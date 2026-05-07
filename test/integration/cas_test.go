@@ -79,14 +79,23 @@ func TestCASRoundtrip(t *testing.T) {
 		dbName     = "cas_roundtrip_db"
 		tableName  = "cas_roundtrip_t"
 		backupName = "cas_roundtrip_bk"
-		rowCount   = 100
+		rowCount   = 10000
 	)
 
-	// 1. Schema + data.
+	// 1. Schema + data. Wide-part format with a non-compressible random
+	// string column so data.bin exceeds the 1024-byte inline threshold —
+	// required for the test to exercise the blob-store path. (At 100 rows
+	// of repetitive 'x' the column compressed to <100 bytes; randomPrintable
+	// at 10000 rows produces ~tens of KB per column, well above threshold.)
 	r.NoError(env.dropDatabase(dbName, true))
 	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.`%s` (id UInt64, x String) ENGINE=MergeTree ORDER BY id", dbName, tableName))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.`%s` SELECT number, toString(number) FROM numbers(%d)", dbName, tableName, rowCount))
+	env.queryWithNoError(r, fmt.Sprintf(
+		"CREATE TABLE `%s`.`%s` (id UInt64, payload String) ENGINE=MergeTree ORDER BY id "+
+			"SETTINGS min_rows_for_wide_part=0, min_bytes_for_wide_part=0",
+		dbName, tableName))
+	env.queryWithNoError(r, fmt.Sprintf(
+		"INSERT INTO `%s`.`%s` SELECT number, randomPrintableASCII(64) FROM numbers(%d)",
+		dbName, tableName, rowCount))
 
 	// 2. v1 create (CAS reuses the local backup directory).
 	env.casBackupNoError(r, "create", "--tables", dbName+".*", backupName)

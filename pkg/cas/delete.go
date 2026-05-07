@@ -43,6 +43,12 @@ func Delete(ctx context.Context, b Backend, cfg Config, name string) error {
 	case ipOK && mdOK:
 		log.Warn().Str("backup", name).Msg("cas-delete: stale inprogress marker present alongside committed metadata.json; proceeding")
 	case !ipOK && !mdOK:
+		// If a v1 backup exists at the root with this name, surface the
+		// proper cross-mode refusal. Operators who type a v1 backup name
+		// into cas-delete get the helpful error.
+		if _, _, exists, err := b.StatFile(ctx, name+"/metadata.json"); err == nil && exists {
+			return ErrV1Backup
+		}
 		return fmt.Errorf("cas: backup %q not found", name)
 	}
 	// (the !ipOK && mdOK case is the normal path; fall through)

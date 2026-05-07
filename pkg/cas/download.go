@@ -111,6 +111,16 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 	// 1. Validate root metadata + persisted CAS params.
 	bm, err := ValidateBackup(ctx, b, cfg, name)
 	if err != nil {
+		// If the backup is missing in the CAS namespace but exists at the
+		// v1 location (root-level <name>/metadata.json), surface the
+		// proper cross-mode refusal instead of "metadata.json missing".
+		// Operators who type a v1 backup name into cas-download get the
+		// helpful error.
+		if errors.Is(err, ErrMissingMetadata) {
+			if _, _, exists, statErr := b.StatFile(ctx, name+"/metadata.json"); statErr == nil && exists {
+				return nil, ErrV1Backup
+			}
+		}
 		return nil, err
 	}
 

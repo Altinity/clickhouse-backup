@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
@@ -42,8 +43,18 @@ func (s *storageBackend) DeleteFile(ctx context.Context, key string) error {
 }
 
 func (s *storageBackend) Walk(ctx context.Context, prefix string, recursive bool, fn func(cas.RemoteFile) error) error {
-	return s.bd.Walk(ctx, prefix, recursive, func(_ context.Context, rf storage.RemoteFile) error {
-		return fn(cas.RemoteFile{Key: rf.Name(), Size: rf.Size(), ModTime: rf.LastModified()})
+	// pkg/storage backends (S3 in particular, see s3.go S3.Walk) strip the
+	// walk-target prefix from rf.Name() — so callers see keys relative to
+	// the walk root. CAS code (cas-status, cold-list, list-remote)
+	// assumes ABSOLUTE keys (i.e. the same keys it constructed via
+	// MetadataJSONPath / BlobPath / etc.), so we reconstruct here by
+	// stripping any leading '/' (path.Join artifact in S3.Walk) and
+	// re-prepending the requested prefix.
+	prefix = strings.TrimSuffix(prefix, "/")
+	return s.bd.Walk(ctx, prefix+"/", recursive, func(_ context.Context, rf storage.RemoteFile) error {
+		rel := strings.TrimPrefix(rf.Name(), "/")
+		abs := prefix + "/" + rel
+		return fn(cas.RemoteFile{Key: abs, Size: rf.Size(), ModTime: rf.LastModified()})
 	})
 }
 
