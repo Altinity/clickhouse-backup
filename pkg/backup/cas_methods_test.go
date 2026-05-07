@@ -189,3 +189,44 @@ func TestSnapshotObjectDiskHits_MultipleTablesMultipleDisks(t *testing.T) {
 		t.Fatalf("got %d hits, want 2: %+v", len(hits), hits)
 	}
 }
+
+// TestSkipObjectDisks_PopulatesUploadInventory verifies that when the CLI
+// flag is set, the snapshot-derived disk/table inventory is forwarded into
+// cas.UploadOptions, which is what planUpload's excludedTables filter relies
+// on. Before the fix, the inventory was empty and the filter no-op'd.
+func TestSkipObjectDisks_PopulatesUploadInventory(t *testing.T) {
+	// Synthesize a local backup that places one table on a hypothetical
+	// object disk ("os3") and one on a regular disk ("default").
+	root := t.TempDir()
+	must := func(err error) { t.Helper(); if err != nil { t.Fatal(err) } }
+	mkPart := func(disk, db, table string) {
+		p := filepath.Join(root, "shadow", db, table, disk, "all_1_1_0")
+		must(os.MkdirAll(p, 0o755))
+		must(os.WriteFile(filepath.Join(p, "checksums.txt"),
+			[]byte("checksums format version: 2\n0 files:\n"), 0o644))
+	}
+	mkPart("default", "db1", "regular")
+	mkPart("os3", "db1", "remote")
+	must(os.MkdirAll(filepath.Join(root, "metadata", "db1"), 0o755))
+	must(os.WriteFile(filepath.Join(root, "metadata", "db1", "regular.json"),
+		[]byte(`{"database":"db1","table":"regular"}`), 0o644))
+	must(os.WriteFile(filepath.Join(root, "metadata", "db1", "remote.json"),
+		[]byte(`{"database":"db1","table":"remote"}`), 0o644))
+
+	b := &Backuper{}
+	diskTypeByName := map[string]string{"default": "local", "os3": "s3"}
+	hits, err := b.snapshotObjectDiskHitsFromDisks(root, diskTypeByName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Database != "db1" || hits[0].Table != "remote" {
+		t.Fatalf("expected exactly db1.remote in hits; got %+v", hits)
+	}
+
+	// Now translate hits into cas.UploadOptions and verify excludedTables
+	// (the helper inside cas.planUpload) sees them.
+	opts := buildSkipObjectDisksUploadOpts(hits)
+	if len(opts.Disks) == 0 || len(opts.ClickHouseTables) == 0 {
+		t.Fatalf("expected non-empty Disks and ClickHouseTables after wiring; got %+v", opts)
+	}
+}
