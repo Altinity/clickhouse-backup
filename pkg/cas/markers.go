@@ -1,0 +1,127 @@
+package cas
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"os"
+	"time"
+)
+
+// markerTool is embedded in marker JSON for forensic context. Set by callers
+// (typically to "clickhouse-backup <version>"); empty is fine.
+var markerTool = "clickhouse-backup"
+
+// SetMarkerTool overrides the tool string written into new markers. Intended
+// to be called once at startup with a version-tagged identifier.
+func SetMarkerTool(tool string) { markerTool = tool }
+
+// hostname returns the host's name; on error returns "unknown".
+func hostname() string {
+	h, err := os.Hostname()
+	if err != nil || h == "" {
+		return "unknown"
+	}
+	return h
+}
+
+// nowRFC3339 returns the current UTC time in RFC3339 format.
+func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
+
+// WriteInProgressMarker writes cas/<cluster>/inprogress/<backup>.marker.
+func WriteInProgressMarker(ctx context.Context, b Backend, clusterPrefix, backup, host string) error {
+	if host == "" {
+		host = hostname()
+	}
+	m := InProgressMarker{Backup: backup, Host: host, StartedAt: nowRFC3339(), Tool: markerTool}
+	data, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return putBytes(ctx, b, InProgressMarkerPath(clusterPrefix, backup), data)
+}
+
+// ReadInProgressMarker returns the parsed marker. Returns an error wrapping
+// io.EOF (or similar) if the marker doesn't exist; callers can use StatFile
+// for an exists/not-exists probe instead.
+func ReadInProgressMarker(ctx context.Context, b Backend, clusterPrefix, backup string) (*InProgressMarker, error) {
+	raw, err := getBytes(ctx, b, InProgressMarkerPath(clusterPrefix, backup))
+	if err != nil {
+		return nil, err
+	}
+	var m InProgressMarker
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// DeleteInProgressMarker removes the in-progress marker for the given backup.
+func DeleteInProgressMarker(ctx context.Context, b Backend, clusterPrefix, backup string) error {
+	return b.DeleteFile(ctx, InProgressMarkerPath(clusterPrefix, backup))
+}
+
+// WritePruneMarker writes the prune marker and returns the random run-id so
+// the caller can verify after read-back (race detection per §6.7 step 2).
+func WritePruneMarker(ctx context.Context, b Backend, clusterPrefix, host string) (runID string, err error) {
+	if host == "" {
+		host = hostname()
+	}
+	runID, err = randomHex(8) // 16 hex chars
+	if err != nil {
+		return "", err
+	}
+	m := PruneMarker{Host: host, StartedAt: nowRFC3339(), RunID: runID, Tool: markerTool}
+	data, err := json.Marshal(m)
+	if err != nil {
+		return "", err
+	}
+	if err := putBytes(ctx, b, PruneMarkerPath(clusterPrefix), data); err != nil {
+		return "", err
+	}
+	return runID, nil
+}
+
+// ReadPruneMarker returns the parsed prune marker.
+func ReadPruneMarker(ctx context.Context, b Backend, clusterPrefix string) (*PruneMarker, error) {
+	raw, err := getBytes(ctx, b, PruneMarkerPath(clusterPrefix))
+	if err != nil {
+		return nil, err
+	}
+	var m PruneMarker
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// DeletePruneMarker removes the prune marker.
+func DeletePruneMarker(ctx context.Context, b Backend, clusterPrefix string) error {
+	return b.DeleteFile(ctx, PruneMarkerPath(clusterPrefix))
+}
+
+// --- helpers ---
+
+func randomHex(nBytes int) (string, error) {
+	buf := make([]byte, nBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+func putBytes(ctx context.Context, b Backend, key string, data []byte) error {
+	return b.PutFile(ctx, key, io.NopCloser(bytes.NewReader(data)), int64(len(data)))
+}
+
+func getBytes(ctx context.Context, b Backend, key string) ([]byte, error) {
+	rc, err := b.GetFile(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	return io.ReadAll(rc)
+}
