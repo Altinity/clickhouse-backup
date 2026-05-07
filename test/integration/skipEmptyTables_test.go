@@ -43,9 +43,15 @@ func TestSkipEmptyTables(t *testing.T) {
 	// Test restore without --skip-empty-tables (should restore both tables)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", "test_skip_empty_backup")
 
-	var tables []string
+	tables := make([]struct {
+		Name string `ch:"name"`
+	}, 0)
 	r.NoError(env.ch.Select(&tables, "SELECT name FROM system.tables WHERE database='test_skip_empty' ORDER BY name"))
-	r.Equal([]string{"empty_table", "table_with_data"}, tables, "Both tables should be restored without --skip-empty-tables")
+	tableNames := make([]string, 0, len(tables))
+	for _, t := range tables {
+		tableNames = append(tableNames, t.Name)
+	}
+	r.Equal([]string{"empty_table", "table_with_data"}, tableNames, "Both tables should be restored without --skip-empty-tables")
 
 	// Verify data in table_with_data
 	var dataCount uint64
@@ -73,8 +79,15 @@ func TestSkipEmptyTables(t *testing.T) {
 	// Test restore with --skip-empty-tables (should skip empty_table completely - both schema and data)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", "--skip-empty-tables", "test_skip_empty_backup")
 
+	tables = make([]struct {
+		Name string `ch:"name"`
+	}, 0)
 	r.NoError(env.ch.Select(&tables, "SELECT name FROM system.tables WHERE database='test_skip_empty' ORDER BY name"))
-	r.Equal([]string{"table_with_data"}, tables, "Only table_with_data should be created with --skip-empty-tables")
+	tableNames = make([]string, 0, len(tables))
+	for _, t := range tables {
+		tableNames = append(tableNames, t.Name)
+	}
+	r.Equal([]string{"table_with_data"}, tableNames, "Only table_with_data should be created with --skip-empty-tables")
 
 	// Verify data in table_with_data
 	r.NoError(env.ch.SelectSingleRowNoCtx(&dataCount, "SELECT count() FROM test_skip_empty.table_with_data"))
@@ -96,8 +109,15 @@ func TestSkipEmptyTables(t *testing.T) {
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore_remote", "--rm", "--skip-empty-tables", "test_skip_empty_backup")
 
+	tables = make([]struct {
+		Name string `ch:"name"`
+	}, 0)
 	r.NoError(env.ch.Select(&tables, "SELECT name FROM system.tables WHERE database='test_skip_empty' ORDER BY name"))
-	r.Equal([]string{"table_with_data"}, tables, "Only table_with_data should be created with restore_remote --skip-empty-tables")
+	tableNames = make([]string, 0, len(tables))
+	for _, t := range tables {
+		tableNames = append(tableNames, t.Name)
+	}
+	r.Equal([]string{"table_with_data"}, tableNames, "Only table_with_data should be created with restore_remote --skip-empty-tables")
 
 	// Verify data in table_with_data
 	r.NoError(env.ch.SelectSingleRowNoCtx(&dataCount, "SELECT count() FROM test_skip_empty.table_with_data"))
