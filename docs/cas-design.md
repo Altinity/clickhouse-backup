@@ -1,6 +1,6 @@
 # Content-Addressable Storage (CAS) Layout for clickhouse-backup
 
-**Status**: Design draft, pending implementation
+**Status**: Phase 1 + Phase 2 shipped (cas-{upload,download,restore,delete,verify,status,prune})
 **Author**: Mikhail Filimonov, drafted with design-interview support
 **Last updated**: 2026-05-07
 
