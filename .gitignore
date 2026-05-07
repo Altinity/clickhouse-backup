@@ -27,3 +27,4 @@ __pycache__/
 .agents/
 pyrightconfig.json
 docs/clickhouse-backup-v2-design-state.md
+docs/superpowers/
