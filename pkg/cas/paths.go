@@ -17,6 +17,11 @@ func TableMetaPath(clusterPrefix, backup, db, table string) string {
 		common.TablePathEncode(db) + "/" + common.TablePathEncode(table) + ".json"
 }
 
+// PartArchivePath returns the per-(disk, db, table) tar.zstd archive key.
+// disk is intentionally NOT TablePathEncode'd: ClickHouse disk names are
+// constrained at config-load time to alphanumeric + dash/underscore, so they
+// are path-safe by construction. db and table can be arbitrary user input
+// and must be encoded.
 func PartArchivePath(clusterPrefix, backup, disk, db, table string) string {
 	return MetadataDir(clusterPrefix, backup) + "parts/" + disk + "/" +
 		common.TablePathEncode(db) + "/" + common.TablePathEncode(table) + ".tar.zstd"
