@@ -29,6 +29,13 @@ For that reason, it's required to run `clickhouse-backup` on the same host or sa
 - **Support for multi disks installations**
 - **Support for custom remote storage types via `rclone`, `kopia`, `restic`, `rsync` etc**
 - **Support for incremental backups on remote storage**
+- **Optional content-addressable (CAS) layout** for mutation-heavy workloads with chain-free, independently-restorable backups (`cas-upload` / `cas-download` / `cas-restore` / `cas-delete` / `cas-verify` / `cas-status`)
+
+## CAS layout (opt-in)
+
+For mutation-heavy tables or scenarios where the v1 incremental chain has grown unwieldy, a content-addressable backup layout is available under the `cas-*` commands. Files are keyed by the CityHash128 already in each part's `checksums.txt`, so identical content is stored once and reused across mutations and across backups; every backup is independently restorable (no `RequiredBackup` chain), and storage grows with new data rather than with the number of backups.
+
+To enable, set `cas.enabled: true` and `cas.cluster_id: <cluster>` in `config.yml`. CAS backups live under a separate top-level prefix (default `cas/`) and never share namespace with v1 backups. Garbage collection is a separate `cas-prune` step (Phase 2). See [docs/cas-design.md](docs/cas-design.md) for the full design.
 
 ## Limitations
 

@@ -279,9 +279,10 @@ func main() {
 			),
 		},
 		{
-			Name:      "upload",
-			Usage:     "Upload backup to remote storage",
-			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
+			Name:        "upload",
+			Usage:       "Upload backup to remote storage",
+			UsageText:   "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
+			Description: "Upload a local backup to remote storage using the v1 layout (per-part archives + RequiredBackup chain for incrementals).\n\nFor mutation-heavy tables or chain-free incremental backups, see `cas-upload` (content-addressable layout). See docs/cas-design.md for the trade-offs.",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				return b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("named-collections-only"), c.Bool("resume"), version, c.Int("command-id"))
