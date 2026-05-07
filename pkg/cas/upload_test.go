@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -411,6 +413,60 @@ func TestUpload_MergesSchemaFieldsFromLocalV1Metadata(t *testing.T) {
 	}
 	if got.TotalBytes != 12345 {
 		t.Errorf("TotalBytes: got %d want 12345", got.TotalBytes)
+	}
+}
+
+// TestUpload_PreservesEmptyTable verifies that a table whose metadata JSON
+// exists locally but has no shadow part directory still appears in the
+// uploaded BackupMetadata.Tables list. Without the fix, the table would be
+// silently dropped and cas-restore could not recreate its schema.
+func TestUpload_PreservesEmptyTable(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	ctx := context.Background()
+
+	// Build a synthetic backup with two tables: t1 has a part, t2 has only
+	// a metadata JSON (no shadow dir).
+	parts := []testfixtures.PartSpec{
+		{
+			Disk: "default", DB: "db1", Table: "t1", Name: "all_1_1_0",
+			Files: []testfixtures.FileSpec{
+				{Name: "data.bin", Size: 64, HashLow: 1, HashHigh: 2},
+			},
+		},
+	}
+	src := testfixtures.Build(t, parts)
+
+	// Add t2's metadata JSON manually (no shadow dir).
+	t2Meta := `{"database":"db1","table":"t2","query":"CREATE TABLE db1.t2 (id UInt64) ENGINE=MergeTree ORDER BY id"}`
+	t2Path := filepath.Join(src.Root, "metadata", "db1", "t2.json")
+	if err := os.WriteFile(t2Path, []byte(t2Meta), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := cas.Upload(ctx, f, cfg, "bk", cas.UploadOptions{
+		LocalBackupDir: src.Root,
+	}); err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+
+	// Read the uploaded root metadata.json and assert both tables are listed.
+	rc, err := f.GetFile(ctx, cas.MetadataJSONPath(cfg.ClusterPrefix(), "bk"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	body, _ := io.ReadAll(rc)
+	var bm metadata.BackupMetadata
+	if err := json.Unmarshal(body, &bm); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, tt := range bm.Tables {
+		got[tt.Database+"."+tt.Table] = true
+	}
+	if !got["db1.t1"] || !got["db1.t2"] {
+		t.Errorf("expected both db1.t1 and db1.t2 in bm.Tables; got %+v", bm.Tables)
 	}
 }
 

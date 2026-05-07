@@ -312,22 +312,81 @@ func formatObjectDiskHits(hits []ObjectDiskHit) string {
 	return strings.Join(parts, ", ")
 }
 
-// planUpload walks <root>/shadow/<db>/<table>/<disk>/<part>/, parses each
-// checksums.txt, and builds an uploadPlan. When skipObjectDisks is true,
-// the planner consults precomputed first (a precomputed db.table
-// allow-list provided by the CLI's snapshot-based pre-flight) and falls
-// through to DetectObjectDiskTables(disks, tables) when that list is
-// empty. Either path silently excludes object-disk-backed tables.
-func planUpload(root string, threshold uint64, filter []string, skipObjectDisks bool, precomputed []string, disks []DiskInfo, tables []TableInfo) (*uploadPlan, error) {
-	shadow := filepath.Join(root, "shadow")
-	st, err := os.Stat(shadow)
+// localTableMetadataEntry is one (db, table) pair discovered by walking
+// <root>/metadata/. Names are post-decode (i.e. ready to use directly,
+// no further TablePathDecode needed).
+type localTableMetadataEntry struct {
+	DB, Table string
+	JSONPath  string // absolute path to the metadata JSON
+}
+
+// enumerateLocalTableMetadata walks <root>/metadata/<db_enc>/<table_enc>.json
+// and returns one entry per file. The (db, table) names come from the JSON
+// body's "database" / "table" fields, NOT from the on-disk path components,
+// so the result is unambiguous and never depends on TablePathDecode.
+func enumerateLocalTableMetadata(root string) ([]localTableMetadataEntry, error) {
+	metaRoot := filepath.Join(root, "metadata")
+	st, err := os.Stat(metaRoot)
 	if err != nil {
-		return nil, fmt.Errorf("cas: stat shadow dir: %w", err)
+		if os.IsNotExist(err) {
+			return nil, nil // no metadata dir → no tables (caller decides what to do)
+		}
+		return nil, fmt.Errorf("stat metadata dir: %w", err)
 	}
 	if !st.IsDir() {
-		return nil, fmt.Errorf("cas: shadow path %q is not a directory", shadow)
+		return nil, fmt.Errorf("metadata path %q is not a directory", metaRoot)
 	}
+	var out []localTableMetadataEntry
+	dbs, err := readDir(metaRoot)
+	if err != nil {
+		return nil, err
+	}
+	for _, dbEnc := range dbs {
+		dbDir := filepath.Join(metaRoot, dbEnc)
+		dbSt, err := os.Stat(dbDir)
+		if err != nil || !dbSt.IsDir() {
+			continue
+		}
+		entries, err := readDir(dbDir)
+		if err != nil {
+			return nil, err
+		}
+		for _, name := range entries {
+			if !strings.HasSuffix(name, ".json") {
+				continue
+			}
+			p := filepath.Join(dbDir, name)
+			tm, err := readLocalTableMetadata(root, common.TablePathDecode(dbEnc), common.TablePathDecode(strings.TrimSuffix(name, ".json")))
+			if err != nil {
+				return nil, fmt.Errorf("read %s: %w", p, err)
+			}
+			out = append(out, localTableMetadataEntry{
+				DB:       tm.Database,
+				Table:    tm.Table,
+				JSONPath: p,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DB != out[j].DB {
+			return out[i].DB < out[j].DB
+		}
+		return out[i].Table < out[j].Table
+	})
+	return out, nil
+}
 
+// planUpload enumerates tables from <root>/metadata/, then for each
+// (db, table) walks <root>/shadow/<db_enc>/<table_enc>/<disk>/<part>/ to
+// classify files. Tables with no shadow dir produce a tableKey entry with
+// no parts — these flow through to bm.Tables without an archive.
+//
+// When skipObjectDisks is true, the planner consults precomputed first
+// (a precomputed db.table allow-list provided by the CLI's snapshot-based
+// pre-flight) and falls through to DetectObjectDiskTables(disks, tables)
+// when that list is empty. Either path silently excludes object-disk-
+// backed tables.
+func planUpload(root string, threshold uint64, filter []string, skipObjectDisks bool, precomputed []string, disks []DiskInfo, tables []TableInfo) (*uploadPlan, error) {
 	excluded := excludedTables(skipObjectDisks, precomputed, disks, tables)
 
 	plan := &uploadPlan{
@@ -336,58 +395,73 @@ func planUpload(root string, threshold uint64, filter []string, skipObjectDisks 
 		localRoot: root,
 	}
 
-	// Walk shadow/<db>/<table>/<disk>/<part>/
-	dbs, err := readDir(shadow)
+	tableEntries, err := enumerateLocalTableMetadata(root)
 	if err != nil {
 		return nil, err
 	}
-	for _, dbEnc := range dbs {
-		// On-disk shadow directory names are TablePathEncode'd by
-		// clickhouse-backup create. Decode for everything that compares
-		// against decoded inputs (CLI --tables filter, live CH table list,
-		// stored TableMetadata.Database). Keep encoded names for the
-		// filesystem walk itself.
-		db := common.TablePathDecode(dbEnc)
-		dbDir := filepath.Join(shadow, dbEnc)
-		tbls, err := readDir(dbDir)
+
+	shadow := filepath.Join(root, "shadow")
+	for _, te := range tableEntries {
+		db, table := te.DB, te.Table
+		if !tableFilterAllows(filter, db, table) {
+			continue
+		}
+		if excluded[db+"."+table] {
+			continue
+		}
+
+		// Find part directories for this table by walking
+		// shadow/<db_enc>/<table_enc>/<disk>/<part>/. Missing or empty is
+		// fine (schema-only / empty-table case).
+		dbEnc := common.TablePathEncode(db)
+		tableEnc := common.TablePathEncode(table)
+		tblDir := filepath.Join(shadow, dbEnc, tableEnc)
+		st, statErr := os.Stat(tblDir)
+		if statErr != nil || !st.IsDir() {
+			// No shadow dir — schema-only or empty table. Register a
+			// tablePlan with the default disk slot so buildBackupMetadata
+			// emits a Tables entry; no parts, no archive.
+			key := "default|" + db + "|" + table
+			if _, ok := plan.tables[key]; !ok {
+				plan.tables[key] = &tablePlan{Disk: "default", DB: db, Table: table}
+				plan.tableKeys = append(plan.tableKeys, key)
+			}
+			continue
+		}
+		diskNames, err := readDir(tblDir)
 		if err != nil {
 			return nil, err
 		}
-		for _, tableEnc := range tbls {
-			table := common.TablePathDecode(tableEnc)
-			if !tableFilterAllows(filter, db, table) {
-				continue
-			}
-			if excluded[db+"."+table] {
-				continue
-			}
-			tblDir := filepath.Join(dbDir, tableEnc)
-			diskNames, err := readDir(tblDir)
+		anyParts := false
+		for _, disk := range diskNames {
+			diskDir := filepath.Join(tblDir, disk)
+			parts, err := readDir(diskDir)
 			if err != nil {
 				return nil, err
 			}
-			for _, disk := range diskNames {
-				// Disk names are not TablePathEncode'd (see paths.go
-				// PartArchivePath comment).
-				diskDir := filepath.Join(tblDir, disk)
-				parts, err := readDir(diskDir)
-				if err != nil {
-					return nil, err
+			key := disk + "|" + db + "|" + table
+			tp, ok := plan.tables[key]
+			if !ok {
+				tp = &tablePlan{Disk: disk, DB: db, Table: table}
+				plan.tables[key] = tp
+				plan.tableKeys = append(plan.tableKeys, key)
+			}
+			for _, part := range parts {
+				partDir := filepath.Join(diskDir, part)
+				if err := planPart(partDir, part, threshold, plan, tp); err != nil {
+					return nil, fmt.Errorf("cas: plan %s/%s/%s/%s: %w", db, table, disk, part, err)
 				}
-				key := disk + "|" + db + "|" + table
-				tp, ok := plan.tables[key]
-				if !ok {
-					tp = &tablePlan{Disk: disk, DB: db, Table: table}
-					plan.tables[key] = tp
-					plan.tableKeys = append(plan.tableKeys, key)
-				}
-				for _, part := range parts {
-					partDir := filepath.Join(diskDir, part)
-					if err := planPart(partDir, part, threshold, plan, tp); err != nil {
-						return nil, fmt.Errorf("cas: plan %s/%s/%s/%s: %w", db, table, disk, part, err)
-					}
-					tp.parts = append(tp.parts, metadata.Part{Name: part})
-				}
+				tp.parts = append(tp.parts, metadata.Part{Name: part})
+				anyParts = true
+			}
+		}
+		if !anyParts {
+			// Empty shadow tree → still register a Tables entry on a
+			// default disk slot so cas-restore can recreate the schema.
+			key := "default|" + db + "|" + table
+			if _, ok := plan.tables[key]; !ok {
+				plan.tables[key] = &tablePlan{Disk: "default", DB: db, Table: table}
+				plan.tableKeys = append(plan.tableKeys, key)
 			}
 		}
 	}
