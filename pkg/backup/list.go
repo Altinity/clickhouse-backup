@@ -274,7 +274,13 @@ func (b *Backuper) collectRemoteCASBackups(ctx context.Context) []BackupInfo {
 	}
 	out := make([]BackupInfo, 0, len(entries))
 	for _, e := range entries {
-		size := "???"
+		// "(unknown)" rather than "???": the latter makes operators wonder
+		// whether they're seeing a display bug or a corrupted backup. CAS
+		// list entries skip the v1 8-category breakdown (data:/arch:/obj:/...)
+		// because that breakdown isn't meaningful for content-addressed
+		// storage; the description column carries the [CAS] tag so the
+		// format difference is operator-explained, not surprising.
+		size := "(unknown)"
 		if e.SizeBytes > 0 {
 			size = utils.FormatBytes(uint64(e.SizeBytes))
 		}
