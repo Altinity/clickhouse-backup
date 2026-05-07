@@ -7,11 +7,13 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// Delete removes a CAS backup's metadata subtree. Blob reclamation is the
-// next prune's responsibility. Per §6.6, metadata.json is deleted FIRST so
-// the backup leaves the catalog atomically; even if the rest of the subtree
-// removal is interrupted, the backup is no longer listable, and the orphan
-// per-table JSONs/archives will be swept by the next prune.
+// Delete removes a CAS backup's metadata subtree. Blob reclamation is
+// reserved for Phase 2 (cas-prune); in Phase 1, deleted-backup blobs
+// remain in remote storage indefinitely. Per §6.6, metadata.json is
+// deleted FIRST so the backup leaves the catalog atomically; even if
+// the rest of the subtree removal is interrupted, the backup is no
+// longer listable, and the orphan per-table JSONs/archives will be
+// swept by the future prune (or via manual cleanup, until prune ships).
 func Delete(ctx context.Context, b Backend, cfg Config, name string) error {
 	if err := validateName(name); err != nil {
 		return err

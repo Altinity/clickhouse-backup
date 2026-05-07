@@ -58,7 +58,7 @@ clickhouse-backup create my_backup            # snapshot the data locally
 clickhouse-backup cas-upload my_backup        # push to remote (only new content)
 clickhouse-backup cas-status                  # see counts, sizes, in-flight uploads
 clickhouse-backup cas-restore my_backup       # restore (any backup, any time)
-clickhouse-backup cas-delete   my_backup      # remove (storage reclaimed by cas-prune)
+clickhouse-backup cas-delete   my_backup      # remove (Phase 1: blob storage NOT yet reclaimed; cas-prune ships in Phase 2)
 clickhouse-backup cas-verify   my_backup      # cheap integrity check (HEAD + size)
 ```
 

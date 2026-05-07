@@ -1,15 +1,17 @@
 package main
 
 import (
+	"errors"
+
 	"github.com/urfave/cli"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 )
 
-// casCommands returns the six cas-* CLI subcommands. rootFlags is the slice of
-// global flags from main.go (passed via the same append-pattern as the
-// existing v1 commands).
+// casCommands returns the seven cas-* CLI subcommands (six implemented + the
+// cas-prune Phase-2 stub). rootFlags is the slice of global flags from main.go
+// (passed via the same append-pattern as the existing v1 commands).
 func casCommands(rootFlags []cli.Flag) []cli.Command {
 	return []cli.Command{
 		{
@@ -145,9 +147,9 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 		},
 		{
 			Name:        "cas-delete",
-			Usage:       "Delete a CAS backup's metadata subtree (blobs are reclaimed by the next prune)",
+			Usage:       "Delete a CAS backup's metadata subtree (Phase 1: blobs are NOT reclaimed)",
 			UsageText:   "clickhouse-backup cas-delete <backup_name>",
-			Description: "Removes the named backup atomically by deleting metadata.json first, then the rest of the metadata subtree. Blob bytes are NOT deleted; reclamation is the next cas-prune's job (per the GraceBlob window).",
+			Description: "Removes the named backup atomically by deleting metadata.json first, then the rest of the metadata subtree. Blob bytes are NOT reclaimed in Phase 1 — that ships with cas-prune in Phase 2; until then, deleted-backup blobs accumulate in remote storage.",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				return b.CASDelete(c.Args().First())
@@ -178,6 +180,16 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				return b.CASStatus()
+			},
+			Flags: rootFlags,
+		},
+		{
+			Name:        "cas-prune",
+			Usage:       "[Phase 2] Garbage-collect orphan blobs (NOT YET IMPLEMENTED in Phase 1)",
+			UsageText:   "clickhouse-backup cas-prune",
+			Description: "Mark-and-sweep blob reclamation; design at docs/cas-design.md §6.7. Phase 1 ships the marker primitives but not the GC sweep. Until cas-prune ships, blobs accumulate after cas-delete.",
+			Action: func(c *cli.Context) error {
+				return errors.New("cas-prune is not implemented in Phase 1; see docs/cas-design.md §6.7. Until Phase 2 ships, blob reclamation is manual: orphan blobs accumulate after cas-delete and must be cleaned up out-of-band if storage is a concern")
 			},
 			Flags: rootFlags,
 		},
