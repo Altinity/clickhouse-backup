@@ -458,6 +458,43 @@ func TestDownload_RejectsTraversalDiskName(t *testing.T) {
 	}
 }
 
+// TestDownload_ProjectionRoundTrip uploads a part with a projection,
+// downloads it, and verifies every projection file lands at the
+// expected nested path with no missing blobs.
+func TestDownload_ProjectionRoundTrip(t *testing.T) {
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "all_1_1_0",
+		Files: []testfixtures.FileSpec{
+			{Name: "data.bin", Size: 4096, HashLow: 1, HashHigh: 2},
+			{Name: "columns.txt", Size: 16, HashLow: 3, HashHigh: 4},
+		},
+		Projections: []testfixtures.ProjectionSpec{{
+			Name: "p1",
+			Files: []testfixtures.FileSpec{
+				{Name: "data.bin", Size: 2048, HashLow: 5, HashHigh: 6},
+				{Name: "columns.txt", Size: 8, HashLow: 7, HashHigh: 8},
+			},
+			AggregateHashLow: 99, AggregateHashHigh: 99, AggregateSize: 2072,
+		}},
+	}}
+	_, _, _, root := uploadAndDownload(t, parts, "bk", cas.DownloadOptions{})
+
+	mustExist := func(p string) {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("missing after download: %s (%v)", p, err)
+		}
+	}
+	// Download materializes into <LocalBackupDir>/<name>/shadow/<dbEnc>/<tableEnc>/<disk>/<part>/
+	partDir := filepath.Join(root, "bk", "shadow",
+		common.TablePathEncode("db1"), common.TablePathEncode("t1"),
+		"default", "all_1_1_0")
+	mustExist(filepath.Join(partDir, "data.bin"))
+	mustExist(filepath.Join(partDir, "columns.txt"))
+	mustExist(filepath.Join(partDir, "p1.proj", "checksums.txt"))
+	mustExist(filepath.Join(partDir, "p1.proj", "data.bin"))
+	mustExist(filepath.Join(partDir, "p1.proj", "columns.txt"))
+}
+
 // TestDownload_RejectsTraversalPartName covers the same defense for the
 // per-Part Name field.
 func TestDownload_RejectsTraversalPartName(t *testing.T) {

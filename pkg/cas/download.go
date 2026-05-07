@@ -266,37 +266,8 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 					common.TablePathEncode(te.DB),
 					common.TablePathEncode(te.Table),
 					disk, p.Name)
-				ckPath := filepath.Join(partDir, "checksums.txt")
-				f, err := os.Open(ckPath)
-				if err != nil {
-					return nil, fmt.Errorf("cas: open %s: %w", ckPath, err)
-				}
-				parsed, perr := checksumstxt.Parse(f)
-				_ = f.Close()
-				if perr != nil {
-					return nil, fmt.Errorf("cas: parse %s: %w", ckPath, perr)
-				}
-				// Deterministic ordering for tests + debugging.
-				names := make([]string, 0, len(parsed.Files))
-				for n := range parsed.Files {
-					names = append(names, n)
-				}
-				sort.Strings(names)
-				for _, fname := range names {
-					if err := validateChecksumsTxtFilename(fname); err != nil {
-						return nil, fmt.Errorf("cas: %s: %w", ckPath, err)
-					}
-					c := parsed.Files[fname]
-					if c.FileSize <= bm.CAS.InlineThreshold {
-						continue
-					}
-					blobs = append(blobs, blobJob{
-						PartDir:  partDir,
-						FileName: fname,
-						Size:     c.FileSize,
-						Hash:     Hash128{Low: c.FileHash.Low, High: c.FileHash.High},
-					})
-					estimateBlobBytes += int64(c.FileSize)
+				if err := collectBlobJobsRecursive(partDir, bm.CAS.InlineThreshold, &blobs, &estimateBlobBytes); err != nil {
+					return nil, err
 				}
 			}
 		}
@@ -600,6 +571,55 @@ func downloadBlobs(ctx context.Context, b Backend, cp string, jobs []blobJob, pa
 		return 0, 0, firstErr
 	}
 	return fetched, bytesUp, nil
+}
+
+// collectBlobJobsRecursive parses partDir/checksums.txt and appends a
+// blobJob for every above-threshold non-.proj file. For each .proj entry
+// in the parent it recurses into <partDir>/<entry>/checksums.txt with the
+// same rules. Mirrors the upload-side projection-aware walker from T5.
+//
+// Each blob's PartDir is the immediate directory containing the file (so
+// downloadBlobs writes to the right nested location, including p1.proj/...).
+func collectBlobJobsRecursive(partDir string, threshold uint64, out *[]blobJob, estimate *int64) error {
+	ckPath := filepath.Join(partDir, "checksums.txt")
+	f, err := os.Open(ckPath)
+	if err != nil {
+		return fmt.Errorf("cas: open %s: %w", ckPath, err)
+	}
+	parsed, perr := checksumstxt.Parse(f)
+	_ = f.Close()
+	if perr != nil {
+		return fmt.Errorf("cas: parse %s: %w", ckPath, perr)
+	}
+	names := make([]string, 0, len(parsed.Files))
+	for n := range parsed.Files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, fname := range names {
+		if strings.HasSuffix(fname, ".proj") {
+			subDir := filepath.Join(partDir, fname)
+			if err := collectBlobJobsRecursive(subDir, threshold, out, estimate); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := validateChecksumsTxtFilename(fname); err != nil {
+			return fmt.Errorf("cas: %s: %w", ckPath, err)
+		}
+		c := parsed.Files[fname]
+		if c.FileSize <= threshold {
+			continue
+		}
+		*out = append(*out, blobJob{
+			PartDir:  partDir,
+			FileName: fname,
+			Size:     c.FileSize,
+			Hash:     Hash128{Low: c.FileHash.Low, High: c.FileHash.High},
+		})
+		*estimate += int64(c.FileSize)
+	}
+	return nil
 }
 
 // checkFreeSpace returns an error if the filesystem hosting localDir has
