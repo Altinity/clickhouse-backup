@@ -27,6 +27,11 @@ func (env *TestEnvironment) casBootstrap(r *require.Assertions, clusterID string
 	// Wipe any leftover CAS state from a previous test on this env.
 	_ = env.DockerExec("minio", "rm", "-rf", "/minio/data/clickhouse/backup")
 	_ = env.DockerExec("minio", "bash", "-c", "mkdir -p /minio/data/clickhouse")
+	// Wipe any leftover LOCAL backups from a previous run (otherwise
+	// 'clickhouse-backup create <same_name>' fails with "backup is already
+	// exists"). The harness keeps env state across tests within a session,
+	// so test-internal cleanup is required.
+	_ = env.DockerExec("clickhouse", "bash", "-c", "rm -rf /var/lib/clickhouse/backup/*")
 
 	casBlock := fmt.Sprintf(`
 cas:

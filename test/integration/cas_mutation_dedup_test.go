@@ -112,14 +112,29 @@ func parseBytesUploaded(t *testing.T, out string) int64 {
 	return 0
 }
 
-// humanBytesToInt64 parses outputs like "5.6 MiB" / "1024 B" / "0 B" into
-// int64 bytes. Uses utils.FormatBytes-compatible suffixes.
+// humanBytesToInt64 parses utils.FormatBytes outputs like "795.56KiB" /
+// "5.6MiB" / "1024B" / "0B" into int64 bytes. NO SPACE between number and
+// unit (utils.FormatBytes never emits one).
 func humanBytesToInt64(t *testing.T, s string) int64 {
 	t.Helper()
+	s = strings.TrimSpace(s)
+	idx := 0
+	for idx < len(s) {
+		c := s[idx]
+		if (c >= '0' && c <= '9') || c == '.' {
+			idx++
+			continue
+		}
+		break
+	}
+	if idx == 0 || idx == len(s) {
+		t.Fatalf("parse human bytes %q: cannot find number/unit boundary", s)
+	}
+	numStr := s[:idx]
+	unit := s[idx:]
 	var v float64
-	var unit string
-	if _, err := fmt.Sscanf(s, "%f %s", &v, &unit); err != nil {
-		t.Fatalf("parse human bytes %q: %v", s, err)
+	if _, err := fmt.Sscanf(numStr, "%f", &v); err != nil {
+		t.Fatalf("parse human bytes number %q: %v", numStr, err)
 	}
 	mult := int64(1)
 	switch strings.ToUpper(unit) {
