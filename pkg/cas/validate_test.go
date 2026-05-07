@@ -62,7 +62,7 @@ func TestValidateBackup_RejectsBadNames(t *testing.T) {
 	f := fakedst.New()
 	c := cfg(t)
 	ctx := context.Background()
-	for _, bad := range []string{"", strings.Repeat("a", 129), "../sneaky", "with space", "name/slash", "tab\tname"} {
+	for _, bad := range []string{"", strings.Repeat("a", 129), "../sneaky", "with space", "name/slash", "tab\tname", ".", "..", "..."} {
 		if _, err := cas.ValidateBackup(ctx, f, c, bad); !errors.Is(err, cas.ErrInvalidBackupName) {
 			t.Errorf("name=%q: want ErrInvalidBackupName, got %v", bad, err)
 		}

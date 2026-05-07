@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strings"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 )
@@ -14,12 +15,18 @@ import (
 // Excludes anything that could be misinterpreted as a path component.
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9._\-+:]+$`)
 
-// validateName enforces backup-name rules: 1..128 chars, [A-Za-z0-9._\-+:].
+// validateName enforces backup-name rules: 1..128 chars, character set
+// [A-Za-z0-9._\-+:], and not a dot-only string ("." / ".." / "..." etc.).
+// Dot-only names pass the regex but are nonsensical and could enable subtle
+// path-shape collisions in future tooling.
 func validateName(name string) error {
 	if len(name) == 0 || len(name) > 128 {
 		return ErrInvalidBackupName
 	}
 	if !nameRe.MatchString(name) {
+		return ErrInvalidBackupName
+	}
+	if strings.Trim(name, ".") == "" {
 		return ErrInvalidBackupName
 	}
 	return nil
