@@ -3,6 +3,7 @@ package testfixtures
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/checksumstxt"
@@ -73,5 +74,55 @@ func TestBuild_PartsIndexed(t *testing.T) {
 	}
 	if got, want := len(lb.Parts["fast:db1.t2"]), 1; got != want {
 		t.Errorf("fast:db1.t2 parts: got %d want %d", got, want)
+	}
+}
+
+// TestBuild_WithProjections verifies the fixture builder writes p1.proj/
+// subdirectories with their own checksums.txt and adds a parent
+// checksums.txt entry whose name ends with .proj.
+func TestBuild_WithProjections(t *testing.T) {
+	parts := []PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "all_1_1_0",
+		Files: []FileSpec{
+			{Name: "data.bin", Size: 8, HashLow: 1, HashHigh: 2},
+		},
+		Projections: []ProjectionSpec{{
+			Name: "p1",
+			Files: []FileSpec{
+				{Name: "data.bin", Size: 4, HashLow: 10, HashHigh: 20},
+				{Name: "columns.txt", Size: 6, HashLow: 30, HashHigh: 40},
+			},
+			AggregateHashLow:  100,
+			AggregateHashHigh: 200,
+			AggregateSize:     10,
+		}},
+	}}
+	lb := Build(t, parts)
+
+	// Parent checksums.txt must list the projection as p1.proj.
+	parentCk := filepath.Join(lb.Root, "shadow", "db1", "t1", "default", "all_1_1_0", "checksums.txt")
+	parentBody, err := os.ReadFile(parentCk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(parentBody), "p1.proj") {
+		t.Errorf("parent checksums.txt missing p1.proj entry; body:\n%s", string(parentBody))
+	}
+
+	// Projection subdir must exist with its own checksums.txt.
+	projCk := filepath.Join(lb.Root, "shadow", "db1", "t1", "default", "all_1_1_0", "p1.proj", "checksums.txt")
+	if _, err := os.Stat(projCk); err != nil {
+		t.Fatalf("projection checksums.txt missing: %v", err)
+	}
+	projBody, err := os.ReadFile(projCk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(projBody), "data.bin") {
+		t.Errorf("projection checksums.txt missing data.bin; body:\n%s", string(projBody))
+	}
+	// Projection's own data files must be on disk.
+	if _, err := os.Stat(filepath.Join(lb.Root, "shadow", "db1", "t1", "default", "all_1_1_0", "p1.proj", "data.bin")); err != nil {
+		t.Errorf("projection data.bin not materialized: %v", err)
 	}
 }

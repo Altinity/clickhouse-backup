@@ -30,6 +30,7 @@ type LocalBackup struct {
 type PartSpec struct {
 	Disk, DB, Table, Name string
 	Files                 []FileSpec // every file the part contains, including any "checksums.txt"-listed files
+	Projections           []ProjectionSpec
 	// TableMeta is optional. When zero-value, Build still writes a minimal
 	// v1 metadata/<db>/<table>.json so cas-upload's merge logic has
 	// something to read.
@@ -48,6 +49,19 @@ type FileSpec struct {
 	HashLow  uint64
 	HashHigh uint64
 	Bytes    []byte
+}
+
+// ProjectionSpec describes one projection subpart inside a parent part.
+// The parent's checksums.txt gets an entry "<Name>.proj" with the given
+// aggregate (hash, size). The projection itself is materialized as a
+// subdirectory <Name>.proj/ containing the listed files plus its own
+// checksums.txt.
+type ProjectionSpec struct {
+	Name              string     // e.g. "p1" — the on-disk dir is <Name>.proj
+	Files             []FileSpec // files inside the projection subdir
+	AggregateHashLow  uint64
+	AggregateHashHigh uint64
+	AggregateSize     uint64
 }
 
 // Build creates a temp directory tree for the given parts and returns
@@ -105,6 +119,49 @@ func Build(t *testing.T, parts []PartSpec) *LocalBackup {
 			if err := os.WriteFile(fp, data, 0o644); err != nil {
 				t.Fatalf("write %s: %v", fp, err)
 			}
+		}
+
+		// Materialize projections: <part>/<name>.proj/{files..., checksums.txt}
+		for _, proj := range p.Projections {
+			projDir := filepath.Join(partDir, proj.Name+".proj")
+			if err := os.MkdirAll(projDir, 0o755); err != nil {
+				t.Fatalf("mkdir %s: %v", projDir, err)
+			}
+			var projListed []FileSpec
+			for _, f := range proj.Files {
+				if f.Name == "checksums.txt" {
+					continue
+				}
+				projListed = append(projListed, f)
+				data := f.Bytes
+				if data == nil {
+					data = synthBytes(f.Name, f.Size)
+				}
+				if uint64(len(data)) != f.Size {
+					t.Fatalf("projection %q file %q: bytes length %d != size %d",
+						proj.Name, f.Name, len(data), f.Size)
+				}
+				fp := filepath.Join(projDir, f.Name)
+				if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
+					t.Fatalf("mkdir %s: %v", filepath.Dir(fp), err)
+				}
+				if err := os.WriteFile(fp, data, 0o644); err != nil {
+					t.Fatalf("write %s: %v", fp, err)
+				}
+			}
+			ck := buildChecksumsV2(projListed)
+			ckPath := filepath.Join(projDir, "checksums.txt")
+			if err := os.WriteFile(ckPath, []byte(ck), 0o644); err != nil {
+				t.Fatalf("write %s: %v", ckPath, err)
+			}
+			// Add the projection entry to the parent's listed set so it
+			// shows up in the parent's checksums.txt with the .proj suffix.
+			listed = append(listed, FileSpec{
+				Name:     proj.Name + ".proj",
+				Size:     proj.AggregateSize,
+				HashLow:  proj.AggregateHashLow,
+				HashHigh: proj.AggregateHashHigh,
+			})
 		}
 
 		// Synthesize checksums.txt last.
