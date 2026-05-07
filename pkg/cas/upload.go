@@ -359,11 +359,16 @@ func enumerateLocalTableMetadata(root string) ([]localTableMetadataEntry, error)
 				continue
 			}
 			p := filepath.Join(dbDir, name)
-			// TODO(T3): remove TablePathDecode once readLocalTableMetadata accepts
-			// encoded path components directly or derives the path internally.
-			tm, err := readLocalTableMetadata(root, common.TablePathDecode(dbEnc), common.TablePathDecode(strings.TrimSuffix(name, ".json")))
+			body, err := os.ReadFile(p)
 			if err != nil {
 				return nil, fmt.Errorf("read %s: %w", p, err)
+			}
+			var tm metadata.TableMetadata
+			if err := json.Unmarshal(body, &tm); err != nil {
+				return nil, fmt.Errorf("parse %s: %w", p, err)
+			}
+			if tm.Database == "" || tm.Table == "" {
+				return nil, fmt.Errorf("metadata JSON %s has empty database/table fields", p)
 			}
 			out = append(out, localTableMetadataEntry{
 				DB:       tm.Database,

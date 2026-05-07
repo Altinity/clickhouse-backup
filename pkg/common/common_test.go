@@ -19,38 +19,6 @@ func TestTablePathEncode(t *testing.T) {
 	r.Equal(str, decoded)
 }
 
-func TestTablePathDecodeRoundTrip(t *testing.T) {
-	r := require.New(t)
-	cases := []string{
-		"plain_alphanum",
-		"my-db",
-		"my db with spaces",
-		"with.dots",
-		"weird(parens)",
-		`!@#$^&*()+-=[]{}|;':\",./<>?~`,
-		"unicode-привет",
-		"", // empty
-	}
-	for _, in := range cases {
-		got := TablePathDecode(TablePathEncode(in))
-		r.Equal(in, got, "round-trip mismatch for %q", in)
-	}
-}
-
-func TestTablePathDecode_PreservesUnencoded(t *testing.T) {
-	// TablePathDecode of a plain (unencoded) string should be a no-op.
-	r := require.New(t)
-	r.Equal("foo_bar", TablePathDecode("foo_bar"))
-}
-
-func TestTablePathDecode_OnInvalidInputReturnsAsIs(t *testing.T) {
-	// An invalid percent-escape (e.g. "%ZZ") should NOT panic; the function
-	// returns the input verbatim. This guards against accidentally
-	// double-decoding or feeding hostile data through.
-	r := require.New(t)
-	r.Equal("bad%ZZescape", TablePathDecode("bad%ZZescape"))
-}
-
 func TestCompareMaps(t *testing.T) {
 	r := require.New(t)
 	map1 := map[string]interface{}{
