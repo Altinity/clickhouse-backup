@@ -568,6 +568,13 @@ func buildExtractSet(partRoot string, threshold uint64) (map[string]extractEntry
 		}
 		for fname, c := range parsed.Files {
 			rel := relPrefix + fname
+			// validate ALL filenames first — including .proj entries — to prevent
+			// directory traversal via crafted remote checksums.txt content.
+			// Upload side trusts local filesystem but applies the same validator
+			// for defense in depth.
+			if err := validateChecksumsTxtFilename(fname); err != nil {
+				return fmt.Errorf("cas: %s: %w", ckPath, err)
+			}
 			if strings.HasSuffix(fname, ".proj") {
 				subDir := filepath.Join(dir, fname)
 				st, statErr := os.Stat(subDir)

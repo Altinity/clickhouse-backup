@@ -597,15 +597,19 @@ func collectBlobJobsRecursive(partDir string, threshold uint64, out *[]blobJob, 
 	}
 	sort.Strings(names)
 	for _, fname := range names {
+		// validate ALL filenames first — including .proj entries — to prevent
+		// directory traversal via crafted remote checksums.txt content. The
+		// download path consumes untrusted data; the upload side trusts local
+		// filesystem content but applies the same validator for defense in depth.
+		if err := validateChecksumsTxtFilename(fname); err != nil {
+			return fmt.Errorf("cas: %s: %w", ckPath, err)
+		}
 		if strings.HasSuffix(fname, ".proj") {
 			subDir := filepath.Join(partDir, fname)
 			if err := collectBlobJobsRecursive(subDir, threshold, out, estimate); err != nil {
 				return err
 			}
 			continue
-		}
-		if err := validateChecksumsTxtFilename(fname); err != nil {
-			return fmt.Errorf("cas: %s: %w", ckPath, err)
 		}
 		c := parsed.Files[fname]
 		if c.FileSize <= threshold {
