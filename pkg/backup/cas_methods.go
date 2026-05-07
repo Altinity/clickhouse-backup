@@ -316,10 +316,13 @@ func (b *Backuper) CASRestore(
 		return errors.New("cas-restore: backup name is required")
 	}
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-	if pidErr := pidlock.CheckAndCreatePidFile(backupName, "cas-restore"); pidErr != nil {
-		return pidErr
-	}
-	defer pidlock.RemovePidFile(backupName)
+	// No pidlock here: the inner v1 b.Restore (invoked via runV1 below)
+	// acquires its own pidlock at pkg/backup/restore.go for the actual
+	// mutation phase. Acquiring here too would self-deadlock — pidlock
+	// has no same-PID exemption, so the inner acquire would fail with
+	// "another clickhouse-backup `cas-restore` command is already running".
+	// The cas-download phase mutates only a local temp directory; concurrent
+	// same-name cas-restore calls are caught when both reach b.Restore.
 
 	ctx, cancel, err := b.setupCASContext(commandId)
 	if err != nil {

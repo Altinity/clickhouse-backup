@@ -524,6 +524,15 @@ func uploadMissingBlobs(ctx context.Context, b Backend, cp string, plan *uploadP
 				mu.Unlock()
 				return
 			}
+			// Production storage backends (S3, GCS, AzBlob) do NOT close the
+			// io.ReadCloser passed to PutFile — they just stream Body off it
+			// and return. Without an explicit defer here, every blob upload
+			// would leak one fd, exhausting the process limit on backups
+			// with thousands of blobs. The fakedst test backend DOES call
+			// r.Close, which masks the leak in unit tests; keep both
+			// behaviors compatible by closing here ourselves (double-close
+			// of *os.File is a no-op error we ignore).
+			defer f.Close()
 			err = b.PutFile(ctx, BlobPath(cp, j.h), f, int64(j.ref.Size))
 			if err != nil {
 				mu.Lock()

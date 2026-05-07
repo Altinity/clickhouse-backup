@@ -32,18 +32,23 @@ func DefaultConfig() Config {
 	}
 }
 
-// SkipPrefixes returns the prefixes that v1 list/retention must ignore. Empty
-// when CAS is disabled. The returned prefixes always end with "/" so a simple
-// HasPrefix check on a remote key correctly distinguishes "cas/" from a
-// hypothetical sibling like "case-archive/".
+// SkipPrefixes returns the prefixes that v1 list/retention must ignore. The
+// returned prefixes always end with "/" so a simple HasPrefix check on a
+// remote key correctly distinguishes "cas/" from a hypothetical sibling like
+// "case-archive/".
 //
 // v1 callers pass this into BackupDestination.BackupList so the cas/<cluster>/
 // subtree is not scanned (which would otherwise be reported as broken backup
 // folders and might be deleted by retention or "clean remote_broken").
+//
+// IMPORTANT: this returns the prefix exclusion regardless of c.Enabled. If
+// CAS is disabled, the operator might be in a config rollback or downgrade
+// scenario where existing CAS data lives in the bucket but cas-* commands
+// are off. Returning nil here would let v1 retention silently delete that
+// data the next time RemoveOldBackupsRemote runs. The protection follows
+// from the existence of the namespace, not from the feature being enabled.
+// Returns nil only when RootPrefix is empty (no namespace to protect).
 func (c Config) SkipPrefixes() []string {
-	if !c.Enabled {
-		return nil
-	}
 	rp := c.RootPrefix
 	if rp != "" && !strings.HasSuffix(rp, "/") {
 		rp += "/"
@@ -81,6 +86,12 @@ func (c Config) Validate() error {
 	}
 	if strings.ContainsAny(c.ClusterID, "/\\ \t\n") {
 		return fmt.Errorf("cas.cluster_id %q must not contain whitespace or path separators", c.ClusterID)
+	}
+	if strings.Contains(c.ClusterID, "..") {
+		return fmt.Errorf("cas.cluster_id %q must not contain %q (path traversal)", c.ClusterID, "..")
+	}
+	if c.RootPrefix == "" {
+		return errors.New("cas.root_prefix must not be empty when cas.enabled=true")
 	}
 	if strings.Contains(c.RootPrefix, "..") || strings.HasPrefix(c.RootPrefix, "/") {
 		return fmt.Errorf("cas.root_prefix %q must not contain %q or start with %q", c.RootPrefix, "..", "/")

@@ -9,7 +9,39 @@ import (
 	"testing"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 )
+
+// TestCASRestore_PidlockRegression encodes the contract that the cas-restore
+// path must not double-acquire the per-backup pidlock. Before the fix,
+// CASRestore took the lock and then b.Restore re-acquired it, deadlocking on
+// Linux because pidlock has no same-PID exemption (verified by Test below).
+//
+// We can't easily exercise the full CASRestore stack in a unit test (needs
+// ClickHouse + storage), so this test pins the invariant directly: the
+// CheckAndCreatePidFile semantics that would catch a regression.
+func TestCASRestore_PidlockHasNoSamePIDExemption(t *testing.T) {
+	// Use a unique name so we don't collide with any leftover pidfile.
+	name := "cas_test_pidlock_regression"
+	if err := pidlock.CheckAndCreatePidFile(name, "outer-test"); err != nil {
+		t.Fatalf("first acquire failed: %v", err)
+	}
+	defer pidlock.RemovePidFile(name)
+
+	// Second acquire in the same process MUST fail. If pidlock ever grew a
+	// same-PID exemption, this test breaks and the comment in cas_methods.go
+	// (about why we removed the outer pidlock from CASRestore) becomes
+	// outdated — re-evaluate at that point.
+	err := pidlock.CheckAndCreatePidFile(name, "inner-test")
+	if err == nil {
+		// Roll back the second acquire so we don't leave state behind.
+		pidlock.RemovePidFile(name)
+		t.Fatal("expected second pidlock acquire in same process to fail; pidlock semantics changed — re-evaluate cas-restore double-lock comment")
+	}
+	if !strings.Contains(err.Error(), "already running") {
+		t.Errorf("expected 'already running' in error, got: %v", err)
+	}
+}
 
 func TestSplitTablePattern(t *testing.T) {
 	cases := []struct {

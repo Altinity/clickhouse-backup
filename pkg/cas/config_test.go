@@ -50,7 +50,7 @@ func TestValidate_RejectsEmptyClusterID(t *testing.T) {
 }
 
 func TestValidate_RejectsBadRootPrefix(t *testing.T) {
-	for _, bad := range []string{"cas/../escape/", "/abs/path/", "..", "/cas/"} {
+	for _, bad := range []string{"", "cas/../escape/", "/abs/path/", "..", "/cas/"} {
 		c := validEnabled()
 		c.RootPrefix = bad
 		if err := c.Validate(); err == nil {
@@ -60,7 +60,7 @@ func TestValidate_RejectsBadRootPrefix(t *testing.T) {
 }
 
 func TestValidate_RejectsBadClusterID(t *testing.T) {
-	for _, bad := range []string{"a/b", "a b", "a\tb", "a\\b", "a\nb"} {
+	for _, bad := range []string{"a/b", "a b", "a\tb", "a\\b", "a\nb", "..", "../escape", "a..b"} {
 		c := validEnabled()
 		c.ClusterID = bad
 		if err := c.Validate(); err == nil {
@@ -102,5 +102,36 @@ func TestClusterPrefix(t *testing.T) {
 	c.RootPrefix = "cas" // missing trailing slash
 	if got := c.ClusterPrefix(); got != "cas/prod-1/" {
 		t.Errorf("normalized: got %q want %q", got, "cas/prod-1/")
+	}
+}
+
+// TestSkipPrefixes_DisabledStillProtects encodes the requirement that
+// v1 retention/list operations must continue to skip the CAS namespace
+// even when cas.enabled=false. Otherwise a config rollback or downgrade
+// would silently expose existing CAS data to v1 deletion.
+func TestSkipPrefixes_DisabledStillProtects(t *testing.T) {
+	c := DefaultConfig()
+	c.Enabled = false
+	c.RootPrefix = "cas/"
+	got := c.SkipPrefixes()
+	if len(got) != 1 || got[0] != "cas/" {
+		t.Errorf("disabled SkipPrefixes: got %v want [cas/]", got)
+	}
+}
+
+func TestSkipPrefixes_NormalizesTrailingSlash(t *testing.T) {
+	c := DefaultConfig()
+	c.RootPrefix = "cas" // no trailing slash
+	got := c.SkipPrefixes()
+	if len(got) != 1 || got[0] != "cas/" {
+		t.Errorf("got %v want [cas/]", got)
+	}
+}
+
+func TestSkipPrefixes_EmptyRootPrefixReturnsNil(t *testing.T) {
+	c := DefaultConfig()
+	c.RootPrefix = ""
+	if got := c.SkipPrefixes(); got != nil {
+		t.Errorf("empty RootPrefix should return nil, got %v", got)
 	}
 }
