@@ -12,6 +12,24 @@ const (
 	MaxInline uint64 = 1 << 30 // 1 GiB
 )
 
+// TableInfo is a minimal description of a ClickHouse table used by
+// DetectObjectDiskTables. The caller (e.g. cas-upload) populates this from
+// clickhouse.Table values; keeping it here avoids an import cycle between
+// pkg/cas and pkg/clickhouse.
+type TableInfo struct {
+	Database  string
+	Name      string
+	DataPaths []string
+}
+
+// DiskInfo is a minimal description of a ClickHouse disk from system.disks,
+// used by DetectObjectDiskTables.
+type DiskInfo struct {
+	Name string
+	Path string
+	Type string
+}
+
 // Triplet is a (filename, size, hash) tuple extracted from a part's
 // checksums.txt. The CAS upload planner classifies each Triplet as inline
 // (size <= InlineThreshold; goes into per-table tar.zstd) or blob
