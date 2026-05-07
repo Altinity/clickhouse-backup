@@ -25,7 +25,7 @@ s3:
   access_key: ${QA_AWS_ACCESS_KEY}
   secret_key: ${QA_AWS_SECRET_KEY}
   bucket: ${QA_AWS_BUCKET}
-#  endpoint: https://${QA_AWS_BUCKET}.s3-fips.${QA_AWS_REGION}.amazonaws.com/
+#  endpoint: https://${QA_AWS_BUCKET}.s3.${QA_AWS_REGION}.amazonaws.com/
   region: ${QA_AWS_REGION}
   acl: private
   force_path_style: false
