@@ -1,8 +1,6 @@
 package main
 
 import (
-	"errors"
-
 	"github.com/urfave/cli"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
@@ -185,13 +183,33 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 		},
 		{
 			Name:        "cas-prune",
-			Usage:       "[Phase 2] Garbage-collect orphan blobs (NOT YET IMPLEMENTED in Phase 1)",
-			UsageText:   "clickhouse-backup cas-prune",
-			Description: "Mark-and-sweep blob reclamation; design at docs/cas-design.md §6.7. Phase 1 ships the marker primitives but not the GC sweep. Until cas-prune ships, blobs accumulate after cas-delete.",
+			Usage:       "Garbage-collect orphan blobs (mark-and-sweep) for the configured CAS cluster",
+			UsageText:   "clickhouse-backup cas-prune [--dry-run] [--grace-hours N] [--abandon-days N] [--unlock]",
+			Description: "Mark-and-sweep GC: walks every live backup's per-table archives, builds a sorted on-disk reference set, then lists the blob store and deletes orphans older than cas.grace_blob. Holds an advisory cas/<cluster>/prune.marker — concurrent cas-upload and cas-delete refuse while it's held. See docs/cas-design.md §6.7 and docs/cas-operator-runbook.md.",
 			Action: func(c *cli.Context) error {
-				return errors.New("cas-prune is not implemented in Phase 1; see docs/cas-design.md §6.7. Until Phase 2 ships, blob reclamation is manual: orphan blobs accumulate after cas-delete and must be cleaned up out-of-band if storage is a concern")
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				return b.CASPrune(c.Bool("dry-run"), c.Int("grace-hours"), c.Int("abandon-days"), c.Bool("unlock"))
 			},
-			Flags: rootFlags,
+			Flags: append(rootFlags,
+				cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Print orphan candidates without deleting anything (no marker is written)",
+				},
+				cli.IntFlag{
+					Name:  "grace-hours",
+					Value: 0,
+					Usage: "Override cas.grace_blob (hours). 0 means use the configured value.",
+				},
+				cli.IntFlag{
+					Name:  "abandon-days",
+					Value: 0,
+					Usage: "Override cas.abandon_threshold (days). 0 means use the configured value.",
+				},
+				cli.BoolFlag{
+					Name:  "unlock",
+					Usage: "Delete a stranded cas/<cluster>/prune.marker (escape hatch when SIGKILL/OOM left it behind). Refuses if no marker is present.",
+				},
+			),
 		},
 	}
 }

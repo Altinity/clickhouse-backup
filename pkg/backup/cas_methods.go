@@ -487,6 +487,35 @@ func (b *Backuper) CASStatus() error {
 	return cas.PrintStatus(r, os.Stdout)
 }
 
+// CASPrune runs mark-and-sweep GC against the configured CAS cluster.
+// graceHours / abandonDays are CLI overrides (0 = use config). unlock is
+// the operator escape hatch for a stranded prune.marker.
+func (b *Backuper) CASPrune(dryRun bool, graceHours, abandonDays int, unlock bool) error {
+	ctx, cancel, err := b.setupCASContext(status.NotFromAPI)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	backend, closer, err := b.ensureCAS(ctx, "")
+	if err != nil {
+		return err
+	}
+	defer closer()
+
+	opts := cas.PruneOptions{DryRun: dryRun, Unlock: unlock}
+	if graceHours > 0 {
+		opts.GraceBlob = time.Duration(graceHours) * time.Hour
+	}
+	if abandonDays > 0 {
+		opts.AbandonThreshold = time.Duration(abandonDays) * 24 * time.Hour
+	}
+	rep, err := cas.Prune(ctx, backend, b.cfg.CAS, opts)
+	if rep != nil {
+		_ = cas.PrintPruneReport(rep, os.Stdout)
+	}
+	return err
+}
+
 // splitTablePattern turns a comma-separated "db1.t1,db2.t2" string into the
 // exact-match filter slice expected by cas.{Download,Upload}.TableFilter.
 // Empty input returns nil (allow-all). Whitespace around each entry is trimmed.
