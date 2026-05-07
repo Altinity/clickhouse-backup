@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -513,61 +514,156 @@ func excludedTables(skipObjectDisks bool, precomputed []string, disks []DiskInfo
 	return out
 }
 
-// planPart parses partDir/checksums.txt, classifies entries, and
-// updates plan + tp accordingly.
+// planPart classifies a single part directory using the two-pass walker.
 //
-// Classification rules (§6.3):
-//   - "checksums.txt" itself: always inline (it gates the restore protocol).
-//   - Files listed in checksums.txt with size <= threshold: inline.
-//   - Files listed in checksums.txt with size > threshold: blob.
-//   - Files on disk but NOT in checksums.txt: TODO — should be inlined per
-//     §6.3, but real ClickHouse parts always list every file. Currently
-//     unhandled; tests only exercise the "fully listed" case.
+//	Pass 1: parse checksums.txt recursively (descending into .proj/ subdirs)
+//	        and build extractSet = { rel_path → (hash, size) } for every
+//	        above-threshold listed file.
+//	Pass 2: walk the part directory recursively. For each file:
+//	          - rel_path in extractSet → register a blob ref.
+//	          - otherwise              → append an archive entry preserving
+//	                                     <partName>/<rel_path>.
+//	        Hidden / non-regular files: warn, skip.
+//	        .proj directories not in any parent's extractSet: warn, skip.
 func planPart(partDir, partName string, threshold uint64, plan *uploadPlan, tp *tablePlan) error {
-	ckPath := filepath.Join(partDir, "checksums.txt")
-	f, err := os.Open(ckPath)
+	extractSet, knownProjDirs, err := buildExtractSet(partDir, threshold)
 	if err != nil {
-		return fmt.Errorf("open checksums.txt: %w", err)
+		return err
 	}
-	parsed, perr := checksumstxt.Parse(f)
-	_ = f.Close()
-	if perr != nil {
-		return fmt.Errorf("parse checksums.txt: %w", perr)
-	}
+	return walkPartFiles(partDir, partName, extractSet, knownProjDirs, plan, tp)
+}
 
-	// checksums.txt is always inline. Stat it for byte accounting.
-	tp.archiveEntries = append(tp.archiveEntries, ArchiveEntry{
-		NameInArchive: partName + "/checksums.txt",
-		LocalPath:     ckPath,
-	})
-	if st, err := os.Stat(ckPath); err == nil {
+// extractEntry holds the blob target for one above-threshold file.
+type extractEntry struct {
+	Hash Hash128
+	Size uint64
+}
+
+// buildExtractSet recursively parses checksums.txt files starting at
+// partRoot. Returns:
+//   - extractSet: rel_path → (hash, size) for every above-threshold
+//     non-.proj checksum entry, recursively. rel_path is relative to
+//     partRoot and uses forward slashes (e.g. "data.bin", "p1.proj/data.bin").
+//   - knownProjDirs: rel_path → struct{} for every .proj directory referenced
+//     by some checksums.txt at any level. Used in pass 2 to distinguish
+//     legitimate projection subtrees from orphans.
+//
+// Strict failures: missing/unparseable .proj/checksums.txt; .proj entry
+// whose target is missing or not a directory; non-.proj entry whose file
+// is missing on disk.
+func buildExtractSet(partRoot string, threshold uint64) (map[string]extractEntry, map[string]struct{}, error) {
+	extractSet := map[string]extractEntry{}
+	knownProj := map[string]struct{}{}
+	var recurse func(dir, relPrefix string) error
+	recurse = func(dir, relPrefix string) error {
+		ckPath := filepath.Join(dir, "checksums.txt")
+		f, err := os.Open(ckPath)
+		if err != nil {
+			return fmt.Errorf("open %s: %w", ckPath, err)
+		}
+		parsed, perr := checksumstxt.Parse(f)
+		_ = f.Close()
+		if perr != nil {
+			return fmt.Errorf("parse %s: %w", ckPath, perr)
+		}
+		for fname, c := range parsed.Files {
+			rel := relPrefix + fname
+			if strings.HasSuffix(fname, ".proj") {
+				subDir := filepath.Join(dir, fname)
+				st, statErr := os.Stat(subDir)
+				if statErr != nil {
+					return fmt.Errorf("projection subdir %s: %w", subDir, statErr)
+				}
+				if !st.IsDir() {
+					return fmt.Errorf("projection entry %q in %s: target on disk is not a directory", fname, ckPath)
+				}
+				knownProj[rel] = struct{}{}
+				if err := recurse(subDir, rel+"/"); err != nil {
+					return err
+				}
+				continue
+			}
+			localPath := filepath.Join(dir, fname)
+			if _, err := os.Stat(localPath); err != nil {
+				return fmt.Errorf("file listed in %s missing on disk: %s", ckPath, fname)
+			}
+			if c.FileSize > threshold {
+				extractSet[rel] = extractEntry{
+					Hash: Hash128{Low: c.FileHash.Low, High: c.FileHash.High},
+					Size: c.FileSize,
+				}
+			}
+		}
+		return nil
+	}
+	if err := recurse(partRoot, ""); err != nil {
+		return nil, nil, err
+	}
+	return extractSet, knownProj, nil
+}
+
+// walkPartFiles is pass 2: walk the on-disk part directory, route each
+// regular file to either the blob store (if rel_path is in extractSet)
+// or the archive (everything else, paths preserved).
+//
+// Hidden files (name starts with ".") and non-regular files (symlinks,
+// sockets, devices) generate a Warn log and are skipped.
+// .proj directories not in knownProj are also warn-and-skipped.
+func walkPartFiles(partRoot, partName string, extractSet map[string]extractEntry, knownProj map[string]struct{}, plan *uploadPlan, tp *tablePlan) error {
+	return filepath.WalkDir(partRoot, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == partRoot {
+			return nil
+		}
+		rel, err := filepath.Rel(partRoot, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			if strings.HasSuffix(rel, ".proj") {
+				if _, ok := knownProj[rel]; !ok {
+					log.Warn().Str("part", partName).Str("rel", rel).Msg("cas-upload: orphan .proj directory in part — skipping")
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		base := filepath.Base(path)
+		if strings.HasPrefix(base, ".") {
+			log.Warn().Str("part", partName).Str("rel", rel).Msg("cas-upload: hidden file in part — skipping")
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			log.Warn().Str("part", partName).Str("rel", rel).Msg("cas-upload: non-regular file in part — skipping")
+			return nil
+		}
+		if entry, ok := extractSet[rel]; ok {
+			plan.totalFiles++
+			plan.totalBytes += entry.Size
+			plan.blobFiles++
+			if _, dup := plan.blobs[entry.Hash]; !dup {
+				plan.blobs[entry.Hash] = blobRef{LocalPath: path, Size: entry.Size}
+			}
+			return nil
+		}
+		st, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", path, err)
+		}
+		size := uint64(st.Size())
+		tp.archiveEntries = append(tp.archiveEntries, ArchiveEntry{
+			NameInArchive: partName + "/" + rel,
+			LocalPath:     path,
+		})
 		plan.totalFiles++
+		plan.totalBytes += size
 		plan.inlineFiles++
-		plan.totalBytes += uint64(st.Size())
-		plan.inlineBytes += uint64(st.Size())
-	}
-
-	for fname, c := range parsed.Files {
-		local := filepath.Join(partDir, fname)
-		plan.totalFiles++
-		plan.totalBytes += c.FileSize
-		if c.FileSize <= threshold {
-			tp.archiveEntries = append(tp.archiveEntries, ArchiveEntry{
-				NameInArchive: partName + "/" + fname,
-				LocalPath:     local,
-			})
-			plan.inlineFiles++
-			plan.inlineBytes += c.FileSize
-			continue
-		}
-		// Blob: count every reference (pre-dedup); dedup happens in plan.blobs map.
-		plan.blobFiles++
-		h := Hash128{Low: c.FileHash.Low, High: c.FileHash.High}
-		if _, ok := plan.blobs[h]; !ok {
-			plan.blobs[h] = blobRef{LocalPath: local, Size: c.FileSize}
-		}
-	}
-	return nil
+		plan.inlineBytes += size
+		return nil
+	})
 }
 
 // tableFilterAllows returns true if the given (db, table) is permitted

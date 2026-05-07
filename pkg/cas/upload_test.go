@@ -1,6 +1,7 @@
 package cas_test
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas/internal/fakedst"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas/internal/testfixtures"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
+	"github.com/klauspost/compress/zstd"
 )
 
 // testCfg returns a CAS config valid enough that Upload doesn't reject
@@ -600,6 +602,268 @@ func TestUpload_SpecialCharDbTable(t *testing.T) {
 	bad := cas.TableMetaPath(cfg.ClusterPrefix(), "bk1", "my%2Ddb", "my%2Dtbl")
 	if _, _, exists, _ := f.StatFile(context.Background(), bad); exists {
 		t.Errorf("per-table JSON wrongly exists at DOUBLE-encoded path %s", bad)
+	}
+}
+
+// TestPlanPart_WithProjection_BlobsBothLevels verifies the walker treats
+// .proj entries in the parent checksums.txt as nested-part directories,
+// recurses into them, and emits blobs for above-threshold files at any
+// depth while preserving paths in archive entries.
+func TestPlanPart_WithProjection_BlobsBothLevels(t *testing.T) {
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "all_1_1_0",
+		Files: []testfixtures.FileSpec{
+			{Name: "data.bin", Size: 8192, HashLow: 1, HashHigh: 2},     // above threshold → blob
+			{Name: "columns.txt", Size: 16, HashLow: 3, HashHigh: 4},    // below → archive
+		},
+		Projections: []testfixtures.ProjectionSpec{{
+			Name: "p1",
+			Files: []testfixtures.FileSpec{
+				{Name: "data.bin", Size: 4096, HashLow: 5, HashHigh: 6}, // above → blob (different hash)
+				{Name: "columns.txt", Size: 8, HashLow: 7, HashHigh: 8}, // below → archive
+			},
+			AggregateHashLow: 99, AggregateHashHigh: 99, AggregateSize: 4120,
+		}},
+	}}
+	src := testfixtures.Build(t, parts)
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	ctx := context.Background()
+
+	res, err := cas.Upload(ctx, f, cfg, "bk", cas.UploadOptions{LocalBackupDir: src.Root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two unique blobs (parent data.bin + projection data.bin); the
+	// p1.proj aggregate entry must NOT become a blob.
+	if res.UniqueBlobs != 2 {
+		t.Errorf("UniqueBlobs: got %d, want 2", res.UniqueBlobs)
+	}
+	cp := cfg.ClusterPrefix()
+	projHash := cas.Hash128{Low: 5, High: 6}
+	if _, _, exists, _ := f.StatFile(ctx, cas.BlobPath(cp, projHash)); !exists {
+		t.Error("projection data.bin blob missing in remote")
+	}
+	bogus := cas.Hash128{Low: 99, High: 99}
+	if _, _, exists, _ := f.StatFile(ctx, cas.BlobPath(cp, bogus)); exists {
+		t.Error("p1.proj aggregate must not become a blob")
+	}
+}
+
+// TestPlanPart_NonChecksumFilesPreserved verifies files in the part
+// directory that aren't listed in checksums.txt (columns.txt, etc.) still
+// land in the per-table archive. Without the new walker they were dropped.
+func TestPlanPart_NonChecksumFilesPreserved(t *testing.T) {
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "all_1_1_0",
+		Files: []testfixtures.FileSpec{
+			{Name: "data.bin", Size: 16, HashLow: 1, HashHigh: 2}, // listed
+		},
+	}}
+	src := testfixtures.Build(t, parts)
+	rogue := filepath.Join(src.Root, "shadow", "db1", "t1", "default", "all_1_1_0", "metadata_version.txt")
+	if err := os.WriteFile(rogue, []byte("42\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	ctx := context.Background()
+	if _, err := cas.Upload(ctx, f, cfg, "bk", cas.UploadOptions{LocalBackupDir: src.Root}); err != nil {
+		t.Fatal(err)
+	}
+	arch := cas.PartArchivePath(cfg.ClusterPrefix(), "bk", "default", "db1", "t1")
+	rc, err := f.GetFile(ctx, arch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	zr, err := zstd.NewReader(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	tr := tar.NewReader(zr)
+	found := map[string]bool{}
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		found[h.Name] = true
+	}
+	if !found["all_1_1_0/metadata_version.txt"] {
+		t.Errorf("metadata_version.txt not in archive; found %v", found)
+	}
+	if !found["all_1_1_0/checksums.txt"] {
+		t.Errorf("checksums.txt missing from archive; found %v", found)
+	}
+}
+
+// TestPlanPart_NestedProjectionDedup verifies that two parts with
+// identical projection content produce ONE blob ref, not two.
+func TestPlanPart_NestedProjectionDedup(t *testing.T) {
+	mkPart := func(name string) testfixtures.PartSpec {
+		return testfixtures.PartSpec{
+			Disk: "default", DB: "db1", Table: "t1", Name: name,
+			Files: []testfixtures.FileSpec{
+				{Name: "data.bin", Size: 2048, HashLow: 11, HashHigh: 22},
+			},
+			Projections: []testfixtures.ProjectionSpec{{
+				Name: "p1",
+				Files: []testfixtures.FileSpec{
+					{Name: "data.bin", Size: 4096, HashLow: 99, HashHigh: 99},
+				},
+				AggregateHashLow: 1, AggregateHashHigh: 1, AggregateSize: 4096,
+			}},
+		}
+	}
+	parts := []testfixtures.PartSpec{mkPart("all_1_1_0"), mkPart("all_2_2_0")}
+	src := testfixtures.Build(t, parts)
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	res, err := cas.Upload(context.Background(), f, cfg, "bk", cas.UploadOptions{LocalBackupDir: src.Root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.UniqueBlobs != 2 {
+		t.Errorf("UniqueBlobs: got %d, want 2 (parent data.bin + shared projection data.bin)", res.UniqueBlobs)
+	}
+}
+
+// TestPlanPart_MissingListedFile_Fails verifies the walker fails when
+// checksums.txt lists a file that's absent on disk.
+func TestPlanPart_MissingListedFile_Fails(t *testing.T) {
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "all_1_1_0",
+		Files: []testfixtures.FileSpec{
+			{Name: "data.bin", Size: 8, HashLow: 1, HashHigh: 2},
+		},
+	}}
+	src := testfixtures.Build(t, parts)
+	if err := os.Remove(filepath.Join(src.Root, "shadow", "db1", "t1", "default", "all_1_1_0", "data.bin")); err != nil {
+		t.Fatal(err)
+	}
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	_, err := cas.Upload(context.Background(), f, cfg, "bk", cas.UploadOptions{LocalBackupDir: src.Root})
+	if err == nil {
+		t.Fatal("expected upload failure when listed file is missing on disk")
+	}
+	if !strings.Contains(err.Error(), "data.bin") {
+		t.Errorf("error should mention data.bin; got: %v", err)
+	}
+}
+
+// TestPlanPart_HiddenFile_Warns verifies a hidden file is skipped (warn).
+func TestPlanPart_HiddenFile_Warns(t *testing.T) {
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "all_1_1_0",
+		Files: []testfixtures.FileSpec{
+			{Name: "data.bin", Size: 8, HashLow: 1, HashHigh: 2},
+		},
+	}}
+	src := testfixtures.Build(t, parts)
+	hidden := filepath.Join(src.Root, "shadow", "db1", "t1", "default", "all_1_1_0", ".hidden")
+	if err := os.WriteFile(hidden, []byte("nope"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	if _, err := cas.Upload(context.Background(), f, cfg, "bk", cas.UploadOptions{LocalBackupDir: src.Root}); err != nil {
+		t.Fatalf("hidden file should warn-and-skip, not fail: %v", err)
+	}
+	arch := cas.PartArchivePath(cfg.ClusterPrefix(), "bk", "default", "db1", "t1")
+	rc, err := f.GetFile(context.Background(), arch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	zr, err := zstd.NewReader(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	tr := tar.NewReader(zr)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(h.Name, ".hidden") {
+			t.Errorf("hidden file leaked into archive: %s", h.Name)
+		}
+	}
+}
+
+// TestPlanPart_ProjEntryNotADir_Fails verifies the walker fails loudly
+// when checksums.txt has a .proj entry whose target on disk is a regular
+// file rather than a directory.
+func TestPlanPart_ProjEntryNotADir_Fails(t *testing.T) {
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "all_1_1_0",
+		Files: []testfixtures.FileSpec{
+			{Name: "data.bin", Size: 8, HashLow: 1, HashHigh: 2},
+		},
+	}}
+	src := testfixtures.Build(t, parts)
+	partDir := filepath.Join(src.Root, "shadow", "db1", "t1", "default", "all_1_1_0")
+	rogue := filepath.Join(partDir, "p1.proj")
+	if err := os.WriteFile(rogue, []byte("not a dir"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rewritten := `checksums format version: 2
+2 files:
+data.bin
+	size: 8
+	hash: 1 2
+	compressed: 0
+p1.proj
+	size: 9
+	hash: 3 4
+	compressed: 0
+`
+	if err := os.WriteFile(filepath.Join(partDir, "checksums.txt"), []byte(rewritten), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	_, err := cas.Upload(context.Background(), f, cfg, "bk", cas.UploadOptions{LocalBackupDir: src.Root})
+	if err == nil {
+		t.Fatal("expected upload failure when .proj entry is not a directory")
+	}
+	if !strings.Contains(err.Error(), "p1.proj") {
+		t.Errorf("error should mention p1.proj; got: %v", err)
+	}
+}
+
+// TestPlanPart_OrphanProjDir_Warns verifies a .proj directory present on
+// disk with no parent checksums.txt entry is skipped (warn) rather than
+// fail.
+func TestPlanPart_OrphanProjDir_Warns(t *testing.T) {
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "all_1_1_0",
+		Files: []testfixtures.FileSpec{
+			{Name: "data.bin", Size: 8, HashLow: 1, HashHigh: 2},
+		},
+	}}
+	src := testfixtures.Build(t, parts)
+	orphan := filepath.Join(src.Root, "shadow", "db1", "t1", "default", "all_1_1_0", "p2.proj")
+	if err := os.MkdirAll(orphan, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, "data.bin"), []byte("orphan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	if _, err := cas.Upload(context.Background(), f, cfg, "bk", cas.UploadOptions{LocalBackupDir: src.Root}); err != nil {
+		t.Fatalf("orphan .proj dir should warn-and-skip, not fail: %v", err)
 	}
 }
 
