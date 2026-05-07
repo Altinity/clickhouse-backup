@@ -18,4 +18,7 @@ var (
 
 	// Pre-flight.
 	ErrObjectDiskRefused = errors.New("cas: object-disk tables not supported in v1 of CAS")
+
+	// Verify.
+	ErrVerifyFailures = errors.New("cas-verify: failures detected")
 )
