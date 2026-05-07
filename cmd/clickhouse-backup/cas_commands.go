@@ -184,26 +184,26 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 		{
 			Name:        "cas-prune",
 			Usage:       "Garbage-collect orphan blobs (mark-and-sweep) for the configured CAS cluster",
-			UsageText:   "clickhouse-backup cas-prune [--dry-run] [--grace-hours N] [--abandon-days N] [--unlock]",
+			UsageText:   "clickhouse-backup cas-prune [--dry-run] [--grace-blob=<duration>] [--abandon-threshold=<duration>] [--unlock]",
 			Description: "Mark-and-sweep GC: walks every live backup's per-table archives, builds a sorted on-disk reference set, then lists the blob store and deletes orphans older than cas.grace_blob. Holds an advisory cas/<cluster>/prune.marker — concurrent cas-upload and cas-delete refuse while it's held. See docs/cas-design.md §6.7 and docs/cas-operator-runbook.md.",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CASPrune(c.Bool("dry-run"), c.Int("grace-hours"), c.Int("abandon-days"), c.Bool("unlock"))
+				return b.CASPrune(c.Bool("dry-run"), c.String("grace-blob"), c.String("abandon-threshold"), c.Bool("unlock"))
 			},
 			Flags: append(rootFlags,
 				cli.BoolFlag{
 					Name:  "dry-run",
 					Usage: "Print orphan candidates without deleting anything (no marker is written)",
 				},
-				cli.IntFlag{
-					Name:  "grace-hours",
-					Value: 0,
-					Usage: "Override cas.grace_blob (hours). 0 means use the configured value.",
+				cli.StringFlag{
+					Name:  "grace-blob",
+					Value: "",
+					Usage: "Override cas.grace_blob — Go duration string (e.g. \"24h\", \"30m\", \"0s\"). Empty (default) uses the configured value.",
 				},
-				cli.IntFlag{
-					Name:  "abandon-days",
-					Value: 0,
-					Usage: "Override cas.abandon_threshold (days). 0 means use the configured value.",
+				cli.StringFlag{
+					Name:  "abandon-threshold",
+					Value: "",
+					Usage: "Override cas.abandon_threshold — Go duration string (e.g. \"168h\", \"0s\"). Empty (default) uses the configured value.",
 				},
 				cli.BoolFlag{
 					Name:  "unlock",

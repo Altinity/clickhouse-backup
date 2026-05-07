@@ -20,15 +20,21 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// PruneOptions tunes a single Prune run. Zero-valued GraceBlob /
-// AbandonThreshold fall back to cfg.GraceBlobDuration() /
-// cfg.AbandonThresholdDuration(). DryRun reports candidates without
-// deleting; Unlock is the operator escape hatch for a stranded prune.marker.
+// PruneOptions tunes a single Prune run. GraceBlob / AbandonThreshold are
+// applied iff their *Set flags are true; otherwise the run uses
+// cfg.GraceBlobDuration() / cfg.AbandonThresholdDuration(). The *Set flags
+// let an explicit zero override the configured non-zero default
+// (use case: targeted cleanup, regression tests).
+//
+// DryRun reports candidates without deleting; Unlock is the operator escape
+// hatch for a stranded prune.marker.
 type PruneOptions struct {
-	DryRun           bool
-	GraceBlob        time.Duration // overrides cfg if non-zero
-	AbandonThreshold time.Duration // overrides cfg if non-zero
-	Unlock           bool
+	DryRun              bool
+	GraceBlob           time.Duration
+	GraceBlobSet        bool
+	AbandonThreshold    time.Duration
+	AbandonThresholdSet bool
+	Unlock              bool
 }
 
 // PruneReport summarizes what a Prune run did. Returned even on error so
@@ -61,11 +67,11 @@ func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*Prun
 	}
 	cp := cfg.ClusterPrefix()
 	grace := cfg.GraceBlobDuration()
-	if opts.GraceBlob > 0 {
+	if opts.GraceBlobSet {
 		grace = opts.GraceBlob
 	}
 	abandon := cfg.AbandonThresholdDuration()
-	if opts.AbandonThreshold > 0 {
+	if opts.AbandonThresholdSet {
 		abandon = opts.AbandonThreshold
 	}
 

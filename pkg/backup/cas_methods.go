@@ -490,7 +490,7 @@ func (b *Backuper) CASStatus() error {
 // CASPrune runs mark-and-sweep GC against the configured CAS cluster.
 // graceHours / abandonDays are CLI overrides (0 = use config). unlock is
 // the operator escape hatch for a stranded prune.marker.
-func (b *Backuper) CASPrune(dryRun bool, graceHours, abandonDays int, unlock bool) error {
+func (b *Backuper) CASPrune(dryRun bool, graceBlob, abandonThreshold string, unlock bool) error {
 	ctx, cancel, err := b.setupCASContext(status.NotFromAPI)
 	if err != nil {
 		return err
@@ -503,11 +503,23 @@ func (b *Backuper) CASPrune(dryRun bool, graceHours, abandonDays int, unlock boo
 	defer closer()
 
 	opts := cas.PruneOptions{DryRun: dryRun, Unlock: unlock}
-	if graceHours > 0 {
-		opts.GraceBlob = time.Duration(graceHours) * time.Hour
+	// Empty string = use the configured value. Any non-empty string must
+	// parse as a Go duration ("0s" is valid and means literal zero).
+	if graceBlob != "" {
+		d, perr := time.ParseDuration(graceBlob)
+		if perr != nil {
+			return fmt.Errorf("cas-prune: --grace-blob %q: %w", graceBlob, perr)
+		}
+		opts.GraceBlob = d
+		opts.GraceBlobSet = true
 	}
-	if abandonDays > 0 {
-		opts.AbandonThreshold = time.Duration(abandonDays) * 24 * time.Hour
+	if abandonThreshold != "" {
+		d, perr := time.ParseDuration(abandonThreshold)
+		if perr != nil {
+			return fmt.Errorf("cas-prune: --abandon-threshold %q: %w", abandonThreshold, perr)
+		}
+		opts.AbandonThreshold = d
+		opts.AbandonThresholdSet = true
 	}
 	rep, err := cas.Prune(ctx, backend, b.cfg.CAS, opts)
 	if rep != nil {

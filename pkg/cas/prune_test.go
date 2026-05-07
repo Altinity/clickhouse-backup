@@ -68,7 +68,7 @@ func TestPrune_HappyPath(t *testing.T) {
 	ageBlob(t, f, cfg, hShared, 2*time.Hour)
 	ageBlob(t, f, cfg, h1, 2*time.Hour)
 
-	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{GraceBlob: time.Hour})
+	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{GraceBlob: time.Hour, GraceBlobSet: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestPrune_RefusesIfFreshInProgressMarker(t *testing.T) {
 	if err := cas.WriteInProgressMarker(ctx, f, cfg.ClusterPrefix(), "bk_running", "host-a"); err != nil {
 		t.Fatal(err)
 	}
-	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{AbandonThreshold: time.Hour})
+	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{AbandonThreshold: time.Hour, AbandonThresholdSet: true})
 	if err == nil || !strings.Contains(err.Error(), "in-progress upload") {
 		t.Fatalf("want fresh-inprogress refusal, got rep=%+v err=%v", rep, err)
 	}
@@ -112,7 +112,7 @@ func TestPrune_SweepsAbandonedMarker(t *testing.T) {
 	// Age past abandon_threshold (1h here, default 7d).
 	f.SetModTime(cas.InProgressMarkerPath(cp, "bk_dead"), time.Now().Add(-2*time.Hour))
 
-	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{AbandonThreshold: time.Hour})
+	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{AbandonThreshold: time.Hour, AbandonThresholdSet: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestPrune_FailClosedOnUnreadableLiveBackup(t *testing.T) {
 	_ = f.PutFile(ctx, cas.BlobPath(cp, hOrphan), io.NopCloser(bytes.NewReader([]byte("x"))), 1)
 	ageBlob(t, f, cfg, hOrphan, 2*time.Hour)
 
-	rep, err := cas.Prune(ctx, fb, cfg, cas.PruneOptions{GraceBlob: time.Hour})
+	rep, err := cas.Prune(ctx, fb, cfg, cas.PruneOptions{GraceBlob: time.Hour, GraceBlobSet: true})
 	if err == nil {
 		t.Fatal("expected fail-closed error from unreadable live backup")
 	}
@@ -182,7 +182,7 @@ func TestPrune_DryRun(t *testing.T) {
 	_ = f.PutFile(ctx, cas.BlobPath(cp, hOrphan), io.NopCloser(bytes.NewReader([]byte("x"))), 1)
 	ageBlob(t, f, cfg, hOrphan, 2*time.Hour)
 
-	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{DryRun: true, GraceBlob: time.Hour})
+	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{DryRun: true, GraceBlob: time.Hour, GraceBlobSet: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestPrune_MetadataOrphanSubtreeSwept(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{GraceBlob: time.Hour})
+	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{GraceBlob: time.Hour, GraceBlobSet: true})
 	if err != nil {
 		t.Fatal(err)
 	}
