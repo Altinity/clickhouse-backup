@@ -59,6 +59,26 @@ type DownloadResult struct {
 // projRe matches a projection-style nested filename: <name>.proj/<file>.
 var projRe = regexp.MustCompile(`^[^/\x00]+\.proj/[^/\x00]+$`)
 
+// validateRemoteFilesystemName rejects disk and part names from remote
+// metadata before they are joined into local filesystem paths. A
+// compromised or adversarially crafted CAS bucket could otherwise direct
+// archive extraction or blob writes outside the intended local backup
+// directory by setting `disk = "../../etc"` or `part_name = "../escape"`.
+//
+// label is only used in the error message ("disk", "part name", etc.).
+func validateRemoteFilesystemName(label, name string) error {
+	if name == "" || name == "." || name == ".." {
+		return fmt.Errorf("cas: unsafe %s in remote metadata: %q", label, name)
+	}
+	if strings.ContainsAny(name, "/\\\x00") {
+		return fmt.Errorf("cas: unsafe %s (path separator or NUL) in remote metadata: %q", label, name)
+	}
+	if strings.Contains(name, "..") {
+		return fmt.Errorf("cas: unsafe %s (contains %q) in remote metadata: %q", label, "..", name)
+	}
+	return nil
+}
+
 // validateChecksumsTxtFilename rejects unsafe filenames listed in a
 // part's checksums.txt. See docs/cas-design.md §6.5 step 5.
 func validateChecksumsTxtFilename(name string) error {
@@ -171,7 +191,19 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 	estimateArchiveBytes := int64(0)
 	var archives []archiveJob
 	for _, te := range tables {
-		for disk := range te.TM.Parts {
+		for disk, parts := range te.TM.Parts {
+			// Reject path-traversal in remote-supplied disk and part names
+			// BEFORE they participate in any path construction (incl. the
+			// archive key passed to StatFile, which in turn flows into the
+			// local filesystem path during extraction).
+			if err := validateRemoteFilesystemName("disk", disk); err != nil {
+				return nil, err
+			}
+			for _, p := range parts {
+				if err := validateRemoteFilesystemName("part name", p.Name); err != nil {
+					return nil, err
+				}
+			}
 			key := PartArchivePath(cp, name, disk, te.DB, te.Table)
 			sz, _, exists, err := b.StatFile(ctx, key)
 			if err != nil {
@@ -213,7 +245,13 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 	estimateBlobBytes := int64(0)
 	for _, te := range tables {
 		for disk, parts := range te.TM.Parts {
+			if err := validateRemoteFilesystemName("disk", disk); err != nil {
+				return nil, err
+			}
 			for _, p := range parts {
+				if err := validateRemoteFilesystemName("part name", p.Name); err != nil {
+					return nil, err
+				}
 				partDir := filepath.Join(localDir, "shadow",
 					common.TablePathEncode(te.DB),
 					common.TablePathEncode(te.Table),
@@ -394,6 +432,14 @@ func downloadArchives(ctx context.Context, b Backend, jobs []archiveJob, localDi
 			already := firstErr != nil
 			mu.Unlock()
 			if already {
+				return
+			}
+			if err := validateRemoteFilesystemName("disk", j.Disk); err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				mu.Unlock()
 				return
 			}
 			dst := filepath.Join(localDir, "shadow",

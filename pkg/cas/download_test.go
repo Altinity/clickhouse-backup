@@ -411,3 +411,91 @@ func TestDownload_PreservesSchemaFields(t *testing.T) {
 		t.Errorf("downloaded JSON lost schema fields: %+v", got)
 	}
 }
+
+// TestDownload_RejectsTraversalDiskName verifies that a remote
+// TableMetadata with a malicious disk name (path traversal) is rejected
+// before any local filesystem write — defense against a compromised CAS
+// bucket directing extraction outside localDir.
+func TestDownload_RejectsTraversalDiskName(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(100)
+	ctx := context.Background()
+	cp := cfg.ClusterPrefix()
+
+	// Hand-craft a CAS-shaped metadata.json + per-table JSON whose Parts
+	// map keys (disk names) contain "..".
+	bm := metadata.BackupMetadata{
+		BackupName: "evil",
+		DataFormat: "directory",
+		Tables:     []metadata.TableTitle{{Database: "db", Table: "t"}},
+		CAS: &metadata.CASBackupParams{
+			LayoutVersion: cas.LayoutVersion, InlineThreshold: cfg.InlineThreshold, ClusterID: cfg.ClusterID,
+		},
+	}
+	body, _ := json.Marshal(&bm)
+	if err := f.PutFile(ctx, cas.MetadataJSONPath(cp, "evil"),
+		io.NopCloser(bytes.NewReader(body)), int64(len(body))); err != nil {
+		t.Fatal(err)
+	}
+	tm := metadata.TableMetadata{
+		Database: "db", Table: "t",
+		Parts: map[string][]metadata.Part{
+			"../escape": {{Name: "all_1_1_0"}},
+		},
+	}
+	tmBody, _ := json.Marshal(&tm)
+	if err := f.PutFile(ctx, cas.TableMetaPath(cp, "evil", "db", "t"),
+		io.NopCloser(bytes.NewReader(tmBody)), int64(len(tmBody))); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := cas.Download(ctx, f, cfg, "evil", cas.DownloadOptions{LocalBackupDir: t.TempDir()})
+	if err == nil {
+		t.Fatal("expected refusal for traversal disk name")
+	}
+	if !strings.Contains(err.Error(), "unsafe disk") {
+		t.Errorf("expected 'unsafe disk' in error, got: %v", err)
+	}
+}
+
+// TestDownload_RejectsTraversalPartName covers the same defense for the
+// per-Part Name field.
+func TestDownload_RejectsTraversalPartName(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(100)
+	ctx := context.Background()
+	cp := cfg.ClusterPrefix()
+
+	bm := metadata.BackupMetadata{
+		BackupName: "evil",
+		DataFormat: "directory",
+		Tables:     []metadata.TableTitle{{Database: "db", Table: "t"}},
+		CAS: &metadata.CASBackupParams{
+			LayoutVersion: cas.LayoutVersion, InlineThreshold: cfg.InlineThreshold, ClusterID: cfg.ClusterID,
+		},
+	}
+	body, _ := json.Marshal(&bm)
+	if err := f.PutFile(ctx, cas.MetadataJSONPath(cp, "evil"),
+		io.NopCloser(bytes.NewReader(body)), int64(len(body))); err != nil {
+		t.Fatal(err)
+	}
+	tm := metadata.TableMetadata{
+		Database: "db", Table: "t",
+		Parts: map[string][]metadata.Part{
+			"default": {{Name: "../escape"}},
+		},
+	}
+	tmBody, _ := json.Marshal(&tm)
+	if err := f.PutFile(ctx, cas.TableMetaPath(cp, "evil", "db", "t"),
+		io.NopCloser(bytes.NewReader(tmBody)), int64(len(tmBody))); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := cas.Download(ctx, f, cfg, "evil", cas.DownloadOptions{LocalBackupDir: t.TempDir()})
+	if err == nil {
+		t.Fatal("expected refusal for traversal part name")
+	}
+	if !strings.Contains(err.Error(), "unsafe part name") {
+		t.Errorf("expected 'unsafe part name' in error, got: %v", err)
+	}
+}
