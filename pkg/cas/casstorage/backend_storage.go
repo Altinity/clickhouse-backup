@@ -1,4 +1,7 @@
-package cas
+// Package casstorage wires the CAS Backend interface to pkg/storage.BackupDestination.
+// It lives in a sub-package so that pkg/cas itself does not import pkg/storage,
+// which would create an import cycle via pkg/storage → pkg/config → pkg/cas.
+package casstorage
 
 import (
 	"context"
@@ -6,11 +9,12 @@ import (
 	"io"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 )
 
 // NewStorageBackend adapts a *storage.BackupDestination to the CAS Backend interface.
-func NewStorageBackend(bd *storage.BackupDestination) Backend { return &storageBackend{bd: bd} }
+func NewStorageBackend(bd *storage.BackupDestination) cas.Backend { return &storageBackend{bd: bd} }
 
 type storageBackend struct{ bd *storage.BackupDestination }
 
@@ -37,9 +41,9 @@ func (s *storageBackend) DeleteFile(ctx context.Context, key string) error {
 	return s.bd.DeleteFile(ctx, key)
 }
 
-func (s *storageBackend) Walk(ctx context.Context, prefix string, recursive bool, fn func(RemoteFile) error) error {
+func (s *storageBackend) Walk(ctx context.Context, prefix string, recursive bool, fn func(cas.RemoteFile) error) error {
 	return s.bd.Walk(ctx, prefix, recursive, func(_ context.Context, rf storage.RemoteFile) error {
-		return fn(RemoteFile{Key: rf.Name(), Size: rf.Size(), ModTime: rf.LastModified()})
+		return fn(cas.RemoteFile{Key: rf.Name(), Size: rf.Size(), ModTime: rf.LastModified()})
 	})
 }
 
@@ -52,4 +56,4 @@ func isNotFound(err error) bool {
 }
 
 // compile-time assertion
-var _ Backend = (*storageBackend)(nil)
+var _ cas.Backend = (*storageBackend)(nil)
