@@ -60,6 +60,9 @@ func (c Config) Validate() error {
 	if strings.ContainsAny(c.ClusterID, "/\\ \t\n") {
 		return fmt.Errorf("cas.cluster_id %q must not contain whitespace or path separators", c.ClusterID)
 	}
+	if strings.Contains(c.RootPrefix, "..") || strings.HasPrefix(c.RootPrefix, "/") {
+		return fmt.Errorf("cas.root_prefix %q must not contain %q or start with %q", c.RootPrefix, "..", "/")
+	}
 	if c.InlineThreshold == 0 || c.InlineThreshold > MaxInline {
 		return fmt.Errorf("cas.inline_threshold must be in (0, %d], got %d", MaxInline, c.InlineThreshold)
 	}

@@ -49,6 +49,16 @@ func TestValidate_RejectsEmptyClusterID(t *testing.T) {
 	}
 }
 
+func TestValidate_RejectsBadRootPrefix(t *testing.T) {
+	for _, bad := range []string{"cas/../escape/", "/abs/path/", "..", "/cas/"} {
+		c := validEnabled()
+		c.RootPrefix = bad
+		if err := c.Validate(); err == nil {
+			t.Errorf("expected error for RootPrefix=%q", bad)
+		}
+	}
+}
+
 func TestValidate_RejectsBadClusterID(t *testing.T) {
 	for _, bad := range []string{"a/b", "a b", "a\tb", "a\\b", "a\nb"} {
 		c := validEnabled()
