@@ -3,6 +3,8 @@ package checksumstxt
 import (
 	"bytes"
 	"encoding/binary"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -267,5 +269,50 @@ func TestParseMinimalistic(t *testing.T) {
 func TestParseMinimalisticRejectsNon5(t *testing.T) {
 	if _, err := ParseMinimalistic(strings.NewReader("checksums format version: 4\n")); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestParseRealFixtures(t *testing.T) {
+	cases := []struct {
+		dir          string
+		wantVersion  int
+		wantMinFiles int
+	}{
+		// v4_wide: wide MergeTree part (3 columns: id, x, y) → 9 files.
+		{"v4_wide", 4, 5},
+		// v4_compact: compact MergeTree part (2 columns: id, x) → 5 files (data.bin, data.cmrk3, ...).
+		{"v4_compact", 4, 3},
+		// v4_projection: wide part with PROJECTION p1 → 10 files including p1.proj entry.
+		{"v4_projection", 4, 5},
+		// v4_multi_block: 300-column wide part → 1202 files (large compressed payload).
+		{"v4_multi_block", 4, 50},
+	}
+	for _, tc := range cases {
+		t.Run(tc.dir, func(t *testing.T) {
+			f, err := os.Open(filepath.Join("testdata", tc.dir, "checksums.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			got, err := Parse(f)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if got.Version != tc.wantVersion {
+				t.Errorf("version: got %d want %d", got.Version, tc.wantVersion)
+			}
+			if len(got.Files) < tc.wantMinFiles {
+				t.Errorf("files: got %d want >=%d", len(got.Files), tc.wantMinFiles)
+			}
+			for name, c := range got.Files {
+				if c.FileSize == 0 && !strings.HasSuffix(name, ".cmrk2") &&
+					!strings.HasSuffix(name, ".cmrk3") && name != "count.txt" {
+					t.Errorf("%s: zero size", name)
+				}
+				if c.FileHash == (Hash128{}) {
+					t.Errorf("%s: zero hash", name)
+				}
+			}
+		})
 	}
 }
