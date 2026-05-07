@@ -24,6 +24,18 @@ func TablePathEncode(str string) string {
 	).Replace(url.PathEscape(str))
 }
 
+// TablePathDecode is the inverse of TablePathEncode. It accepts a
+// percent-encoded string and returns the original; on parse failure it
+// returns the input verbatim (TablePathEncode never produces malformed
+// percent-escapes, so a decode failure indicates the input was not the
+// output of TablePathEncode and is best treated as already-decoded).
+func TablePathDecode(str string) string {
+	if dec, err := url.PathUnescape(str); err == nil {
+		return dec
+	}
+	return str
+}
+
 func SumMapValuesInt(m map[string]int) int {
 	s := 0
 	for _, v := range m {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 )
 
@@ -53,13 +54,15 @@ type FileSpec struct {
 // the resulting LocalBackup. checksums.txt is always written last for
 // each part with the v2 text format listing every other file.
 //
-// The layout is shadow-only:
+// The layout matches what `clickhouse-backup create` produces:
 //
-//	<root>/shadow/<db>/<table>/<disk>/<part>/<file>
+//	<root>/shadow/<TablePathEncode(db)>/<TablePathEncode(table)>/<disk>/<part>/<file>
+//	<root>/metadata/<TablePathEncode(db)>/<TablePathEncode(table)>.json
 //
-// (db and table are written verbatim, NOT TablePathEncode'd; Upload
-// re-encodes when computing remote keys. Tests should pick names that
-// don't collide with separator characters.)
+// Encoding is applied to db and table components on the filesystem so
+// that tests with special characters (hyphen, dot, space, etc.) exercise
+// the real upload code path. Disk names are written verbatim (real
+// ClickHouse disk names are constrained at config-load time).
 func Build(t *testing.T, parts []PartSpec) *LocalBackup {
 	t.Helper()
 	root := t.TempDir()
@@ -70,7 +73,9 @@ func Build(t *testing.T, parts []PartSpec) *LocalBackup {
 	for _, p := range parts {
 		key := p.Disk + ":" + p.DB + "." + p.Table
 		lb.Parts[key] = append(lb.Parts[key], p)
-		partDir := filepath.Join(root, "shadow", p.DB, p.Table, p.Disk, p.Name)
+		dbEnc := common.TablePathEncode(p.DB)
+		tableEnc := common.TablePathEncode(p.Table)
+		partDir := filepath.Join(root, "shadow", dbEnc, tableEnc, p.Disk, p.Name)
 		if err := os.MkdirAll(partDir, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", partDir, err)
 		}
@@ -135,7 +140,7 @@ func Build(t *testing.T, parts []PartSpec) *LocalBackup {
 			tm.UUID = "00000000-0000-0000-0000-000000000000"
 		}
 
-		metaDir := filepath.Join(root, "metadata", p.DB)
+		metaDir := filepath.Join(root, "metadata", common.TablePathEncode(p.DB))
 		if err := os.MkdirAll(metaDir, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", metaDir, err)
 		}
@@ -143,7 +148,7 @@ func Build(t *testing.T, parts []PartSpec) *LocalBackup {
 		if err != nil {
 			t.Fatalf("marshal table metadata %s.%s: %v", p.DB, p.Table, err)
 		}
-		metaPath := filepath.Join(metaDir, p.Table+".json")
+		metaPath := filepath.Join(metaDir, common.TablePathEncode(p.Table)+".json")
 		if err := os.WriteFile(metaPath, body, 0o644); err != nil {
 			t.Fatalf("write %s: %v", metaPath, err)
 		}

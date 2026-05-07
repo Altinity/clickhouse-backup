@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/checksumstxt"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/rs/zerolog/log"
 )
@@ -328,25 +329,34 @@ func planUpload(root string, threshold uint64, filter []string, skipObjectDisks 
 	if err != nil {
 		return nil, err
 	}
-	for _, db := range dbs {
-		dbDir := filepath.Join(shadow, db)
+	for _, dbEnc := range dbs {
+		// On-disk shadow directory names are TablePathEncode'd by
+		// clickhouse-backup create. Decode for everything that compares
+		// against decoded inputs (CLI --tables filter, live CH table list,
+		// stored TableMetadata.Database). Keep encoded names for the
+		// filesystem walk itself.
+		db := common.TablePathDecode(dbEnc)
+		dbDir := filepath.Join(shadow, dbEnc)
 		tbls, err := readDir(dbDir)
 		if err != nil {
 			return nil, err
 		}
-		for _, table := range tbls {
+		for _, tableEnc := range tbls {
+			table := common.TablePathDecode(tableEnc)
 			if !tableFilterAllows(filter, db, table) {
 				continue
 			}
 			if excluded[db+"."+table] {
 				continue
 			}
-			tblDir := filepath.Join(dbDir, table)
+			tblDir := filepath.Join(dbDir, tableEnc)
 			diskNames, err := readDir(tblDir)
 			if err != nil {
 				return nil, err
 			}
 			for _, disk := range diskNames {
+				// Disk names are not TablePathEncode'd (see paths.go
+				// PartArchivePath comment).
 				diskDir := filepath.Join(tblDir, disk)
 				parts, err := readDir(diskDir)
 				if err != nil {
@@ -639,14 +649,17 @@ func uploadTableJSONs(ctx context.Context, b Backend, cp, name string, plan *upl
 	return nil
 }
 
-// readLocalTableMetadata reads <root>/metadata/<db>/<table>.json that
-// `clickhouse-backup create` wrote. Returns a zero-value TableMetadata
-// + nil error if the file is missing — older create flows or test
-// fixtures may omit it; the caller logs and ships an empty schema in
-// that case (degrading fresh-host restore but not breaking
-// table-already-exists restore).
+// readLocalTableMetadata reads <root>/metadata/<TablePathEncode(db)>/<TablePathEncode(table)>.json
+// that `clickhouse-backup create` wrote. The on-disk path is always
+// percent-encoded (matching create's filesystem layout); the caller
+// passes db/table as DECODED identifiers, and this helper applies the
+// encoding for the lookup. Returns a zero-value TableMetadata + nil
+// error if the file is missing — older create flows or test fixtures
+// may omit it; the caller logs and ships an empty schema in that case
+// (degrading fresh-host restore but not breaking table-already-exists
+// restore).
 func readLocalTableMetadata(root, db, table string) (metadata.TableMetadata, error) {
-	p := filepath.Join(root, "metadata", db, table+".json")
+	p := filepath.Join(root, "metadata", common.TablePathEncode(db), common.TablePathEncode(table)+".json")
 	f, err := os.Open(p)
 	if err != nil {
 		if os.IsNotExist(err) {

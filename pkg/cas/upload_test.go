@@ -418,3 +418,90 @@ func (i *injectingBackend) StatFile(ctx context.Context, key string) (int64, tim
 	}
 	return i.Backend.StatFile(ctx, key)
 }
+
+// TestUpload_SpecialCharDbTable verifies the headline blocker fix from
+// the external review: a database/table name containing characters that
+// TablePathEncode percent-escapes (hyphen, dot, space, etc.) must round-
+// trip without double-encoding. Before the fix, planUpload stored the
+// already-encoded directory name verbatim in tablePlan.DB/Table, and
+// TableMetaPath/PartArchivePath then encoded again, producing keys like
+// "my%252Ddb" and breaking schema restore.
+func TestUpload_SpecialCharDbTable(t *testing.T) {
+	parts := []testfixtures.PartSpec{
+		{
+			Disk: "default", DB: "my-db", Table: "my-tbl", Name: "all_1_1_0",
+			Files: []testfixtures.FileSpec{
+				{Name: "columns.txt", Size: 8, HashLow: 1, HashHigh: 0},
+			},
+		},
+	}
+	lb := testfixtures.Build(t, parts)
+	f := fakedst.New()
+	cfg := testCfg(100)
+	if _, err := cas.Upload(context.Background(), f, cfg, "bk1", cas.UploadOptions{
+		LocalBackupDir: lb.Root,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// metadata.json — Tables[].Database/Table must be the DECODED original.
+	rc, err := f.GetFile(context.Background(), cas.MetadataJSONPath(cfg.ClusterPrefix(), "bk1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(rc)
+	rc.Close()
+	var bm metadata.BackupMetadata
+	if err := json.Unmarshal(body, &bm); err != nil {
+		t.Fatal(err)
+	}
+	if len(bm.Tables) != 1 {
+		t.Fatalf("Tables: got %d want 1", len(bm.Tables))
+	}
+	if bm.Tables[0].Database != "my-db" {
+		t.Errorf("Tables[0].Database: got %q want \"my-db\" (NOT %q)", bm.Tables[0].Database, "my%2Ddb")
+	}
+	if bm.Tables[0].Table != "my-tbl" {
+		t.Errorf("Tables[0].Table: got %q want \"my-tbl\"", bm.Tables[0].Table)
+	}
+
+	// Per-table JSON exists at the SINGLE-encoded path.
+	want := cas.TableMetaPath(cfg.ClusterPrefix(), "bk1", "my-db", "my-tbl")
+	if _, _, exists, _ := f.StatFile(context.Background(), want); !exists {
+		t.Errorf("per-table JSON missing at single-encoded path %s", want)
+	}
+	// Double-encoded path must NOT exist.
+	bad := cas.TableMetaPath(cfg.ClusterPrefix(), "bk1", "my%2Ddb", "my%2Dtbl")
+	if _, _, exists, _ := f.StatFile(context.Background(), bad); exists {
+		t.Errorf("per-table JSON wrongly exists at DOUBLE-encoded path %s", bad)
+	}
+}
+
+// TestUpload_TableFilter_WithSpecialChars proves that --tables filtering
+// works against the decoded names operators actually type, not the
+// shadow-directory encoded forms.
+func TestUpload_TableFilter_WithSpecialChars(t *testing.T) {
+	parts := []testfixtures.PartSpec{
+		{Disk: "default", DB: "my-db", Table: "keep-me", Name: "p1",
+			Files: []testfixtures.FileSpec{{Name: "columns.txt", Size: 4, HashLow: 1, HashHigh: 0}}},
+		{Disk: "default", DB: "my-db", Table: "skip-me", Name: "p1",
+			Files: []testfixtures.FileSpec{{Name: "columns.txt", Size: 4, HashLow: 2, HashHigh: 0}}},
+	}
+	lb := testfixtures.Build(t, parts)
+	f := fakedst.New()
+	cfg := testCfg(100)
+	if _, err := cas.Upload(context.Background(), f, cfg, "bk1", cas.UploadOptions{
+		LocalBackupDir: lb.Root,
+		TableFilter:    []string{"my-db.keep-me"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	keep := cas.TableMetaPath(cfg.ClusterPrefix(), "bk1", "my-db", "keep-me")
+	skip := cas.TableMetaPath(cfg.ClusterPrefix(), "bk1", "my-db", "skip-me")
+	if _, _, exists, _ := f.StatFile(context.Background(), keep); !exists {
+		t.Errorf("filter dropped the matching table; %s missing", keep)
+	}
+	if _, _, exists, _ := f.StatFile(context.Background(), skip); exists {
+		t.Errorf("filter let a non-matching table through; %s present", skip)
+	}
+}
