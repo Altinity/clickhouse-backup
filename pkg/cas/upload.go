@@ -47,6 +47,13 @@ type UploadOptions struct {
 	// (intended for unit tests that don't model live ClickHouse).
 	Disks            []DiskInfo
 	ClickHouseTables []TableInfo
+
+	// ExcludedTables is a precomputed list of "db.table" keys to skip.
+	// When non-empty, planUpload skips these tables directly without
+	// invoking DetectObjectDiskTables. Used by callers (e.g. cas-upload
+	// CLI) that already know which tables are object-disk-backed via a
+	// snapshot walk and don't need the live-disks Path-prefix match.
+	ExcludedTables []string
 }
 
 // UploadResult summarizes what an Upload run did. The stats break down into
@@ -180,7 +187,7 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 	}
 
 	// 6. Plan upload: walk shadow/, parse checksums.txt, classify.
-	plan, err := planUpload(opts.LocalBackupDir, cfg.InlineThreshold, opts.TableFilter, opts.SkipObjectDisks, opts.Disks, opts.ClickHouseTables)
+	plan, err := planUpload(opts.LocalBackupDir, cfg.InlineThreshold, opts.TableFilter, opts.SkipObjectDisks, opts.ExcludedTables, opts.Disks, opts.ClickHouseTables)
 	if err != nil {
 		// Best-effort cleanup of the marker we just wrote.
 		if !opts.DryRun {
@@ -306,7 +313,7 @@ func formatObjectDiskHits(hits []ObjectDiskHit) string {
 // checksums.txt, and builds a uploadPlan. opts.SkipObjectDisks plus the
 // disk/table info is used here to silently exclude object-disk tables
 // when requested.
-func planUpload(root string, threshold uint64, filter []string, skipObjectDisks bool, disks []DiskInfo, tables []TableInfo) (*uploadPlan, error) {
+func planUpload(root string, threshold uint64, filter []string, skipObjectDisks bool, excludedTablesList []string, disks []DiskInfo, tables []TableInfo) (*uploadPlan, error) {
 	shadow := filepath.Join(root, "shadow")
 	st, err := os.Stat(shadow)
 	if err != nil {
@@ -316,7 +323,7 @@ func planUpload(root string, threshold uint64, filter []string, skipObjectDisks 
 		return nil, fmt.Errorf("cas: shadow path %q is not a directory", shadow)
 	}
 
-	excluded := excludedTables(skipObjectDisks, disks, tables)
+	excluded := excludedTables(skipObjectDisks, excludedTablesList, disks, tables)
 
 	plan := &uploadPlan{
 		blobs:     make(map[Hash128]blobRef),
@@ -389,13 +396,26 @@ func planUpload(root string, threshold uint64, filter []string, skipObjectDisks 
 	return plan, nil
 }
 
-// excludedTables returns a set of "db.table" keys to skip, based on
-// object-disk detection. Returns an empty set when the pre-flight is
-// not requested (skipObjectDisks==false OR disks/tables empty); the
-// caller-side refusal in step 3 handles that case.
-func excludedTables(skipObjectDisks bool, disks []DiskInfo, tables []TableInfo) map[string]bool {
+// excludedTables returns a set of "db.table" keys to skip when
+// skipObjectDisks is true. Two paths:
+//  1. precomputed: caller passed an explicit list (used by the CLI's
+//     snapshot-driven flow that doesn't have live disk paths).
+//  2. derived: caller passed DiskInfo + TableInfo, in which case we run
+//     DetectObjectDiskTables (used by tests that model live ClickHouse).
+//
+// When both are empty, returns an empty set (effectively a no-op).
+func excludedTables(skipObjectDisks bool, precomputed []string, disks []DiskInfo, tables []TableInfo) map[string]bool {
 	out := make(map[string]bool)
-	if !skipObjectDisks || len(disks) == 0 || len(tables) == 0 {
+	if !skipObjectDisks {
+		return out
+	}
+	if len(precomputed) > 0 {
+		for _, k := range precomputed {
+			out[k] = true
+		}
+		return out
+	}
+	if len(disks) == 0 || len(tables) == 0 {
 		return out
 	}
 	for _, h := range DetectObjectDiskTables(tables, disks) {

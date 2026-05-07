@@ -151,46 +151,6 @@ func (b *Backuper) snapshotObjectDiskHits(ctx context.Context, localBackupDir st
 	return b.snapshotObjectDiskHitsFromDisks(localBackupDir, diskTypeByName)
 }
 
-// buildSkipObjectDisksUploadOpts converts the snapshot-derived hits into
-// the (Disks, ClickHouseTables) pair that planUpload's excludedTables
-// helper expects. The slices are deliberately minimal — they only need to
-// carry enough info for DetectObjectDiskTables to flag the same triples
-// the snapshot already flagged.
-func buildSkipObjectDisksUploadOpts(hits []cas.ObjectDiskHit) cas.UploadOptions {
-	if len(hits) == 0 {
-		return cas.UploadOptions{}
-	}
-	diskByName := map[string]cas.DiskInfo{}
-	tableSet := map[string]cas.TableInfo{}
-	for _, h := range hits {
-		diskByName[h.Disk] = cas.DiskInfo{Name: h.Disk, Type: h.DiskType}
-		key := h.Database + "." + h.Table
-		ti := tableSet[key]
-		ti.Database, ti.Name = h.Database, h.Table
-		// Append the disk to the table's DataPaths (DetectObjectDiskTables
-		// matches by table->DataPaths intersection with object-disk types).
-		appendIfMissing := func(s []string, v string) []string {
-			for _, x := range s {
-				if x == v {
-					return s
-				}
-			}
-			return append(s, v)
-		}
-		ti.DataPaths = appendIfMissing(ti.DataPaths, h.Disk)
-		tableSet[key] = ti
-	}
-	disks := make([]cas.DiskInfo, 0, len(diskByName))
-	for _, d := range diskByName {
-		disks = append(disks, d)
-	}
-	tables := make([]cas.TableInfo, 0, len(tableSet))
-	for _, t := range tableSet {
-		tables = append(tables, t)
-	}
-	return cas.UploadOptions{Disks: disks, ClickHouseTables: tables}
-}
-
 // CASUpload uploads a local backup using the CAS layout.
 func (b *Backuper) CASUpload(backupName string, skipObjectDisks, dryRun bool, backupVersion string, commandId int) error {
 	if backupName == "" {
@@ -242,9 +202,11 @@ func (b *Backuper) CASUpload(backupName string, skipObjectDisks, dryRun bool, ba
 		Parallelism:     int(b.cfg.General.UploadConcurrency),
 	}
 	if skipObjectDisks {
-		filtered := buildSkipObjectDisksUploadOpts(hits)
-		uploadOpts.Disks = filtered.Disks
-		uploadOpts.ClickHouseTables = filtered.ClickHouseTables
+		excluded := make([]string, 0, len(hits))
+		for _, h := range hits {
+			excluded = append(excluded, h.Database+"."+h.Table)
+		}
+		uploadOpts.ExcludedTables = excluded
 	}
 	res, uploadErr := cas.Upload(ctx, backend, b.cfg.CAS, backupName, uploadOpts)
 	if uploadErr != nil {
