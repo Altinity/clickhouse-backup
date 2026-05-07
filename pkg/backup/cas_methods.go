@@ -317,6 +317,10 @@ func (b *Backuper) CASDelete(backupName string) error {
 		return errors.New("cas-delete: backup name is required")
 	}
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
+	if pidErr := pidlock.CheckAndCreatePidFile(backupName, "cas-delete"); pidErr != nil {
+		return pidErr
+	}
+	defer pidlock.RemovePidFile(backupName)
 	ctx, cancel, err := b.setupCASContext(status.NotFromAPI)
 	if err != nil {
 		return err
