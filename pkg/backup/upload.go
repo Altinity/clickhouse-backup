@@ -81,7 +81,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		}
 	}()
 
-	remoteBackups, err := b.dst.BackupList(ctx, false, "")
+	remoteBackups, err := b.dst.BackupList(ctx, false, "", b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return errors.Wrap(err, "b.dst.BackupList return error")
 	}
@@ -300,7 +300,7 @@ func (b *Backuper) RemoveOldBackupsRemote(ctx context.Context) error {
 		return nil
 	}
 	start := time.Now()
-	backupList, err := b.dst.BackupList(ctx, true, "")
+	backupList, err := b.dst.BackupList(ctx, true, "", b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return errors.WithMessage(err, "BackupList")
 	}

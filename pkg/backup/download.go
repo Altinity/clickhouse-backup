@@ -111,7 +111,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		}
 	}()
 
-	remoteBackups, err := b.dst.BackupList(ctx, true, backupName)
+	remoteBackups, err := b.dst.BackupList(ctx, true, backupName, b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return errors.WithMessage(err, "BackupList")
 	}
@@ -1321,7 +1321,7 @@ func (b *Backuper) findDiffFileExist(ctx context.Context, requiredBackup *metada
 }
 
 func (b *Backuper) ReadBackupMetadataRemote(ctx context.Context, backupName string) (*metadata.BackupMetadata, error) {
-	backupList, err := b.dst.BackupList(ctx, true, backupName)
+	backupList, err := b.dst.BackupList(ctx, true, backupName, b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return nil, errors.WithMessage(err, "BackupList")
 	}

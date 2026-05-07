@@ -32,6 +32,28 @@ func DefaultConfig() Config {
 	}
 }
 
+// SkipPrefixes returns the prefixes that v1 list/retention must ignore. Empty
+// when CAS is disabled. The returned prefixes always end with "/" so a simple
+// HasPrefix check on a remote key correctly distinguishes "cas/" from a
+// hypothetical sibling like "case-archive/".
+//
+// v1 callers pass this into BackupDestination.BackupList so the cas/<cluster>/
+// subtree is not scanned (which would otherwise be reported as broken backup
+// folders and might be deleted by retention or "clean remote_broken").
+func (c Config) SkipPrefixes() []string {
+	if !c.Enabled {
+		return nil
+	}
+	rp := c.RootPrefix
+	if rp != "" && !strings.HasSuffix(rp, "/") {
+		rp += "/"
+	}
+	if rp == "" {
+		return nil
+	}
+	return []string{rp}
+}
+
 // ClusterPrefix returns the per-cluster prefix used for every CAS object key.
 // Always ends with "/". Form: "<root_prefix><cluster_id>/", e.g. "cas/prod-1/".
 //

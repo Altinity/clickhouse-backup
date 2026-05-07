@@ -335,7 +335,7 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 
 	b.dst = bd
 
-	backupList, err := bd.BackupList(ctx, true, backupName)
+	backupList, err := bd.BackupList(ctx, true, backupName, b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return errors.WithMessage(err, "bd.BackupList")
 	}

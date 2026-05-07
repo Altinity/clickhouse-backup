@@ -435,7 +435,7 @@ func (b *Backuper) getTablesDiffFromLocal(ctx context.Context, diffFrom string, 
 
 func (b *Backuper) getTablesDiffFromRemote(ctx context.Context, diffFromRemote string, tablePattern string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
 	tablesForUploadFromDiff = make(map[metadata.TableTitle]metadata.TableMetadata)
-	backupList, err := b.dst.BackupList(ctx, true, diffFromRemote)
+	backupList, err := b.dst.BackupList(ctx, true, diffFromRemote, b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return nil, errors.Wrap(err, "b.dst.BackupList return error")
 	}
