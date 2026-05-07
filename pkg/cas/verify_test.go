@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas/internal/fakedst"
@@ -187,6 +188,61 @@ func TestVerify_JSONOutput(t *testing.T) {
 	}
 	if vf.Want == 0 {
 		t.Error("JSON Want: got 0, want non-zero")
+	}
+}
+
+// stallingBackend wraps another Backend and forces StatFile to return a
+// non-nil error for one specific key — simulating a transient network
+// hiccup. All other methods delegate.
+type stallingBackend struct {
+	cas.Backend
+	failKey string
+}
+
+func (s *stallingBackend) StatFile(ctx context.Context, key string) (int64, time.Time, bool, error) {
+	if key == s.failKey {
+		return 0, time.Time{}, false, errors.New("simulated network error")
+	}
+	return s.Backend.StatFile(ctx, key)
+}
+
+func TestVerify_StatErrorIsNotMissing(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(100)
+	ctx := context.Background()
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db", Table: "t", Name: "all_1_1_0",
+		Files: []testfixtures.FileSpec{
+			// Above-threshold so it goes to the blob store (testCfg threshold = 100).
+			{Name: "data.bin", Size: 2048, HashLow: 7, HashHigh: 7},
+			{Name: "columns.txt", Size: 8, HashLow: 8, HashHigh: 8},
+		},
+	}}
+	src := testfixtures.Build(t, parts)
+	if _, err := cas.Upload(ctx, f, cfg, "bk", cas.UploadOptions{LocalBackupDir: src.Root}); err != nil {
+		t.Fatal(err)
+	}
+
+	target := cas.BlobPath(cfg.ClusterPrefix(), cas.Hash128{Low: 7, High: 7})
+	sb := &stallingBackend{Backend: f, failKey: target}
+
+	var out bytes.Buffer
+	res, err := cas.Verify(ctx, sb, cfg, "bk", cas.VerifyOptions{}, &out)
+	if !errors.Is(err, cas.ErrVerifyFailures) {
+		t.Fatalf("expected ErrVerifyFailures, got %v", err)
+	}
+	if len(res.Failures) != 1 {
+		t.Fatalf("got %d failures, want 1: %+v", len(res.Failures), res.Failures)
+	}
+	f0 := res.Failures[0]
+	if f0.Kind != "stat_error" {
+		t.Errorf("Kind: got %q want \"stat_error\" (NOT \"missing\" — that would mislead operators)", f0.Kind)
+	}
+	if f0.Path != target {
+		t.Errorf("Path: got %q want %q", f0.Path, target)
+	}
+	if f0.Err == "" {
+		t.Error("Err: should carry the underlying StatFile error message")
 	}
 }
 

@@ -24,10 +24,11 @@ type VerifyOptions struct {
 
 // VerifyFailure describes a single blob that failed verification.
 type VerifyFailure struct {
-	Kind string `json:"kind"`           // "missing" | "size_mismatch"
+	Kind string `json:"kind"`            // "stat_error" | "missing" | "size_mismatch"
 	Path string `json:"path"`
 	Want uint64 `json:"want"`
-	Got  int64  `json:"got,omitempty"` // present for size_mismatch
+	Got  int64  `json:"got,omitempty"`  // present for size_mismatch
+	Err  string `json:"err,omitempty"`  // present for stat_error
 }
 
 // VerifyResult summarises what a Verify run found.
@@ -219,7 +220,16 @@ func headAllInParallel(ctx context.Context, b Backend, blobs []expectedBlob, par
 
 			bl := results[i].blob
 			size, _, exists, err := b.StatFile(ctx, bl.Path)
-			if err != nil || !exists {
+			if err != nil {
+				results[i].failure = &VerifyFailure{
+					Kind: "stat_error",
+					Path: bl.Path,
+					Want: bl.Size,
+					Err:  err.Error(),
+				}
+				return
+			}
+			if !exists {
 				results[i].failure = &VerifyFailure{
 					Kind: "missing",
 					Path: bl.Path,
@@ -263,6 +273,8 @@ func writeVerifyFailure(out io.Writer, f VerifyFailure, asJSON bool) {
 		return
 	}
 	switch f.Kind {
+	case "stat_error":
+		_, _ = fmt.Fprintf(out, "STATERR  %s (want %d bytes): %s\n", f.Path, f.Want, f.Err)
 	case "missing":
 		_, _ = fmt.Fprintf(out, "MISSING  %s (want %d bytes)\n", f.Path, f.Want)
 	case "size_mismatch":
