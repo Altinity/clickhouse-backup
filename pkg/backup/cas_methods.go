@@ -147,16 +147,49 @@ func (b *Backuper) CASUpload(backupName string, skipObjectDisks, dryRun bool, ba
 	}
 	log.Info().
 		Str("backup", res.BackupName).
-		Int("blobs_considered", res.BlobsConsidered).
+		Int("total_files", res.TotalFiles).
+		Uint64("total_bytes", res.TotalBytes).
+		Int("inline_files", res.InlineFiles).
+		Uint64("inline_bytes", res.InlineBytes).
+		Int("unique_blobs", res.UniqueBlobs).
+		Uint64("blob_bytes_total", res.BlobBytesTotal).
 		Int("blobs_uploaded", res.BlobsUploaded).
 		Int64("bytes_uploaded", res.BytesUploaded).
+		Int("blobs_reused", res.BlobsReused).
+		Int64("bytes_reused", res.BytesReused).
 		Int("archives", res.PerTableArchives).
+		Int64("archive_bytes", res.ArchiveBytes).
 		Bool("dry_run", res.DryRun).
 		Dur("elapsed", time.Since(start)).
 		Msg("cas-upload done")
-	fmt.Printf("cas-upload: %s blobs=%d uploaded=%d bytes=%d archives=%d dryRun=%v elapsed=%s\n",
-		res.BackupName, res.BlobsConsidered, res.BlobsUploaded, res.BytesUploaded, res.PerTableArchives, res.DryRun, time.Since(start).Round(time.Millisecond))
+
+	totalBytesH := utils.FormatBytes(res.TotalBytes)
+	inlineBytesH := utils.FormatBytes(res.InlineBytes)
+	blobBytesH := utils.FormatBytes(res.BlobBytesTotal)
+	uploadedH := utils.FormatBytes(uint64(res.BytesUploaded))
+	reusedH := utils.FormatBytes(uint64(res.BytesReused))
+	archiveH := utils.FormatBytes(uint64(res.ArchiveBytes))
+	prefix := "cas-upload"
+	if res.DryRun {
+		prefix = "cas-upload (dry-run)"
+	}
+	fmt.Printf("%s: %s\n", prefix, res.BackupName)
+	fmt.Printf("  Backup content : %d files, %s total\n", res.TotalFiles, totalBytesH)
+	fmt.Printf("  Inlined        : %d files, %s (packed into %d archive%s, %s compressed)\n",
+		res.InlineFiles, inlineBytesH, res.PerTableArchives, plural(res.PerTableArchives), archiveH)
+	fmt.Printf("  Blob store     : %d unique blobs, %s\n", res.UniqueBlobs, blobBytesH)
+	fmt.Printf("    uploaded now : %d blobs, %s\n", res.BlobsUploaded, uploadedH)
+	fmt.Printf("    reused       : %d blobs, %s (already in remote — saved by content-addressing)\n",
+		res.BlobsReused, reusedH)
+	fmt.Printf("  Wall clock     : %s\n", time.Since(start).Round(time.Millisecond))
 	return nil
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // CASDownload materializes a CAS backup into the local backup directory.

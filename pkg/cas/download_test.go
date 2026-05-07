@@ -61,7 +61,9 @@ func TestDownload_RoundTripBytes(t *testing.T) {
 	lb, _, _, root := uploadAndDownload(t, parts, "b1", cas.DownloadOptions{})
 	localBackupDir := filepath.Join(root, "b1")
 
-	// Check root metadata.json: parseable, CAS != nil.
+	// Check root metadata.json: parseable. CAS field is intentionally stripped
+	// from the LOCAL copy (so v1 restore handoff works); the REMOTE
+	// metadata.json keeps it. See pkg/cas/download.go for rationale.
 	bmBody, err := os.ReadFile(filepath.Join(localBackupDir, "metadata.json"))
 	if err != nil {
 		t.Fatalf("read root metadata.json: %v", err)
@@ -70,8 +72,8 @@ func TestDownload_RoundTripBytes(t *testing.T) {
 	if err := json.Unmarshal(bmBody, &bm); err != nil {
 		t.Fatalf("parse local metadata.json: %v", err)
 	}
-	if bm.CAS == nil {
-		t.Fatal("local metadata.json: CAS field nil")
+	if bm.CAS != nil {
+		t.Fatal("local metadata.json: CAS field MUST be stripped (v1 restore would refuse otherwise)")
 	}
 	if bm.DataFormat != "directory" {
 		t.Errorf("DataFormat: got %q want directory", bm.DataFormat)

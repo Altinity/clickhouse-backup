@@ -29,13 +29,40 @@ For that reason, it's required to run `clickhouse-backup` on the same host or sa
 - **Support for multi disks installations**
 - **Support for custom remote storage types via `rclone`, `kopia`, `restic`, `rsync` etc**
 - **Support for incremental backups on remote storage**
-- **Optional content-addressable (CAS) layout** for mutation-heavy workloads with chain-free, independently-restorable backups (`cas-upload` / `cas-download` / `cas-restore` / `cas-delete` / `cas-verify` / `cas-status`)
+- **Smart deduplicating backups** with the `cas-*` commands — every backup is independent, only changed data is uploaded, and mutations don't blow up your storage bill (see below)
 
-## CAS layout (opt-in)
+## Smart deduplicating backups (opt-in)
 
-For mutation-heavy tables or scenarios where the v1 incremental chain has grown unwieldy, a content-addressable backup layout is available under the `cas-*` commands. Files are keyed by the CityHash128 already in each part's `checksums.txt`, so identical content is stored once and reused across mutations and across backups; every backup is independently restorable (no `RequiredBackup` chain), and storage grows with new data rather than with the number of backups.
+Most backup tools force a tradeoff: full backups eat storage and bandwidth, while incremental backups are smaller but chain together — losing or rotating the wrong base backup breaks every dependent restore. ClickHouse mutations make this worse: a single `ALTER TABLE ... UPDATE` can rewrite one column and rename the part, leaving 99% of the bytes identical to the previous version but invisible to chain-based dedup.
 
-To enable, set `cas.enabled: true` and `cas.cluster_id: <cluster>` in `config.yml`. CAS backups live under a separate top-level prefix (default `cas/`) and never share namespace with v1 backups. Garbage collection is a separate `cas-prune` step (Phase 2). See [docs/cas-design.md](docs/cas-design.md) for the full design.
+The `cas-*` commands (`cas-upload`, `cas-download`, `cas-restore`, `cas-delete`, `cas-verify`, `cas-status`) use **content-addressed storage** to solve both problems. Files are keyed by their content hash, so identical bytes are stored once and shared across every backup that contains them — across mutations, across days, across tables. The result:
+
+- **Smaller uploads than incremental, no base-backup dependency.** Each `cas-upload` only transfers files whose content isn't already in the remote — typically a small fraction of a full backup. Unlike incremental backups, every CAS backup is independently restorable. Delete any backup at any time without affecting the others.
+- **Mutation-friendly.** An `ALTER UPDATE` on one column reuses every other column's bytes; the second backup uploads only the changed column.
+- **Storage grows with new data, not with the number of backups.** Keeping 30 daily snapshots of a slowly-changing dataset costs roughly the same as keeping one.
+
+### Quick start
+
+In `config.yml`:
+
+```yaml
+cas:
+  enabled: true
+  cluster_id: my-prod-cluster   # required; identifies this source cluster
+```
+
+Then:
+
+```sh
+clickhouse-backup create my_backup            # snapshot the data locally
+clickhouse-backup cas-upload my_backup        # push to remote (only new content)
+clickhouse-backup cas-status                  # see counts, sizes, in-flight uploads
+clickhouse-backup cas-restore my_backup       # restore (any backup, any time)
+clickhouse-backup cas-delete   my_backup      # remove (storage reclaimed by cas-prune)
+clickhouse-backup cas-verify   my_backup      # cheap integrity check (HEAD + size)
+```
+
+CAS backups live under their own prefix in the remote bucket and don't interfere with the existing `upload` / `download` / `restore` commands — you can mix both in the same bucket if needed.
 
 ## Limitations
 

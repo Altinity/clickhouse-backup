@@ -47,16 +47,47 @@ type UploadOptions struct {
 	ClickHouseTables []TableInfo
 }
 
-// UploadResult summarizes what an Upload run did. BlobsConsidered counts
-// unique blob hashes in the plan; BlobsUploaded is the subset actually
-// transferred (after cold-list dedup).
+// UploadResult summarizes what an Upload run did. The stats break down into
+// three layers operators care about:
+//
+//  1. The backup's logical content (TotalFiles / TotalBytes — what would be
+//     in a v1 backup, including duplicated content across parts).
+//  2. How the content was placed: InlineFiles/InlineBytes (small files that
+//     ride inside per-table tar.zstd archives) vs BlobFiles (file references
+//     that go to the content-addressed blob store) and the deduplicated
+//     UniqueBlobs / BlobBytesTotal.
+//  3. What actually crossed the wire on this run: BlobsUploaded /
+//     BytesUploaded (new blobs PUT to the remote), BlobsReused / BytesReused
+//     (deduped via cold-list against existing remote blobs), and ArchiveBytes
+//     (compressed bytes for the per-table archives uploaded now).
 type UploadResult struct {
-	BackupName       string
-	BlobsConsidered  int
-	BlobsUploaded    int
-	BytesUploaded    int64
+	BackupName string
+
+	// Logical content (counted across every part, before blob dedup).
+	TotalFiles  int
+	TotalBytes  uint64
+	InlineFiles int
+	InlineBytes uint64
+	BlobFiles   int // file references that pointed at a blob (pre-dedup)
+
+	// Blob-store side, after content-addressed dedup within this backup.
+	UniqueBlobs    int    // unique blob hashes referenced (= len(plan.blobs))
+	BlobBytesTotal uint64 // sum of UniqueBlobs sizes
+
+	// What this run sent to / dedup'd against the remote.
+	BlobsUploaded int   // unique blobs newly PUT
+	BytesUploaded int64 // sum of BlobsUploaded sizes
+	BlobsReused   int   // unique blobs already in remote (skipped)
+	BytesReused   int64 // sum of BlobsReused sizes
+	ArchiveBytes  int64 // compressed bytes of per-table archives uploaded
+
 	PerTableArchives int
 	DryRun           bool
+
+	// BlobsConsidered is an alias for UniqueBlobs kept for backwards
+	// compatibility with log output written before the stats expansion.
+	// New code should read UniqueBlobs.
+	BlobsConsidered int
 }
 
 // uploadPlan is the in-memory description of what to upload, built by
@@ -70,6 +101,13 @@ type uploadPlan struct {
 	tables map[string]*tablePlan
 	// tableKeys preserves a sorted ordering for deterministic uploads.
 	tableKeys []string
+
+	// Aggregates for stats reporting. Populated alongside the maps above.
+	totalFiles  int
+	totalBytes  uint64
+	inlineFiles int
+	inlineBytes uint64
+	blobFiles   int // file references that go to the blob store (pre-dedup)
 }
 
 // blobRef points at one local file claimed to have hash h. We pick any
@@ -144,8 +182,23 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 		return nil, err
 	}
 
+	// Compute total bytes referenced by unique blobs (after content dedup
+	// within this backup; cold-list dedup against the remote happens in
+	// step 7).
+	var blobBytesTotal uint64
+	for _, br := range plan.blobs {
+		blobBytesTotal += br.Size
+	}
+
 	res := &UploadResult{
 		BackupName:      name,
+		TotalFiles:      plan.totalFiles,
+		TotalBytes:      plan.totalBytes,
+		InlineFiles:     plan.inlineFiles,
+		InlineBytes:     plan.inlineBytes,
+		BlobFiles:       plan.blobFiles,
+		UniqueBlobs:     len(plan.blobs),
+		BlobBytesTotal:  blobBytesTotal,
 		BlobsConsidered: len(plan.blobs),
 		DryRun:          opts.DryRun,
 	}
@@ -170,14 +223,24 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 	}
 	res.BlobsUploaded = uploaded
 	res.BytesUploaded = bytesUp
+	// Reused = unique blobs that were already in the remote (dedup'd via cold-list).
+	res.BlobsReused = res.UniqueBlobs - uploaded
+	if res.BlobsReused < 0 {
+		res.BlobsReused = 0
+	}
+	res.BytesReused = int64(blobBytesTotal) - bytesUp
+	if res.BytesReused < 0 {
+		res.BytesReused = 0
+	}
 
 	// 9. Per-(disk,db,table) archives.
-	archCount, err := uploadPartArchives(ctx, b, cp, name, plan)
+	archCount, archBytes, err := uploadPartArchives(ctx, b, cp, name, plan)
 	if err != nil {
 		_ = DeleteInProgressMarker(ctx, b, cp, name)
 		return nil, err
 	}
 	res.PerTableArchives = archCount
+	res.ArchiveBytes = archBytes
 
 	// 10. Per-table JSONs.
 	if err := uploadTableJSONs(ctx, b, cp, name, plan); err != nil {
@@ -341,22 +404,33 @@ func planPart(partDir, partName string, threshold uint64, plan *uploadPlan, tp *
 		return fmt.Errorf("parse checksums.txt: %w", perr)
 	}
 
-	// checksums.txt is always inline.
+	// checksums.txt is always inline. Stat it for byte accounting.
 	tp.archiveEntries = append(tp.archiveEntries, ArchiveEntry{
 		NameInArchive: partName + "/checksums.txt",
 		LocalPath:     ckPath,
 	})
+	if st, err := os.Stat(ckPath); err == nil {
+		plan.totalFiles++
+		plan.inlineFiles++
+		plan.totalBytes += uint64(st.Size())
+		plan.inlineBytes += uint64(st.Size())
+	}
 
 	for fname, c := range parsed.Files {
 		local := filepath.Join(partDir, fname)
+		plan.totalFiles++
+		plan.totalBytes += c.FileSize
 		if c.FileSize <= threshold {
 			tp.archiveEntries = append(tp.archiveEntries, ArchiveEntry{
 				NameInArchive: partName + "/" + fname,
 				LocalPath:     local,
 			})
+			plan.inlineFiles++
+			plan.inlineBytes += c.FileSize
 			continue
 		}
-		// Blob.
+		// Blob: count every reference (pre-dedup); dedup happens in plan.blobs map.
+		plan.blobFiles++
 		h := Hash128{Low: c.FileHash.Low, High: c.FileHash.High}
 		if _, ok := plan.blobs[h]; !ok {
 			plan.blobs[h] = blobRef{LocalPath: local, Size: c.FileSize}
@@ -458,8 +532,9 @@ func uploadMissingBlobs(ctx context.Context, b Backend, cp string, plan *uploadP
 }
 
 // uploadPartArchives builds and PUTs one tar.zstd per (disk, db, table).
-func uploadPartArchives(ctx context.Context, b Backend, cp, name string, plan *uploadPlan) (int, error) {
+func uploadPartArchives(ctx context.Context, b Backend, cp, name string, plan *uploadPlan) (int, int64, error) {
 	count := 0
+	var totalBytes int64
 	for _, key := range plan.tableKeys {
 		tp := plan.tables[key]
 		if len(tp.archiveEntries) == 0 {
@@ -467,15 +542,17 @@ func uploadPartArchives(ctx context.Context, b Backend, cp, name string, plan *u
 		}
 		var buf bytes.Buffer
 		if err := WriteArchive(&buf, tp.archiveEntries); err != nil {
-			return count, fmt.Errorf("cas: write archive %s/%s/%s: %w", tp.Disk, tp.DB, tp.Table, err)
+			return count, totalBytes, fmt.Errorf("cas: write archive %s/%s/%s: %w", tp.Disk, tp.DB, tp.Table, err)
 		}
 		key := PartArchivePath(cp, name, tp.Disk, tp.DB, tp.Table)
+		size := int64(buf.Len())
 		if err := putBytes(ctx, b, key, buf.Bytes()); err != nil {
-			return count, fmt.Errorf("cas: put archive %s: %w", key, err)
+			return count, totalBytes, fmt.Errorf("cas: put archive %s: %w", key, err)
 		}
 		count++
+		totalBytes += size
 	}
-	return count, nil
+	return count, totalBytes, nil
 }
 
 // uploadTableJSONs writes per-(db, table) TableMetadata JSONs at

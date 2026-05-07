@@ -139,8 +139,19 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 	// 5. Save root metadata.json (post per-table writes so a failure mid-
 	// download leaves the catalog untouched on disk; Save order doesn't
 	// matter for correctness — both are required for restore).
+	//
+	// We strip BackupMetadata.CAS from the local copy so that the existing
+	// v1 restore flow accepts the handoff. The cross-mode guard in
+	// pkg/backup/restore.go refuses to operate on backups where CAS != nil
+	// — that guard is intentional for direct v1 invocation, but cas-restore
+	// has already validated the backup at the CAS layer and is materializing
+	// a v1-shaped local layout. Stripping the field here keeps the on-disk
+	// layout indistinguishable from a v1 directory-format backup, which is
+	// the contract §6.5 specifies.
+	bmLocal := *bm
+	bmLocal.CAS = nil
 	bmPath := filepath.Join(localDir, "metadata.json")
-	bmBody, err := json.MarshalIndent(bm, "", "\t")
+	bmBody, err := json.MarshalIndent(&bmLocal, "", "\t")
 	if err != nil {
 		return nil, fmt.Errorf("cas: marshal local metadata.json: %w", err)
 	}
