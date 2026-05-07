@@ -13,6 +13,7 @@ import (
 	"github.com/urfave/cli"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server"
@@ -36,6 +37,9 @@ func main() {
 	cliapp.UsageText = "clickhouse-backup <command> [-t, --tables=<db>.<table>] <backup_name>"
 	cliapp.Description = "Run as 'root' or 'clickhouse' user"
 	cliapp.Version = version
+	// Wire the build version into CAS marker JSON (inprogress / prune
+	// markers carry this for forensic context — see pkg/cas/markers.go).
+	cas.SetMarkerTool(fmt.Sprintf("clickhouse-backup/%s", version))
 	// @todo add GCS and Azure support when resolve https://github.com/googleapis/google-cloud-go/issues/8169 and https://github.com/Azure/azure-sdk-for-go/issues/21047
 	if strings.HasSuffix(version, "fips") {
 		_ = os.Setenv("AWS_USE_FIPS_ENDPOINT", "true")

@@ -1,10 +1,60 @@
 package backup
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 )
+
+func TestSplitTablePattern(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{"db.t", []string{"db.t"}},
+		{"db1.t1,db2.t2", []string{"db1.t1", "db2.t2"}},
+		{"db1.t1, db2.t2", []string{"db1.t1", "db2.t2"}},
+		{"  db.t  ", []string{"db.t"}},
+		{",,", nil},
+	}
+	for _, c := range cases {
+		got := splitTablePattern(c.in)
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("splitTablePattern(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestEnsureCAS_RefusesWhenDisabled(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.CAS.Enabled = false
+	b := &Backuper{cfg: cfg}
+	_, _, err := b.ensureCAS(context.Background(), "anyname")
+	if err == nil {
+		t.Fatal("expected refusal when cas.enabled=false")
+	}
+	if !strings.Contains(err.Error(), "cas.enabled=false") {
+		t.Errorf("error should mention cas.enabled=false, got: %v", err)
+	}
+}
+
+func TestEnsureCAS_RefusesUnsupportedRemoteStorage(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.CAS.Enabled = true
+	cfg.CAS.ClusterID = "c1"
+	cfg.General.RemoteStorage = "none"
+	b := &Backuper{cfg: cfg}
+	_, _, err := b.ensureCAS(context.Background(), "anyname")
+	if err == nil || !strings.Contains(err.Error(), "remote_storage") {
+		t.Errorf("expected remote_storage error, got: %v", err)
+	}
+}
 
 func TestSnapshotObjectDiskHits_EmptyBackup(t *testing.T) {
 	tmp := t.TempDir()

@@ -362,6 +362,17 @@ Six new top-level subcommands, plus extension of the existing `list` verb:
 
 **Retention behavior**: `cas-upload` MUST NOT call `RemoveOldBackupsRemote`. CAS retention is exclusively managed by `cas-prune`. The v1 `backups_to_keep_remote` config knob applies only to v1 backups (and the §6.2.0 prefix exclusion ensures CAS backups don't accidentally count toward it).
 
+#### 6.10.1 Output-format convention
+
+`cas-verify --json` is a boolean flag that emits line-delimited JSON failures. The existing v1 `list` command uses `--format text|json|yaml|csv|tsv` for tabular listings.
+
+These two patterns are kept distinct on purpose:
+
+- **Tabular listings** use `--format` because operators may want csv/tsv for spreadsheet ingest.
+- **Diagnostic pass/fail commands** (`cas-verify`, future `cas-fsck`) use `--json` because failures are line-delimited streams, not tables; the only useful alternatives are "human" or "machine".
+
+When new CAS commands need machine-readable output, follow this rule: tabular → `--format`; line-delimited diagnostic → `--json`. Don't introduce a third convention without an explicit decision recorded here.
+
 ### 6.11 Configuration surface
 
 CAS-specific parameters live under a `cas:` block in `config.yml`. Existing config file paths and env-var conventions are unchanged.

@@ -35,7 +35,7 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 		{
 			Name:        "cas-download",
 			Usage:       "Materialize a CAS backup into the local data directory (does not load into ClickHouse)",
-			UsageText:   "clickhouse-backup cas-download [-t, --tables=<db>.<table>] [--partitions=<part_names>] [-s, --schema] [-d, --data] <backup_name>",
+			UsageText:   "clickhouse-backup cas-download [-t, --tables=<db>.<table>] [--partitions=<part_names>] [-s, --schema] <backup_name>",
 			Description: "Download a CAS-layout backup into <DefaultDataPath>/backup/<name>/. Use cas-restore (or v1 restore) to load tables into ClickHouse from the materialized directory.",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
@@ -55,8 +55,9 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 					Usage: "Schema-only: write JSON metadata locally and skip part archives + blobs",
 				},
 				cli.BoolFlag{
-					Name:  "data, d",
-					Usage: "Data-only (reserved; no behavioral effect in CAS v1)",
+					Name:   "data, d",
+					Hidden: true,
+					Usage:  "Reserved (currently a no-op); will gate data-only download in a future version",
 				},
 			),
 		},
