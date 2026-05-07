@@ -28,8 +28,14 @@ func (env *TestEnvironment) casBootstrap(r *require.Assertions, clusterID string
 	// only. Tests may share the env across runs (RUN_PARALLEL=1 serializes
 	// on a single env), so wiping the entire backup tree would clobber
 	// concurrent tests' state.
+	//
+	// The S3 `path: backup/{cluster}/{shard}` (config-s3.yml) places objects
+	// at /minio/data/clickhouse/backup/cluster/0/cas/<clusterID>/... — NOT
+	// at /minio/data/clickhouse/backup/cas/<clusterID>/. Wipe the real path
+	// (older revisions of this helper got it wrong, leaving stale blobs
+	// across test reruns).
 	_ = env.DockerExec("minio", "bash", "-c",
-		fmt.Sprintf("rm -rf /minio/data/clickhouse/backup/cas/%s/", clusterID))
+		fmt.Sprintf("rm -rf /minio/data/clickhouse/backup/cluster/0/cas/%s/", clusterID))
 	_ = env.DockerExec("minio", "bash", "-c", "mkdir -p /minio/data/clickhouse")
 	// Local backups must be wiped wholesale because v1 'create' rejects an
 	// existing same-named backup (regardless of CAS namespace). Test names
