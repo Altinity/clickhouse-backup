@@ -1,0 +1,563 @@
+# Content-Addressable Storage (CAS) Layout for clickhouse-backup
+
+**Status**: Design draft, pending implementation
+**Author**: Mikhail Filimonov, drafted with design-interview support
+**Last updated**: 2026-05-07
+
+## 1. Summary
+
+A new set of commands — `cas-upload`, `cas-download`, `cas-restore`, `cas-delete`, `cas-prune`, `cas-verify` — that store backups to remote object storage in a **content-addressable layout**. Files are keyed by their content hash (CityHash128, sourced from ClickHouse's per-part `checksums.txt`); identical content is stored once and referenced from any number of backups. Garbage collection is a separate, eventual mark-and-sweep step.
+
+The new commands run side-by-side with the existing `upload` / `download` / `delete` commands and use a separate top-level prefix in the target bucket, so v1 and CAS backups never share namespace.
+
+### 1.1 When to use CAS vs. v1
+
+Pick CAS when:
+- Tables are mutation-heavy (CAS deduplicates the unchanged columns of mutated parts; v1 re-uploads).
+- You want every backup to be independently restorable (CAS has no incremental chain; removing one backup never affects another).
+- You expect many backups over time and want storage to grow with *new* data, not with the number of backups.
+
+Stick with v1 when:
+- Tables include **object-disk** disks (s3/azure/hdfs object disks) — CAS does not support these in v1.
+- You currently use **client-side encryption** — CAS v1 supports bucket-level encryption only (see §3). Operators using v1's client-side encryption cannot move to CAS until convergent encryption ships in a later version.
+- You're already happy with v1's incremental chain and don't want to change.
+- You need a feature CAS hasn't implemented yet (see §3 non-goals).
+
+CAS backups and v1 backups can coexist in the same bucket under different prefixes; they never see each other's data. There is no migration tool — opt in by writing new backups with `cas-upload`.
+
+### 1.2 Mental model
+
+CAS backups are **independent**. There is no `RequiredBackup` chain. Removing backup A never affects backup B's restorability. A blob remains in the store as long as any backup references it (refcounting is implicit via mark-and-sweep). This is the most important difference from v1; surface it everywhere user-facing (README, `--help` text).
+
+## 2. Goals
+
+- **Deduplicate across mutations**: ClickHouse mutations create new part names whose underlying files are mostly identical (often hardlinked) to the source part. Today's tool re-uploads them. CAS reuses the existing blob on the target.
+- **Eliminate the incremental chain dependency**: every CAS backup is independently restorable. No `RequiredBackup` pointer; no chain unrolling.
+- **Reduce full-backup wall-clock and cost** by uploading only blobs not already in the target.
+- **Reuse existing infrastructure**: the storage abstraction (`BackupDestination`), table walker, multipart upload, retry, throttling, `BackupMetadata` / `TableMetadata` structs are reused as-is.
+- **Don't break v1**: separate commands, separate prefix, no behavioral changes to existing code paths.
+- **Preserve the relevant restore CLI surface**: `--tables`, `--partitions`, `--schema-only`, `--data-only`, `--restore-database-mapping`, `--restore-table-mapping`, `--rm`, `--restore-schema-as-attach` all work unchanged for CAS backups. `--ignore-dependencies` is rejected with an error (CAS backups have no chain — see §6.10).
+
+## 3. Non-goals (v1 of CAS)
+
+- Distributed locking. Operators serialize commands externally, matching today's PID-file model.
+- Hash verification on download (full content re-hash). Deferred to v2 of CAS. **Size verification on download is in v1**; see §6.8.
+- Refcount-delta files / incremental garbage collection. Deferred; v1 uses full mark-and-sweep, which is sufficient at the target scale.
+- Convergent encryption. v1 of CAS uses bucket-level encryption only. **TODO (v2)**: design and ship convergent encryption so existing v1 client-side-encryption users can migrate to CAS without losing client-side encryption. Known weaknesses (confirmation-of-file attacks) need threat-modeling per the deployment context.
+- Migration of existing v1 backups into CAS layout. Out of scope; users opt in by writing new backups with `cas-upload`.
+- Garbage collection of metadata across replicas/clusters beyond what mark-and-sweep already handles.
+- Object Lock / immutability features beyond what's intrinsic to content addressing.
+- **Object-disk parts (s3/azure/hdfs object disks) are NOT supported by `cas-*` commands in v1.** The existing `pkg/backup/create.go:1031` and `pkg/backup/restore.go:2227` paths (~1000 LOC of dual-direction object-reference handling, including cross-storage key rewriting) are non-trivial to fold into CAS, and content-addressing semantics for already-remote object stubs need their own design pass. `cas-upload` will refuse to back up tables on object disks in v1; operators must use v1 `upload` for those tables. Lifted in v2 of CAS.
+
+## 4. Background
+
+Today's `clickhouse-backup` upload pipeline (see `pkg/backup/upload.go:38–295`):
+
+- A backup is a directory `{backup_name}/` on the remote target containing a top-level `metadata.json` (`BackupMetadata` struct, `pkg/metadata/backup_metadata.go:12`), per-table JSONs at `metadata/{db}/{table}.json` (`TableMetadata`, `pkg/metadata/table_metadata.go:10`), and per-part archives (compressed tar streams) under each table.
+- Dedup happens **only against a base backup** (`RequiredBackup` field), at part-name granularity, via the `Required=true` flag set in `TableMetadata.Parts` (`pkg/backup/upload.go:756–784`).
+- Concurrency is bounded by a per-backup PID file (`pkg/pidlock/pidlock.go:15`); there are no S3 conditional writes or distributed locks.
+- ClickHouse's `checksums.txt` files are **not parsed** by the tool today. Hashes are computed by `pkg/common/common.go:131` (CRC64 of whole files/archives).
+
+## 5. Problems being solved
+
+1. **Mutation explosion**: a mutation can rewrite one column and rename the part, while hardlinking ~all other column files. Today this triggers a full re-upload of the new part. CAS reuses the existing blobs.
+2. **Incremental chain fragility**: incremental backups depend on a base backup. Restore unrolls the chain. With CAS, every backup is independent.
+3. **Time/cost of full backups**: with CAS the second backup of a mostly-unchanged dataset uploads only the diff in blobs.
+4. **Reuse**: as much existing code as possible — orchestration, retry, multipart, encryption, metadata structs.
+5. **Containment**: separate commands (`cas-*`) so the new path can't regress v1.
+
+## 6. Proposed design
+
+### 6.1 Object layout
+
+A CAS deployment uses a single configurable root prefix (default: `cas/`) under the existing remote target. Inside that root:
+
+```
+cas/
+  blob/<aa>/<rest_of_hash>                       # immutable, content-addressed; <aa> = first 2 hex
+                                                 # chars of CityHash128 hex; <rest> = remaining 30 chars
+  metadata/<backup>/                             # per-backup directory
+    metadata.json                                # BackupMetadata (reused struct; RequiredBackup
+                                                 #   unused; new CAS sub-struct populated — see §6.2.1)
+    metadata/<enc_db>/<enc_table>.json           # TableMetadata (reused struct). enc_* = TablePathEncode
+    parts/<disk>/<enc_db>/<enc_table>.tar.zstd    # per-disk per-(db,table) archive of small files only.
+                                                 #   contents: <part_name>/<filename> for every part.
+                                                 #   Path components encoded with common.TablePathEncode
+                                                 #   (pkg/common/common.go:18) to handle non-ASCII /
+                                                 #   special chars and avoid db/table name collisions.
+    rbac/, configs/, named_collections/          # unchanged from existing layout
+  inprogress/<backup>.marker                     # timestamp + host; written at upload start, deleted
+                                                 #   at commit. Used by `cas-prune` for abandoned-upload
+                                                 #   cleanup; also blocks `cas-delete` of same name
+  prune.marker                                   # the GC lock; written when `cas-prune` runs.
+                                                 #   While present, `cas-upload` and `cas-delete` refuse
+```
+
+**Sharding**: 256-way prefix sharding by first 2 hex chars of the hash. Sufficient for S3 per-prefix rate limits at the target scale; intuitive layout for human inspection.
+
+**Hash source**: each part's `checksums.txt`, parsed per the on-disk format (versions 2/3/4 supported; spec in `docs/checksumstxt/format.md`, reference parser in `docs/checksumstxt/checksumstxt.go`). The `Checksum.FileHash` field (CityHash128 of the file's on-disk bytes — not `UncompressedHash`) is what CAS keys blobs by. This gives byte-identity dedup, which is exactly what we want: identical column files produced by hardlink-mutations dedup; logically-equal files with different on-disk encodings (e.g., recompressed) do not, and that's correct because their stored bytes differ. 128 bits gives negligible accidental-collision probability across ~10⁹ blobs; reusing ClickHouse's already-computed hash avoids ~50+ CPU-hours of re-hashing per 100TB backup.
+
+**Path layout decisions**:
+- No `by-extension` dimension. Same content under different filenames must dedupe.
+- No `first/last` double-byte split. Single 2-byte prefix is sufficient (see §10.1 for rate-limit math).
+
+### 6.2 Inline-vs-blob threshold
+
+Files with `size > inline_threshold` go to the blob store. Files with `size ≤ inline_threshold` are packed into the per-disk-per-(db,table) archive. Default: **512 KB**, configurable.
+
+Rationale: ClickHouse parts contain many small metadata files (`columns.txt`, `primary.idx`, `partition.dat`, `minmax_*.idx`, `count.txt`, `default_compression_codec.txt`, `serialization.json`, `checksums.txt` itself). Per-PUT cost on S3 ≈ $0.005/1K. At 50 small files × 10⁴ parts × 1 backup = 500K extra PUTs ≈ $2.50/backup just in API charges, with worse tail-latency. Packing them into a per-table tar.zstd is dramatically more efficient.
+
+The threshold should be tuned against an actual file-size distribution from a representative ClickHouse instance before final commit; 512 KB is the starting point.
+
+### 6.2.1 CAS layout parameters MUST be persisted with the backup
+
+Restore behavior depends on parameters chosen at upload time. If a backup is uploaded with `inline_threshold = 512 KB` and later restored after the operator has reconfigured the tool to `inline_threshold = 1 MB`, restore would look in the inline archive for files that were actually stored as blobs — silent corruption.
+
+Persist the following per-backup, embedded in `BackupMetadata` as a new `CAS *CASBackupParams` field (`omitempty`, populated only by `cas-upload`):
+
+```go
+type CASBackupParams struct {
+    LayoutVersion   uint8   // schema version of the CAS layout itself; v1 = 1
+    InlineThreshold uint64  // bytes; ValidateBackup MUST reject if 0 or > 1 GiB
+    ClusterID       string  // required (§6.11); identifies the source cluster for namespace isolation
+}
+```
+
+**LayoutVersion evolution policy** (decided): a tool encountering `LayoutVersion > supported_max` refuses with a clear error. Operators MUST keep the oldest tool capable of reading their oldest backup. LayoutVersion bumps are major-version BREAKING CHANGE entries.
+
+**No `HashAlgorithm` field.** The hash is sourced from each part's `checksums.txt` — its value, encoding, and meaning are part-local properties defined by ClickHouse's on-disk format (always CityHash128 for `Checksum.FileHash` across format versions 2/3/4; see `docs/checksumstxt/format.md`). If ClickHouse ever changed the hash, the change would be visible per-part in the format version of `checksums.txt`, not as a CAS-wide policy. CAS does not pick a hash; it adopts whatever the part wrote.
+
+**No `RootPrefix`, `BlobShardWidth`, or `ArchiveCodec` fields.** A field whose only purpose is "documentation" is rot-by-construction (you can't read it without already knowing where to look). Hardcode v1 to: root prefix configurable via config but not persisted, shard width = 2, archive codec = `zstd` with `.tar.zstd` extension matching `pkg/config/config.go:310`. Any change to these is a `LayoutVersion` bump.
+
+Restore reads `BackupMetadata.CAS` and uses those values exclusively. CLI / config values for these parameters apply only at upload time. Restore ignores them.
+
+If `BackupMetadata.CAS == nil`, the backup is a v1 backup; CAS commands refuse to operate on it (and v1 commands refuse to operate on a backup with `CAS != nil`). See §6.2.2 for exact code locations of the cross-mode guards.
+
+If `BackupMetadata.CAS.LayoutVersion` is unrecognized (newer than the running tool supports), CAS commands refuse with a clear error.
+
+### 6.2.2 Isolation from v1
+
+CAS and v1 must not see each other's data. Two requirements, both Phase-1 ship-gates:
+
+**1. v1 commands MUST exclude the configured CAS root prefix from listing and retention.** v1's `BackupList` (`pkg/storage/general.go`) walks the bucket root; `RemoveOldBackupsRemote` and `CleanRemoteBroken` then operate on those entries. Without an explicit exclusion, the CAS root would appear as a broken v1 backup and could be reclaimed. Modify `BackupList` to accept a skip-prefixes set populated from `cas.root_prefix`; the consequence flows to `RemoveBackupRemote`, `RemoveOldBackupsRemote`, and `CleanRemoteBroken`.
+
+**2. v1 and CAS commands MUST refuse on the wrong type.** v1 commands (`Download`, `Restore`, `RestoreFromRemote`, `RemoveBackupRemote`, watch mode — anywhere remote `BackupMetadata` is loaded) refuse with a clear error if `BackupMetadata.CAS != nil`. CAS commands refuse with the inverse check via `ValidateBackup` (§7).
+
+Test: `TestCompatibilityMixedBucket` (mixed bucket; v1 retention/list/clean don't touch CAS objects regardless of config) plus `TestV1RefusesCASBackup` / `TestCASRefusesV1Backup` per entry point.
+
+### 6.3 Metadata archive packing
+
+One **tar.zstd per disk per (db, table)**. Path inside the archive: `<part_name>/<filename>`. Contains every file of every part where `size ≤ inline_threshold`. Extension `.tar.zstd` matches `pkg/config/config.go:310`'s convention so existing readers can be reused.
+
+**`checksums.txt` is always inlined**, regardless of size. It is treated as a special case (not as a parsed-checksum entry) because:
+- Restore needs `checksums.txt` on disk *before* it can decide which blobs to fetch (§6.5 step 6 reads the local file).
+- It's tiny in practice (KB-range).
+- Putting it in the blob store would chicken-and-egg the restore protocol.
+
+**Files on disk but not listed in `checksums.txt`** (an edge case ClickHouse should not produce, but the parser may encounter from future or experimental part formats): **always inline into the per-table archive**, regardless of size. They go into the metadata archive alongside the small files; never into the blob store. This avoids any local hashing in the `cas-upload` data path and gives a single rule for the corner case. The lost-dedup cost is negligible because such files are rare by construction; the simplicity is worth it. No "skip" mode — silently skipping files corrupts backups.
+
+Rationale:
+- Matches existing per-disk per-table structure (`TableMetadata.Files: map[string][]string`, `pkg/metadata/table_metadata.go`).
+- Natural partial-restore granularity: `--tables=db.t1` downloads one archive per disk.
+- Reasonable file count: hundreds of tables × few disks → low thousands of archives, not 10⁴+ per-part archives.
+- Small files of disparate types don't benefit from per-type clustering; the win from cross-type compression is small once the big homogeneous files are in the blob store.
+
+### 6.4 Upload — `cas-upload`
+
+**Pre-condition**: `cas-upload` operates on a **pre-existing local backup** produced by the existing `clickhouse-backup create` command (which freezes parts into the local backup directory). This mirrors the v1 `create` + `upload` split: separation of concerns, reuses `pkg/backup/create.go` unchanged, and lets operators inspect the local backup before pushing. `cas-upload` does NOT internally freeze — operators run `clickhouse-backup create <name>` first, then `clickhouse-backup cas-upload <name>`.
+
+1. PID-lock as today (`pkg/pidlock`).
+2. **Refuse if `cas/prune.marker` exists** (the GC lock — see §6.7). Surface the marker's age in the error.
+3. **Pre-flight check for object disks**: scan in-scope tables. If any are on object disks (s3/azure/hdfs) and `--skip-object-disks` is not set, refuse with a list of `(db, table, disk)` triples. With `--skip-object-disks`, log them and exclude from the upload set.
+4. **Best-effort same-name check**: refuse if `cas/metadata/<backup>/metadata.json` already exists. Best-effort only — two hosts can both pass and both PUT (last writer wins). Multi-host concurrent uploads to the same name are **unsupported** (§3); operators must use unique names per shard.
+5. Write `cas/inprogress/<backup>.marker` with timestamp + host identifier (used by prune for abandoned-upload cleanup; not for race protection).
+6. Walk parts. For each part, parse `checksums.txt` to obtain `(filename, size, hash)` triples. Apply the inline threshold.
+7. Build the set of unique blob paths.
+8. **Cold-list** `cas/blob/<aa>/` prefixes in parallel → in-memory existence set.
+9. Upload missing blobs via the existing `BackupDestination` abstraction.
+10. For each `(disk, db, table)`: build and upload `cas/metadata/<backup>/parts/<disk>/<enc_db>/<enc_table>.tar.zstd` (path components encoded via `common.TablePathEncode`).
+11. Upload per-table JSONs at `cas/metadata/<backup>/metadata/<enc_db>/<enc_table>.json`.
+12. Upload RBAC, configs, named_collections (unchanged from v1).
+13. **Pre-commit safety re-checks** (closes the old-orphan-reuse and long-upload-vs-abandon-sweep races — Blockers B4, B5):
+    a. HEAD `cas/prune.marker`. If present, abort: "concurrent prune detected; aborting before commit." (Single HEAD; cheap; closes the window where prune ran past our step 2 lock check.)
+    b. HEAD `cas/inprogress/<backup>.marker`. If absent, abort: "our in-progress marker was swept (upload exceeded abandon_threshold); aborting." (Closes the long-upload-past-abandon-sweep race.)
+14. **Commit (LAST, in this order)**:
+    a. Upload `cas/metadata/<backup>/metadata.json` — populates `BackupMetadata.CAS` per §6.2.1. Until this exists, the backup is not in the catalog.
+    b. Delete `cas/inprogress/<backup>.marker`. (If this fails — 5xx, OOM, Ctrl-C — the marker becomes stale; `cas-delete` is required to treat it as stale when `metadata.json` exists, see §6.6.)
+
+The presence of `cas/metadata/<backup>/metadata.json` is the catalog truth.
+
+### 6.5 Restore — `cas-restore`
+
+CAS restore is implemented as **`cas-download`** (downloads + materializes a complete v1-shaped backup directory on local disk) followed by the **existing v1 restore flow** (which reads from that local directory).
+
+The existing restore reads metadata **from disk**, not in-memory:
+- Root `metadata.json` is read by `pkg/backup/restore.go:114`.
+- Per-table JSONs are read from the local `metadata/` directory by `pkg/backup/restore.go:1936`.
+
+So `cas-download` MUST write the complete v1 backup directory layout before `cas-restore` invokes the existing restore. "Synthesize in memory and call restore" is **not** sufficient; existing restore won't see synthesized structures.
+
+#### What `cas-download` writes locally
+
+For backup `<name>` rooted at `<local_backups_dir>/<name>/`:
+
+```
+<name>/
+  metadata.json                                # full BackupMetadata (DataFormat="directory")
+  metadata/<enc_db>/<enc_table>.json           # full TableMetadata per table (Parts populated,
+                                               #   Files empty, schema fields preserved as in v1)
+  shadow/<enc_db>/<enc_table>/<disk>/<part>/   # part directories with all files reconstructed:
+                                               #   - small files extracted from per-table archive
+                                               #   - large files downloaded from cas/blob/...
+  rbac/, configs/, named_collections/          # downloaded as today
+```
+
+Every file the existing restore expects must exist on disk before handoff.
+
+#### Local staging contract
+
+- `BackupMetadata.DataFormat = "directory"` (`pkg/metadata/backup_metadata.go:30`; constant `pkg/backup/backuper.go:28` `DirectoryFormat`). Branches existing restore code into the no-archive path (`pkg/backup/download.go:615, 627, 670`).
+- `TableMetadata.Parts` populated; `TableMetadata.Files` empty (only consumed when `DataFormat != "directory"`; `pkg/backup/download.go:673`).
+- `TableMetadata.Checksums` is **not populated** by CAS (the per-archive CRC64 the v1 path uses is irrelevant — checksums.txt inside each part directory is the source of truth for blob content).
+- Reuses `filesystemhelper.HardlinkBackupPartsToStorage` (`pkg/filesystemhelper/filesystemhelper.go:119`) for the staging-to-detached step.
+
+#### `cas-download` steps
+
+1. Resolve the backup name. Read `cas/metadata/<backup>/metadata.json`. **Read `BackupMetadata.CAS` to get the persisted parameters** (`LayoutVersion` and `InlineThreshold` — those are the only fields per §6.2.1); restore uses these — never values from the current config.
+2. Refuse if `BackupMetadata.CAS == nil` (v1 backup) or `LayoutVersion` is unsupported.
+3. Apply CLI filters (`--tables`, `--partitions`, `--schema-only`, `--data-only`, mappings, etc.) to determine the working set of `(db, table, parts)`.
+4. Write the local `metadata.json` and per-table `metadata/<enc_db>/<enc_table>.json` files to disk first (the existing restore flow reads them from disk).
+5. For each in-scope `(disk, db, table)`: download `parts/<disk>/<enc_db>/<enc_table>.tar.zstd`, extract into the local shadow directory at the canonical layout path. **Path containment** for every tar entry, assert `strings.HasPrefix(filepath.Clean(extractPath)+sep, filepath.Clean(rootDir)+sep)` before write; reject `..` and absolute paths. **`checksums.txt` filename validation**: when parsing, reject any filename with leading `/`, embedded `..` components, or NUL bytes; allow single `/` separators only for projection paths matching `<name>.proj/<file>`. Each part directory now contains all small files including `checksums.txt`.
+6. For each part in scope: parse the local `checksums.txt`, identify files with `size > BackupMetadata.CAS.InlineThreshold` (i.e. files NOT in the archive), download each from `cas/blob/<aa>/<rest>` into the part directory. The full part directory is now reconstructed locally.
+
+`cas-download` exits here. The local layout is exactly what `restore` consumes.
+
+#### `cas-restore`
+
+1. Run `cas-download` (steps above) with the same flags.
+2. Invoke the existing `restore` flow on the materialized local directory. **Object-disk handling MUST be skipped**: `pkg/backup/restore.go:196-204` checks live ClickHouse disks, not metadata; CAS restore must short-circuit `downloadObjectDiskParts` when `BackupMetadata.CAS != nil`. The pre-flight in `cas-upload` ensures CAS backups never include object-disk parts, so no object-disk processing is needed at restore.
+
+This split also matches v1's `download` + `restore` verb pair and lets operators inspect the staged directory before applying.
+
+Per-partition restore is per-part filtering: intersect `TableMetadata.Parts` with `--partitions`, then proceed only with selected parts. The per-table archive is downloaded whole even for one partition (acceptable overhead).
+
+`--schema-only` skips steps 4–5 entirely; very fast for CAS.
+
+### 6.6 Delete — `cas-delete`
+
+**Order matters.** The catalog truth is `metadata.json`.
+
+1. **Refuse if `cas/prune.marker` exists** (the GC lock).
+2. **Stale-marker-aware inprogress check**: if `cas/inprogress/<backup>.marker` exists AND `cas/metadata/<backup>/metadata.json` does NOT exist → upload in flight; refuse. If both exist → the upload committed but failed to delete its marker; treat as **stale** and proceed (log a warning). If only `metadata.json` exists → normal case; proceed.
+3. Delete `cas/metadata/<backup>/metadata.json` **first**. Backup is no longer in the catalog.
+4. Delete the rest of `cas/metadata/<backup>/`.
+5. Orphan blobs reclaimed by the next prune run.
+
+If interrupted between steps 3 and 4: the backup is gone from the catalog; remaining files become metadata-orphans. Prune handles them lazily.
+
+### 6.7 Prune — `cas-prune`
+
+Mark-and-sweep GC. **Single rule**: `cas-prune` takes an exclusive lock; while held, no `cas-upload` or `cas-delete` may run. Operators schedule pruning during a quiet window. There is no automatic protection — the operator must ensure no CAS writes are happening.
+
+#### Algorithm
+
+1. **Sanity check** (operator-courtesy): list `cas/inprogress/*.marker`. If any is younger than `abandon_threshold` (default 7 days), refuse with a clear error listing the markers (name, host, age) and exit. The operator either waits for the upload to finish or, if confident the upload is dead, deletes the marker manually before retrying.
+2. Write `cas/prune.marker` with timestamp + host id + a random run-id. **Read it back** and compare run-id to ours; if it differs, another `cas-prune` raced us — abort with "concurrent prune detected; aborting". **Defer the marker delete to the end of the function** so step 12 always runs even if intermediate steps fail or panic. The defer-release MUST run on every exit path: success, fail-closed abort, panic, signal cancellation, error returns.
+3. Record `T_0 = now()`.
+4. **Abandoned-upload sweep**: any `cas/inprogress/<backup>.marker` older than `abandon_threshold` → delete it. Any blobs from the abandoned run become orphans handled by step 9.
+5. List `cas/metadata/*/metadata.json` → live backup set.
+6. For each live backup, walk per-table archives, extract `checksums.txt` files, accumulate referenced blob paths into a sorted on-disk file (streaming).
+7. **Fail-closed**: if any live backup's per-table archives or JSONs cannot be read, abort without deleting; surface error.
+8. List `cas/blob/<aa>/` in parallel; stream-compare against the referenced set to identify orphan candidates.
+9. Filter deletion candidates: orphan AND `LastModified < T_0 - grace_blob` (default 24h).
+10. Sweep metadata-orphan subtrees: `cas/metadata/<backup>/` with no `metadata.json` → delete.
+11. Delete confirmed blob candidates.
+12. Release `cas/prune.marker`. (Implemented as a deferred call from step 2 — runs unconditionally.)
+
+**Stale-marker recovery**: defer-release covers panics, signals, and error returns. Only `kill -9` or kernel OOM-kill leaves a stranded marker. When that happens, the operator inspects and clears it explicitly:
+
+- `cas-status` displays `cas/prune.marker` if present (timestamp, host, run-id).
+- `cas-prune --unlock` deletes the marker (after operator confirms no prune is actually running). Refuses if a marker isn't present (avoid silently doing nothing).
+
+No timeout-based auto-bypass; operator owns the call. Documented in the operator runbook.
+
+`cas-prune --dry-run` runs steps 1, 3–10 and prints what would be deleted; does not write the lock or perform deletes.
+
+#### Why this works
+
+The single load-bearing rule: **don't run `cas-upload` or `cas-delete` while `cas-prune` is running.** `cas-upload` and `cas-delete` enforce this by refusing to start when `cas/prune.marker` exists.
+
+The grace period (`grace_blob`, default 24h) is defense-in-depth against:
+- The TOCTOU window between `cas-upload`'s marker check and the prune lock write (small).
+- Operator misuse (running prune during uploads anyway, or ignoring marker errors).
+- Object-store eventual-consistency oddities.
+
+**This is not a distributed mutex.** Two operators racing `cas-prune` on different hosts can both pass step 1 and both PUT step 2. Operators must serialize prune across hosts the same way they serialize v1 commands today (no overlapping cron, etc.). Distributed locking is a non-goal (§3); v2 may add it via S3 conditional-create.
+
+#### Race scenarios
+
+| Scenario | Outcome |
+|---|---|
+| Operator starts `cas-upload` while prune holds the lock | Upload refuses; clear error naming the prune marker's age and host. |
+| Operator starts `cas-prune` while uploads are in flight | Prune refuses (step 1) with a list of fresh inprogress markers. |
+| Operator forces the issue (deletes markers manually) | Grace period limits damage to blobs younger than `grace_blob`. Beyond that, on their own. |
+| Upload crashes mid-flight | Inprogress marker persists. Next prune blocks until `abandon_threshold`; then sweeps marker; orphan blobs reclaimed. |
+| Two uploaders race on same blob | Idempotent (content-keyed). |
+| Crashed remove between deleting metadata.json and rest of subtree | Backup gone from catalog; remaining files become metadata-orphans; step 10 sweeps. |
+| Backend with weak `LastModified` semantics | Grace degrades; rely harder on operator scheduling. Document. |
+
+### 6.8 Verify — `cas-verify`
+
+Integrity check, ships with v1:
+
+1. Read `cas/metadata/<backup>/metadata.json` and `metadata/<enc_db>/<enc_table>.json` for all tables.
+2. Download per-table archives, extract `checksums.txt` files into memory. Build the set of `(blob_path, expected_size)` pairs.
+3. **HEAD each blob in parallel**. Report:
+   - Missing blobs (HEAD 404).
+   - **Size mismatches**: HEAD-returned `Content-Length` vs. expected size from `checksums.txt`. Catches truncated, replaced, or partially-written blobs at zero CPU cost.
+4. Exit non-zero if any failures.
+
+`cas-verify --json` emits machine-readable output (one JSON object per failure) so operators can pipe into tooling for triage / alerts.
+
+Does NOT verify blob *content* hashes against `checksums.txt` — that's a separate v2 mode (full re-hash on download, ~minutes-to-hours wall-clock at 100TB scale). HEAD + size verification catches the silent-corruption-from-buggy-GC class of failures, which is the most likely failure mode in v1, at near-zero cost.
+
+#### Recovery from `cas-verify` failures
+
+If `cas-verify` reports missing or wrong-sized blobs, the backup is unrestorable. v1 has no automated repair — `cas-delete` the broken backup and create a fresh one (`clickhouse-backup create <new_name>` + `cas-upload <new_name>`). Because every CAS backup is independent (no chain), losing one doesn't affect any other.
+
+`cas-fsck` (v2) will automate repair when local parts are still available.
+
+### 6.9 Multi-shard concurrent upload to a shared bucket
+
+Supported natively, with one convention: backup names must be unique across writers. Recommended naming: `<cluster>__<shard>__<timestamp>` or similar.
+
+Mechanics:
+- Different shards write to different `cas/metadata/<backup>/` directories. No collision.
+- Different shards may upload identical blobs concurrently. Idempotent (content-keyed). Worst case: a small amount of wasted bandwidth.
+- Prune is single-writer (marker file); operators must ensure only one prune runs at a time across all shards.
+
+This is a strict improvement over v1, which requires per-shard separate prefixes.
+
+### 6.10 CLI surface
+
+Six new top-level subcommands, plus extension of the existing `list` verb:
+
+| Command | Purpose |
+|---|---|
+| `cas-upload <name> [--skip-object-disks] [--dry-run]` | Build and push a CAS backup. `--skip-object-disks` excludes object-disk tables; `--dry-run` reports what would be uploaded without writing. |
+| `cas-download <name> [--tables ...] [--partitions ...]` | Materialize a CAS backup into the local shadow directory in v1 layout. **Stops there** — does not load into ClickHouse. Mirrors the existing `download` verb. **Disk-space pre-flight**: estimate bytes from per-table archive sizes + sum of blob sizes from `checksums.txt`; refuse early if local free space < estimate × 1.1. Re-running over a partial directory is safe (idempotent overwrites). |
+| `cas-restore <name> [...all existing restore flags...]` | Convenience: `cas-download` followed by the existing `restore` flow. Identical flag set to `restore`. |
+| `cas-delete <name>` | Delete the per-backup metadata subtree (refuses if upload or prune in flight; see §6.6). Blobs are reclaimed by the next prune run. |
+| `cas-prune [--dry-run] [--grace-hours N] [--abandon-days N] [--unlock]` | Mark-and-sweep GC. `--dry-run` prints candidates without deleting. `--unlock` deletes a stranded `cas/prune.marker` (operator escape hatch when prune was killed by SIGKILL/OOM). |
+| `cas-verify <name> [--json]` | HEAD + size check on referenced blobs. `--json` outputs structured failures for tooling. |
+| `cas-status` | Bucket-level health summary: backup count, blob count, total bytes, freshest/oldest backup, in-progress markers (with age + host), prune marker state, abandoned-marker candidates. Cheap (LIST only). |
+
+**Existing `list` extended**: `clickhouse-backup list remote` enumerates v1 *and* CAS backups, with a `[CAS]` tag. `clickhouse-backup list local` unchanged. No new `cas-list` verb — symmetry beats command proliferation.
+
+**Help-text discoverability**:
+- The existing `upload --help` gains a closing line: *"For mutation-heavy tables or chain-free incrementals, see `cas-upload`."*
+- The README gains a short "CAS layout" section pointing to this design doc.
+
+**Rejected flags**: `cas-restore` does NOT accept `--ignore-dependencies`. CAS backups have no chain, so the flag is meaningless; passing it produces an error ("CAS backups have no dependencies; flag not applicable") rather than silently being a no-op.
+
+**Retention behavior**: `cas-upload` MUST NOT call `RemoveOldBackupsRemote`. CAS retention is exclusively managed by `cas-prune`. The v1 `backups_to_keep_remote` config knob applies only to v1 backups (and the §6.2.0 prefix exclusion ensures CAS backups don't accidentally count toward it).
+
+### 6.11 Configuration surface
+
+CAS-specific parameters live under a `cas:` block in `config.yml`. Existing config file paths and env-var conventions are unchanged.
+
+```yaml
+cas:
+  enabled: false             # gate; set true to allow cas-* commands against this config
+  cluster_id: ""             # REQUIRED, no default. Identifies the source cluster;
+                             #   persisted in BackupMetadata.CAS.ClusterID.
+  root_prefix: "cas/"        # top-level prefix in the bucket. Effective per-cluster prefix
+                             #   is <root_prefix><cluster_id>/  (e.g. "cas/prod-shard-1/")
+  inline_threshold: 524288   # bytes; ValidateBackup MUST reject 0 or > 1 GiB
+  grace_blob: "24h"          # prune won't delete a blob younger than this
+  abandon_threshold: "168h"  # 7 days; in-progress markers older than this are auto-cleaned
+```
+
+**Per-cluster prefix is mandatory.** Operators MUST configure `cluster_id`. Cross-cluster blob sharing is out of scope for v1; if anyone needs it, it's a v2 conversation with its own threat model.
+
+**Env vars** (override config; prefix `CAS_*` for symmetry with `S3_*`/`GCS_*`/`AZBLOB_*`):
+- `CAS_ENABLED`, `CAS_CLUSTER_ID`, `CAS_ROOT_PREFIX`
+- `CAS_INLINE_THRESHOLD`, `CAS_GRACE_BLOB`, `CAS_ABANDON_THRESHOLD`
+
+**CLI flags** (override config + env):
+- `cas-prune --grace-hours N --abandon-days N --dry-run`
+- `cas-upload --skip-object-disks --dry-run`
+- `cas-verify --json`
+
+`inline_threshold` is read from config at upload time and **persisted** in `BackupMetadata.CAS.InlineThreshold`. Restore uses the persisted value, never the current config (§6.2.1).
+
+## 7. Reuse vs. new code
+
+### Reused as-is
+- `pkg/storage/general.go` — `BackupDestination`, multipart, retry, throttling, `CopyObject`
+- `pkg/metadata/backup_metadata.go:12` — `BackupMetadata` struct (don't populate `RequiredBackup`; new `CAS` field added — see §6.2.1)
+- `pkg/metadata/table_metadata.go:10` — `TableMetadata` struct (write `Parts` populated, `Files` empty, `DataFormat = "directory"`)
+- `pkg/backup/backuper.go:28` — `DirectoryFormat` constant
+- `pkg/backup/backuper.go:145` — shadow-directory layout for local staging
+- `pkg/common/common.go:18` — `TablePathEncode` for db/table path components
+- `pkg/pidlock/pidlock.go:15` — per-backup PID locking
+- `pkg/backup/upload.go:114` — `prepareTableListToUpload` table iteration
+- `pkg/filesystemhelper/filesystemhelper.go:119` — `HardlinkBackupPartsToStorage` for staging-to-detached
+- `pkg/resumable/state.go` — progress tracking (BoltDB) usable for blob-level resume
+- All `pkg/clickhouse/*` query helpers
+- All restore-side schema/RBAC/configs handling
+
+### New code (estimate: ~1500-2500 LOC)
+- **`pkg/checksumstxt/`** — parser for ClickHouse's `checksums.txt` format (versions 2/3/4 on-disk; v5 minimalistic for completeness). Reference implementation already drafted at `docs/checksumstxt/checksumstxt.go` (300 LOC) with tests at `docs/checksumstxt/checksumstxt_test.go` (271 LOC) and full format spec at `docs/checksumstxt/format.md`. Move into `pkg/checksumstxt/` during Phase 1 — this is a ClickHouse part-format concept, not a CAS concept; namespace it accordingly. Keep tests against real ClickHouse part fixtures spanning compact, wide, encrypted, and projection parts.
+- **`pkg/cas/validate.go`** — single `ValidateBackup(ctx, name) error` function used as a precondition by every CAS command. Enforces:
+  1. Backup name is well-formed (printable ASCII only, no NUL or control chars, len ≤ 128, no `..` or path separators).
+  2. `metadata.json` exists and parses.
+  3. `BackupMetadata.CAS != nil` and `LayoutVersion ≤ supported_max` (refuse newer; §6.2.1).
+  4. `InlineThreshold > 0 AND ≤ 1 GiB`.
+  5. `ClusterID` is non-empty and matches the configured cluster.
+  6. All referenced per-table archives can be HEADed.
+  7. Inprogress / prune marker state is consistent with the catalog (used by `cas-delete`'s stale-marker logic, §6.6 step 2).
+**Backend assumptions** (no probe in v1): CAS assumes the configured backend provides read-your-writes consistency for individual objects and a meaningful `LastModified`. AWS S3, MinIO, GCS, and Azure Blob all qualify. Quirky on-prem backends are the operator's risk to validate; document the assumption in the operator runbook.
+- **`pkg/cas/blobpath.go`** — derives blob paths from hashes. Trivial.
+- **`pkg/cas/upload.go`** — orchestrates the upload protocol in §6.4 (object-disk pre-flight, prune-lock check, marker management). Calls into existing `BackupDestination`.
+- **`pkg/cas/download.go`** — implements `cas-download`: materializes a backup into the shadow directory.
+- **`pkg/cas/restore.go`** — thin: invokes `cas-download` then hands off to existing restore flow.
+- **`pkg/cas/delete.go`** — implements §6.6 (prune-lock check, ordered delete).
+- **`pkg/cas/prune.go`** — implements §6.7. Streaming mergesort, parallel listings, lock-and-sweep.
+- **`pkg/cas/verify.go`** — implements §6.8 (HEAD + size; `--json` output).
+- **`pkg/cas/cache.go`** — cold-list and in-memory existence set. (Spill-to-disk only if a real workload exhausts memory; ship in-memory first.)
+- **`pkg/cas/list.go`** — thin helpers used by the existing `list remote` to surface CAS backups with a `[CAS]` tag.
+- **`cmd/clickhouse-backup/cas_*.go`** — command bindings.
+- **`pkg/cas/config.go`** — CAS-specific config: root prefix, inline threshold, grace period, abandon threshold (the actual persisted parameters and the configurable knobs).
+
+See §6.10 for the full CLI surface.
+
+## 8. Risk register
+
+| # | Risk | Likelihood | Impact | Mitigation |
+|---|------|-----------|--------|-----------|
+| R1 | `checksums.txt` parser bug (format version edge case, multi-block compressed v4, projection paths, etc.) producing wrong hashes → blob mis-keyed → silent corruption at restore | Low-Medium | High | Reference parser already drafted at `docs/checksumstxt/` with format spec and unit tests covering v2/v3/v4 paths. Add fixture-based tests against real ClickHouse part directories spanning compact, wide, encrypted, projection, and multi-disk parts before Phase 1 ships. `cas-verify` size check catches some manifestations. |
+| R2 | GC race: in-flight upload's blob deleted before commit, OR old-orphan-reuse during concurrent prune | Low (with operator discipline) | High | `cas-prune` takes an exclusive lock; `cas-upload` and `cas-delete` refuse while it's held. `grace_blob` is defense-in-depth. Operator must serialize prune across hosts (no overlapping cron). |
+| R4 | Hash collision (CityHash128) | Negligible | High | 128 bits → ~10¹⁸ blobs before 10⁻⁶ collision probability. Practically impossible at any plausible scale. Documented. |
+| R5 | Memory blowup at upload (cold-list set of 10⁷ hashes) or at GC (live set of 10⁸+ hashes) | Medium | Medium | Spill cold-list to sorted on-disk file at >N entries. GC uses streaming mergesort with bounded memory. |
+| R6 | Object store backend doesn't honor `LastModified` semantics needed for grace check (e.g., quirky on-prem MinIO) | Medium | High | Document: grace mechanism assumes `LastModified` reflects actual write time. Fall back to `abandon_threshold`-based stricter mode for non-conforming backends. |
+| R7 | Per-table archive becomes huge (table with many parts) → restore must download whole archive even for partial-partition restore | Medium | Low | Acceptable v1; if it becomes a problem, switch to per-part archives or multi-archive splitting (matches existing `splitPartFiles` infrastructure). |
+| R9 | Bucket cost surprise: per-PUT charges from many small blobs if inline threshold misconfigured | Low | Medium | Inline threshold default 512 KB. Document the cost trade-off. |
+| R10 | First CAS upload after migration is huge because nothing is shared with v1 backups | Certain | Low | Expected. Document. CAS dedup compounds across subsequent CAS backups. |
+| R11 | Crashed upload leaves orphan blobs that aren't reclaimed for `grace_blob` | Certain | Low | Expected; tolerable per design. The orphan-cleanup latency is bounded by `grace_blob`. |
+| R13 | Object-disk tables encountered during `cas-upload` cause silent skip or partial backup | Certain (if user has them) | High | `cas-upload` does pre-flight pass and refuses with a list of offending `(db, table, disk)` triples. `--skip-object-disks` excludes them. Operator must use v1 `upload` for those tables. v2 lifts. |
+| R17 | Same-name concurrent `cas-upload` from two hosts: both pass the metadata.json existence check, both PUT, last writer wins on root metadata | Low (if naming convention followed) | High | v1 of CAS does not protect against this; documented as unsupported (§6.4 step 3). Operators MUST use unique backup names per shard. v2 may add S3 conditional-create-based "claim" for multi-host coordination. |
+| R14 | Layout-parameter mismatch between upload-time config and restore-time config (e.g., `inline_threshold` changed) → restore reads wrong location → silent corruption | Medium | High | Persist all layout parameters in `BackupMetadata.CAS` (§6.2.1); restore reads from there exclusively, ignoring config. CAS commands refuse to operate on backups whose `CAS` block is missing or has unknown `LayoutVersion`. |
+| R15 | Adversarial CityHash128 collision (attacker crafts a colliding blob to corrupt restore) | Negligible-Low | High | CityHash128 is non-cryptographic; collisions are findable by motivated attackers. Backup-tool threat model assumes trusted bucket. **CAS cannot switch to a stronger hash without ClickHouse upstream changes** — the hash comes from each part's `checksums.txt`, written by ClickHouse. If adversarial-collision resistance becomes a real requirement, it's an upstream conversation, not a clickhouse-backup change. |
+| R16 | `cas-delete` interrupted between deleting `metadata.json` and rest of subtree → metadata-orphans accumulate | Low | Low | Live-set computation ignores subtrees without `metadata.json` (§6.6). Prune does lazy cleanup of metadata-orphan directories. |
+
+## 9. Deferred to v2 of CAS
+
+- **Hash verification on download** (full content re-hash). Cheap per blob; v1 ships size verification only.
+- **Object-disk parts**.
+- **Refcount-delta optimization for prune**: re-evaluate if the catalog grows past several hundred backups or prune wall-clock becomes painful. Decide on shape (post-commit manifest, per-backup blob-list sidecar, or delta files) based on real measurements.
+- **Distributed locking via S3 conditional create** (replaces the advisory marker).
+- **`cas-fsck`** repair tool: walks local part directories and re-uploads missing blobs in bulk.
+- **Convergent encryption** (so existing v1 client-side-encryption users can migrate).
+- **Per-blob resumable uploads**: existing `pkg/resumable` is per-archive. Either extend it or design a separate completion log.
+
+## 9.1 Implementation-time decisions
+
+- **Inline threshold default**: 512 KB is a starting point; profile against a representative ClickHouse part-file distribution before locking it in.
+
+## 10. Appendix
+
+### 10.1 Request-rate sanity check (justifies 256-prefix sharding)
+
+S3 limits: ~3500 PUT/COPY/POST/DELETE per second per partition prefix; ~5500 GET/HEAD per second per partition prefix.
+
+**Upload phase** (100 TB × 10⁷ files; assume 1 GB/s network; ~10 MB avg file):
+- Aggregate ~100 PUT/s. Distributed evenly across 256 prefixes → ~0.4 PUT/s/prefix. Three orders of magnitude under the limit.
+- Worst case (small-file-heavy, 1 MB avg): ~1000 PUT/s aggregate → ~4 PUT/s/prefix. Still trivial.
+
+**Cold-list phase**:
+- 10⁷ blobs / 1000 keys per page = 10⁴ LIST calls. With 256-way parallelism: ~40 LIST per prefix; <1 second wall-clock.
+- Cost: ~$0.05.
+
+**Garbage collection**:
+- LIST `metadata/*` → ~100 entries; one call.
+- Metadata archive download: ~10⁴ archives total at ~MB each; tens of GB total; same-region S3 egress is free; minutes wall-clock.
+- LIST `blob/*` for orphan scan: same as cold-list; <1 second wall-clock.
+
+Two-byte sharding gives ample headroom. One-byte (16 prefixes) would also work at this scale. Two-byte is git-familiar and provides headroom for users with much larger catalogs.
+
+### 10.2 Memory budget
+
+- **Upload-time existence cache**: ~10⁷ blobs × 32 bytes/hash + overhead ≈ 600 MB peak. v1 ships in-memory only; spill-to-disk added only if a real workload exhausts memory. (600 MB is acceptable on any host already running clickhouse-backup against 100TB.)
+- **GC-time live-set**: ~10⁸ refs aggregate across 100 backups; held as a sorted on-disk file (streaming mergesort over per-backup contributions). Bounded RAM regardless of catalog size.
+- **GC-time orphan-scan**: streaming compare against the on-disk live-set; bounded RAM.
+
+### 10.3 Implementation phasing
+
+**Phase 1** — MVP upload + restore round-trip (the smallest shippable thing):
+- Move `docs/checksumstxt/` into `pkg/checksumstxt/`; extend tests with real ClickHouse part fixtures (compact, wide, encrypted, projection, multi-disk)
+- `pkg/cas/config.go` with the §6.11 schema; `BackupMetadata.CAS` struct + persistence (§6.2.1)
+- Blob path derivation, encoded db/table path components
+- Object-disk detection (pre-flight + `--skip-object-disks`)
+- `cas-upload`: prune-lock check, `metadata.json` collision check, cold-list cache, blob upload, per-table `.tar.zstd`, ordered commit (§6.4 step 13)
+- `cas-download` and `cas-restore`: shadow-directory staging with `DataFormat="directory"`, filter support (`--tables`, `--partitions`, `--schema-only`, `--data-only`, `--restore-database-mapping`, `--restore-table-mapping`, `--rm`); `--ignore-dependencies` rejected with explicit error
+- `cas-delete` (prune-lock check, ordered delete §6.6)
+- `cas-verify` (HEAD + size; `--json`)
+- `cas-delete` (with §6.6 ordering: metadata.json first)
+- `list remote` extended to surface CAS backups with `[CAS]` tag
+- v1 `BackupList` / `RemoveBackupRemote` / `RemoveOldBackupsRemote` / `CleanRemoteBroken` exclude the configured CAS root prefix- Cross-mode guards in v1 `delete` / `download` / `restore` (§6.2.2)
+- README + `--help` discoverability hooks (§6.10)
+
+**Phase 1.5** — operational primitives (between MVP and prune):
+- `cas-status` (bucket health summary; LIST-only, cheap; surfaces in-progress markers and prune-marker state)
+
+**Phase 2** — prune:
+- `cas-prune`: mark-and-sweep with exclusive lock (refuses while `cas-upload`/`cas-delete` are in flight; the symmetric refusal is enforced from the upload/remove side), abandoned-upload sweep, grace-period delete, fail-closed on unreadable live-backup metadata, metadata-orphan lazy cleanup
+- `--dry-run` for sanity checks
+- Operator runbook (when to run, what failures mean, manual recovery from `cas-verify` output)
+
+**Phase 3** — hardening (only as needed):
+- Per-blob resumable uploads (extend `pkg/resumable`)
+- Performance benchmarks against representative datasets. **TODO**: pin concrete success targets before benchmarking. Suggested starting points (operator to confirm):
+  - **Mutation dedup**: post-mutation backup uploads ≤ 5% of unmutated backup size on a 100TB-with-one-mutated-column scenario (the headline value-prop).
+  - **Cold full backup**: within 1.2× of v1's wall-clock for the same dataset (slight overhead acceptable due to per-file HEAD checks).
+  - **Repeat-of-same-data backup**: < 5 min wall-clock for 100TB if all blobs are already present (cold-list dominates).
+  - **Restore**: within 1.5× of v1's wall-clock (slower due to per-blob fetches; acceptable trade for chain-free).
+- Stress tests for the prune-lock + grace-period correctness paths
+
+**Deferred (post-v1 of CAS)**:
+- Hash-on-download verification
+- Refcount-delta or blob-manifest optimization for prune (decide based on real GC measurements)
+- Distributed locking via S3 conditional writes
+- `cas-fsck` repair tool
+- Object-disk support
+- Convergent encryption
+
+### 10.4 Ship-gating tests
+
+Implementer fills in normal coverage during code review. These are the load-bearing tests that must pass before each phase ships:
+
+**Phase 1:**
+- `TestCASRoundtrip` — cas-upload → cas-download → byte-compare every file.
+- `TestMutationDedup` — the headline value-prop. Backup, ALTER UPDATE one column, OPTIMIZE, backup again; assert the second backup uploads roughly the mutated-column's blobs only.
+- `TestCompatibilityMixedBucket` — v1 + CAS backups same bucket; v1 commands refuse CAS targets; v1 retention/list/clean-broken don't touch CAS prefix.
+- `TestV1RefusesCASBackup` / `TestCASRefusesV1Backup` — cross-mode guards.
+- `TestUploadCommitChecksPruneMarker` — pre-commit re-check closes the old-orphan-reuse race.
+- `TestParseV4_MultiBlock` / `TestParseFilenameTraversal` — parser hardening.
+- `TestTarExtractionContainment` — path-traversal defense (also patch the v1 path).
+
+**Phase 2 (prune):**
+- `TestPruneGracePeriodRespected` — fresh blob younger than `grace_blob` is never deleted.
+- `TestPruneMarkerReleasedOnError` — defer-release runs on every exit path.
+- `TestPruneSweepsAbandonedMarker` — markers older than `abandon_threshold` are cleaned up.
+
+### 10.5 Glossary
+
+- **Blob**: an immutable file in `cas/blob/<aa>/<rest>`, content-keyed by the CityHash128 of its contents.
+- **Live set / referenced set**: union of blob paths referenced by any backup whose `metadata.json` exists.
+- **Orphan**: a blob in the blob store with no live references.
+- **Grace period (`grace_blob`)**: the minimum age a blob must have before prune may delete it.
+- **Abandon threshold**: how long an `inprogress` marker must persist before being treated as a crashed upload.
+- **Cold-list**: parallel `LIST` of all `cas/blob/<aa>/` prefixes at the start of an upload, to seed the existence cache.
+- **In-progress marker**: a small sentinel file at `cas/inprogress/<backup>.marker` written when an upload starts and deleted at commit.
+- **Prune marker**: `cas/prune.marker`. The advisory exclusive lock for GC. While present, `cas-upload` and `cas-delete` refuse to start.
