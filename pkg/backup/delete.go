@@ -12,6 +12,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/custom"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
@@ -340,6 +341,13 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
+			// CAS backups are deleted via the cas-delete CLI
+			// (Task 15) which runs the §6.6 cold-list/blob-prune
+			// ordering. The v1 prefix-blast path here would orphan
+			// CAS blobs and leave the warm-list inconsistent.
+			if backup.CAS != nil {
+				return cas.ErrCASBackup
+			}
 			err = b.cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx, backup)
 			if err != nil {
 				return errors.WithMessage(err, "cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent")

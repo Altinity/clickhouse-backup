@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -125,6 +126,12 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	}
 	if !found {
 		return errors.Errorf("'%s' is not found on remote storage", backupName)
+	}
+	// CAS backups must be downloaded via the cas-download CLI
+	// (pkg/cas.Download); the v1 path expects per-part archives + per-disk
+	// metadata trees that the CAS layout does not produce.
+	if remoteBackup.CAS != nil {
+		return cas.ErrCASBackup
 	}
 	if len(remoteBackup.Tables) == 0 && remoteBackup.RBACSize == 0 && remoteBackup.ConfigSize == 0 && remoteBackup.NamedCollectionsSize == 0 && !b.cfg.General.AllowEmptyBackups {
 		return errors.Errorf("'%s' is empty backup", backupName)
