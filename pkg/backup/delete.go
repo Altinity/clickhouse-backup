@@ -366,6 +366,9 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 			return nil
 		}
 	}
+	if isCASBackupRemote(ctx, bd, b.cfg.CAS, backupName) {
+		return cas.ErrCASBackup
+	}
 	return errors.Errorf("'%s' is not found on remote storage", backupName)
 }
 

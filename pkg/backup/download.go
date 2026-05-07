@@ -125,6 +125,15 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		}
 	}
 	if !found {
+		// Before reporting "not found", check whether the named backup
+		// exists in the CAS namespace. v1 BackupList walks the root level
+		// only and skips the CAS prefix; CAS backups live at
+		// cas/<cluster>/metadata/<name>/, so a name typo from CAS to v1
+		// would hit this branch with a misleading error. Surface the
+		// proper cross-mode refusal instead.
+		if isCASBackupRemote(ctx, b.dst, b.cfg.CAS, backupName) {
+			return cas.ErrCASBackup
+		}
 		return errors.Errorf("'%s' is not found on remote storage", backupName)
 	}
 	// CAS backups must be downloaded via the cas-download CLI

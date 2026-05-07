@@ -14,6 +14,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas/casstorage"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/rs/zerolog/log"
 )
@@ -506,4 +507,27 @@ func splitTablePattern(p string) []string {
 		return nil
 	}
 	return out
+}
+
+// isCASBackupRemote returns true if a backup with the given name exists
+// in the CAS namespace (cas/<cluster>/metadata/<name>/metadata.json).
+// Used by v1 download/restore/delete to surface a proper cross-mode
+// refusal instead of "not found on remote storage" when an operator
+// types a CAS backup name into a v1 command. Best-effort: returns false
+// on any storage error or when CAS is disabled (no namespace configured).
+func isCASBackupRemote(ctx context.Context, dst *storage.BackupDestination, cfg cas.Config, name string) bool {
+	if cfg.RootPrefix == "" {
+		return false
+	}
+	rp := cfg.RootPrefix
+	if !strings.HasSuffix(rp, "/") {
+		rp += "/"
+	}
+	clusterPrefix := rp + cfg.ClusterID + "/"
+	key := clusterPrefix + "metadata/" + name + "/metadata.json"
+	rf, err := dst.StatFile(ctx, key)
+	if err != nil || rf == nil {
+		return false
+	}
+	return true
 }

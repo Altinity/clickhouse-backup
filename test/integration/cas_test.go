@@ -24,13 +24,16 @@ const casConfigPath = "/tmp/config-cas.yml"
 // clusterID is incorporated into root_prefix so concurrent tests in different
 // envPool slots can't trample each other's bucket layouts.
 func (env *TestEnvironment) casBootstrap(r *require.Assertions, clusterID string) {
-	// Wipe any leftover CAS state from a previous test on this env.
-	_ = env.DockerExec("minio", "rm", "-rf", "/minio/data/clickhouse/backup")
+	// Wipe any leftover state from a previous test under THIS clusterID
+	// only. Tests may share the env across runs (RUN_PARALLEL=1 serializes
+	// on a single env), so wiping the entire backup tree would clobber
+	// concurrent tests' state.
+	_ = env.DockerExec("minio", "bash", "-c",
+		fmt.Sprintf("rm -rf /minio/data/clickhouse/backup/cas/%s/", clusterID))
 	_ = env.DockerExec("minio", "bash", "-c", "mkdir -p /minio/data/clickhouse")
-	// Wipe any leftover LOCAL backups from a previous run (otherwise
-	// 'clickhouse-backup create <same_name>' fails with "backup is already
-	// exists"). The harness keeps env state across tests within a session,
-	// so test-internal cleanup is required.
+	// Local backups must be wiped wholesale because v1 'create' rejects an
+	// existing same-named backup (regardless of CAS namespace). Test names
+	// embed the test prefix to avoid collisions across tests.
 	_ = env.DockerExec("clickhouse", "bash", "-c", "rm -rf /var/lib/clickhouse/backup/*")
 
 	casBlock := fmt.Sprintf(`
@@ -149,10 +152,22 @@ func TestCASCrossModeGuards(t *testing.T) {
 	env.casBackupNoError(r, "create", "--tables", dbName+".*", casName)
 	env.casBackupNoError(r, "cas-upload", casName)
 
+	// Drop the local backup directories so v1 download / cas-download don't
+	// short-circuit on the local-already-exists pre-check (which fires
+	// BEFORE the cross-mode CAS guard at pkg/backup/download.go:133). In
+	// production this isn't a concern because users typically download to a
+	// host where the backup wasn't just created; the test simulates that
+	// state by clearing local backups before the cross-mode probes.
+	_ = env.DockerExec("clickhouse", "bash", "-c", "rm -rf /var/lib/clickhouse/backup/*")
+
 	// 2. Cross-mode refusals: v1 download on CAS backup.
 	out, err := env.casBackup("download", casName)
 	r.Error(err, "v1 download must refuse CAS backup; out=%s", out)
 	r.Contains(out, "refusing to operate on CAS backup")
+
+	// Clear local again so cas-download's own materialization doesn't trip
+	// over the v1-uploaded local dir.
+	_ = env.DockerExec("clickhouse", "bash", "-c", "rm -rf /var/lib/clickhouse/backup/*")
 
 	// 3. cas-download on v1 backup.
 	out, err = env.casBackup("cas-download", v1Name)
