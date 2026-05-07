@@ -286,6 +286,11 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 	return res, nil
 }
 
+// FormatObjectDiskHits renders a compact one-line summary suitable for
+// embedding in user-facing errors. Exported for callers that perform the
+// pre-flight outside cas.Upload (e.g., the CLI's snapshot-based scan).
+func FormatObjectDiskHits(hits []ObjectDiskHit) string { return formatObjectDiskHits(hits) }
+
 // formatObjectDiskHits renders a compact one-line summary of detected
 // object-disk hits suitable for embedding in error messages.
 func formatObjectDiskHits(hits []ObjectDiskHit) string {

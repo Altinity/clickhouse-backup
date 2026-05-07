@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -73,33 +74,80 @@ func (b *Backuper) ensureCAS(ctx context.Context, backupName string) (cas.Backen
 	return backend, closer, nil
 }
 
-// chTablesAndDisks returns ClickHouse tables and disks suitable for the CAS
-// object-disk pre-flight. Errors are logged but not fatal — a missing pre-
-// flight just means cas.Upload's caller is responsible for the refusal.
-func (b *Backuper) chTablesAndDisks(ctx context.Context) ([]cas.TableInfo, []cas.DiskInfo) {
-	var chTables []cas.TableInfo
-	var chDisks []cas.DiskInfo
-	tables, err := b.ch.GetTables(ctx, "")
+// snapshotObjectDiskHitsFromDisks is the pure, testable core of the snapshot
+// pre-flight. It walks <localBackupDir>/shadow/<db>/<table>/<disk>/ to
+// enumerate (db, table, disk) triples actually present in the backup, then
+// cross-references diskTypeByName (disk name → type) to identify object-disk
+// hits. Returns deduplicated hits (empty slice + nil error for empty/no-object-disk backups).
+func (b *Backuper) snapshotObjectDiskHitsFromDisks(localBackupDir string, diskTypeByName map[string]string) ([]cas.ObjectDiskHit, error) {
+	shadow := filepath.Join(localBackupDir, "shadow")
+	var hits []cas.ObjectDiskHit
+	seen := map[cas.ObjectDiskHit]struct{}{}
+
+	dbs, err := os.ReadDir(shadow)
 	if err != nil {
-		log.Warn().Msgf("cas: GetTables for object-disk pre-flight failed: %v", err)
-	} else {
-		for _, t := range tables {
-			chTables = append(chTables, cas.TableInfo{
-				Database:  t.Database,
-				Name:      t.Name,
-				DataPaths: t.DataPaths,
-			})
+		if os.IsNotExist(err) {
+			return nil, nil // empty backup or schema-only backup
+		}
+		return nil, fmt.Errorf("cas: read shadow dir: %w", err)
+	}
+	for _, dbe := range dbs {
+		if !dbe.IsDir() {
+			continue
+		}
+		db := dbe.Name()
+		tables, err := os.ReadDir(filepath.Join(shadow, db))
+		if err != nil {
+			continue
+		}
+		for _, tbe := range tables {
+			if !tbe.IsDir() {
+				continue
+			}
+			table := tbe.Name()
+			disks, err := os.ReadDir(filepath.Join(shadow, db, table))
+			if err != nil {
+				continue
+			}
+			for _, de := range disks {
+				if !de.IsDir() {
+					continue
+				}
+				disk := de.Name()
+				diskType, ok := diskTypeByName[disk]
+				if !ok {
+					continue // disk not present in live system.disks; treat as local
+				}
+				if !cas.IsObjectDiskType(diskType) {
+					continue
+				}
+				h := cas.ObjectDiskHit{Database: db, Table: table, Disk: disk, DiskType: diskType}
+				if _, dup := seen[h]; dup {
+					continue
+				}
+				seen[h] = struct{}{}
+				hits = append(hits, h)
+			}
 		}
 	}
+	return hits, nil
+}
+
+// snapshotObjectDiskHits queries live system.disks for disk-type information,
+// then delegates to snapshotObjectDiskHitsFromDisks to walk the local backup
+// snapshot. If system.disks is unreachable the pre-flight is skipped (returns
+// nil, nil) — matching the existing tolerance for non-fatal pre-flight errors.
+func (b *Backuper) snapshotObjectDiskHits(ctx context.Context, localBackupDir string) ([]cas.ObjectDiskHit, error) {
+	diskTypeByName := map[string]string{}
 	disks, err := b.ch.GetDisks(ctx, true)
 	if err != nil {
-		log.Warn().Msgf("cas: GetDisks for object-disk pre-flight failed: %v", err)
-	} else {
-		for _, d := range disks {
-			chDisks = append(chDisks, cas.DiskInfo{Name: d.Name, Path: d.Path, Type: d.Type})
-		}
+		log.Warn().Msgf("cas: GetDisks for snapshot pre-flight failed: %v; skipping pre-flight", err)
+		return nil, nil
 	}
-	return chTables, chDisks
+	for _, d := range disks {
+		diskTypeByName[d.Name] = d.Type
+	}
+	return b.snapshotObjectDiskHitsFromDisks(localBackupDir, diskTypeByName)
 }
 
 // CASUpload uploads a local backup using the CAS layout.
@@ -132,15 +180,25 @@ func (b *Backuper) CASUpload(backupName string, skipObjectDisks, dryRun bool, ba
 		return fmt.Errorf("cas-upload: local backup %q not found at %s; run 'clickhouse-backup create %s' first", backupName, fullLocal, backupName)
 	}
 
-	chTables, chDisks := b.chTablesAndDisks(ctx)
+	// Snapshot-based pre-flight: read which disks the local backup actually
+	// uses, not which disks the live ClickHouse currently has.
+	if !skipObjectDisks {
+		hits, err := b.snapshotObjectDiskHits(ctx, fullLocal)
+		if err != nil {
+			return fmt.Errorf("cas-upload: snapshot pre-flight: %w", err)
+		}
+		if len(hits) > 0 {
+			return fmt.Errorf("%w: %s",
+				cas.ErrObjectDiskRefused,
+				cas.FormatObjectDiskHits(hits))
+		}
+	}
 
 	res, uploadErr := cas.Upload(ctx, backend, b.cfg.CAS, backupName, cas.UploadOptions{
-		LocalBackupDir:   fullLocal,
-		SkipObjectDisks:  skipObjectDisks,
-		DryRun:           dryRun,
-		Parallelism:      int(b.cfg.General.UploadConcurrency),
-		ClickHouseTables: chTables,
-		Disks:            chDisks,
+		LocalBackupDir:  fullLocal,
+		SkipObjectDisks: skipObjectDisks,
+		DryRun:          dryRun,
+		Parallelism:     int(b.cfg.General.UploadConcurrency),
 	})
 	if uploadErr != nil {
 		return uploadErr
