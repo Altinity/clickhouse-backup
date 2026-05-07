@@ -5,11 +5,14 @@
 package testfixtures
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 )
 
 // LocalBackup describes the synthesized backup-on-disk layout returned
@@ -26,6 +29,10 @@ type LocalBackup struct {
 type PartSpec struct {
 	Disk, DB, Table, Name string
 	Files                 []FileSpec // every file the part contains, including any "checksums.txt"-listed files
+	// TableMeta is optional. When zero-value, Build still writes a minimal
+	// v1 metadata/<db>/<table>.json so cas-upload's merge logic has
+	// something to read.
+	TableMeta metadata.TableMetadata
 }
 
 // FileSpec describes one file inside a part.
@@ -100,6 +107,45 @@ func Build(t *testing.T, parts []PartSpec) *LocalBackup {
 		ckPath := filepath.Join(partDir, "checksums.txt")
 		if err := os.WriteFile(ckPath, []byte(ck), 0o644); err != nil {
 			t.Fatalf("write %s: %v", ckPath, err)
+		}
+	}
+
+	// Write one v1-style metadata/<db>/<table>.json per (db, table). Mimics
+	// what `clickhouse-backup create` writes; cas-upload merges the schema
+	// fields from these files into the uploaded TableMetadata.
+	seen := map[string]bool{}
+	for _, p := range parts {
+		key := p.DB + "." + p.Table
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		tm := p.TableMeta
+		if tm.Database == "" {
+			tm.Database = p.DB
+		}
+		if tm.Table == "" {
+			tm.Table = p.Table
+		}
+		if tm.Query == "" {
+			tm.Query = "CREATE TABLE " + p.DB + "." + p.Table + " (id UInt64) ENGINE=MergeTree ORDER BY id"
+		}
+		if tm.UUID == "" {
+			tm.UUID = "00000000-0000-0000-0000-000000000000"
+		}
+
+		metaDir := filepath.Join(root, "metadata", p.DB)
+		if err := os.MkdirAll(metaDir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", metaDir, err)
+		}
+		body, err := json.MarshalIndent(&tm, "", "\t")
+		if err != nil {
+			t.Fatalf("marshal table metadata %s.%s: %v", p.DB, p.Table, err)
+		}
+		metaPath := filepath.Join(metaDir, p.Table+".json")
+		if err := os.WriteFile(metaPath, body, 0o644); err != nil {
+			t.Fatalf("write %s: %v", metaPath, err)
 		}
 	}
 	return lb

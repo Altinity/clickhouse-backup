@@ -310,6 +310,58 @@ func TestUpload_SkipObjectDisks(t *testing.T) {
 	}
 }
 
+// TestUpload_MergesSchemaFieldsFromLocalV1Metadata verifies cas-upload
+// reads the per-(db, table) JSON that `clickhouse-backup create` wrote
+// and merges Query/UUID/TotalBytes/etc. into the uploaded
+// TableMetadata. Without this merge, cas-restore on a fresh host can't
+// recreate tables.
+func TestUpload_MergesSchemaFieldsFromLocalV1Metadata(t *testing.T) {
+	parts := []testfixtures.PartSpec{
+		{
+			Disk: "default", DB: "db1", Table: "t1", Name: "all_1_1_0",
+			Files: []testfixtures.FileSpec{
+				{Name: "columns.txt", Size: 8, HashLow: 1, HashHigh: 0},
+			},
+			TableMeta: metadata.TableMetadata{
+				Database:   "db1",
+				Table:      "t1",
+				Query:      "CREATE TABLE db1.t1 (id UInt64) ENGINE=MergeTree ORDER BY id",
+				UUID:       "deadbeef-0000-0000-0000-000000000001",
+				TotalBytes: 12345,
+			},
+		},
+	}
+	src := testfixtures.Build(t, parts)
+	f := fakedst.New()
+	cfg := testCfg(100)
+	if _, err := cas.Upload(context.Background(), f, cfg, "bk1", cas.UploadOptions{
+		LocalBackupDir: src.Root,
+	}); err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+
+	rc, err := f.GetFile(context.Background(), cas.TableMetaPath(cfg.ClusterPrefix(), "bk1", "db1", "t1"))
+	if err != nil {
+		t.Fatalf("get table metadata: %v", err)
+	}
+	body, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	var got metadata.TableMetadata
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("parse table metadata: %v", err)
+	}
+
+	if got.Query == "" {
+		t.Error("uploaded TableMetadata.Query is empty - fresh-host restore would fail")
+	}
+	if got.UUID != "deadbeef-0000-0000-0000-000000000001" {
+		t.Errorf("UUID: got %q want %q", got.UUID, "deadbeef-0000-0000-0000-000000000001")
+	}
+	if got.TotalBytes != 12345 {
+		t.Errorf("TotalBytes: got %d want 12345", got.TotalBytes)
+	}
+}
+
 // ---------------------- test helpers ----------------------
 
 // countingBackend wraps a Backend and counts PutFile calls per key.

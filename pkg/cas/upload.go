@@ -14,6 +14,7 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/checksumstxt"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
+	"github.com/rs/zerolog/log"
 )
 
 // UploadOptions configures an Upload run.
@@ -101,6 +102,11 @@ type uploadPlan struct {
 	tables map[string]*tablePlan
 	// tableKeys preserves a sorted ordering for deterministic uploads.
 	tableKeys []string
+
+	// localRoot is the local backup directory passed to planUpload; used by
+	// uploadTableJSONs to read the v1 per-table metadata that
+	// 'clickhouse-backup create' wrote.
+	localRoot string
 
 	// Aggregates for stats reporting. Populated alongside the maps above.
 	totalFiles  int
@@ -307,8 +313,9 @@ func planUpload(root string, threshold uint64, filter []string, skipObjectDisks 
 	excluded := excludedTables(skipObjectDisks, disks, tables)
 
 	plan := &uploadPlan{
-		blobs:  make(map[Hash128]blobRef),
-		tables: make(map[string]*tablePlan),
+		blobs:     make(map[Hash128]blobRef),
+		tables:    make(map[string]*tablePlan),
+		localRoot: root,
 	}
 
 	// Walk shadow/<db>/<table>/<disk>/<part>/
@@ -587,15 +594,25 @@ func uploadTableJSONs(ctx context.Context, b Backend, cp, name string, plan *upl
 			Table:        dt.Table,
 			Parts:        make(map[string][]metadata.Part),
 			MetadataOnly: false,
-			// TODO: populate Query/UUID/Size from the local
-			// metadata/<db>/<table>.json file produced by
-			// `clickhouse-backup create`. Phase 1 leaves these zero so
-			// download can round-trip Parts; later tasks (cas-download
-			// → cas-restore) will read them when needed.
 		}
 		for _, tp := range tps {
 			tm.Parts[tp.Disk] = append(tm.Parts[tp.Disk], tp.parts...)
 		}
+		// Merge schema fields from the v1 per-table metadata that
+		// `clickhouse-backup create` wrote to disk. Required so cas-restore
+		// on a fresh host can issue CREATE TABLE; without these fields the
+		// v1 restore handoff produces an empty Query and fails.
+		local, err := readLocalTableMetadata(plan.localRoot, dt.DB, dt.Table)
+		if err != nil {
+			return fmt.Errorf("cas: read local table metadata for %s.%s: %w", dt.DB, dt.Table, err)
+		}
+		tm.Query = local.Query
+		tm.UUID = local.UUID
+		tm.TotalBytes = local.TotalBytes
+		tm.Size = local.Size
+		tm.DependenciesTable = local.DependenciesTable
+		tm.DependenciesDatabase = local.DependenciesDatabase
+		tm.Mutations = local.Mutations
 		body, err := json.MarshalIndent(&tm, "", "\t")
 		if err != nil {
 			return fmt.Errorf("cas: marshal table metadata %s.%s: %w", dt.DB, dt.Table, err)
@@ -606,6 +623,30 @@ func uploadTableJSONs(ctx context.Context, b Backend, cp, name string, plan *upl
 		}
 	}
 	return nil
+}
+
+// readLocalTableMetadata reads <root>/metadata/<db>/<table>.json that
+// `clickhouse-backup create` wrote. Returns a zero-value TableMetadata
+// + nil error if the file is missing — older create flows or test
+// fixtures may omit it; the caller logs and ships an empty schema in
+// that case (degrading fresh-host restore but not breaking
+// table-already-exists restore).
+func readLocalTableMetadata(root, db, table string) (metadata.TableMetadata, error) {
+	p := filepath.Join(root, "metadata", db, table+".json")
+	f, err := os.Open(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Warn().Str("path", p).Msg("cas: local v1 per-table metadata missing; uploaded schema fields will be empty")
+			return metadata.TableMetadata{}, nil
+		}
+		return metadata.TableMetadata{}, fmt.Errorf("cas: open %s: %w", p, err)
+	}
+	defer f.Close()
+	var tm metadata.TableMetadata
+	if err := json.NewDecoder(f).Decode(&tm); err != nil {
+		return metadata.TableMetadata{}, fmt.Errorf("cas: parse %s: %w", p, err)
+	}
+	return tm, nil
 }
 
 // buildBackupMetadata constructs the root BackupMetadata for the commit

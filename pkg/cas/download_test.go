@@ -383,3 +383,31 @@ func TestDownload_PartitionFilter(t *testing.T) {
 		t.Errorf("all_1_1_0/checksums.txt missing: %v", err)
 	}
 }
+
+// TestDownload_PreservesSchemaFields is a regression test that the v1
+// schema fields populated in cas-upload survive the upload→download
+// round-trip and land in the per-table JSON the v1 restore reads.
+func TestDownload_PreservesSchemaFields(t *testing.T) {
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "all_1_1_0",
+		Files: []testfixtures.FileSpec{{Name: "columns.txt", Size: 8, HashLow: 1, HashHigh: 0}},
+		TableMeta: metadata.TableMetadata{
+			Database: "db1", Table: "t1",
+			Query: "CREATE TABLE db1.t1 ENGINE=Memory",
+			UUID:  "abc",
+		},
+	}}
+	_, _, _, root := uploadAndDownload(t, parts, "b1", cas.DownloadOptions{})
+	body, err := os.ReadFile(filepath.Join(root, "b1", "metadata",
+		common.TablePathEncode("db1"), common.TablePathEncode("t1")+".json"))
+	if err != nil {
+		t.Fatalf("read downloaded table metadata: %v", err)
+	}
+	var got metadata.TableMetadata
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("parse table metadata: %v", err)
+	}
+	if got.Query == "" || got.UUID == "" {
+		t.Errorf("downloaded JSON lost schema fields: %+v", got)
+	}
+}
