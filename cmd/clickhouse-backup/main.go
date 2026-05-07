@@ -822,6 +822,7 @@ func main() {
 				}),
 		},
 	}
+	cliapp.Commands = append(cliapp.Commands, casCommands(cliapp.Flags)...)
 	if err := cliapp.Run(os.Args); err != nil {
 		log.Fatal().Stack().Err(err).Send()
 	}
