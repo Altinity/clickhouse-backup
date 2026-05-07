@@ -53,6 +53,9 @@ type UploadOptions struct {
 	// invoking DetectObjectDiskTables. Used by callers (e.g. cas-upload
 	// CLI) that already know which tables are object-disk-backed via a
 	// snapshot walk and don't need the live-disks Path-prefix match.
+	// If both ExcludedTables and Disks/ClickHouseTables are provided,
+	// ExcludedTables takes priority and Disks/ClickHouseTables are
+	// ignored for exclusion.
 	ExcludedTables []string
 }
 
@@ -310,10 +313,12 @@ func formatObjectDiskHits(hits []ObjectDiskHit) string {
 }
 
 // planUpload walks <root>/shadow/<db>/<table>/<disk>/<part>/, parses each
-// checksums.txt, and builds a uploadPlan. opts.SkipObjectDisks plus the
-// disk/table info is used here to silently exclude object-disk tables
-// when requested.
-func planUpload(root string, threshold uint64, filter []string, skipObjectDisks bool, excludedTablesList []string, disks []DiskInfo, tables []TableInfo) (*uploadPlan, error) {
+// checksums.txt, and builds an uploadPlan. When skipObjectDisks is true,
+// the planner consults precomputed first (a precomputed db.table
+// allow-list provided by the CLI's snapshot-based pre-flight) and falls
+// through to DetectObjectDiskTables(disks, tables) when that list is
+// empty. Either path silently excludes object-disk-backed tables.
+func planUpload(root string, threshold uint64, filter []string, skipObjectDisks bool, precomputed []string, disks []DiskInfo, tables []TableInfo) (*uploadPlan, error) {
 	shadow := filepath.Join(root, "shadow")
 	st, err := os.Stat(shadow)
 	if err != nil {
@@ -323,7 +328,7 @@ func planUpload(root string, threshold uint64, filter []string, skipObjectDisks 
 		return nil, fmt.Errorf("cas: shadow path %q is not a directory", shadow)
 	}
 
-	excluded := excludedTables(skipObjectDisks, excludedTablesList, disks, tables)
+	excluded := excludedTables(skipObjectDisks, precomputed, disks, tables)
 
 	plan := &uploadPlan{
 		blobs:     make(map[Hash128]blobRef),

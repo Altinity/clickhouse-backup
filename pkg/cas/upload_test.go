@@ -315,6 +315,53 @@ func TestUpload_SkipObjectDisks(t *testing.T) {
 	}
 }
 
+// TestUpload_ExcludedTablesSkipsArchive verifies the precomputed exclusion
+// list flows through cas.Upload to planUpload and the excluded table's
+// per-table archive is NOT written. Closes the gap between the CLI-side
+// wiring test (TestSkipObjectDisks_ExclusionFiresFromSnapshot) and the
+// existing live-disk-derived path (TestUpload_SkipObjectDisks).
+func TestUpload_ExcludedTablesSkipsArchive(t *testing.T) {
+	ctx := context.Background()
+	parts := []testfixtures.PartSpec{
+		{
+			Disk: "default", DB: "db1", Table: "keep", Name: "all_1_1_0",
+			Files: []testfixtures.FileSpec{
+				{Name: "data.bin", Size: 16, HashLow: 1, HashHigh: 1},
+			},
+		},
+		{
+			Disk: "default", DB: "db1", Table: "drop", Name: "all_1_1_0",
+			Files: []testfixtures.FileSpec{
+				{Name: "data.bin", Size: 16, HashLow: 2, HashHigh: 2},
+			},
+		},
+	}
+	src := testfixtures.Build(t, parts)
+	f := fakedst.New()
+	cfg := testCfg(1024)
+
+	if _, err := cas.Upload(ctx, f, cfg, "bk", cas.UploadOptions{
+		LocalBackupDir:  src.Root,
+		SkipObjectDisks: true,
+		ExcludedTables:  []string{"db1.drop"},
+	}); err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+
+	// db1.keep's per-table archive must exist; db1.drop's must not.
+	cp := cfg.ClusterPrefix()
+	keepKey := cas.PartArchivePath(cp, "bk", "default", "db1", "keep")
+	dropKey := cas.PartArchivePath(cp, "bk", "default", "db1", "drop")
+	if _, _, exists, err := f.StatFile(ctx, keepKey); err != nil || !exists {
+		t.Errorf("db1.keep archive missing: exists=%v err=%v", exists, err)
+	}
+	if _, _, exists, err := f.StatFile(ctx, dropKey); err != nil {
+		t.Fatalf("StatFile(drop): %v", err)
+	} else if exists {
+		t.Errorf("db1.drop archive should NOT exist when in ExcludedTables; key=%s", dropKey)
+	}
+}
+
 // TestUpload_MergesSchemaFieldsFromLocalV1Metadata verifies cas-upload
 // reads the per-(db, table) JSON that `clickhouse-backup create` wrote
 // and merges Query/UUID/TotalBytes/etc. into the uploaded
