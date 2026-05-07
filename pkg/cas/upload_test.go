@@ -468,6 +468,29 @@ func TestUpload_PreservesEmptyTable(t *testing.T) {
 	if !got["db1.t1"] || !got["db1.t2"] {
 		t.Errorf("expected both db1.t1 and db1.t2 in bm.Tables; got %+v", bm.Tables)
 	}
+
+	// db1.t2 is schema-only; its per-table JSON must have an empty Parts map
+	// (not {"default": null}), otherwise download would try to fetch a
+	// nonexistent per-disk archive and fail with "cas: archive missing".
+	rc2, err := f.GetFile(ctx, cas.TableMetaPath(cfg.ClusterPrefix(), "bk", "db1", "t2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc2.Close()
+	body2, _ := io.ReadAll(rc2)
+	var tmT2 metadata.TableMetadata
+	if err := json.Unmarshal(body2, &tmT2); err != nil {
+		t.Fatal(err)
+	}
+	if len(tmT2.Parts) != 0 {
+		t.Errorf("empty-table Parts should be empty map, got %v", tmT2.Parts)
+	}
+
+	// Full download round-trip: proves the fix prevents "cas: archive missing".
+	dst := t.TempDir()
+	if _, err := cas.Download(ctx, f, cfg, "bk", cas.DownloadOptions{LocalBackupDir: dst}); err != nil {
+		t.Fatalf("Download with empty table failed: %v", err)
+	}
 }
 
 // ---------------------- test helpers ----------------------

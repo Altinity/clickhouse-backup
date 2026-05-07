@@ -344,8 +344,11 @@ func enumerateLocalTableMetadata(root string) ([]localTableMetadataEntry, error)
 	for _, dbEnc := range dbs {
 		dbDir := filepath.Join(metaRoot, dbEnc)
 		dbSt, err := os.Stat(dbDir)
-		if err != nil || !dbSt.IsDir() {
-			continue
+		if err != nil {
+			return nil, fmt.Errorf("stat metadata db dir %s: %w", dbDir, err)
+		}
+		if !dbSt.IsDir() {
+			continue // e.g., a stray file alongside the db directories
 		}
 		entries, err := readDir(dbDir)
 		if err != nil {
@@ -356,6 +359,8 @@ func enumerateLocalTableMetadata(root string) ([]localTableMetadataEntry, error)
 				continue
 			}
 			p := filepath.Join(dbDir, name)
+			// TODO(T3): remove TablePathDecode once readLocalTableMetadata accepts
+			// encoded path components directly or derives the path internally.
 			tm, err := readLocalTableMetadata(root, common.TablePathDecode(dbEnc), common.TablePathDecode(strings.TrimSuffix(name, ".json")))
 			if err != nil {
 				return nil, fmt.Errorf("read %s: %w", p, err)
@@ -719,6 +724,13 @@ func uploadTableJSONs(ctx context.Context, b Backend, cp, name string, plan *upl
 			MetadataOnly: false,
 		}
 		for _, tp := range tps {
+			if len(tp.parts) == 0 {
+				// Schema-only / empty table: no per-disk parts. Don't insert a
+				// disk key at all — downstream (cas-download) ranges over
+				// tm.Parts and would otherwise try to fetch a nonexistent
+				// per-table archive for that disk.
+				continue
+			}
 			tm.Parts[tp.Disk] = append(tm.Parts[tp.Disk], tp.parts...)
 		}
 		// Merge schema fields from the v1 per-table metadata that
