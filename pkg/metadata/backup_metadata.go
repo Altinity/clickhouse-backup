@@ -29,6 +29,17 @@ type BackupMetadata struct {
 	Functions               []FunctionsMeta   `json:"functions"`
 	DataFormat              string            `json:"data_format"`
 	RequiredBackup          string            `json:"required_backup,omitempty"`
+	// CAS holds parameters for the content-addressable layout. Populated only by
+	// cas-upload; nil means the backup is a v1 backup. See docs/cas-design.md §6.2.1.
+	CAS *CASBackupParams `json:"cas,omitempty"`
+}
+
+// CASBackupParams persists CAS layout parameters per backup so restore is
+// hermetic against future config drift. See docs/cas-design.md §6.2.1.
+type CASBackupParams struct {
+	LayoutVersion   uint8  `json:"layout_version"`
+	InlineThreshold uint64 `json:"inline_threshold"`
+	ClusterID       string `json:"cluster_id"`
 }
 
 func (b *BackupMetadata) GetFullSize() uint64 {
