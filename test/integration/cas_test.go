@@ -42,7 +42,7 @@ func (env *TestEnvironment) casBootstrapWith(r *require.Assertions, clusterID, b
 		_ = env.DockerExec("minio", "bash", "-c",
 			fmt.Sprintf("rm -rf /minio/data/clickhouse/backup/cluster/0/cas/%s/", clusterID))
 		_ = env.DockerExec("minio", "bash", "-c", "mkdir -p /minio/data/clickhouse")
-	case "config-gcs.yml":
+	case "config-gcs.yml", "config-gcs-emulator.yml":
 		// fake-gcs-server: bucket=altinity-qa-test, path: backup/{cluster}/{shard}
 		_ = env.DockerExec("gcs", "sh", "-c",
 			fmt.Sprintf("rm -rf /data/altinity-qa-test/backup/cluster/0/cas/%s/", clusterID))
