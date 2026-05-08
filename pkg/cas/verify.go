@@ -17,6 +17,10 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// verify.go — streaming archive extractor mirrors prune.go::collectRefsFromArchive.
+// All per-table archives are streamed directly from GetFile without buffering
+// the entire archive in memory first.
+
 // VerifyOptions configures a Verify run.
 type VerifyOptions struct {
 	JSON        bool
@@ -52,6 +56,9 @@ type expectedBlob struct {
 // structured result; if Failures is non-empty, also returns ErrVerifyFailures
 // so callers (and the CLI) can detect the failure cleanly.
 func Verify(ctx context.Context, b Backend, cfg Config, name string, opts VerifyOptions, out io.Writer) (*VerifyResult, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("cas: verify: invalid config: %w", err)
+	}
 	bm, err := ValidateBackup(ctx, b, cfg, name)
 	if err != nil {
 		return nil, err
@@ -108,14 +115,10 @@ func buildVerifySet(ctx context.Context, b Backend, cp, name string, bm *metadat
 			if err != nil {
 				return nil, fmt.Errorf("cas-verify: get archive %s: %w", archPath, err)
 			}
-			archBytes, err := io.ReadAll(archRC)
+			extractErr := extractBlobsFromArchive(archRC, cp, bm.CAS.InlineThreshold, seen)
 			_ = archRC.Close()
-			if err != nil {
-				return nil, fmt.Errorf("cas-verify: read archive %s: %w", archPath, err)
-			}
-
-			if err := extractBlobsFromArchive(bytes.NewReader(archBytes), cp, bm.CAS.InlineThreshold, seen); err != nil {
-				return nil, fmt.Errorf("cas-verify: extract blobs from %s: %w", archPath, err)
+			if extractErr != nil {
+				return nil, fmt.Errorf("cas-verify: extract blobs from %s: %w", archPath, extractErr)
 			}
 		}
 	}
