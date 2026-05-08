@@ -42,6 +42,14 @@ func (s *storageBackend) DeleteFile(ctx context.Context, key string) error {
 	return s.bd.DeleteFile(ctx, key)
 }
 
+func (s *storageBackend) PutFileIfAbsent(ctx context.Context, key string, data io.ReadCloser, size int64) (bool, error) {
+	created, err := s.bd.PutFileAbsoluteIfAbsent(ctx, key, data, size)
+	if errors.Is(err, storage.ErrConditionalPutNotSupported) {
+		return false, cas.ErrConditionalPutNotSupported
+	}
+	return created, err
+}
+
 func (s *storageBackend) Walk(ctx context.Context, prefix string, recursive bool, fn func(cas.RemoteFile) error) error {
 	// pkg/storage backends (S3 in particular, see s3.go S3.Walk) strip the
 	// walk-target prefix from rf.Name() — so callers see keys relative to

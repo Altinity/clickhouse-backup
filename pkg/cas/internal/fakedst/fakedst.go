@@ -56,6 +56,23 @@ func (f *Fake) PutFile(ctx context.Context, key string, r io.ReadCloser, size in
 	return nil
 }
 
+// PutFileIfAbsent atomically writes data at key only if not present.
+// In the in-memory fake, this is a single map operation under the lock.
+func (f *Fake) PutFileIfAbsent(ctx context.Context, key string, data io.ReadCloser, size int64) (bool, error) {
+	body, err := io.ReadAll(data)
+	_ = data.Close()
+	if err != nil {
+		return false, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, exists := f.files[key]; exists {
+		return false, nil
+	}
+	f.files[key] = fakeFile{data: body, modTime: time.Now()}
+	return true, nil
+}
+
 func (f *Fake) GetFile(ctx context.Context, key string) (io.ReadCloser, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

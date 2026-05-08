@@ -21,4 +21,11 @@ var (
 
 	// Verify.
 	ErrVerifyFailures = errors.New("cas-verify: failures detected")
+
+	// ErrConditionalPutNotSupported is returned by PutFileIfAbsent when the
+	// underlying backend cannot perform an atomic conditional write.
+	// pkg/cas cannot import pkg/storage (import cycle), so this is a
+	// separate sentinel; the casstorage adapter translates
+	// storage.ErrConditionalPutNotSupported into this value.
+	ErrConditionalPutNotSupported = errors.New("conditional PutFile not supported by this backend")
 )
