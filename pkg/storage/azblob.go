@@ -218,6 +218,13 @@ func (a *AzureBlob) PutFileAbsolute(ctx context.Context, key string, r io.ReadCl
 	return nil
 }
 
+// PutFileAbsoluteIfAbsent stub — replaced by a native implementation in a
+// later task. Returns ErrConditionalPutNotSupported so callers refuse
+// atomicity-required operations cleanly.
+func (a *AzureBlob) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return false, ErrConditionalPutNotSupported
+}
+
 func (a *AzureBlob) DeleteFile(ctx context.Context, key string) error {
 	a.logf("AZBLOB->DeleteFile %s", key)
 	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.Path, key))

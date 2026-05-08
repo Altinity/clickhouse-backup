@@ -24,6 +24,11 @@ type Config struct {
 	InlineThreshold  uint64 `yaml:"inline_threshold" envconfig:"CAS_INLINE_THRESHOLD"`
 	GraceBlob        string `yaml:"grace_blob" envconfig:"CAS_GRACE_BLOB"`
 	AbandonThreshold string `yaml:"abandon_threshold" envconfig:"CAS_ABANDON_THRESHOLD"`
+	// AllowUnsafeMarkers, when true, lets backends without native atomic-create
+	// (currently only FTP) write CAS markers using a stat-then-rename fallback
+	// with a documented race window. Default false; CAS refuses marker writes
+	// on those backends unless the operator explicitly opts in.
+	AllowUnsafeMarkers bool `yaml:"allow_unsafe_markers" envconfig:"CAS_ALLOW_UNSAFE_MARKERS"`
 
 	// Parsed by Validate(). Zero until Validate() runs.
 	graceBlobDur        time.Duration

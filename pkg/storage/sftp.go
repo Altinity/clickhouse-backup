@@ -248,6 +248,13 @@ func (sftp *SFTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadClos
 	return nil
 }
 
+// PutFileAbsoluteIfAbsent stub — replaced by a native implementation in a
+// later task. Returns ErrConditionalPutNotSupported so callers refuse
+// atomicity-required operations cleanly.
+func (sftp *SFTP) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return false, ErrConditionalPutNotSupported
+}
+
 func (sftp *SFTP) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	return 0, errors.Errorf("CopyObject not implemented for %s", sftp.Kind())
 }

@@ -378,6 +378,13 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 	return nil
 }
 
+// PutFileAbsoluteIfAbsent stub — replaced by a native implementation in a
+// later task. Returns ErrConditionalPutNotSupported so callers refuse
+// atomicity-required operations cleanly.
+func (gcs *GCS) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return false, ErrConditionalPutNotSupported
+}
+
 func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 	return gcs.StatFileAbsolute(ctx, path.Join(gcs.Config.Path, key))
 }

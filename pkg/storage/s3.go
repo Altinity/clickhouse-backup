@@ -369,6 +369,13 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 	return nil
 }
 
+// PutFileAbsoluteIfAbsent stub — replaced by a native implementation in a
+// later task. Returns ErrConditionalPutNotSupported so callers refuse
+// atomicity-required operations cleanly.
+func (s *S3) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return false, ErrConditionalPutNotSupported
+}
+
 func (s *S3) putFileMultipartCRC32(ctx context.Context, putParams *s3.PutObjectInput, r io.Reader, localSize, partSize int64) error {
 	createParams := &s3.CreateMultipartUploadInput{
 		Bucket:       putParams.Bucket,
