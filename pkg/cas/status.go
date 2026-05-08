@@ -13,33 +13,35 @@ import (
 
 // StatusReport is the result of a LIST-only bucket health check.
 type StatusReport struct {
-	BackupCount         int
-	BlobCount           int
-	BlobBytes           int64
-	PruneMarker         *PruneMarkerInfo
-	InProgressFresh     []InProgressInfo
-	InProgressAbandoned []InProgressInfo
-	Backups             []BackupSummary
+	BackupCount         int              `json:"backup_count"`
+	BlobCount           int              `json:"blob_count"`
+	BlobBytes           int64            `json:"blob_bytes"`
+	PruneMarker         *PruneMarkerInfo `json:"prune_marker,omitempty"`
+	InProgressFresh     []InProgressInfo `json:"in_progress_fresh"`
+	InProgressAbandoned []InProgressInfo `json:"in_progress_abandoned"`
+	Backups             []BackupSummary  `json:"backups"`
 }
 
 // BackupSummary holds minimal per-backup metadata collected during Status.
 type BackupSummary struct {
-	Name       string
-	UploadedAt time.Time // ModTime of metadata.json
+	Name       string    `json:"name"`
+	UploadedAt time.Time `json:"uploaded_at"` // ModTime of metadata.json
 }
 
 // PruneMarkerInfo holds metadata about the prune.marker object.
 type PruneMarkerInfo struct {
-	Path    string
-	ModTime time.Time
-	Age     time.Duration
+	Path       string        `json:"path"`
+	ModTime    time.Time     `json:"mod_time"`
+	Age        time.Duration `json:"-"`
+	AgeSeconds float64       `json:"age_seconds"`
 }
 
 // InProgressInfo holds metadata about an inprogress marker object.
 type InProgressInfo struct {
-	Backup  string
-	ModTime time.Time
-	Age     time.Duration
+	Backup     string        `json:"backup"`
+	ModTime    time.Time     `json:"mod_time"`
+	Age        time.Duration `json:"-"`
+	AgeSeconds float64       `json:"age_seconds"`
 }
 
 // Status performs a LIST-only bucket health summary for the given cluster.
@@ -99,9 +101,10 @@ func Status(ctx context.Context, b Backend, cfg Config) (*StatusReport, error) {
 	if exists {
 		age := time.Since(modTime)
 		r.PruneMarker = &PruneMarkerInfo{
-			Path:    pruneKey,
-			ModTime: modTime,
-			Age:     age,
+			Path:       pruneKey,
+			ModTime:    modTime,
+			Age:        age,
+			AgeSeconds: age.Seconds(),
 		}
 	}
 
@@ -117,9 +120,10 @@ func Status(ctx context.Context, b Backend, cfg Config) (*StatusReport, error) {
 		backup := strings.TrimSuffix(inner, ".marker")
 		age := now.Sub(f.ModTime)
 		info := InProgressInfo{
-			Backup:  backup,
-			ModTime: f.ModTime,
-			Age:     age,
+			Backup:     backup,
+			ModTime:    f.ModTime,
+			Age:        age,
+			AgeSeconds: age.Seconds(),
 		}
 		if age >= cfg.AbandonThresholdDuration() {
 			r.InProgressAbandoned = append(r.InProgressAbandoned, info)

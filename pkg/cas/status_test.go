@@ -2,12 +2,15 @@ package cas_test
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas/internal/fakedst"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas/internal/testfixtures"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStatus_EmptyBucket(t *testing.T) {
@@ -118,4 +121,47 @@ func TestStatus_ClassifiesInProgressByAge(t *testing.T) {
 	if len(r.InProgressAbandoned) != 1 || r.InProgressAbandoned[0].Backup != "bk_old" {
 		t.Errorf("abandoned: %+v", r.InProgressAbandoned)
 	}
+}
+
+// TestStatusReport_JSONTags verifies that StatusReport and related structs
+// marshal to snake_case keys and that Duration fields are exposed as seconds
+// (not nanosecond integers) via the age_seconds field.
+func TestStatusReport_JSONTags(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(100)
+	cfg.AbandonThreshold = "1h"
+	require.NoError(t, cfg.Validate())
+	ctx := context.Background()
+
+	// Write a prune marker.
+	if _, _, err := cas.WritePruneMarker(ctx, f, cfg.ClusterPrefix(), "h1"); err != nil {
+		t.Fatal(err)
+	}
+	// Write a fresh in-progress marker.
+	if _, err := cas.WriteInProgressMarker(ctx, f, cfg.ClusterPrefix(), "bk_r", "h"); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := cas.Status(ctx, f, cfg)
+	require.NoError(t, err)
+
+	raw, err := json.Marshal(r)
+	require.NoError(t, err)
+	s := string(raw)
+
+	// Top-level snake_case keys must be present.
+	require.True(t, strings.Contains(s, `"backup_count"`), "missing backup_count: %s", s)
+	require.True(t, strings.Contains(s, `"blob_count"`), "missing blob_count: %s", s)
+	require.True(t, strings.Contains(s, `"blob_bytes"`), "missing blob_bytes: %s", s)
+	require.True(t, strings.Contains(s, `"in_progress_fresh"`), "missing in_progress_fresh: %s", s)
+	require.True(t, strings.Contains(s, `"in_progress_abandoned"`), "missing in_progress_abandoned: %s", s)
+	require.True(t, strings.Contains(s, `"backups"`), "missing backups: %s", s)
+
+	// PruneMarker fields.
+	require.True(t, strings.Contains(s, `"prune_marker"`), "missing prune_marker: %s", s)
+	require.True(t, strings.Contains(s, `"age_seconds"`), "missing age_seconds in prune_marker: %s", s)
+
+	// Age (time.Duration) must NOT appear as nanosecond integer — the field is tagged json:"-".
+	require.False(t, strings.Contains(s, `"Age"`), "raw Go field name Age must not appear: %s", s)
+	require.False(t, strings.Contains(s, `"age":`), "unexported age field must not appear: %s", s)
 }
