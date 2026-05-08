@@ -15,10 +15,11 @@ import (
 
 // Fake is an in-memory implementation of cas.Backend for use in tests.
 type Fake struct {
-	mu       sync.Mutex
-	files    map[string]fakeFile
-	statHook func(key string) (size int64, modTime time.Time, exists bool, err error, override bool)
-	putHook  func(key string) (err error, override bool)
+	mu         sync.Mutex
+	files      map[string]fakeFile
+	statHook   func(key string) (size int64, modTime time.Time, exists bool, err error, override bool)
+	putHook    func(key string) (err error, override bool)
+	deleteHook func(key string) (err error, override bool)
 }
 
 type fakeFile struct {
@@ -56,6 +57,15 @@ func (f *Fake) SetPutHook(h func(key string) (err error, override bool)) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.putHook = h
+}
+
+// SetDeleteHook installs a function consulted by DeleteFile before the normal
+// delete. If the hook returns override=true and a non-nil error, that error is
+// returned instead of deleting. Used by tests to inject delete failures.
+func (f *Fake) SetDeleteHook(h func(key string) (err error, override bool)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleteHook = h
 }
 
 // Len is a test helper for assertions.
@@ -139,6 +149,14 @@ func (f *Fake) StatFile(ctx context.Context, key string) (int64, time.Time, bool
 }
 
 func (f *Fake) DeleteFile(ctx context.Context, key string) error {
+	f.mu.Lock()
+	hook := f.deleteHook
+	f.mu.Unlock()
+	if hook != nil {
+		if err, override := hook(key); override && err != nil {
+			return err
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.files, key)

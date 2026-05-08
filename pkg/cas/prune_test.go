@@ -496,3 +496,53 @@ func TestPrintPruneReport_FormatsBytes(t *testing.T) {
 	require.Contains(t, out, utils.FormatBytes(1572864))
 	require.Contains(t, out, "(1572864)")
 }
+
+// TestPrune_BlobDeleteFailuresCounted verifies that BlobDeleteFailures is
+// incremented for every failed delete (not just the first) and that the
+// field appears in PrintPruneReport output when non-zero.
+func TestPrune_BlobDeleteFailuresCounted(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	ctx := context.Background()
+	cp := cfg.ClusterPrefix()
+
+	// Place 3 orphan blobs, all aged past grace so they are candidates.
+	hA := cas.Hash128{Low: 0xA1, High: 0x00}
+	hB := cas.Hash128{Low: 0xB2, High: 0x00}
+	hC := cas.Hash128{Low: 0xC3, High: 0x00}
+	for _, h := range []cas.Hash128{hA, hB, hC} {
+		if err := f.PutFile(ctx, cas.BlobPath(cp, h), io.NopCloser(bytes.NewReader([]byte("x"))), 1); err != nil {
+			t.Fatal(err)
+		}
+		ageBlob(t, f, cfg, h, 2*time.Hour)
+	}
+
+	// Make delete fail for hA and hB but succeed for hC.
+	failKeys := map[string]bool{
+		cas.BlobPath(cp, hA): true,
+		cas.BlobPath(cp, hB): true,
+	}
+	f.SetDeleteHook(func(key string) (error, bool) {
+		if failKeys[key] {
+			return errors.New("simulated delete failure"), true
+		}
+		return nil, false
+	})
+
+	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{GraceBlob: time.Hour, GraceBlobSet: true})
+	// Prune returns an error (first failure) but also a partial report.
+	require.Error(t, err)
+	require.Equal(t, 2, rep.BlobDeleteFailures, "BlobDeleteFailures should count all failures, not just the first")
+	require.Equal(t, uint64(1), rep.OrphansDeleted, "hC should have been successfully deleted")
+
+	// hA and hB must still exist (delete failed).
+	_, _, existsA, _ := f.StatFile(ctx, cas.BlobPath(cp, hA))
+	_, _, existsB, _ := f.StatFile(ctx, cas.BlobPath(cp, hB))
+	require.True(t, existsA, "hA must survive a failed delete")
+	require.True(t, existsB, "hB must survive a failed delete")
+
+	// Verify PrintPruneReport surfaces the failure count.
+	var buf bytes.Buffer
+	require.NoError(t, cas.PrintPruneReport(rep, &buf))
+	require.Contains(t, buf.String(), "Blob delete failures: 2")
+}
