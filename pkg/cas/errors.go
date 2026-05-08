@@ -12,9 +12,10 @@ var (
 	ErrInvalidBackupName        = errors.New("cas: invalid backup name")
 
 	// Lifecycle.
-	ErrBackupExists     = errors.New("cas: backup with this name already exists")
-	ErrUploadInProgress = errors.New("cas: upload in progress for this name")
-	ErrPruneInProgress  = errors.New("cas: prune in progress")
+	ErrBackupExists       = errors.New("cas: backup with this name already exists")
+	ErrUploadInProgress   = errors.New("cas: upload in progress for this name")
+	ErrPruneInProgress    = errors.New("cas: prune in progress")
+	ErrNoInProgressMarker = errors.New("cas: no inprogress marker found for backup")
 
 	// Pre-flight.
 	ErrObjectDiskRefused = errors.New("cas: object-disk tables not supported in v1 of CAS")

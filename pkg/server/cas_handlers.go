@@ -85,7 +85,7 @@ func (api *APIServer) httpCASUploadHandler(w http.ResponseWriter, r *http.Reques
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("cas-upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.CASUpload(name, skipObjectDisks, dryRun, api.clickhouseBackupVersion, commandId, waitForPrune)
+			return b.CASUpload(name, skipObjectDisks, dryRun, false, api.clickhouseBackupVersion, commandId, waitForPrune)
 		})
 		if err != nil {
 			log.Error().Msgf("cas-upload error: %v", err)

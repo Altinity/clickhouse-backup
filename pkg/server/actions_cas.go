@@ -52,7 +52,7 @@ func (api *APIServer) actionsCASHandler(command string, args []string, row statu
 		go func() {
 			err, _ := api.metrics.ExecuteWithMetrics("cas-upload", 0, func() error {
 				b := backup.NewBackuper(cfg)
-				return b.CASUpload(name, skipObjectDisks, dryRun, api.clickhouseBackupVersion, commandId, waitForPrune)
+				return b.CASUpload(name, skipObjectDisks, dryRun, false, api.clickhouseBackupVersion, commandId, waitForPrune)
 			})
 			status.Current.Stop(commandId, err)
 			if err != nil {

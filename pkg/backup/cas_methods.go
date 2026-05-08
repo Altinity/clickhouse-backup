@@ -365,15 +365,23 @@ func (b *Backuper) snapshotMetadataObjectDiskHitsFromCH(ctx context.Context, loc
 }
 
 // CASUpload uploads a local backup using the CAS layout.
-func (b *Backuper) CASUpload(backupName string, skipObjectDisks, dryRun bool, backupVersion string, commandId int, waitForPrune time.Duration) error {
+// When unlock=true the function removes a stranded in-progress marker for
+// backupName and exits immediately without uploading anything.
+// --unlock is incompatible with --dry-run and --skip-object-disks.
+func (b *Backuper) CASUpload(backupName string, skipObjectDisks, dryRun, unlock bool, backupVersion string, commandId int, waitForPrune time.Duration) error {
 	if backupName == "" {
 		return errors.New("cas-upload: backup name is required")
 	}
-	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-	if pidErr := pidlock.CheckAndCreatePidFile(backupName, "cas-upload"); pidErr != nil {
-		return pidErr
+
+	// Refuse incompatible flag combinations upfront.
+	if unlock && dryRun {
+		return errors.New("cas-upload: --unlock and --dry-run are incompatible; --unlock removes a real marker")
 	}
-	defer pidlock.RemovePidFile(backupName)
+	if unlock && skipObjectDisks {
+		return errors.New("cas-upload: --unlock and --skip-object-disks are incompatible; --unlock does not perform an upload")
+	}
+
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 
 	ctx, cancel, err := b.setupCASContext(commandId)
 	if err != nil {
@@ -381,12 +389,27 @@ func (b *Backuper) CASUpload(backupName string, skipObjectDisks, dryRun bool, ba
 	}
 	defer cancel()
 
-	start := time.Now()
 	backend, closer, err := b.ensureCAS(ctx, backupName)
 	if err != nil {
 		return err
 	}
 	defer closer()
+
+	// --unlock path: remove stranded marker and exit. No upload, no pidlock.
+	if unlock {
+		if err := cas.UnlockInProgress(ctx, backend, b.cfg.CAS, backupName); err != nil {
+			return err
+		}
+		fmt.Printf("cas-upload --unlock: inprogress marker for %q removed; backup slot is now free\n", backupName)
+		return nil
+	}
+
+	if pidErr := pidlock.CheckAndCreatePidFile(backupName, "cas-upload"); pidErr != nil {
+		return pidErr
+	}
+	defer pidlock.RemovePidFile(backupName)
+
+	start := time.Now()
 
 	// Resolve the local backup directory.
 	fullLocal := path.Join(b.DefaultDataPath, "backup", backupName)

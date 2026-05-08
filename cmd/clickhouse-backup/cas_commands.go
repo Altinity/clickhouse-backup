@@ -31,8 +31,8 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 		{
 			Name:        "cas-upload",
 			Usage:       "Upload a local backup using the content-addressable layout (see docs/cas-design.md)",
-			UsageText:   "clickhouse-backup cas-upload [--skip-object-disks] [--dry-run] <backup_name>",
-			Description: "Upload a backup created by 'clickhouse-backup create' using the CAS layout. Blobs are content-keyed via per-part checksums.txt; small files are packed into per-table tar.zstd archives. CAS dedupes across mutations and across backups; every backup is independently restorable. Requires cas.enabled=true and cas.cluster_id configured.",
+			UsageText:   "clickhouse-backup cas-upload [--skip-object-disks] [--dry-run] [--unlock] <backup_name>",
+			Description: "Upload a backup created by 'clickhouse-backup create' using the CAS layout. Blobs are content-keyed via per-part checksums.txt; small files are packed into per-table tar.zstd archives. CAS dedupes across mutations and across backups; every backup is independently restorable. Requires cas.enabled=true and cas.cluster_id configured.\n\n   --unlock removes a stranded inprogress marker for <backup_name> (left behind by SIGKILL/OOM) and exits immediately without uploading. Incompatible with --dry-run and --skip-object-disks.",
 			Action: func(c *cli.Context) error {
 				cfg := config.GetConfigFromCli(c)
 				wait, err := resolveWaitForPrune(c, cfg)
@@ -40,7 +40,7 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 					return err
 				}
 				b := backup.NewBackuper(cfg)
-				return b.CASUpload(c.Args().First(), c.Bool("skip-object-disks"), c.Bool("dry-run"), version, c.Int("command-id"), wait)
+				return b.CASUpload(c.Args().First(), c.Bool("skip-object-disks"), c.Bool("dry-run"), c.Bool("unlock"), version, c.Int("command-id"), wait)
 			},
 			Flags: append(rootFlags,
 				cli.BoolFlag{
@@ -54,6 +54,10 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 				cli.StringFlag{
 					Name:  "wait-for-prune",
 					Usage: `If a prune is in progress, wait up to this duration (Go duration string, e.g. "5m") before giving up. Overrides cas.wait_for_prune. Empty = use config; "0s" = don't wait.`,
+				},
+				cli.BoolFlag{
+					Name:  "unlock",
+					Usage: "Remove a stranded inprogress marker for <backup_name> (self-service recovery after SIGKILL/OOM). Incompatible with --dry-run and --skip-object-disks. Does NOT perform an upload.",
 				},
 			),
 		},
