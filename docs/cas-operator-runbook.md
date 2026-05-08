@@ -103,6 +103,50 @@ mc rm <minio-alias>/<bucket>/<root_prefix><cluster>/inprogress/<name>.marker
 # or via gsutil/aws s3 rm for the corresponding backend.
 ```
 
+## Recovering from a concurrent cas-upload refusal
+
+If `cas-upload` is killed (SIGKILL, OOM-kill, host crash) before its
+deferred cleanup fires, the `cas/<cluster>/inprogress/<name>.marker`
+remains in remote storage. The next `cas-upload` for the same backup
+name refuses with:
+
+    cas: another cas-upload is in progress for "<name>" on host=<host>
+    started=<rfc3339>; wait for it to finish or run cas-prune
+    --abandon-threshold=0s if confirmed dead
+
+Recovery:
+
+1. **Verify nothing is actually running.** Check `ps`/`systemctl` on the
+   host listed in the error message. If something IS running, do not
+   interrupt it.
+
+2. If confirmed dead, sweep the marker:
+
+   ```sh
+   clickhouse-backup cas-prune --abandon-threshold=0s
+   ```
+
+   This treats every inprogress marker as abandoned regardless of age and
+   reclaims it. Then retry `cas-upload`.
+
+## Backend support for atomic markers
+
+`cas-upload` and `cas-prune` rely on atomic create-only-if-absent writes
+to their respective markers. Backend support:
+
+| Backend | Atomic markers | Notes |
+|---|---|---|
+| s3 | yes | Requires MinIO ≥ RELEASE.2024-11 or AWS S3 (always supported) |
+| azblob | yes | Native If-None-Match |
+| gcs | yes | Native generation-match |
+| cos | yes | Native If-None-Match |
+| sftp | yes | Server-side via SSH_FXF_EXCL |
+| ftp | NO by default | Set `cas.allow_unsafe_markers: true` to enable best-effort with documented race window |
+
+If your backend is FTP and you have not set `cas.allow_unsafe_markers`,
+`cas-upload` and `cas-prune` will refuse with an `ErrConditionalPutNotSupported`-derived
+message at marker-write time.
+
 ## Recovering from `cas-verify` failures
 
 `cas-verify` reports three failure kinds:

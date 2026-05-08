@@ -97,5 +97,10 @@ type RemoteStorage interface {
 	// (false, nil) if an object already exists; (false, ErrConditionalPutNotSupported)
 	// if this backend cannot perform an atomic create.
 	PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (created bool, err error)
+	// PutFileIfAbsent is the path-prefixed variant of PutFileAbsoluteIfAbsent:
+	// it prepends the backend's configured path prefix (like PutFile does) before
+	// delegating to PutFileAbsoluteIfAbsent. This is what casstorage should call
+	// so that CAS marker keys are in the same namespace as ordinary objects.
+	PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (created bool, err error)
 	CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error)
 }

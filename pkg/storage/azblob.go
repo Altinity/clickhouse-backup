@@ -251,6 +251,12 @@ func (a *AzureBlob) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r i
 	return true, nil
 }
 
+// PutFileIfAbsent is the path-prefixed variant of PutFileAbsoluteIfAbsent.
+// It prepends a.Config.Path to key, matching PutFile semantics.
+func (a *AzureBlob) PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return a.PutFileAbsoluteIfAbsent(ctx, path.Join(a.Config.Path, key), r, localSize)
+}
+
 func (a *AzureBlob) DeleteFile(ctx context.Context, key string) error {
 	a.logf("AZBLOB->DeleteFile %s", key)
 	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.Path, key))

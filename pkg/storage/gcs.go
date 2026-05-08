@@ -421,6 +421,12 @@ func (gcs *GCS) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.Re
 	return true, nil
 }
 
+// PutFileIfAbsent is the path-prefixed variant of PutFileAbsoluteIfAbsent.
+// It prepends gcs.Config.Path to key, matching PutFile semantics.
+func (gcs *GCS) PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return gcs.PutFileAbsoluteIfAbsent(ctx, path.Join(gcs.Config.Path, key), r, localSize)
+}
+
 func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 	return gcs.StatFileAbsolute(ctx, path.Join(gcs.Config.Path, key))
 }

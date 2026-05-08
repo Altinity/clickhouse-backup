@@ -43,7 +43,11 @@ func (s *storageBackend) DeleteFile(ctx context.Context, key string) error {
 }
 
 func (s *storageBackend) PutFileIfAbsent(ctx context.Context, key string, data io.ReadCloser, size int64) (bool, error) {
-	created, err := s.bd.PutFileAbsoluteIfAbsent(ctx, key, data, size)
+	// PutFileIfAbsent (not PutFileAbsoluteIfAbsent) so that the backend adds
+	// its configured path prefix — the same prefix that PutFile, StatFile,
+	// DeleteFile and GetFile all prepend. Without this, markers land at a
+	// different key than StatFile/DeleteFile look for.
+	created, err := s.bd.PutFileIfAbsent(ctx, key, data, size)
 	if errors.Is(err, storage.ErrConditionalPutNotSupported) {
 		return false, cas.ErrConditionalPutNotSupported
 	}

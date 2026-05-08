@@ -278,6 +278,12 @@ func (sftp *SFTP) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.
 	return true, nil
 }
 
+// PutFileIfAbsent is the path-prefixed variant of PutFileAbsoluteIfAbsent.
+// It prepends sftp.Config.Path to key, matching PutFile semantics.
+func (sftp *SFTP) PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return sftp.PutFileAbsoluteIfAbsent(ctx, path.Join(sftp.Config.Path, key), r, localSize)
+}
+
 // isSFTPAlreadyExists returns true if err is the SFTP server's response
 // to opening with O_EXCL when the target exists. The pkg/sftp library
 // surfaces this with varying wrapping depending on the protocol version

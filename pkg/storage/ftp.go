@@ -277,6 +277,12 @@ func (f *FTP) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.Read
 	return true, nil
 }
 
+// PutFileIfAbsent is the path-prefixed variant of PutFileAbsoluteIfAbsent.
+// It prepends f.Config.Path to key, matching PutFile semantics.
+func (f *FTP) PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return f.PutFileAbsoluteIfAbsent(ctx, path.Join(f.Config.Path, key), r, localSize)
+}
+
 // randomFTPSuffix returns 8 random hex characters for unique temp filenames.
 func randomFTPSuffix() string {
 	var b [4]byte

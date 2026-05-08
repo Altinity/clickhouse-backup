@@ -407,6 +407,12 @@ func (s *S3) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadC
 	return true, nil
 }
 
+// PutFileIfAbsent is the path-prefixed variant of PutFileAbsoluteIfAbsent.
+// It prepends s.Config.Path to key, matching PutFile semantics.
+func (s *S3) PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return s.PutFileAbsoluteIfAbsent(ctx, path.Join(s.Config.Path, key), r, localSize)
+}
+
 // isS3PreconditionFailed returns true if err corresponds to S3
 // PreconditionFailed (HTTP 412), which is what IfNoneMatch returns when
 // the target object already exists.

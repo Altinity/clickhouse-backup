@@ -360,6 +360,12 @@ func (c *COS) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.Read
 	return true, nil
 }
 
+// PutFileIfAbsent is the path-prefixed variant of PutFileAbsoluteIfAbsent.
+// It prepends c.Config.Path to key, matching PutFile semantics.
+func (c *COS) PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return c.PutFileAbsoluteIfAbsent(ctx, path.Join(c.Config.Path, key), r, localSize)
+}
+
 // isCOSPreconditionFailed returns true when the error is a Tencent COS HTTP 412
 // (PreconditionFailed), which is what COS returns for If-None-Match: "*" when
 // the object already exists.
