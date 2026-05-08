@@ -3,9 +3,12 @@ package cas
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"time"
 )
 
 // ErrConditionalPutNotHonored is returned when a backend's PutFileIfAbsent
@@ -13,18 +16,31 @@ import (
 // marker locks.
 var ErrConditionalPutNotHonored = errors.New("cas: backend silently ignored conditional put — marker locks unsafe")
 
-const probeKey = "cas-conditional-put-probe"
+const probeKeyPrefix = "cas-conditional-put-probe-"
 
-// ProbeConditionalPut writes <clusterPrefix>/cas-conditional-put-probe twice
-// via PutFileIfAbsent. Returns nil iff the backend correctly honored the
+// probeKeyRandom returns a 16-character hex string (64 bits of entropy) for
+// use as the unique per-call suffix of the probe key. 64 bits makes random
+// collision between concurrent probes astronomically unlikely.
+func probeKeyRandom() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand.Read only fails on catastrophic OS failures; fall back to
+		// a time-based key rather than panicking so the probe still works.
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// ProbeConditionalPut writes <clusterPrefix>/cas-conditional-put-probe-<random>
+// twice via PutFileIfAbsent. Returns nil iff the backend correctly honored the
 // precondition (first created=true, second created=false). Cleans up the
 // sentinel on completion.
 //
-// If a stale sentinel exists from a prior interrupted probe, it is deleted
-// and the write is retried once. This handles the case where a previous
-// process was killed between the first write and the cleanup.
+// A unique random suffix is used per invocation so that two concurrent probes
+// (e.g. cas-upload and cas-prune starting simultaneously) operate on different
+// keys and cannot interfere with each other.
 func ProbeConditionalPut(ctx context.Context, b Backend, clusterPrefix string) error {
-	key := clusterPrefix + probeKey
+	key := clusterPrefix + probeKeyPrefix + probeKeyRandom()
 	body1 := []byte("probe-1")
 	body2 := []byte("probe-2")
 
@@ -43,17 +59,11 @@ func ProbeConditionalPut(ctx context.Context, b Backend, clusterPrefix string) e
 		return fmt.Errorf("cas conditional-put probe: first write: %w", err)
 	}
 	if !created1 {
-		// Stale sentinel from a prior probe; clean and retry once.
-		if delErr := b.DeleteFile(ctx, key); delErr != nil {
-			return fmt.Errorf("cas conditional-put probe: cleanup stale sentinel: %w", delErr)
-		}
-		created1, err = b.PutFileIfAbsent(ctx, key, io.NopCloser(bytes.NewReader(body1)), int64(len(body1)))
-		if err != nil {
-			return fmt.Errorf("cas conditional-put probe: first write (retry): %w", err)
-		}
-		if !created1 {
-			return fmt.Errorf("cas conditional-put probe: cannot establish baseline after cleanup")
-		}
+		// The key already exists. Since it is unique and random, this indicates
+		// either an astronomically unlikely random collision or a backend bug
+		// (e.g. the backend is not respecting the conditional-create semantics
+		// at all and returned created=false for a key we just generated).
+		return fmt.Errorf("cas conditional-put probe: unexpected: random key %q already exists; possible random-collision or backend bug", key)
 	}
 
 	// Second write: must report not-created if backend honors the precondition.

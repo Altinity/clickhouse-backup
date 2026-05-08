@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,10 +22,16 @@ func TestProbeConditionalPut_HonoredBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected nil on honoring backend, got: %v", err)
 	}
-	// Sentinel must be cleaned up after a successful probe.
-	_, _, exists, _ := f.StatFile(context.Background(), "cas/test-cluster/"+cas.ProbeKey)
-	if exists {
-		t.Error("probe did not clean up sentinel on success")
+	// Sentinel must be cleaned up after a successful probe. Walk the prefix
+	// and confirm no probe keys remain.
+	ctx := context.Background()
+	var found []string
+	_ = f.Walk(ctx, "cas/test-cluster/"+cas.ProbeKeyPrefix, true, func(rf cas.RemoteFile) error {
+		found = append(found, rf.Key)
+		return nil
+	})
+	if len(found) != 0 {
+		t.Errorf("probe did not clean up sentinel on success; leftover keys: %v", found)
 	}
 }
 
@@ -59,24 +66,69 @@ func TestProbeConditionalPut_ErrorOnFirstWrite(t *testing.T) {
 	}
 }
 
-// TestProbeConditionalPut_StaleSentinelCleanedAndRetried pre-places a
-// sentinel via PutFile (bypassing the conditional path) and then runs the
-// probe. The probe should delete the stale sentinel, re-write, and succeed.
-func TestProbeConditionalPut_StaleSentinelCleanedAndRetried(t *testing.T) {
+// TestProbeConditionalPut_RejectsExistingProbeKey verifies that if the first
+// PutFileIfAbsent returns created=false (as if the random key already exists),
+// the probe returns an error mentioning "random-collision or backend bug".
+func TestProbeConditionalPut_RejectsExistingProbeKey(t *testing.T) {
+	// firstCall tracks whether this is the first PutFileIfAbsent invocation.
+	b := &firstCallReturnsFalseBackend{}
+	err := cas.ProbeConditionalPut(context.Background(), b, "cas/test-cluster/")
+	if err == nil {
+		t.Fatal("expected error when first PutFileIfAbsent returns created=false, got nil")
+	}
+	if !strings.Contains(err.Error(), "random-collision or backend bug") {
+		t.Errorf("expected 'random-collision or backend bug' in error, got: %v", err)
+	}
+}
+
+// TestProbeConditionalPut_SkipsWhenBackendReturnsNotSupported verifies that the
+// probe returns nil (gracefully skipped) when the backend's PutFileIfAbsent
+// returns ErrConditionalPutNotSupported on the first write. This preserves the
+// original UX where the marker-write layer produces the operator-facing
+// "backend cannot guarantee atomic markers" diagnostic instead of a probe error.
+func TestProbeConditionalPut_SkipsWhenBackendReturnsNotSupported(t *testing.T) {
+	b := &notSupportedBackend{}
+	err := cas.ProbeConditionalPut(context.Background(), b, "cas/test-cluster/")
+	if err != nil {
+		t.Errorf("expected nil (probe gracefully skipped), got: %v", err)
+	}
+}
+
+// TestProbeConditionalPut_TwoConcurrentProbesDontCollide verifies that two
+// concurrent probes against the same backend don't interfere with each other.
+// Because each probe picks a unique random key, both should succeed without
+// either one deleting the other's sentinel.
+func TestProbeConditionalPut_TwoConcurrentProbesDontCollide(t *testing.T) {
 	f := fakedst.New()
 	ctx := context.Background()
-	// Pre-seed a stale sentinel so the first PutFileIfAbsent sees it already
-	// present and returns created=false.
-	_ = f.PutFile(ctx, "cas/test-cluster/"+cas.ProbeKey, io.NopCloser(bytes.NewReader([]byte("stale"))), 5)
+	const clusterPrefix = "cas/test-cluster/"
 
-	err := cas.ProbeConditionalPut(ctx, f, "cas/test-cluster/")
-	if err != nil {
-		t.Fatalf("expected nil after stale-sentinel cleanup path, got: %v", err)
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range errs {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = cas.ProbeConditionalPut(ctx, f, clusterPrefix)
+		}()
 	}
-	// Sentinel must be cleaned up.
-	_, _, exists, _ := f.StatFile(ctx, "cas/test-cluster/"+cas.ProbeKey)
-	if exists {
-		t.Error("probe did not clean up sentinel after stale-path success")
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("probe %d failed: %v", i, err)
+		}
+	}
+
+	// After both probes complete, no probe sentinels should remain.
+	var found []string
+	_ = f.Walk(ctx, clusterPrefix+cas.ProbeKeyPrefix, true, func(rf cas.RemoteFile) error {
+		found = append(found, rf.Key)
+		return nil
+	})
+	if len(found) != 0 {
+		t.Errorf("probes left behind sentinel keys: %v", found)
 	}
 }
 
@@ -103,19 +155,6 @@ func (a *alwaysCreatesBackend) StatFile(_ context.Context, _ string) (int64, tim
 func (a *alwaysCreatesBackend) DeleteFile(_ context.Context, _ string) error { return nil }
 func (a *alwaysCreatesBackend) Walk(_ context.Context, _ string, _ bool, _ func(cas.RemoteFile) error) error {
 	return nil
-}
-
-// TestProbeConditionalPut_SkipsWhenBackendReturnsNotSupported verifies that the
-// probe returns nil (gracefully skipped) when the backend's PutFileIfAbsent
-// returns ErrConditionalPutNotSupported on the first write. This preserves the
-// original UX where the marker-write layer produces the operator-facing
-// "backend cannot guarantee atomic markers" diagnostic instead of a probe error.
-func TestProbeConditionalPut_SkipsWhenBackendReturnsNotSupported(t *testing.T) {
-	b := &notSupportedBackend{}
-	err := cas.ProbeConditionalPut(context.Background(), b, "cas/test-cluster/")
-	if err != nil {
-		t.Errorf("expected nil (probe gracefully skipped), got: %v", err)
-	}
 }
 
 // notSupportedBackend is a cas.Backend stub whose PutFileIfAbsent returns
@@ -161,5 +200,38 @@ func (e *errOnPutBackend) StatFile(_ context.Context, _ string) (int64, time.Tim
 }
 func (e *errOnPutBackend) DeleteFile(_ context.Context, _ string) error { return nil }
 func (e *errOnPutBackend) Walk(_ context.Context, _ string, _ bool, _ func(cas.RemoteFile) error) error {
+	return nil
+}
+
+// firstCallReturnsFalseBackend is a cas.Backend stub whose first
+// PutFileIfAbsent call returns (false, nil), simulating a scenario where the
+// random probe key happens to already exist (random collision or backend bug).
+type firstCallReturnsFalseBackend struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (b *firstCallReturnsFalseBackend) PutFileIfAbsent(_ context.Context, _ string, r io.ReadCloser, _ int64) (bool, error) {
+	_ = r.Close()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.calls++
+	if b.calls == 1 {
+		return false, nil
+	}
+	return true, nil
+}
+func (b *firstCallReturnsFalseBackend) PutFile(_ context.Context, _ string, r io.ReadCloser, _ int64) error {
+	_ = r.Close()
+	return nil
+}
+func (b *firstCallReturnsFalseBackend) GetFile(_ context.Context, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(nil)), nil
+}
+func (b *firstCallReturnsFalseBackend) StatFile(_ context.Context, _ string) (int64, time.Time, bool, error) {
+	return 0, time.Time{}, false, nil
+}
+func (b *firstCallReturnsFalseBackend) DeleteFile(_ context.Context, _ string) error { return nil }
+func (b *firstCallReturnsFalseBackend) Walk(_ context.Context, _ string, _ bool, _ func(cas.RemoteFile) error) error {
 	return nil
 }
