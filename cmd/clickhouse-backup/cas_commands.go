@@ -1,11 +1,27 @@
 package main
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/urfave/cli"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 )
+
+// resolveWaitForPrune returns the --wait-for-prune CLI value if set, otherwise
+// falls back to the configured cas.wait_for_prune value.
+func resolveWaitForPrune(c *cli.Context, cfg *config.Config) (time.Duration, error) {
+	if v := c.String("wait-for-prune"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return 0, fmt.Errorf("--wait-for-prune: %w", err)
+		}
+		return d, nil
+	}
+	return cfg.CAS.WaitForPruneDuration(), nil
+}
 
 // casCommands returns the seven cas-* CLI subcommands (six implemented + the
 // cas-prune Phase-2 stub). rootFlags is the slice of global flags from main.go
@@ -18,8 +34,13 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 			UsageText:   "clickhouse-backup cas-upload [--skip-object-disks] [--dry-run] <backup_name>",
 			Description: "Upload a backup created by 'clickhouse-backup create' using the CAS layout. Blobs are content-keyed via per-part checksums.txt; small files are packed into per-table tar.zstd archives. CAS dedupes across mutations and across backups; every backup is independently restorable. Requires cas.enabled=true and cas.cluster_id configured.",
 			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CASUpload(c.Args().First(), c.Bool("skip-object-disks"), c.Bool("dry-run"), version, c.Int("command-id"))
+				cfg := config.GetConfigFromCli(c)
+				wait, err := resolveWaitForPrune(c, cfg)
+				if err != nil {
+					return err
+				}
+				b := backup.NewBackuper(cfg)
+				return b.CASUpload(c.Args().First(), c.Bool("skip-object-disks"), c.Bool("dry-run"), version, c.Int("command-id"), wait)
 			},
 			Flags: append(rootFlags,
 				cli.BoolFlag{
@@ -29,6 +50,10 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 				cli.BoolFlag{
 					Name:  "dry-run",
 					Usage: "Plan the upload without writing anything to remote storage",
+				},
+				cli.StringFlag{
+					Name:  "wait-for-prune",
+					Usage: `If a prune is in progress, wait up to this duration (Go duration string, e.g. "5m") before giving up. Overrides cas.wait_for_prune. Empty = use config; "0s" = don't wait.`,
 				},
 			),
 		},
@@ -149,10 +174,20 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 			UsageText:   "clickhouse-backup cas-delete <backup_name>",
 			Description: "Removes the named backup atomically by deleting metadata.json first, then the rest of the metadata subtree. Blob bytes are NOT reclaimed in Phase 1 — that ships with cas-prune in Phase 2; until then, deleted-backup blobs accumulate in remote storage.",
 			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CASDelete(c.Args().First())
+				cfg := config.GetConfigFromCli(c)
+				wait, err := resolveWaitForPrune(c, cfg)
+				if err != nil {
+					return err
+				}
+				b := backup.NewBackuper(cfg)
+				return b.CASDelete(c.Args().First(), wait)
 			},
-			Flags: rootFlags,
+			Flags: append(rootFlags,
+				cli.StringFlag{
+					Name:  "wait-for-prune",
+					Usage: `If a prune is in progress, wait up to this duration (Go duration string, e.g. "5m") before giving up. Overrides cas.wait_for_prune. Empty = use config; "0s" = don't wait.`,
+				},
+			),
 		},
 		{
 			Name:        "cas-verify",

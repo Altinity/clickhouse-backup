@@ -327,7 +327,7 @@ func (b *Backuper) snapshotMetadataObjectDiskHitsFromCH(ctx context.Context, loc
 }
 
 // CASUpload uploads a local backup using the CAS layout.
-func (b *Backuper) CASUpload(backupName string, skipObjectDisks, dryRun bool, backupVersion string, commandId int) error {
+func (b *Backuper) CASUpload(backupName string, skipObjectDisks, dryRun bool, backupVersion string, commandId int, waitForPrune time.Duration) error {
 	if backupName == "" {
 		return errors.New("cas-upload: backup name is required")
 	}
@@ -385,6 +385,7 @@ func (b *Backuper) CASUpload(backupName string, skipObjectDisks, dryRun bool, ba
 		SkipObjectDisks: skipObjectDisks,
 		DryRun:          dryRun,
 		Parallelism:     int(b.cfg.General.UploadConcurrency),
+		WaitForPrune:    waitForPrune,
 	}
 	if skipObjectDisks {
 		excluded := make([]string, 0, len(hits))
@@ -600,7 +601,7 @@ func (b *Backuper) CASRestore(
 
 // CASDelete removes a CAS backup's metadata subtree (blob reclamation is the
 // next prune's responsibility).
-func (b *Backuper) CASDelete(backupName string) error {
+func (b *Backuper) CASDelete(backupName string, waitForPrune time.Duration) error {
 	if backupName == "" {
 		return errors.New("cas-delete: backup name is required")
 	}
@@ -619,7 +620,7 @@ func (b *Backuper) CASDelete(backupName string) error {
 		return err
 	}
 	defer closer()
-	if err := cas.Delete(ctx, backend, b.cfg.CAS, backupName, cas.DeleteOptions{}); err != nil {
+	if err := cas.Delete(ctx, backend, b.cfg.CAS, backupName, cas.DeleteOptions{WaitForPrune: waitForPrune}); err != nil {
 		return err
 	}
 	fmt.Printf("cas-delete: %s removed\n", backupName)
