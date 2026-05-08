@@ -57,6 +57,10 @@ type Backuper struct {
 	// short-lived instances equally).
 	casProbeOnce sync.Once
 	casProbeErr  error
+
+	// casUnsafeBannerOnce ensures the unsafe-marker startup WARN banner is
+	// emitted at most once per Backuper instance.
+	casUnsafeBannerOnce sync.Once
 }
 
 func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {

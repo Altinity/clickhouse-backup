@@ -92,6 +92,18 @@ func (b *Backuper) ensureCAS(ctx context.Context, backupName string) (cas.Backen
 		}
 	}
 
+	// One-shot startup banner when operating in any unsafe-marker mode so
+	// the risk is visible in logs even when the operator never reads the
+	// runbook. Fires at most once per Backuper lifetime.
+	b.casUnsafeBannerOnce.Do(func() {
+		if b.cfg.CAS.SkipConditionalPutProbe {
+			log.Warn().Msg("cas: cas.skip_conditional_put_probe=true — conditional-put compliance NOT verified; if the backend silently ignores If-None-Match, marker locks are unsafe and concurrent uploads may corrupt backups. Use only on backends you have independently confirmed honor the precondition.")
+		}
+		if b.cfg.General.RemoteStorage == "ftp" && b.cfg.CAS.AllowUnsafeMarkers {
+			log.Warn().Msg("cas: cas.allow_unsafe_markers=true on FTP — markers use a STAT+STOR+RNFR/RNTO best-effort sequence with a small TOCTOU window between STAT and RNTO. Two concurrent cas-upload runs MAY both pass the marker write; serialize uploads externally if you cannot tolerate that risk.")
+		}
+	})
+
 	return backend, closer, nil
 }
 
