@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	stderrors "errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awsV2Config "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -369,11 +371,57 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 	return nil
 }
 
-// PutFileAbsoluteIfAbsent stub — replaced by a native implementation in a
-// later task. Returns ErrConditionalPutNotSupported so callers refuse
-// atomicity-required operations cleanly.
+// PutFileAbsoluteIfAbsent atomically creates the object at key only if it
+// doesn't already exist. Uses the AWS S3 IfNoneMatch precondition
+// (supported since Nov 2024; MinIO ≥ RELEASE.2024-11). Always uses the
+// single-PUT path (markers are tiny); multipart uploads aren't compatible
+// with IfNoneMatch on PutObject.
 func (s *S3) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
-	return false, ErrConditionalPutNotSupported
+	body, err := io.ReadAll(r)
+	_ = r.Close()
+	if err != nil {
+		return false, errors.WithMessage(err, "S3 PutFileAbsoluteIfAbsent ReadAll")
+	}
+	params := &s3.PutObjectInput{
+		Bucket:       aws.String(s.Config.Bucket),
+		Key:          aws.String(key),
+		Body:         bytes.NewReader(body),
+		StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
+		IfNoneMatch:  aws.String("*"),
+	}
+	if s.Config.ACL != "" {
+		params.ACL = s3types.ObjectCannedACL(s.Config.ACL)
+	}
+	if s.Config.SSE != "" {
+		params.ServerSideEncryption = s3types.ServerSideEncryption(s.Config.SSE)
+	}
+	if s.Config.SSEKMSKeyId != "" {
+		params.SSEKMSKeyId = aws.String(s.Config.SSEKMSKeyId)
+	}
+	if _, err := s.client.PutObject(ctx, params); err != nil {
+		if isS3PreconditionFailed(err) {
+			return false, nil
+		}
+		return false, errors.WithMessage(err, "S3 PutFileAbsoluteIfAbsent PutObject")
+	}
+	return true, nil
+}
+
+// isS3PreconditionFailed returns true if err corresponds to S3
+// PreconditionFailed (HTTP 412), which is what IfNoneMatch returns when
+// the target object already exists.
+func isS3PreconditionFailed(err error) bool {
+	var apiErr smithy.APIError
+	if stderrors.As(err, &apiErr) {
+		if apiErr.ErrorCode() == "PreconditionFailed" {
+			return true
+		}
+	}
+	var respErr *awshttp.ResponseError
+	if stderrors.As(err, &respErr) && respErr.HTTPStatusCode() == http.StatusPreconditionFailed {
+		return true
+	}
+	return false
 }
 
 func (s *S3) putFileMultipartCRC32(ctx context.Context, putParams *s3.PutObjectInput, r io.Reader, localSize, partSize int64) error {
