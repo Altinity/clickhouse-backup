@@ -706,7 +706,8 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			return nil, errors.WithMessage(err, "NewBackupDestination ftp ApplyMacros ObjectDiskPath")
 		}
 		ftpStorage := &FTP{
-			Config: &cfg.FTP,
+			Config:             &cfg.FTP,
+			AllowUnsafeMarkers: cfg.CAS.AllowUnsafeMarkers,
 		}
 		return &BackupDestination{
 			ftpStorage,

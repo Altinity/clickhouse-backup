@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -20,10 +22,11 @@ import (
 )
 
 type FTP struct {
-	clients       *pool.ObjectPool
-	Config        *config.FTPConfig
-	dirCache      map[string]bool
-	dirCacheMutex sync.RWMutex
+	clients            *pool.ObjectPool
+	Config             *config.FTPConfig
+	dirCache           map[string]bool
+	dirCacheMutex      sync.RWMutex
+	AllowUnsafeMarkers bool
 }
 
 func (f *FTP) Kind() string {
@@ -232,11 +235,52 @@ func (f *FTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 	return nil
 }
 
-// PutFileAbsoluteIfAbsent stub — replaced by a native implementation in a
-// later task. Returns ErrConditionalPutNotSupported so callers refuse
-// atomicity-required operations cleanly.
+// PutFileAbsoluteIfAbsent atomically creates the file at key only if it
+// doesn't already exist. FTP has no portable atomic-create primitive; by
+// default we refuse with ErrConditionalPutNotSupported. With
+// AllowUnsafeMarkers=true, fall back to STAT → STOR-to-tmp → RNFR/RNTO,
+// which has a small race window between STAT and RNTO. Log a per-call
+// WARN so operators see the documented race in their logs.
 func (f *FTP) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
-	return false, ErrConditionalPutNotSupported
+	if !f.AllowUnsafeMarkers {
+		return false, ErrConditionalPutNotSupported
+	}
+	where := fmt.Sprintf("PutFileAbsoluteIfAbsent->%s", key)
+	client, err := f.getConnectionFromPool(ctx, where)
+	defer f.returnConnectionToPool(ctx, where, client)
+	if err != nil {
+		return false, errors.WithMessage(err, "FTP PutFileAbsoluteIfAbsent getConnection")
+	}
+	// STAT: does the target already exist?
+	if _, statErr := client.FileSize(key); statErr == nil {
+		return false, nil
+	}
+	// Best-effort fallback: write to a temp filename, then rename.
+	log.Warn().Str("key", key).Msg("FTP PutFileAbsoluteIfAbsent: best-effort path (cas.allow_unsafe_markers=true); small race window between STAT and RNTO")
+	if err := f.MkdirAll(path.Dir(key), client); err != nil {
+		return false, errors.WithMessage(err, "FTP PutFileAbsoluteIfAbsent MkdirAll")
+	}
+	tmpKey := key + ".tmp." + randomFTPSuffix()
+	if err := client.Stor(tmpKey, r); err != nil {
+		return false, errors.WithMessage(err, "FTP PutFileAbsoluteIfAbsent Stor")
+	}
+	// Re-check: did someone else create the target while we were writing?
+	if _, statErr := client.FileSize(key); statErr == nil {
+		_ = client.Delete(tmpKey)
+		return false, nil
+	}
+	if err := client.Rename(tmpKey, key); err != nil {
+		_ = client.Delete(tmpKey)
+		return false, errors.WithMessage(err, "FTP PutFileAbsoluteIfAbsent Rename")
+	}
+	return true, nil
+}
+
+// randomFTPSuffix returns 8 random hex characters for unique temp filenames.
+func randomFTPSuffix() string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 func (f *FTP) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
