@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -185,8 +186,20 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 
 	// 5. Write in-progress marker (skipped on DryRun).
 	if !opts.DryRun {
-		if err := WriteInProgressMarker(ctx, b, cp, name, ""); err != nil {
+		created, err := WriteInProgressMarker(ctx, b, cp, name, "")
+		if err != nil {
+			if errors.Is(err, ErrConditionalPutNotSupported) {
+				return nil, fmt.Errorf("cas: backend cannot guarantee atomic markers; refusing to start cas-upload for %q (set cas.allow_unsafe_markers=true to override on FTP)", name)
+			}
 			return nil, fmt.Errorf("cas: write inprogress marker: %w", err)
+		}
+		if !created {
+			existing, readErr := ReadInProgressMarker(ctx, b, cp, name)
+			if readErr != nil {
+				return nil, fmt.Errorf("cas: another cas-upload is in progress for %q (could not read marker: %v)", name, readErr)
+			}
+			return nil, fmt.Errorf("cas: another cas-upload is in progress for %q on host=%s started=%s; wait for it to finish or run cas-prune --abandon-threshold=0s if confirmed dead",
+				name, existing.Host, existing.StartedAt)
 		}
 	}
 

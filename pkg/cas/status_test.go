@@ -99,11 +99,11 @@ func TestStatus_ClassifiesInProgressByAge(t *testing.T) {
 	ctx := context.Background()
 
 	// fresh marker — just written, age ~ 0
-	if err := cas.WriteInProgressMarker(ctx, f, cfg.ClusterPrefix(), "bk_recent", "h"); err != nil {
+	if _, err := cas.WriteInProgressMarker(ctx, f, cfg.ClusterPrefix(), "bk_recent", "h"); err != nil {
 		t.Fatal(err)
 	}
 	// abandoned marker — write then age it to 2h ago
-	if err := cas.WriteInProgressMarker(ctx, f, cfg.ClusterPrefix(), "bk_old", "h"); err != nil {
+	if _, err := cas.WriteInProgressMarker(ctx, f, cfg.ClusterPrefix(), "bk_old", "h"); err != nil {
 		t.Fatal(err)
 	}
 	f.SetModTime(cas.InProgressMarkerPath(cfg.ClusterPrefix(), "bk_old"), time.Now().Add(-2*time.Hour))

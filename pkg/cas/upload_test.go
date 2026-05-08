@@ -867,6 +867,37 @@ func TestPlanPart_OrphanProjDir_Warns(t *testing.T) {
 	}
 }
 
+// TestUpload_RefusesIfInprogressMarkerPresent verifies that a second
+// cas-upload attempt for the same backup name fails cleanly when an
+// inprogress marker already exists. Without the conditional-create fix,
+// the second upload would overwrite the marker and proceed.
+func TestUpload_RefusesIfInprogressMarkerPresent(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	ctx := context.Background()
+
+	// Pre-write a marker simulating another host's upload in flight.
+	if _, err := cas.WriteInProgressMarker(ctx, f, cfg.ClusterPrefix(), "bk", "host-other"); err != nil {
+		t.Fatalf("WriteInProgressMarker setup: %v", err)
+	}
+
+	// Build a synthetic local backup; the upload should refuse before
+	// touching any blob.
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "p1",
+		Files: []testfixtures.FileSpec{{Name: "data.bin", Size: 16, HashLow: 1, HashHigh: 2}},
+	}}
+	src := testfixtures.Build(t, parts)
+
+	_, err := cas.Upload(ctx, f, cfg, "bk", cas.UploadOptions{LocalBackupDir: src.Root})
+	if err == nil {
+		t.Fatal("expected Upload to refuse when inprogress marker is present")
+	}
+	if !strings.Contains(err.Error(), "another cas-upload is in progress") {
+		t.Errorf("error should mention concurrent upload; got: %v", err)
+	}
+}
+
 // TestUpload_TableFilter_WithSpecialChars proves that --tables filtering
 // works against the decoded names operators actually type, not the
 // shadow-directory encoded forms.

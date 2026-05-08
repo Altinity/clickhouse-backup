@@ -92,7 +92,7 @@ func TestPrune_RefusesIfFreshInProgressMarker(t *testing.T) {
 	f := fakedst.New()
 	cfg := testCfg(1024)
 	ctx := context.Background()
-	if err := cas.WriteInProgressMarker(ctx, f, cfg.ClusterPrefix(), "bk_running", "host-a"); err != nil {
+	if _, err := cas.WriteInProgressMarker(ctx, f, cfg.ClusterPrefix(), "bk_running", "host-a"); err != nil {
 		t.Fatal(err)
 	}
 	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{AbandonThreshold: time.Hour, AbandonThresholdSet: true})
@@ -106,7 +106,7 @@ func TestPrune_SweepsAbandonedMarker(t *testing.T) {
 	cfg := testCfg(1024)
 	ctx := context.Background()
 	cp := cfg.ClusterPrefix()
-	if err := cas.WriteInProgressMarker(ctx, f, cp, "bk_dead", "host-a"); err != nil {
+	if _, err := cas.WriteInProgressMarker(ctx, f, cp, "bk_dead", "host-a"); err != nil {
 		t.Fatal(err)
 	}
 	// Age past abandon_threshold (1h here, default 7d).

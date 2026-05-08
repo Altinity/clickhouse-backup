@@ -31,17 +31,18 @@ func hostname() string {
 // nowRFC3339 returns the current UTC time in RFC3339 format.
 func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
 
-// WriteInProgressMarker writes cas/<cluster>/inprogress/<backup>.marker.
-func WriteInProgressMarker(ctx context.Context, b Backend, clusterPrefix, backup, host string) error {
+// WriteInProgressMarker atomically creates cas/<cluster>/inprogress/<backup>.marker.
+// Returns (true, nil) on successful create; (false, nil) if a marker
+// already exists (another upload is in progress); (false, ErrConditionalPutNotSupported)
+// when the backend can't do atomic create.
+func WriteInProgressMarker(ctx context.Context, b Backend, clusterPrefix, backup, host string) (created bool, err error) {
 	if host == "" {
 		host = hostname()
 	}
 	m := InProgressMarker{Backup: backup, Host: host, StartedAt: nowRFC3339(), Tool: markerTool}
-	data, err := json.Marshal(m)
-	if err != nil {
-		return err
-	}
-	return putBytes(ctx, b, InProgressMarkerPath(clusterPrefix, backup), data)
+	data, _ := json.Marshal(m)
+	return b.PutFileIfAbsent(ctx, InProgressMarkerPath(clusterPrefix, backup),
+		io.NopCloser(bytes.NewReader(data)), int64(len(data)))
 }
 
 // ReadInProgressMarker returns the parsed marker. Returns an error wrapping

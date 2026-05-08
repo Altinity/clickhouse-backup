@@ -11,7 +11,7 @@ import (
 func TestInProgressMarker_RoundTrip(t *testing.T) {
 	f := fakedst.New()
 	ctx := context.Background()
-	if err := cas.WriteInProgressMarker(ctx, f, "cas/c1/", "bk1", "host-a"); err != nil {
+	if _, err := cas.WriteInProgressMarker(ctx, f, "cas/c1/", "bk1", "host-a"); err != nil {
 		t.Fatal(err)
 	}
 	m, err := cas.ReadInProgressMarker(ctx, f, "cas/c1/", "bk1")
@@ -38,7 +38,7 @@ func TestInProgressMarker_RoundTrip(t *testing.T) {
 func TestInProgressMarker_DefaultsHost(t *testing.T) {
 	f := fakedst.New()
 	ctx := context.Background()
-	if err := cas.WriteInProgressMarker(ctx, f, "cas/c1/", "bk", ""); err != nil {
+	if _, err := cas.WriteInProgressMarker(ctx, f, "cas/c1/", "bk", ""); err != nil {
 		t.Fatal(err)
 	}
 	m, err := cas.ReadInProgressMarker(ctx, f, "cas/c1/", "bk")
