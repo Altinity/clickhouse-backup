@@ -228,7 +228,7 @@ func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []Bac
 			// see them in `list remote` output. CAS lives in a disjoint
 			// key prefix (cas/<cluster>/...) and is invisible to the
 			// v1 BackupList walk above (which now skips that prefix).
-			backupInfos = append(backupInfos, b.collectRemoteCASBackups(ctx)...)
+			backupInfos = append(backupInfos, b.CollectRemoteCASBackups(ctx)...)
 		default:
 			return backupInfos
 		}
@@ -236,7 +236,7 @@ func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []Bac
 	return backupInfos
 }
 
-// collectRemoteCASBackups enumerates CAS-mode remote backups and returns
+// CollectRemoteCASBackups enumerates CAS-mode remote backups and returns
 // BackupInfo rows tagged with "[CAS]" in the description column. It is a
 // no-op (returns nil) when CAS is disabled, when remote_storage is "none"
 // or "custom" (CAS only supports object-storage backends), or when the
@@ -245,7 +245,7 @@ func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []Bac
 // Errors from the underlying walk are logged and swallowed: list-remote
 // is informational and a CAS-side failure must not break the v1 listing
 // that just succeeded.
-func (b *Backuper) collectRemoteCASBackups(ctx context.Context) []BackupInfo {
+func (b *Backuper) CollectRemoteCASBackups(ctx context.Context) []BackupInfo {
 	if !b.cfg.CAS.Enabled {
 		return nil
 	}
@@ -254,16 +254,16 @@ func (b *Backuper) collectRemoteCASBackups(ctx context.Context) []BackupInfo {
 	}
 	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
 	if err != nil {
-		log.Warn().Msgf("collectRemoteCASBackups NewBackupDestination: %v", err)
+		log.Warn().Msgf("CollectRemoteCASBackups NewBackupDestination: %v", err)
 		return nil
 	}
 	if err := bd.Connect(ctx); err != nil {
-		log.Warn().Msgf("collectRemoteCASBackups bd.Connect: %v", err)
+		log.Warn().Msgf("CollectRemoteCASBackups bd.Connect: %v", err)
 		return nil
 	}
 	defer func() {
 		if err := bd.Close(ctx); err != nil {
-			log.Warn().Msgf("collectRemoteCASBackups bd.Close: %v", err)
+			log.Warn().Msgf("CollectRemoteCASBackups bd.Close: %v", err)
 		}
 	}()
 	backend := casstorage.NewStorageBackend(bd)
