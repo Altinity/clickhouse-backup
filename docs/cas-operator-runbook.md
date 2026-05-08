@@ -119,6 +119,52 @@ route table, async polling pattern, and example `curl` calls.
 
 ---
 
+## Known limitations (v1)
+
+The `cas-*` commands ship as **experimental** in v1. Things v1 explicitly does
+not do; expect them to land in later releases:
+
+- **`--tables` patterns are glob-only, not regex.** `--tables=db.*` or
+  `--tables=db.tab[12]` work (filepath.Match semantics, parity with v1).
+  Regex-style filters (`^db\..*_temp$`) do not.
+- **Object-disk tables are refused.** Tables on disks of type `s3`,
+  `s3_plain`, `azure_blob_storage`, `azure`, `hdfs`, `web`, or `encrypted`
+  layered on any of those are blocked by the `cas-upload` preflight. Use
+  `--skip-object-disks` to exclude or v1 `upload` for those tables. Lifted
+  in a future release once content-addressing of already-remote object
+  stubs is designed.
+- **Multi-host concurrent upload to the same backup name is unsupported.**
+  Two hosts running `cas-upload mybackup` simultaneously can race past the
+  same-name check and last-writer wins on `metadata.json`. Use unique names
+  per writer (e.g. `<cluster>__<shard>__<timestamp>`).
+- **Hash verification on download is HEAD + size only.** `cas-verify` and
+  `cas-download` confirm each blob's *size* against the value in
+  `checksums.txt`; they do NOT re-hash blob bytes. Silent corruption from a
+  buggy GC is caught; an attacker who replaces a blob with same-sized
+  garbage at the same key is not (CityHash128 is non-cryptographic; the
+  threat model assumes a trusted bucket).
+- **No per-blob resumable uploads.** Existing `pkg/resumable` operates at
+  per-archive granularity; CAS uploads at blob granularity have no resume
+  protocol yet. A killed `cas-upload` re-uploads everything that wasn't
+  already in the blob store on the next attempt (cold-list dedup limits
+  the cost).
+- **FTP is best-effort.** With `cas.allow_unsafe_markers=true` FTP markers
+  use a STAT+STOR+RNFR/RNTO sequence with a small race window. Without the
+  flag, CAS refuses on FTP. SFTP, S3, GCS, Azure, COS all have native
+  atomic primitives.
+- **Old MinIO is rejected.** The conditional-put startup probe refuses
+  MinIO releases pre-`RELEASE.2024-11-07T00-52-20Z` because they silently
+  ignore `If-None-Match: "*"`. Update MinIO, switch to a different
+  backend, or set `cas.skip_conditional_put_probe=true` after independent
+  validation of the precondition.
+- **Cross-cluster blob sharing is not supported.** Each cluster has its
+  own namespace under `cas.root_prefix + cas.cluster_id + "/"`. Two
+  clusters writing to the same bucket cannot dedup against each other.
+
+A consolidated v2 backlog with rationale lives in `docs/cas-design.md` §9.
+
+---
+
 ## When to run `cas-prune`
 
 `cas-prune` is the garbage collector. After every `cas-delete` (and after

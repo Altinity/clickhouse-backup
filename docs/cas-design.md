@@ -398,6 +398,22 @@ cas:
                               #   marker for up to this duration before refusing.
                               #   Useful for cron deployments where prune may overlap
                               #   with scheduled uploads. Go duration string.
+  skip_conditional_put_probe: false
+                              # Bypass the one-shot startup probe that verifies the
+                              #   backend honors If-None-Match (or equivalent). Set
+                              #   true ONLY for backends you have independently
+                              #   confirmed are compliant; on a backend that silently
+                              #   ignores the precondition, marker locks become unsafe
+                              #   and concurrent uploads can corrupt backups. Emits a
+                              #   startup WARN banner when enabled.
+  allow_unsafe_object_disk_skip: false
+                              # When ClickHouse system.disks cannot be queried during
+                              #   the cas-upload preflight, FAIL CLOSED by default
+                              #   (refuse the upload) so unsupported object-disk
+                              #   tables can't slip through. Set true to fall back
+                              #   to shadow-only detection — may MISS fully-object-
+                              #   disk-backed tables and produce an unrestorable
+                              #   CAS backup. Emits a startup WARN banner when enabled.
 ```
 
 **Per-cluster prefix is mandatory.** Operators MUST configure `cluster_id`. Cross-cluster blob sharing is out of scope for v1; if anyone needs it, it's a v2 conversation with its own threat model.
@@ -406,6 +422,7 @@ cas:
 - `CAS_ENABLED`, `CAS_CLUSTER_ID`, `CAS_ROOT_PREFIX`
 - `CAS_INLINE_THRESHOLD`, `CAS_GRACE_BLOB`, `CAS_ABANDON_THRESHOLD`
 - `CAS_ALLOW_UNSAFE_MARKERS`, `CAS_WAIT_FOR_PRUNE`
+- `CAS_SKIP_CONDITIONAL_PUT_PROBE`, `CAS_ALLOW_UNSAFE_OBJECT_DISK_SKIP`
 
 **CLI flags** (override config + env):
 - `cas-prune --grace-blob DUR --abandon-threshold DUR --dry-run --unlock`
