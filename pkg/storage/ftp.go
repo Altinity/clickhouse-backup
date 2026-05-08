@@ -247,10 +247,10 @@ func (f *FTP) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.Read
 	}
 	where := fmt.Sprintf("PutFileAbsoluteIfAbsent->%s", key)
 	client, err := f.getConnectionFromPool(ctx, where)
-	defer f.returnConnectionToPool(ctx, where, client)
 	if err != nil {
 		return false, errors.WithMessage(err, "FTP PutFileAbsoluteIfAbsent getConnection")
 	}
+	defer f.returnConnectionToPool(ctx, where, client)
 	// STAT: does the target already exist?
 	if _, statErr := client.FileSize(key); statErr == nil {
 		return false, nil
@@ -262,6 +262,7 @@ func (f *FTP) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.Read
 	}
 	tmpKey := key + ".tmp." + randomFTPSuffix()
 	if err := client.Stor(tmpKey, r); err != nil {
+		_ = client.Delete(tmpKey)
 		return false, errors.WithMessage(err, "FTP PutFileAbsoluteIfAbsent Stor")
 	}
 	// Re-check: did someone else create the target while we were writing?
