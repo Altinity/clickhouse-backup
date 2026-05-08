@@ -1050,6 +1050,64 @@ func TestUpload_AbortsIfColdListedBlobDisappearsBeforeCommit(t *testing.T) {
 	}
 }
 
+// TestUpload_WaitsForPruneMarker verifies that Upload waits for the prune
+// marker to disappear (within WaitForPrune) rather than refusing immediately.
+func TestUpload_WaitsForPruneMarker(t *testing.T) {
+	poll := 10 * time.Millisecond
+	cas.SetPollIntervalForTesting(&poll)
+	defer cas.SetPollIntervalForTesting(nil)
+
+	f := fakedst.New()
+	cfg := testCfg(100)
+	cp := cfg.ClusterPrefix()
+
+	// Pre-place prune marker; schedule deletion after 50ms.
+	if err := f.PutFile(context.Background(), cas.PruneMarkerPath(cp),
+		io.NopCloser(strings.NewReader("{}")), 2); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		_ = f.DeleteFile(context.Background(), cas.PruneMarkerPath(cp))
+	}()
+
+	lb := testfixtures.Build(t, []testfixtures.PartSpec{smallPart("p1", 0)})
+	_, err := cas.Upload(context.Background(), f, cfg, "bk", cas.UploadOptions{
+		LocalBackupDir: lb.Root,
+		WaitForPrune:   5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Upload should succeed once marker is cleared; got: %v", err)
+	}
+}
+
+// TestUpload_RefusesAfterWaitTimeout verifies that Upload returns
+// ErrPruneInProgress when WaitForPrune elapses and the marker remains.
+func TestUpload_RefusesAfterWaitTimeout(t *testing.T) {
+	poll := 10 * time.Millisecond
+	cas.SetPollIntervalForTesting(&poll)
+	defer cas.SetPollIntervalForTesting(nil)
+
+	f := fakedst.New()
+	cfg := testCfg(100)
+	cp := cfg.ClusterPrefix()
+
+	// Pre-place prune marker permanently.
+	if err := f.PutFile(context.Background(), cas.PruneMarkerPath(cp),
+		io.NopCloser(strings.NewReader("{}")), 2); err != nil {
+		t.Fatal(err)
+	}
+
+	lb := testfixtures.Build(t, []testfixtures.PartSpec{smallPart("p1", 0)})
+	_, err := cas.Upload(context.Background(), f, cfg, "bk", cas.UploadOptions{
+		LocalBackupDir: lb.Root,
+		WaitForPrune:   100 * time.Millisecond,
+	})
+	if !errors.Is(err, cas.ErrPruneInProgress) {
+		t.Fatalf("got err=%v; want ErrPruneInProgress", err)
+	}
+}
+
 // TestUpload_LeaksNoMarkerOnCommitError verifies that a PutFile failure
 // on metadata.json at step 12 cleans up the in-progress marker before
 // returning the error.

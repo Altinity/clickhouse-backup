@@ -59,6 +59,10 @@ type UploadOptions struct {
 	// ExcludedTables takes priority and Disks/ClickHouseTables are
 	// ignored for exclusion.
 	ExcludedTables []string
+
+	// WaitForPrune, when > 0, polls the prune marker for up to this duration
+	// before giving up at upload step 2. 0 = refuse immediately (default).
+	WaitForPrune time.Duration
 }
 
 // UploadResult summarizes what an Upload run did. The stats break down into
@@ -162,11 +166,11 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 	}
 	cp := cfg.ClusterPrefix()
 
-	// 2. Refuse if prune.marker exists.
-	if _, _, exists, err := b.StatFile(ctx, PruneMarkerPath(cp)); err != nil {
-		return nil, fmt.Errorf("cas: stat prune marker: %w", err)
-	} else if exists {
-		return nil, ErrPruneInProgress
+	// 2. Refuse if prune.marker exists (with optional wait).
+	// NOTE: the in-progress marker has NOT been written yet at this point
+	// (that happens in step 5), so no cleanup is needed on this error path.
+	if err := waitForPrune(ctx, b, cp, opts.WaitForPrune); err != nil {
+		return nil, err
 	}
 
 	// 3. Object-disk pre-flight.
