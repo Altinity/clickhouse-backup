@@ -247,7 +247,7 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 	}
 
 	// 8. Upload missing blobs.
-	uploaded, bytesUp, err := uploadMissingBlobs(ctx, b, cp, plan, existing, opts.Parallelism)
+	uploaded, bytesUp, skippedColdList, err := uploadMissingBlobs(ctx, b, cp, plan, existing, opts.Parallelism)
 	if err != nil {
 		_ = DeleteInProgressMarker(ctx, b, cp, name)
 		return nil, err
@@ -295,6 +295,21 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 	} else if !exists {
 		// The marker is already gone (swept by an over-eager prune); no cleanup needed.
 		return nil, fmt.Errorf("cas: in-progress marker for %q was swept (upload exceeded abandon_threshold); aborting", name)
+	}
+
+	// 11c. Re-validate cold-listed blobs (closes ColdList TOCTOU vs concurrent prune).
+	//      A prune that ran past 11a's check could have deleted a blob we
+	//      decided to skip in step 8 because cold-list said it was present.
+	for _, blobKey := range skippedColdList {
+		_, _, exists, err := b.StatFile(ctx, blobKey)
+		if err != nil {
+			_ = DeleteInProgressMarker(ctx, b, cp, name)
+			return nil, fmt.Errorf("cas: re-check cold-listed blob %s: %w", blobKey, err)
+		}
+		if !exists {
+			_ = DeleteInProgressMarker(ctx, b, cp, name)
+			return nil, fmt.Errorf("cas: cold-listed blob %s disappeared before commit (concurrent prune?); aborting", blobKey)
+		}
 	}
 
 	// 12. Commit: write root metadata.json.
@@ -707,21 +722,27 @@ func tableFilterAllows(filter []string, db, table string) bool {
 
 // uploadMissingBlobs PUTs every blob in plan.blobs that is not in the
 // existing set. Concurrency capped by parallelism (<=0 → 16).
-func uploadMissingBlobs(ctx context.Context, b Backend, cp string, plan *uploadPlan, existing *ExistenceSet, parallelism int) (int, int64, error) {
+// skipped contains the full object keys of blobs that were skipped because
+// cold-list reported them as already present; callers re-validate these
+// before committing to close the ColdList TOCTOU window.
+func uploadMissingBlobs(ctx context.Context, b Backend, cp string, plan *uploadPlan, existing *ExistenceSet, parallelism int) (uploaded int, bytesUp int64, skipped []string, err error) {
 	if parallelism <= 0 {
 		parallelism = 16
 	}
 	type job struct {
-		h    Hash128
-		ref  blobRef
+		h   Hash128
+		ref blobRef
 	}
 	var jobs []job
 	for h, ref := range plan.blobs {
 		if existing.Has(h) {
+			skipped = append(skipped, BlobPath(cp, h))
 			continue
 		}
 		jobs = append(jobs, job{h: h, ref: ref})
 	}
+	// Deterministic ordering of skipped aids debugging/tests.
+	sort.Strings(skipped)
 	// Deterministic ordering aids debugging/tests.
 	sort.Slice(jobs, func(i, j int) bool {
 		if jobs[i].h.High != jobs[j].h.High {
@@ -731,10 +752,8 @@ func uploadMissingBlobs(ctx context.Context, b Backend, cp string, plan *uploadP
 	})
 
 	var (
-		mu        sync.Mutex
-		uploaded  int
-		bytesUp   int64
-		firstErr  error
+		mu       sync.Mutex
+		firstErr error
 	)
 
 	sem := make(chan struct{}, parallelism)
@@ -787,7 +806,7 @@ func uploadMissingBlobs(ctx context.Context, b Backend, cp string, plan *uploadP
 		}()
 	}
 	wg.Wait()
-	return uploaded, bytesUp, firstErr
+	return uploaded, bytesUp, skipped, firstErr
 }
 
 // uploadPartArchives builds and PUTs one tar.zstd per (disk, db, table).

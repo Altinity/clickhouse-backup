@@ -971,6 +971,85 @@ func TestUpload_LeaksNoMarkerOnRecheckError(t *testing.T) {
 	}
 }
 
+// TestUpload_AbortsIfColdListedBlobDisappearsBeforeCommit verifies that if a
+// blob was skipped during upload (because cold-list said it already existed)
+// but is gone by the time we reach step 11c, Upload returns an error and
+// does NOT write metadata.json.
+func TestUpload_AbortsIfColdListedBlobDisappearsBeforeCommit(t *testing.T) {
+	ctx := context.Background()
+	f := fakedst.New()
+	// Use a threshold high enough that data.bin (1024 bytes) is uploaded as a
+	// blob, not inlined.
+	cfg := testCfg(100)
+	cp := cfg.ClusterPrefix()
+
+	// Build a local backup with one part containing a 1024-byte data.bin blob.
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "p1",
+		Files: []testfixtures.FileSpec{
+			{Name: "columns.txt", Size: 23, HashLow: 1, HashHigh: 100},
+			{Name: "primary.idx", Size: 8, HashLow: 2, HashHigh: 100},
+			{Name: "data.bin", Size: 1024, HashLow: 3, HashHigh: 100},
+		},
+	}}
+	lb := testfixtures.Build(t, parts)
+
+	// First, do a successful upload to populate the backend with the blob and
+	// confirm the harness works. After this, metadata.json for "seed-backup"
+	// exists and the blob is stored in the backend.
+	_, err := cas.Upload(ctx, f, cfg, "seed-backup", cas.UploadOptions{LocalBackupDir: lb.Root})
+	if err != nil {
+		t.Fatalf("seed upload failed: %v", err)
+	}
+
+	// Confirm the blob exists in the backend (it was uploaded in seed phase).
+	blobPrefix := cp + "blob/"
+	var coldHitKey string
+	if err := f.Walk(ctx, blobPrefix, true, func(rf cas.RemoteFile) error {
+		coldHitKey = rf.Key
+		return nil
+	}); err != nil {
+		t.Fatalf("Walk to find blob key: %v", err)
+	}
+	if coldHitKey == "" {
+		t.Fatal("no blob found in backend after seed upload")
+	}
+
+	// Install a StatHook that makes the seeded blob appear to be gone (simulating
+	// a concurrent prune deleting it between ColdList and step 11c).
+	// ColdList uses Walk (not StatFile), so it will still see the blob as present
+	// and upload will skip re-uploading it. The hook only fires during step 11c.
+	f.SetStatHook(func(key string) (int64, time.Time, bool, error, bool) {
+		if key == coldHitKey {
+			// Blob "disappeared": return exists=false, override=true.
+			return 0, time.Time{}, false, nil, true
+		}
+		// Pass through all other keys.
+		return 0, time.Time{}, false, nil, false
+	})
+
+	// Now run a second upload for "test-backup". The cold-list will see the blob
+	// (Walk is not hooked), uploadMissingBlobs will skip it, and step 11c will
+	// detect that StatFile returns not-found → abort.
+	_, err = cas.Upload(ctx, f, cfg, "test-backup", cas.UploadOptions{LocalBackupDir: lb.Root})
+	if err == nil {
+		t.Fatal("expected Upload to abort when cold-listed blob disappears before commit")
+	}
+	if !strings.Contains(err.Error(), "cold-listed blob") {
+		t.Errorf("error should mention 'cold-listed blob'; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "disappeared before commit") {
+		t.Errorf("error should mention 'disappeared before commit'; got: %v", err)
+	}
+
+	// metadata.json must NOT have been written.
+	f.SetStatHook(nil)
+	_, _, exists, _ := f.StatFile(ctx, cas.MetadataJSONPath(cp, "test-backup"))
+	if exists {
+		t.Error("metadata.json was written despite cold-listed blob disappearing")
+	}
+}
+
 // TestUpload_LeaksNoMarkerOnCommitError verifies that a PutFile failure
 // on metadata.json at step 12 cleans up the in-progress marker before
 // returning the error.
