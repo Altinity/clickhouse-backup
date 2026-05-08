@@ -494,6 +494,16 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	// Clean shared state between test runs so the next test gets a fresh environment
 	_ = env.DockerExec("minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3")
 
+	// CAS leaves state under <bucket>/backup/cluster/<shard>/cas/<cluster_id>/.
+	// v1 retention/clean-broken explicitly skips it (by design — see SkipPrefixes
+	// in pkg/cas/config.go), so it persists across env-pool reuse and surfaces
+	// as a bucket-not-empty failure in checkObjectStorageIsEmpty for the next
+	// non-CAS test on the same slot. Sweep every per-backend CAS path.
+	_ = env.DockerExec("minio", "bash", "-c", "rm -rf /minio/data/clickhouse/backup/cluster/*/cas/")
+	_ = env.DockerExec("gcs", "sh", "-c", "rm -rf /data/altinity-qa-test/backup/cluster/*/cas/ 2>/dev/null || true")
+	_ = env.DockerExec("sshd", "sh", "-c", "rm -rf /root/cas/ 2>/dev/null || true")
+	_ = env.DockerExec("ftp", "sh", "-c", "rm -rf /home/test_backup/backup/cas/ /home/ftpusers/test_backup/backup/cas/ /backup/cas/ 2>/dev/null || true")
+
 	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" || strings.HasPrefix(t.Name(), "TestEmbedded") {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/backups_s3")
 	}

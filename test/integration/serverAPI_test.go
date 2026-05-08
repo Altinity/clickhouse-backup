@@ -450,8 +450,11 @@ func testAPIBackupList(t *testing.T, r *require.Assertions, env *TestEnvironment
 	log.Debug().Msg("Check /backup/list")
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/list'")
 	r.NoError(err, "%s\nunexpected GET /backup/list error: %v", out, err)
-	localListFormat := "{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"data_size\":\\d+,\"metadata_size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"regular\"}"
-	remoteListFormat := "{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"data_size\":\\d+,\"metadata_size\":\\d+,\"compressed_size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar, regular\"}"
+	// v1 backups now carry a "kind":"v1" field after "name" (added by the
+	// CAS work in pkg/server/server.go::httpListHandler so /backup/list
+	// can distinguish v1 vs CAS rows in a single response).
+	localListFormat := "{\"name\":\"z_backup_%d\",\"kind\":\"v1\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"data_size\":\\d+,\"metadata_size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"regular\"}"
+	remoteListFormat := "{\"name\":\"z_backup_%d\",\"kind\":\"v1\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"data_size\":\\d+,\"metadata_size\":\\d+,\"compressed_size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar, regular\"}"
 	for i := 1; i <= apiBackupNumber; i++ {
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf(localListFormat, i)), out))
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf(remoteListFormat, i)), out))

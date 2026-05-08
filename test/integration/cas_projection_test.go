@@ -145,6 +145,14 @@ func TestCASUploadSkipObjectDisks(t *testing.T) {
 	env.casBootstrap(r, "skip_objdisk")
 	const dbName = "cas_skipod_db"
 	r.NoError(env.dropDatabase(dbName, true))
+	// Always-run cleanup: the body below has a t.Skip path mid-flight that
+	// would otherwise leave dbName + local backup `cas_skipod_bk` behind,
+	// breaking the next non-CAS test on the same env-pool slot when it tries
+	// to back up a table whose disk references the missing remote stub.
+	t.Cleanup(func() {
+		_ = env.dropDatabase(dbName, true)
+		_, _ = env.casBackup("delete", "local", "cas_skipod_bk")
+	})
 	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
 	env.queryWithNoError(r, fmt.Sprintf(
 		"CREATE TABLE `%s`.regular (id UInt64) ENGINE=MergeTree ORDER BY id", dbName))
