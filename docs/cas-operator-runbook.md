@@ -483,3 +483,10 @@ body, e.g. `{"command": "cas-upload mybk --skip-object-disks"}`.
 The `cas-prune --unlock` flag is also available via `?unlock=true`. It
 overrides a stranded prune marker; use with the same operator confidence
 required when running the CLI form.
+
+### Note: structured-output commands via /backup/actions
+
+**Note:** `cas-status` invoked via `POST /backup/actions` returns only an
+acknowledgement; the structured status report is logged at INFO level by the
+daemon but not surfaced in the action response. Use `GET /backup/cas-status`
+directly to retrieve the report payload.

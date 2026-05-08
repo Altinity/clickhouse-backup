@@ -548,6 +548,9 @@ This section is the consolidated backlog of items raised across the design-inter
 - **`ExistenceSet` memory bound**. v1 ships in-memory only (per §10.2 estimate, ~600 MB at 10⁷ blobs). Add spill-to-disk only when a real workload exhausts memory.
 - **Replace `ColdList` with per-blob `PutFileIfAbsent` + Stat fallback**. Upload today does a 256-shard `LIST` of `cas/<cluster>/blob/` to seed an existence set, then dedups blobs against it. Alternative shape: for each planned blob, attempt `PutFileIfAbsent`; backends that don't support it fall back to `StatFile` + conditional upload. This deletes the global LIST pass, the existence set, the pre-commit re-validation of cold-listed blobs (Phase 7 ColdList TOCTOU defense), and most of the related test scaffolding. Trade-off: at scale the request count flips from `O(shards)` LISTs to `O(planned_blobs)` HEADs/PUTs (≈10⁴ vs 10⁷ for a 100 TB cold-start upload — three orders of magnitude more requests but zero global scan). Worth re-evaluating with real workload measurements; if hit rates make most blobs already-present, the per-blob approach becomes reasonable. Keeps ColdList for v1 since it's measured-known-fast on the realistic case (cold-list dominates wall-clock on dedup-heavy repeat backups).
 
+- **Semaphore acquisition does not respect ctx cancellation.** `pkg/cas/upload.go::uploadMissingBlobs` and four other goroutine-pool sites use `sem <- struct{}{}` without a `select { case sem <- ...: case <-ctx.Done(): return }`. Goroutines queued on the semaphore drain slowly when ctx is cancelled (O(N/parallelism) batches). Not a deadlock, but extends shutdown latency on large catalogs. Tighten when needed.
+- **Prune `--parallelism` flag.** `SweepOrphans` uses `const parallelism = 32`; mark phase uses literal `16`. Upload/Download respect `cfg.General.{Upload,Download}Concurrency`. Add `Parallelism int` to `PruneOptions` and thread it through.
+
 ### 9.3 Operability / observability
 
 - **Structured prune logs**. Today prune emits human-readable status lines; for cron / observability pipelines, add a `--log-format=json` option emitting one structured event per phase (mark-start, mark-done with counts, sweep-start, sweep-done with bytes-reclaimed, marker-release).
@@ -564,6 +567,8 @@ This section is the consolidated backlog of items raised across the design-inter
 
 ### 9.4.x Storage-layer cleanup
 
+- **`atomicSwapDir` rename.** `pkg/cas/download.go::atomicSwapDir` is named misleadingly — its body acknowledges the swap is not OS-atomic. Rename to `replaceDir` (or `swapDirBestEffort`) and update the doc-comment.
+- **`markerTool` package-level var written without synchronization.** Safe in production (set once before server starts). If tests are ever run with `t.Parallel()` and call `cas.SetMarkerTool` concurrently, this becomes a data race. Either gate behind `sync/atomic.Value` or add a code comment documenting the single-write contract.
 - **`FTP.AllowUnsafeMarkers` field exposure on the storage struct**. `pkg/storage/ftp.go:35` exports `AllowUnsafeMarkers bool` so the CAS layer can wire the config flag through `pkg/storage/general.go`'s NewBackupDestination. No other backend embeds a CAS-specific policy field on its struct — the asymmetry leaks CAS semantics into the storage abstraction. Cleanup options: (a) make it unexported and add a setter the CAS layer calls; (b) remove from the struct and have the CAS layer wrap PutFileIfAbsent with the fallback above the storage interface. Refactor preference, not a correctness bug.
 
 ### 9.5 Test coverage (deferred — load-bearing tests already ship)
@@ -571,6 +576,9 @@ This section is the consolidated backlog of items raised across the design-inter
 - **`TestPrune_FailClosedOnNilCASMetadata`**. If a v1-style `metadata.json` lands in `cas/<cluster>/metadata/`, all subsequent prune runs abort with "no CAS field". Behavior is correct; lock it with a focused unit test asserting (a) the abort, (b) zero blobs deleted in that run.
 - **`TestBackupList_SkipsV1BackupNamedSameasCASPrefix`**. Wave-A added a WARN log when `BackupList` skips an entry matching a CAS prefix. Add a test that an entry literally named `"cas"` is correctly skipped, while `"casematch"` is NOT — verifies the equality vs. HasPrefix branches.
 - **`TestListRemoteCAS_WalkError`**. `pkg/backup/list.go::CollectRemoteCASBackups` swallows walk errors and returns an empty slice. Add a unit test that asserts a walk error is logged but not propagated, so a future refactor doesn't accidentally break the fail-open contract.
+
+- **`casstorage.Walk` absolute-key reconstruction contract test.** `pkg/cas/casstorage/backend_storage.go::Walk` reconstructs absolute keys because all six known backends strip the configured path prefix from `rf.Name()`. This is correct today but not formally contracted; a new backend returning absolute keys would silently double-prepend. Add a table-driven test exercising all six backends, OR document the contract on the `RemoteStorage.Walk` doc-comment.
+- **`root_prefix` mid-deployment-change auto-detect.** Operator-policy concern documented in the runbook (deferred per user decision). If automated detection becomes desirable: on startup with CAS enabled, stat a sentinel under the default prefix and warn loudly if CAS-shaped objects are found there (e.g. `<default_prefix>/<cluster_id>/prune.marker`).
 
 ### 9.6 UX / docs polish
 
