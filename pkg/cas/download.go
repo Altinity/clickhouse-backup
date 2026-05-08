@@ -564,6 +564,16 @@ func downloadBlobs(ctx context.Context, b Backend, cp string, jobs []blobJob, pa
 				mu.Unlock()
 				return
 			}
+			if uint64(n) != j.Size {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("cas: blob %s truncated: got %d bytes, expected %d (per checksums.txt)",
+						BlobPath(cp, j.Hash), n, j.Size)
+				}
+				mu.Unlock()
+				_ = os.Remove(cleanDst) // best-effort: don't leave a corrupt file behind
+				return
+			}
 			mu.Lock()
 			fetched++
 			bytesUp += n

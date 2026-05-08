@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas/internal/fakedst"
@@ -563,6 +564,81 @@ func TestDownload_RejectsTraversalPartName(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unsafe part name") {
 		t.Errorf("expected 'unsafe part name' in error, got: %v", err)
+	}
+}
+
+// truncatingBackend wraps a real Backend but returns a single-byte body for
+// any key that contains "/blob/" — simulating a network-truncated blob fetch.
+type truncatingBackend struct{ inner cas.Backend }
+
+func (tb *truncatingBackend) GetFile(ctx context.Context, key string) (io.ReadCloser, error) {
+	if strings.Contains(key, "/blob/") {
+		return io.NopCloser(strings.NewReader("X")), nil // 1 byte — always truncated
+	}
+	return tb.inner.GetFile(ctx, key)
+}
+func (tb *truncatingBackend) PutFile(ctx context.Context, key string, r io.ReadCloser, size int64) error {
+	return tb.inner.PutFile(ctx, key, r, size)
+}
+func (tb *truncatingBackend) PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, size int64) (bool, error) {
+	return tb.inner.PutFileIfAbsent(ctx, key, r, size)
+}
+func (tb *truncatingBackend) StatFile(ctx context.Context, key string) (int64, time.Time, bool, error) {
+	return tb.inner.StatFile(ctx, key)
+}
+func (tb *truncatingBackend) DeleteFile(ctx context.Context, key string) error {
+	return tb.inner.DeleteFile(ctx, key)
+}
+func (tb *truncatingBackend) Walk(ctx context.Context, prefix string, recursive bool, fn func(cas.RemoteFile) error) error {
+	return tb.inner.Walk(ctx, prefix, recursive, fn)
+}
+
+// TestDownloadBlobs_RejectsTruncatedBlob verifies that Download returns an
+// error when the backend delivers fewer bytes than recorded in checksums.txt,
+// and that the partial destination file is removed.
+func TestDownloadBlobs_RejectsTruncatedBlob(t *testing.T) {
+	// Build a real backup with one above-threshold blob (size 1024).
+	const blobSize = 1024
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "all_1_1_0",
+		Files: []testfixtures.FileSpec{
+			{Name: "columns.txt", Size: 8, HashLow: 1, HashHigh: 0},
+			{Name: "data.bin", Size: blobSize, HashLow: 42, HashHigh: 7, Bytes: makeBlobBytes(0xAB)},
+		},
+	}}
+
+	lb := testfixtures.Build(t, parts)
+	real := fakedst.New()
+	cfg := testCfg(100) // threshold=100 so data.bin (1024 bytes) is stored as a blob
+
+	if _, err := cas.Upload(context.Background(), real, cfg, "b1", cas.UploadOptions{LocalBackupDir: lb.Root}); err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+
+	// Wrap the backend with one that truncates blob fetches.
+	wrapped := &truncatingBackend{inner: real}
+
+	dlRoot := t.TempDir()
+	_, err := cas.Download(context.Background(), wrapped, cfg, "b1", cas.DownloadOptions{
+		LocalBackupDir: dlRoot,
+	})
+	if err == nil {
+		t.Fatal("expected Download to fail on truncated blob, got nil error")
+	}
+	if !strings.Contains(err.Error(), "truncated") {
+		t.Errorf("error should mention 'truncated'; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "expected") {
+		t.Errorf("error should mention 'expected' size; got: %v", err)
+	}
+
+	// The corrupt destination file must not be left behind.
+	dlPartDir := filepath.Join(dlRoot, "b1", "shadow",
+		common.TablePathEncode("db1"), common.TablePathEncode("t1"),
+		"default", "all_1_1_0")
+	corruptFile := filepath.Join(dlPartDir, "data.bin")
+	if _, statErr := os.Stat(corruptFile); statErr == nil {
+		t.Errorf("corrupt partial file was not removed: %s", corruptFile)
 	}
 }
 
