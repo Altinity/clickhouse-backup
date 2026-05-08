@@ -66,3 +66,16 @@ func TestCASSmokeGCS(t *testing.T) {
 	runCASBackendSmoke(t, env, r,
 		"cas_smoke_gcs_db", "cas_smoke_gcs_t", "cas_smoke_gcs_bk")
 }
+
+// TestCASSmokeAzure exercises the full CAS lifecycle against Azurite.
+// Verifies the Azure backend's PutFileAbsoluteIfAbsent (If-None-Match)
+// path added in Phase 4 T4.
+func TestCASSmokeAzure(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+	defer env.Cleanup(t, r)
+
+	env.casBootstrapWith(r, "smoke_azure", "config-azblob.yml", "")
+	runCASBackendSmoke(t, env, r,
+		"cas_smoke_azure_db", "cas_smoke_azure_t", "cas_smoke_azure_bk")
+}
