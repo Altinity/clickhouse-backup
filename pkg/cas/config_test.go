@@ -25,6 +25,9 @@ func TestDefaultConfig(t *testing.T) {
 	if c.AbandonThreshold != "168h" {
 		t.Errorf("AbandonThreshold: got %q want \"168h\"", c.AbandonThreshold)
 	}
+	if c.SkipConditionalPutProbe {
+		t.Error("default SkipConditionalPutProbe should be false")
+	}
 	if err := c.Validate(); err != nil {
 		t.Errorf("disabled default must validate: %v", err)
 	}

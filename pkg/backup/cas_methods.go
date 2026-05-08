@@ -76,6 +76,22 @@ func (b *Backuper) ensureCAS(ctx context.Context, backupName string) (cas.Backen
 		}
 		b.ch.Close()
 	}
+
+	// Run the conditional-put probe once per Backuper lifetime. This detects
+	// backends (older MinIO <2024-11, some Ceph RGW) that silently ignore
+	// If-None-Match: *, which would defeat marker locks and risk data loss.
+	// Operators can opt out via cas.skip_conditional_put_probe=true.
+	if !b.cfg.CAS.SkipConditionalPutProbe {
+		b.casProbeOnce.Do(func() {
+			cp := b.cfg.CAS.ClusterPrefix()
+			b.casProbeErr = cas.ProbeConditionalPut(ctx, backend, cp)
+		})
+		if b.casProbeErr != nil {
+			closer()
+			return nil, func() {}, b.casProbeErr
+		}
+	}
+
 	return backend, closer, nil
 }
 

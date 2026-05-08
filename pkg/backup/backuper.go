@@ -51,6 +51,12 @@ type Backuper struct {
 	resumableState         *resumable.State
 	shadowBackupUUIDs      []string
 	shadowBackupUUIDsMutex sync.Mutex
+
+	// casProbeOnce ensures the conditional-put startup probe runs at most once
+	// per Backuper instance (covers daemon long-lived instances and CLI
+	// short-lived instances equally).
+	casProbeOnce sync.Once
+	casProbeErr  error
 }
 
 func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {

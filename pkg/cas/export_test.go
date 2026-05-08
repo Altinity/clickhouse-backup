@@ -17,3 +17,7 @@ func WaitForPrune(ctx context.Context, b Backend, clusterPrefix string, wait tim
 func SetPollIntervalForTesting(d *time.Duration) {
 	pollIntervalForTesting = d
 }
+
+// ProbeKey is the exported test shim for the unexported probeKey constant.
+// Used by probe_test.go to assert sentinel cleanup.
+const ProbeKey = probeKey

@@ -31,6 +31,15 @@ type Config struct {
 	// on those backends unless the operator explicitly opts in.
 	AllowUnsafeMarkers bool `yaml:"allow_unsafe_markers" envconfig:"CAS_ALLOW_UNSAFE_MARKERS"`
 
+	// SkipConditionalPutProbe, when true, disables the startup probe that
+	// verifies the backend correctly honors If-None-Match: * (i.e. refuses to
+	// overwrite an existing object via PutFileIfAbsent). The probe detects older
+	// MinIO (<2024-11), older Ceph RGW, and other buggy S3-compatible stores
+	// that silently ignore the precondition, defeating marker locks and risking
+	// data loss. Set to true ONLY if you knowingly run on a non-conforming
+	// backend and accept the risk.
+	SkipConditionalPutProbe bool `yaml:"skip_conditional_put_probe" envconfig:"CAS_SKIP_CONDITIONAL_PUT_PROBE"`
+
 	// Parsed by Validate(). Zero until Validate() runs.
 	graceBlobDur        time.Duration
 	abandonThresholdDur time.Duration
