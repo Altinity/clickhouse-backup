@@ -1,6 +1,7 @@
 package cas
 
 import (
+	"container/heap"
 	"context"
 	"encoding/binary"
 	"encoding/hex"
@@ -199,46 +200,71 @@ type shardOutForCompare = struct {
 	err   error
 }
 
-// shardIter is a min-heap iterator across the 256 shard slices.
-type shardIter struct {
-	heads   []shardHead
-	current remoteBlob
-	valid   bool
-}
-
+// shardHead tracks the read position within one shard's sorted blob slice.
 type shardHead struct {
 	blobs []remoteBlob
 	idx   int
 }
 
+// current returns the blob at the current read position.
+func (h *shardHead) current() remoteBlob { return h.blobs[h.idx] }
+
+// shardHeap is a min-heap of *shardHead values ordered by the current blob's
+// hash. It implements heap.Interface so container/heap drives the merge.
+type shardHeap []*shardHead
+
+func (h shardHeap) Len() int      { return len(h) }
+func (h shardHeap) Less(i, j int) bool {
+	return hashLess(h[i].current().hash, h[j].current().hash)
+}
+func (h shardHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
+func (h *shardHeap) Push(x interface{}) { *h = append(*h, x.(*shardHead)) }
+func (h *shardHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	old[n-1] = nil // avoid memory leak
+	*h = old[:n-1]
+	return x
+}
+
+// shardIter is a min-heap iterator across the 256 shard slices.
+// It merges individually-sorted shards in O(N log k) time (k ≤ 256 shards)
+// using container/heap instead of the former O(N k) linear scan.
+type shardIter struct {
+	h       shardHeap
+	current remoteBlob
+	valid   bool
+}
+
 func newShardIter(shards []shardOutForCompare) *shardIter {
 	it := &shardIter{}
-	for _, s := range shards {
-		if len(s.blobs) > 0 {
-			it.heads = append(it.heads, shardHead{blobs: s.blobs, idx: 0})
+	for i := range shards {
+		if len(shards[i].blobs) > 0 {
+			it.h = append(it.h, &shardHead{blobs: shards[i].blobs, idx: 0})
 		}
 	}
+	heap.Init(&it.h)
 	_ = it.advance()
 	return it
 }
 
 func (it *shardIter) advance() error {
-	if len(it.heads) == 0 {
+	if it.h.Len() == 0 {
 		it.valid = false
 		return nil
 	}
-	// Find the smallest current element.
-	min := 0
-	for i := 1; i < len(it.heads); i++ {
-		if hashLess(it.heads[i].blobs[it.heads[i].idx].hash, it.heads[min].blobs[it.heads[min].idx].hash) {
-			min = i
-		}
-	}
-	it.current = it.heads[min].blobs[it.heads[min].idx]
+	// The heap root is always the shard with the globally-smallest current blob.
+	top := it.h[0]
+	it.current = top.current()
 	it.valid = true
-	it.heads[min].idx++
-	if it.heads[min].idx >= len(it.heads[min].blobs) {
-		it.heads = append(it.heads[:min], it.heads[min+1:]...)
+	top.idx++
+	if top.idx < len(top.blobs) {
+		// Shard still has entries: fix the heap position of the root (O(log k)).
+		heap.Fix(&it.h, 0)
+	} else {
+		// Shard exhausted: remove it from the heap (O(log k)).
+		heap.Pop(&it.h)
 	}
 	return nil
 }

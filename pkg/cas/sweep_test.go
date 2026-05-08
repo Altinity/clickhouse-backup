@@ -3,6 +3,7 @@ package cas_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"path/filepath"
 	"reflect"
@@ -225,5 +226,64 @@ func TestSweep_ManyShardsParallel(t *testing.T) {
 	})
 	if !reflect.DeepEqual(gotHashes, wantHashes) {
 		t.Errorf("hash set mismatch")
+	}
+}
+
+// BenchmarkSweepOrphans_LargeN measures the heap-merge path with N blobs
+// spread evenly across all 256 shards.  The benchmark is intentionally
+// free of absolute assertions so it never becomes flaky; its purpose is
+// to make future O(N k) regressions visible in benchmark history.
+//
+// Run with:
+//
+//	go test ./pkg/cas/ -bench BenchmarkSweepOrphans -benchtime=1x -count=1
+func BenchmarkSweepOrphans_LargeN(b *testing.B) {
+	const totalBlobs = 10_000 // scaled down so the benchmark runs quickly
+	const numShards = 256
+	perShard := totalBlobs / numShards
+
+	now := time.Now()
+	old := now.Add(-2 * time.Hour)
+
+	f := fakedst.New()
+	cp := "cas/bench/"
+	ctx := context.Background()
+
+	// Pre-populate: spread blobs across all 256 shards.
+	// Hash128.High encodes the shard (top byte) so blobs land deterministically.
+	for shard := 0; shard < numShards; shard++ {
+		for j := 0; j < perShard; j++ {
+			h := cas.Hash128{
+				High: uint64(shard) << 56,
+				Low:  uint64(j),
+			}
+			key := cas.BlobPath(cp, h)
+			_ = f.PutFile(ctx, key, io.NopCloser(bytes.NewReader([]byte("x"))), 1)
+			f.SetModTime(key, old)
+		}
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tmp := b.TempDir()
+		p := fmt.Sprintf("%s/marks-%d", tmp, i)
+		w, err := cas.NewMarkSetWriter(p, 1024)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := w.Close(); err != nil { // empty mark set: all blobs are orphans
+			b.Fatal(err)
+		}
+		r, err := cas.OpenMarkSetReader(p)
+		if err != nil {
+			b.Fatal(err)
+		}
+		cands, _, err := cas.SweepOrphans(ctx, f, cp, r, time.Hour, now)
+		_ = r.Close()
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.ReportMetric(float64(len(cands)), "orphans")
 	}
 }
