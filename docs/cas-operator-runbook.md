@@ -4,6 +4,121 @@ This runbook covers day-to-day operation of the content-addressable backup
 mode (`cas-*` commands). For the design rationale see
 [docs/cas-design.md](cas-design.md). For end-user usage see the README.
 
+## First production deployment (start here)
+
+> ⚠️ **CAS is experimental.** The on-disk layout may change incompatibly
+> before the feature is marked stable. Validate on non-critical workloads
+> first and keep parallel v1 backups (or copies outside the CAS namespace)
+> until you've gained confidence. See `docs/cas-design.md` for stability notes.
+
+This section walks an operator from zero to a first scheduled prune. Each
+subsection is a gate — don't advance until the current step is clean.
+
+### 1. Validate config
+
+Open your config file (default `/etc/clickhouse-backup/config.yml`) and
+confirm the following fields are set:
+
+| Field | Requirement |
+|---|---|
+| `cas.enabled` | `true` |
+| `cas.cluster_id` | Non-empty, **unique per source cluster** |
+| `cas.root_prefix` | Set (default `cas/`; leave unless you have a reason to change) |
+| `cas.grace_blob` | `24h` default; increase if prune windows are infrequent |
+| `cas.abandon_threshold` | `168h` default; lower only if you have noisy uploader crashes |
+
+```sh
+clickhouse-backup print-config 2>/dev/null | grep -A15 "^cas:"
+```
+
+### 2. First test backup (low-risk table)
+
+Pick a small, non-critical table. Do **not** run the first CAS upload
+against production-critical data until step 4 completes.
+
+```sh
+clickhouse-backup create test-cas-bk1 --tables=mydb.small_table
+clickhouse-backup cas-upload test-cas-bk1
+```
+
+The upload summary reports bytes uploaded vs. reused. On a fresh cluster
+expect 100 % uploaded / 0 % reused. Dedup gains appear from backup 2 onward.
+
+### 3. Validate via cas-verify
+
+```sh
+clickhouse-backup cas-verify test-cas-bk1
+```
+
+Zero failures is the bar. If `missing` or `size_mismatch` failures appear,
+see [Recovering from cas-verify failures](#recovering-from-cas-verify-failures)
+below.
+
+### 4. Round-trip restore + count check
+
+Drop the test table, restore from CAS, and confirm row counts match the
+pre-backup baseline:
+
+```sh
+clickhouse-client -q "SELECT count() FROM mydb.small_table"   # record N
+clickhouse-backup cas-restore test-cas-bk1 --rm
+clickhouse-client -q "SELECT count() FROM mydb.small_table"   # must equal N
+```
+
+A mismatched count indicates a data or config problem; investigate before
+proceeding to production backups.
+
+### 5. Set up scheduled prune
+
+`cas-prune` is the garbage collector; run it regularly (weekly is a safe
+default, daily for high-churn deployments). Schedule it in a quiet window
+when no concurrent uploads are expected. For the prune's behavior and flags
+see [When to run cas-prune](#when-to-run-cas-prune) below.
+
+```cron
+# Example: daily at 03:00 UTC
+0 3 * * * /usr/bin/clickhouse-backup cas-prune
+```
+
+If cron timing cannot guarantee no overlap with scheduled uploads, set
+`cas.wait_for_prune` so uploads poll and retry instead of failing immediately:
+
+```yaml
+cas:
+  wait_for_prune: "10m"
+```
+
+### 6. Monitoring
+
+`cas-status` is LIST-only (never writes) and cheap to run frequently. Pipe
+its output into your log pipeline and alert on:
+
+- Prune marker present for more than 2× expected prune duration → stranded
+  marker.
+- Abandoned in-progress markers accumulating → failed uploads or dying hosts.
+- Total blob bytes growing linearly despite stable backup count → `cas-prune`
+  is not running.
+
+See [Monitoring suggestions](#monitoring-suggestions) below for the full
+alert catalogue.
+
+### 7. Recovery procedures
+
+For step-by-step recovery instructions see the dedicated sections below:
+
+- Stranded prune marker → [Recovering from a stranded cas/\<cluster\>/prune.marker](#recovering-from-a-stranded-casclusterprunemarker)
+- Stranded upload marker → [Recovering from a stranded inprogress marker](#recovering-from-a-stranded-inprogress-marker)
+- `cas-upload` refusal due to concurrent marker → [Recovering from a concurrent cas-upload refusal](#recovering-from-a-concurrent-cas-upload-refusal)
+- Corrupt backup found by `cas-verify` → [Recovering from cas-verify failures](#recovering-from-cas-verify-failures)
+
+### 8. REST API
+
+In daemon mode all CAS commands are available via HTTP at the same port as
+the v1 API. See [REST API endpoints](#rest-api-endpoints) below for the full
+route table, async polling pattern, and example `curl` calls.
+
+---
+
 ## When to run `cas-prune`
 
 `cas-prune` is the garbage collector. After every `cas-delete` (and after
