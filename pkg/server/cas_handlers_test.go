@@ -86,3 +86,78 @@ func TestCASUploadHandler_LockedWhenBusy(t *testing.T) {
 
 	require.Equal(t, 423, rr.Code)
 }
+
+// ---------- cas-download ----------
+
+// TestCASDownloadHandler_AsyncAck verifies that POST /backup/cas-download/{name}
+// returns 200 with an acknowledged asyncAck body immediately.
+func TestCASDownloadHandler_AsyncAck(t *testing.T) {
+	api := newTestAPI(t)
+	api.config.API.AllowParallel = true
+
+	req := httptest.NewRequest("POST", "/backup/cas-download/mybackup", nil)
+	req = mux.SetURLVars(req, map[string]string{"name": "mybackup"})
+	rr := httptest.NewRecorder()
+
+	api.httpCASDownloadHandler(rr, req)
+
+	require.Equal(t, 200, rr.Code)
+	var ack asyncAck
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &ack))
+	require.Equal(t, "acknowledged", ack.Status)
+	require.Equal(t, "cas-download", ack.Operation)
+	require.Equal(t, "mybackup", ack.BackupName)
+	require.NotEmpty(t, ack.OperationId)
+}
+
+// TestCASDownloadHandler_DataOnlyReturns501 verifies that ?data returns 501.
+func TestCASDownloadHandler_DataOnlyReturns501(t *testing.T) {
+	api := newTestAPI(t)
+	api.config.API.AllowParallel = true
+
+	req := httptest.NewRequest("POST", "/backup/cas-download/mybackup?data", nil)
+	req = mux.SetURLVars(req, map[string]string{"name": "mybackup"})
+	rr := httptest.NewRecorder()
+
+	api.httpCASDownloadHandler(rr, req)
+
+	require.Equal(t, 501, rr.Code)
+}
+
+// ---------- cas-restore ----------
+
+// TestCASRestoreHandler_AsyncAck verifies that POST /backup/cas-restore/{name}
+// returns 200 with an acknowledged asyncAck body immediately.
+func TestCASRestoreHandler_AsyncAck(t *testing.T) {
+	api := newTestAPI(t)
+	api.config.API.AllowParallel = true
+
+	req := httptest.NewRequest("POST", "/backup/cas-restore/mybackup", nil)
+	req = mux.SetURLVars(req, map[string]string{"name": "mybackup"})
+	rr := httptest.NewRecorder()
+
+	api.httpCASRestoreHandler(rr, req)
+
+	require.Equal(t, 200, rr.Code)
+	var ack asyncAck
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &ack))
+	require.Equal(t, "acknowledged", ack.Status)
+	require.Equal(t, "cas-restore", ack.Operation)
+	require.Equal(t, "mybackup", ack.BackupName)
+	require.NotEmpty(t, ack.OperationId)
+}
+
+// TestCASRestoreHandler_IgnoreDependenciesReturns400 verifies that
+// ?ignore-dependencies is rejected with 400 at the handler boundary.
+func TestCASRestoreHandler_IgnoreDependenciesReturns400(t *testing.T) {
+	api := newTestAPI(t)
+	api.config.API.AllowParallel = true
+
+	req := httptest.NewRequest("POST", "/backup/cas-restore/mybackup?ignore-dependencies", nil)
+	req = mux.SetURLVars(req, map[string]string{"name": "mybackup"})
+	rr := httptest.NewRecorder()
+
+	api.httpCASRestoreHandler(rr, req)
+
+	require.Equal(t, 400, rr.Code)
+}
