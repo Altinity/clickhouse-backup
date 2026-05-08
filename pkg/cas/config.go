@@ -40,6 +40,17 @@ type Config struct {
 	// backend and accept the risk.
 	SkipConditionalPutProbe bool `yaml:"skip_conditional_put_probe" envconfig:"CAS_SKIP_CONDITIONAL_PUT_PROBE"`
 
+	// AllowUnsafeObjectDiskSkip, when true, allows cas-upload to continue even
+	// when the object-disk pre-flight cannot query system.disks (e.g. transient
+	// ClickHouse unavailability) or cannot inspect table metadata JSON. By
+	// default (false) any failure in the object-disk detection pipeline is a
+	// hard error, ensuring CAS never silently ingests a backup that may contain
+	// unrestorable object-disk-backed tables. Set to true ONLY if you cannot
+	// query system.disks at upload time and consciously accept that the
+	// resulting CAS backup may include object-disk tables that cannot be
+	// restored.
+	AllowUnsafeObjectDiskSkip bool `yaml:"allow_unsafe_object_disk_skip" envconfig:"CAS_ALLOW_UNSAFE_OBJECT_DISK_SKIP"`
+
 	// Parsed by Validate(). Zero until Validate() runs.
 	graceBlobDur        time.Duration
 	abandonThresholdDur time.Duration

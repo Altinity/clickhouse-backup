@@ -102,6 +102,9 @@ func (b *Backuper) ensureCAS(ctx context.Context, backupName string) (cas.Backen
 		if b.cfg.General.RemoteStorage == "ftp" && b.cfg.CAS.AllowUnsafeMarkers {
 			log.Warn().Msg("cas: cas.allow_unsafe_markers=true on FTP — markers use a STAT+STOR+RNFR/RNTO best-effort sequence with a small TOCTOU window between STAT and RNTO. Two concurrent cas-upload runs MAY both pass the marker write; serialize uploads externally if you cannot tolerate that risk.")
 		}
+		if b.cfg.CAS.AllowUnsafeObjectDiskSkip {
+			log.Warn().Msg("cas: cas.allow_unsafe_object_disk_skip=true — object-disk preflight will be skipped on disk-query failure; CAS backups may silently include unrestorable object-disk tables.")
+		}
 	})
 
 	return backend, closer, nil
@@ -180,14 +183,18 @@ func (b *Backuper) snapshotObjectDiskHitsFromDisks(localBackupDir string, diskTy
 
 // snapshotObjectDiskHits queries live system.disks for disk-type information,
 // then delegates to snapshotObjectDiskHitsFromDisks to walk the local backup
-// snapshot. If system.disks is unreachable the pre-flight is skipped (returns
-// nil, nil) — matching the existing tolerance for non-fatal pre-flight errors.
+// snapshot. If system.disks is unreachable the function fails closed (returns
+// an error) unless cas.allow_unsafe_object_disk_skip=true, in which case it
+// logs a warning and returns (nil, nil).
 func (b *Backuper) snapshotObjectDiskHits(ctx context.Context, localBackupDir string) ([]cas.ObjectDiskHit, error) {
 	diskTypeByName := map[string]string{}
 	disks, err := b.ch.GetDisks(ctx, true)
 	if err != nil {
-		log.Warn().Msgf("cas: GetDisks for snapshot pre-flight failed: %v; skipping pre-flight", err)
-		return nil, nil
+		if b.cfg.CAS.AllowUnsafeObjectDiskSkip {
+			log.Warn().Msgf("cas: GetDisks for snapshot pre-flight failed: %v; cas.allow_unsafe_object_disk_skip=true so continuing without object-disk detection — CAS backup may include unrestorable object-disk tables", err)
+			return nil, nil
+		}
+		return nil, fmt.Errorf("cas: object-disk pre-flight failed (cannot query system.disks): %w (set cas.allow_unsafe_object_disk_skip=true to bypass at your own risk)", err)
 	}
 	for _, d := range disks {
 		diskTypeByName[d.Name] = d.Type
@@ -392,11 +399,15 @@ func (b *Backuper) CASUpload(backupName string, skipObjectDisks, dryRun bool, ba
 	}
 
 	// Augment with metadata-JSON-driven detection so fully-object-disk-backed
-	// tables (no shadow parts) are also caught. Best-effort: if the live-
-	// ClickHouse query fails we log and fall back to shadow-only.
+	// tables (no shadow parts) are also caught. Fail closed on error unless
+	// cas.allow_unsafe_object_disk_skip=true.
 	metaHits, metaErr := b.snapshotMetadataObjectDiskHitsFromCH(ctx, fullLocal)
 	if metaErr != nil {
-		log.Warn().Err(metaErr).Msg("cas-upload: metadata-driven object-disk pre-flight failed; falling back to shadow-only detection")
+		if b.cfg.CAS.AllowUnsafeObjectDiskSkip {
+			log.Warn().Err(metaErr).Msg("cas-upload: metadata-driven object-disk pre-flight failed; cas.allow_unsafe_object_disk_skip=true so falling back to shadow-only detection — fully-object-disk-backed tables may be missed")
+		} else {
+			return fmt.Errorf("cas-upload: metadata-driven object-disk pre-flight failed: %w (set cas.allow_unsafe_object_disk_skip=true to bypass at your own risk)", metaErr)
+		}
 	}
 	hits := mergeObjectDiskHits(shadowHits, metaHits)
 
