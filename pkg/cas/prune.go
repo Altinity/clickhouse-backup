@@ -83,6 +83,18 @@ func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*Prun
 		if !exists {
 			return nil, errors.New("cas-prune --unlock: no prune.marker present")
 		}
+		if opts.DryRun {
+			if m, readErr := ReadPruneMarker(ctx, b, cp); readErr == nil {
+				log.Info().
+					Str("host", m.Host).
+					Str("run_id", m.RunID).
+					Str("started_at", m.StartedAt).
+					Msg("cas-prune --dry-run --unlock: would delete this marker (no action taken)")
+			} else {
+				log.Info().Err(readErr).Msg("cas-prune --dry-run --unlock: marker present but unparseable; would delete")
+			}
+			return &PruneReport{DryRun: true}, nil
+		}
 		if err := b.DeleteFile(ctx, PruneMarkerPath(cp)); err != nil {
 			return nil, fmt.Errorf("cas-prune --unlock: delete marker: %w", err)
 		}

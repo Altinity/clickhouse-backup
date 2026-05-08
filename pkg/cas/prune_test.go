@@ -233,6 +233,32 @@ func TestPrune_UnlockRefusesIfNoMarker(t *testing.T) {
 	}
 }
 
+func TestPrune_DryRunUnlockKeepsMarker(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	ctx := context.Background()
+
+	runID, created, err := cas.WritePruneMarker(ctx, f, cfg.ClusterPrefix(), "host-other")
+	if err != nil || !created {
+		t.Fatalf("WritePruneMarker setup: created=%v err=%v", created, err)
+	}
+	_ = runID
+
+	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{Unlock: true, DryRun: true})
+	if err != nil {
+		t.Fatalf("Prune --dry-run --unlock returned error: %v", err)
+	}
+	if rep == nil || !rep.DryRun {
+		t.Errorf("expected DryRun=true in report; got %+v", rep)
+	}
+
+	// The marker must still exist.
+	_, _, exists, _ := f.StatFile(ctx, cas.PruneMarkerPath(cfg.ClusterPrefix()))
+	if !exists {
+		t.Error("prune marker was deleted by --dry-run --unlock; expected it to survive")
+	}
+}
+
 func TestPrune_MetadataOrphanSubtreeSwept(t *testing.T) {
 	f := fakedst.New()
 	cfg := testCfg(1024)
