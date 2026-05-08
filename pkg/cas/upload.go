@@ -210,13 +210,23 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 		}
 	}
 
+	// Single deferred cleanup: runs on any error path (including panics) and
+	// uses a detached context so a cancelled operation ctx doesn't strand the
+	// marker. Skipped when DryRun (no marker was written) or when committed
+	// (the success path does an explicit delete after committing metadata.json).
+	var committed bool
+	defer func() {
+		if opts.DryRun || committed {
+			return
+		}
+		cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = DeleteInProgressMarker(cleanCtx, b, cp, name)
+	}()
+
 	// 6. Plan upload: walk shadow/, parse checksums.txt, classify.
 	plan, err := planUpload(opts.LocalBackupDir, cfg.InlineThreshold, opts.TableFilter, opts.SkipObjectDisks, opts.ExcludedTables, opts.Disks, opts.ClickHouseTables)
 	if err != nil {
-		// Best-effort cleanup of the marker we just wrote.
-		if !opts.DryRun {
-			_ = DeleteInProgressMarker(ctx, b, cp, name)
-		}
 		return nil, err
 	}
 
@@ -249,14 +259,12 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 	// 7. Cold-list existing blobs.
 	existing, err := ColdList(ctx, b, cp, opts.Parallelism)
 	if err != nil {
-		_ = DeleteInProgressMarker(ctx, b, cp, name)
 		return nil, fmt.Errorf("cas: cold-list: %w", err)
 	}
 
 	// 8. Upload missing blobs.
 	uploaded, bytesUp, skippedColdList, err := uploadMissingBlobs(ctx, b, cp, plan, existing, opts.Parallelism)
 	if err != nil {
-		_ = DeleteInProgressMarker(ctx, b, cp, name)
 		return nil, err
 	}
 	res.BlobsUploaded = uploaded
@@ -274,7 +282,6 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 	// 9. Per-(disk,db,table) archives.
 	archCount, archBytes, err := uploadPartArchives(ctx, b, cp, name, plan)
 	if err != nil {
-		_ = DeleteInProgressMarker(ctx, b, cp, name)
 		return nil, err
 	}
 	res.PerTableArchives = archCount
@@ -282,22 +289,18 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 
 	// 10. Per-table JSONs.
 	if err := uploadTableJSONs(ctx, b, cp, name, plan); err != nil {
-		_ = DeleteInProgressMarker(ctx, b, cp, name)
 		return nil, err
 	}
 
 	// 11. Pre-commit safety re-checks.
 	// 11a. prune marker
 	if _, _, exists, err := b.StatFile(ctx, PruneMarkerPath(cp)); err != nil {
-		_ = DeleteInProgressMarker(ctx, b, cp, name)
 		return nil, fmt.Errorf("cas: re-check prune marker: %w", err)
 	} else if exists {
-		_ = DeleteInProgressMarker(ctx, b, cp, name)
 		return nil, fmt.Errorf("%w: detected concurrent prune before commit", ErrPruneInProgress)
 	}
 	// 11b. our own inprogress marker
 	if _, _, exists, err := b.StatFile(ctx, InProgressMarkerPath(cp, name)); err != nil {
-		_ = DeleteInProgressMarker(ctx, b, cp, name)
 		return nil, fmt.Errorf("cas: re-check inprogress marker: %w", err)
 	} else if !exists {
 		// The marker is already gone (swept by an over-eager prune); no cleanup needed.
@@ -312,7 +315,6 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 	//      Parallelised with the same bounded-pool pattern as uploadMissingBlobs
 	//      to avoid O(skipped × RTT) serial latency on large incremental backups.
 	if revalErr := revalidateColdList(ctx, b, cp, name, skippedColdList, opts.Parallelism); revalErr != nil {
-		_ = DeleteInProgressMarker(ctx, b, cp, name)
 		return nil, revalErr
 	}
 
@@ -323,12 +325,15 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 		return nil, fmt.Errorf("cas: marshal metadata.json: %w", err)
 	}
 	if err := putBytes(ctx, b, MetadataJSONPath(cp, name), bmJSON); err != nil {
-		_ = DeleteInProgressMarker(ctx, b, cp, name)
 		return nil, fmt.Errorf("cas: put metadata.json: %w", err)
 	}
 
-	// 13. Best-effort: delete inprogress marker.
-	_ = DeleteInProgressMarker(ctx, b, cp, name)
+	// 13. Mark committed BEFORE explicit delete so a panic during delete doesn't
+	// trigger the defer's redundant cleanup. Then best-effort delete the marker.
+	committed = true
+	if err := DeleteInProgressMarker(ctx, b, cp, name); err != nil {
+		log.Warn().Err(err).Msg("cas: release inprogress marker after commit")
+	}
 
 	return res, nil
 }

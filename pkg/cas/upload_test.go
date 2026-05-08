@@ -1501,3 +1501,89 @@ func casArchiveFiles(t *testing.T, dir string) []string {
 	}
 	return out
 }
+
+// TestUpload_ErrorPathCleansInprogressMarker verifies the single-defer
+// refactor (#3): when Upload fails partway through (after the inprogress
+// marker is written), the deferred cleanup removes the marker even though
+// no explicit cleanup call exists on that path.
+func TestUpload_ErrorPathCleansInprogressMarker(t *testing.T) {
+	lb := testfixtures.Build(t, []testfixtures.PartSpec{smallPart("p1", 0)})
+	f := fakedst.New()
+	cfg := testCfg(100)
+	cp := cfg.ClusterPrefix()
+
+	// Inject a failure for the archive PutFile to trigger an error in step 9
+	// (uploadPartArchives). The marker was written in step 5; without the defer
+	// it would strand. Archive keys contain "/parts/" in their path.
+	archivePutFailed := false
+	f.SetPutHook(func(key string) (error, bool) {
+		if strings.Contains(key, "/parts/") && !archivePutFailed {
+			archivePutFailed = true
+			return fmt.Errorf("injected archive PUT failure"), true
+		}
+		return nil, false
+	})
+
+	_, err := cas.Upload(context.Background(), f, cfg, "b1", cas.UploadOptions{
+		LocalBackupDir: lb.Root,
+	})
+	if err == nil {
+		t.Fatal("expected Upload to fail due to injected error")
+	}
+
+	// The inprogress marker must be absent — the deferred cleanup ran.
+	markerKey := cas.InProgressMarkerPath(cp, "b1")
+	if _, _, exists, statErr := f.StatFile(context.Background(), markerKey); statErr != nil {
+		t.Fatalf("StatFile(marker): %v", statErr)
+	} else if exists {
+		t.Error("inprogress marker still present after Upload error — defer cleanup did not run")
+	}
+}
+
+// ctxRespectingBackend wraps fakedst.Fake and makes Walk fail with
+// context.Canceled when the context is already cancelled. This lets us
+// test that a pre-cancelled ctx causes Upload to fail, which in turn
+// exercises the deferred cleanup path.
+type ctxRespectingBackend struct {
+	cas.Backend
+}
+
+func (c *ctxRespectingBackend) Walk(ctx context.Context, prefix string, recursive bool, fn func(cas.RemoteFile) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.Backend.Walk(ctx, prefix, recursive, fn)
+}
+
+// TestUpload_CancelledContextStillReleasesMarker verifies detached-context
+// cleanup (#2): when the operation context is cancelled before Upload returns,
+// the deferred cleanup uses a fresh context.Background() and still deletes
+// the inprogress marker.
+func TestUpload_CancelledContextStillReleasesMarker(t *testing.T) {
+	lb := testfixtures.Build(t, []testfixtures.PartSpec{smallPart("p1", 0)})
+	f := fakedst.New()
+	cfg := testCfg(100)
+	cp := cfg.ClusterPrefix()
+
+	// Use a pre-cancelled context. The ctxRespectingBackend translates it into
+	// a Walk error, which ColdList surfaces to Upload, which returns an error
+	// before committing — giving the deferred cleanup a chance to run.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	_, err := cas.Upload(ctx, &ctxRespectingBackend{f}, cfg, "b1", cas.UploadOptions{
+		LocalBackupDir: lb.Root,
+	})
+	if err == nil {
+		t.Fatal("expected Upload to fail with cancelled context")
+	}
+
+	// The inprogress marker must be absent despite the operation ctx being
+	// cancelled — the deferred cleanup used its own context.Background()-derived ctx.
+	markerKey := cas.InProgressMarkerPath(cp, "b1")
+	if _, _, exists, statErr := f.StatFile(context.Background(), markerKey); statErr != nil {
+		t.Fatalf("StatFile(marker): %v", statErr)
+	} else if exists {
+		t.Error("inprogress marker still present after cancelled-ctx Upload — detached cleanup context not working")
+	}
+}
