@@ -1,8 +1,8 @@
 # Content-Addressable Storage (CAS) Layout for clickhouse-backup
 
-**Status**: Phase 1 + Phase 2 shipped (cas-{upload,download,restore,delete,verify,status,prune})
+**Status**: Phases 1–6 shipped on branch `cas-phase1`. Commands implemented: `cas-{upload,download,restore,delete,verify,status,prune}`. Phase 3 added projection-aware planner + cross-mode guards; Phase 4 added atomic markers (S3 IfNoneMatch, SFTP O_EXCL, native conditional create on Azure/GCS/COS, refuse-by-default on FTP); Phase 5 added per-backend integration smoke tests across MinIO/Azurite/fake-gcs/SFTP; Phase 6 closed the P1 defects from the second external review wave (marker-leak, dry-run-unlock, DataOnly no-op, zero-ModTime classification, object-disk preflight on metadata-only tables, decoded-name skip exclusions).
 **Author**: Mikhail Filimonov, drafted with design-interview support
-**Last updated**: 2026-05-07
+**Last updated**: 2026-05-08
 
 ## 1. Summary
 
@@ -167,7 +167,7 @@ Rationale:
 **Pre-condition**: `cas-upload` operates on a **pre-existing local backup** produced by the existing `clickhouse-backup create` command (which freezes parts into the local backup directory). This mirrors the v1 `create` + `upload` split: separation of concerns, reuses `pkg/backup/create.go` unchanged, and lets operators inspect the local backup before pushing. `cas-upload` does NOT internally freeze — operators run `clickhouse-backup create <name>` first, then `clickhouse-backup cas-upload <name>`.
 
 1. PID-lock as today (`pkg/pidlock`).
-2. **Refuse if `cas/prune.marker` exists** (the GC lock — see §6.7). Surface the marker's age in the error.
+2. **Refuse if `cas/prune.marker` exists** (the GC lock — see §6.7). Surface the marker's age in the error. If `cas.wait_for_prune` (or `--wait-for-prune` flag) is > 0, poll the marker every 2 seconds for up to that duration before refusing.
 3. **Pre-flight check for object disks**: scan in-scope tables. If any are on object disks (s3/azure/hdfs) and `--skip-object-disks` is not set, refuse with a list of `(db, table, disk)` triples. With `--skip-object-disks`, log them and exclude from the upload set.
 4. **Best-effort same-name check**: refuse if `cas/metadata/<backup>/metadata.json` already exists. Best-effort only — two hosts can both pass and both PUT (last writer wins). Multi-host concurrent uploads to the same name are **unsupported** (§3); operators must use unique names per shard.
 5. Write `cas/inprogress/<backup>.marker` with timestamp + host identifier (used by prune for abandoned-upload cleanup; not for race protection).
@@ -247,7 +247,7 @@ Per-partition restore is per-part filtering: intersect `TableMetadata.Parts` wit
 
 **Order matters.** The catalog truth is `metadata.json`.
 
-1. **Refuse if `cas/prune.marker` exists** (the GC lock).
+1. **Refuse if `cas/prune.marker` exists** (the GC lock). If `cas.wait_for_prune` (or `--wait-for-prune` flag) is > 0, poll the marker every 2 seconds for up to that duration before refusing.
 2. **Stale-marker-aware inprogress check**: if `cas/inprogress/<backup>.marker` exists AND `cas/metadata/<backup>/metadata.json` does NOT exist → upload in flight; refuse. If both exist → the upload committed but failed to delete its marker; treat as **stale** and proceed (log a warning). If only `metadata.json` exists → normal case; proceed.
 3. Delete `cas/metadata/<backup>/metadata.json` **first**. Backup is no longer in the catalog.
 4. Delete the rest of `cas/metadata/<backup>/`.
@@ -348,7 +348,7 @@ Six new top-level subcommands, plus extension of the existing `list` verb:
 | `cas-download <name> [--tables ...] [--partitions ...]` | Materialize a CAS backup into the local shadow directory in v1 layout. **Stops there** — does not load into ClickHouse. Mirrors the existing `download` verb. **Disk-space pre-flight**: estimate bytes from per-table archive sizes + sum of blob sizes from `checksums.txt`; refuse early if local free space < estimate × 1.1. Re-running over a partial directory is safe (idempotent overwrites). |
 | `cas-restore <name> [...all existing restore flags...]` | Convenience: `cas-download` followed by the existing `restore` flow. Identical flag set to `restore`. |
 | `cas-delete <name>` | Delete the per-backup metadata subtree (refuses if upload or prune in flight; see §6.6). Blobs are reclaimed by the next prune run. |
-| `cas-prune [--dry-run] [--grace-hours N] [--abandon-days N] [--unlock]` | Mark-and-sweep GC. `--dry-run` prints candidates without deleting. `--unlock` deletes a stranded `cas/prune.marker` (operator escape hatch when prune was killed by SIGKILL/OOM). |
+| `cas-prune [--dry-run] [--grace-blob DUR] [--abandon-threshold DUR] [--unlock]` | Mark-and-sweep GC. `DUR` is a Go duration string (e.g. `24h`, `30m`, `0s`). `--grace-blob` overrides config `cas.grace_blob`; `--abandon-threshold` overrides `cas.abandon_threshold`. `--dry-run` prints candidates without deleting and never touches the prune marker (so combining `--dry-run --unlock` is a no-op rather than the destructive double-meaning the first cut shipped with — see Phase 6 A3). `--unlock` deletes a stranded `cas/prune.marker` (operator escape hatch when prune was killed by SIGKILL/OOM). Explicit `--grace-blob=0s` / `--abandon-threshold=0s` are honored as "no grace" / "sweep all stale markers now" — distinguished from unset via `*Set` bools in `PruneOptions`. |
 | `cas-verify <name> [--json]` | HEAD + size check on referenced blobs. `--json` outputs structured failures for tooling. |
 | `cas-status` | Bucket-level health summary: backup count, blob count, total bytes, freshest/oldest backup, in-progress markers (with age + host), prune marker state, abandoned-marker candidates. Cheap (LIST only). |
 
@@ -385,8 +385,17 @@ cas:
   root_prefix: "cas/"        # top-level prefix in the bucket. Effective per-cluster prefix
                              #   is <root_prefix><cluster_id>/  (e.g. "cas/prod-shard-1/")
   inline_threshold: 524288   # bytes; ValidateBackup MUST reject 0 or > 1 GiB
-  grace_blob: "24h"          # prune won't delete a blob younger than this
-  abandon_threshold: "168h"  # 7 days; in-progress markers older than this are auto-cleaned
+  grace_blob: "24h"          # prune won't delete a blob younger than this. Go duration string.
+  abandon_threshold: "168h"  # 7 days; in-progress markers older than this are auto-cleaned. Go duration string.
+  allow_unsafe_markers: false # opt-in for backends that lack atomic conditional create. Phase 4
+                              #   implements PutFileIfAbsent natively on S3 / Azure / GCS / COS / SFTP.
+                              #   FTP has no portable atomic primitive: with this flag false (default)
+                              #   cas-upload and cas-prune refuse on FTP; with true, FTP falls back to
+                              #   a STAT+STOR+RNFR/RNTO best-effort sequence with a per-call WARN log.
+  wait_for_prune: "0s"        # if > 0, cas-upload and cas-delete poll the prune
+                              #   marker for up to this duration before refusing.
+                              #   Useful for cron deployments where prune may overlap
+                              #   with scheduled uploads. Go duration string.
 ```
 
 **Per-cluster prefix is mandatory.** Operators MUST configure `cluster_id`. Cross-cluster blob sharing is out of scope for v1; if anyone needs it, it's a v2 conversation with its own threat model.
@@ -394,10 +403,12 @@ cas:
 **Env vars** (override config; prefix `CAS_*` for symmetry with `S3_*`/`GCS_*`/`AZBLOB_*`):
 - `CAS_ENABLED`, `CAS_CLUSTER_ID`, `CAS_ROOT_PREFIX`
 - `CAS_INLINE_THRESHOLD`, `CAS_GRACE_BLOB`, `CAS_ABANDON_THRESHOLD`
+- `CAS_ALLOW_UNSAFE_MARKERS`, `CAS_WAIT_FOR_PRUNE`
 
 **CLI flags** (override config + env):
-- `cas-prune --grace-hours N --abandon-days N --dry-run`
-- `cas-upload --skip-object-disks --dry-run`
+- `cas-prune --grace-blob DUR --abandon-threshold DUR --dry-run --unlock`
+- `cas-upload --skip-object-disks --dry-run [--wait-for-prune=DUR]`
+- `cas-delete [--wait-for-prune=DUR]`
 - `cas-verify --json`
 
 `inline_threshold` is read from config at upload time and **persisted** in `BackupMetadata.CAS.InlineThreshold`. Restore uses the persisted value, never the current config (§6.2.1).
@@ -464,13 +475,67 @@ See §6.10 for the full CLI surface.
 
 ## 9. Deferred to v2 of CAS
 
-- **Hash verification on download** (full content re-hash). Cheap per blob; v1 ships size verification only.
-- **Object-disk parts**.
-- **Refcount-delta optimization for prune**: re-evaluate if the catalog grows past several hundred backups or prune wall-clock becomes painful. Decide on shape (post-commit manifest, per-backup blob-list sidecar, or delta files) based on real measurements.
-- **Distributed locking via S3 conditional create** (replaces the advisory marker).
-- **`cas-fsck`** repair tool: walks local part directories and re-uploads missing blobs in bulk.
-- **Convergent encryption** (so existing v1 client-side-encryption users can migrate).
-- **Per-blob resumable uploads**: existing `pkg/resumable` is per-archive. Either extend it or design a separate completion log.
+This section is the consolidated backlog of items raised across the design-interview, brainstorming, and external-review waves and explicitly punted out of the v1 ship train. Each entry names a category and a one-line rationale for deferral. Feature-class items get a short "what it would do" line; correctness/operability items name the file or scenario that motivates them.
+
+### 9.1 Major features
+
+- **Hash verification on download** (full content re-hash). v1 ships HEAD + size verification only (`cas-verify`); v2 adds `cas-verify --deep` that downloads each blob and re-hashes against the value in `checksums.txt`. Wall-clock cost is minutes-to-hours at 100TB; size verification catches the realistic silent-corruption-from-buggy-GC class for free.
+- **Object-disk parts** (s3 / azure / hdfs object disks). `cas-upload` refuses these in v1 (§3); v2 needs a design pass for content-addressing already-remote object stubs and the cross-storage key rewriting paths in `pkg/backup/create.go:1031` / `pkg/backup/restore.go:2227`.
+- **Convergent encryption**. Required for v1 client-side-encryption users to migrate to CAS without losing client-side encryption. Known weaknesses (confirmation-of-file attacks) need threat-modeling per deployment.
+- **`cas-fsck` repair tool**. Walks local part directories and re-uploads missing blobs in bulk; today the only recovery from a broken backup is `cas-delete` + fresh `create` + `cas-upload`.
+- **Parallel `cas-verify`**. Today HEAD calls run sequentially; parallelizing across blobs gives a multi-x speedup at zero correctness cost. Deferred because v1 verify is fast enough at the target scale.
+- **Per-blob resumable uploads**. Existing `pkg/resumable` is per-archive; CAS uploads at blob granularity. Either extend resumable state or maintain a separate per-blob completion log.
+- **Migration tool from v1 to CAS**. Out of scope for v1; users opt in by writing new backups with `cas-upload`.
+- **Distributed locking via S3 conditional create** (true multi-host coordination). Phase 4 added per-backend `PutFileIfAbsent` and Phase 6 wired it into both markers, which closes the local same-name race; cross-host coordination across many writers on the same backup name is still operator-policy.
+- **REST API / daemon-mode wiring for `cas-*` commands**. Today the CAS commands are CLI-only. `pkg/server/server.go` registers HTTP routes for the v1 verbs (`create`, `upload`, `download`, `restore`, `delete`, `clean`, `watch`, `list`); there is no `cas-*` handler and the `/backup/actions` dispatcher does not recognize CAS verbs. `GET /backup/list` returns only v1 backups (the `[CAS]` tag is added in the CLI renderer, not the HTTP one). Daemon-mode operators currently cannot drive CAS. To wire it: add per-command handlers mirroring the v1 ones (param parsing, sync/async via `api.status`), extend the `/backup/actions` verb table, merge CAS into `httpListHandler`'s response, and cover with `pkg/server/` tests. Decision needed: whether each CAS verb gets its own route (`POST /backup/cas-upload/{name}`) or routes only through `/backup/actions` (consistent with how v1 also accepts both forms).
+- **Local-disk / NFS target for CAS**. Today `cas-*` commands run against object-store backends (S3/Azure/GCS/COS) and SFTP/FTP. A local filesystem target (plain `file://` path or NFS mount) is attractive for on-prem deployments and air-gapped backups. Most pieces port cleanly: blob layout is just files, atomic markers map to `O_CREAT|O_EXCL`, cold-list is `filepath.WalkDir`. Open questions: how `cas-prune`'s `LastModified`-based grace handles NFS clock skew between writer and pruner; whether to expose the existing `pkg/storage` filesystem backend (if any) or write a thin local backend specifically for CAS; concurrency semantics across multiple writers on the same NFS export.
+- **Refcount-delta / blob-manifest optimization for prune**. Re-evaluate if catalog grows past several hundred backups or prune wall-clock becomes painful. Decide between post-commit manifest, per-backup blob-list sidecar, or delta files based on real measurements.
+
+### 9.2 Performance / scalability
+
+- **Prune mark-phase parallelism**. Today the live-set walk is single-threaded over `cas/metadata/*/`. With hundreds of backups this dominates prune wall-clock. Trivial to parallelize across backups with bounded concurrency.
+- **`SweepOrphans` spill-to-disk**. Current implementation streams the merge but holds intermediate state in memory; at very large catalogs (>10⁸ blobs) spill the sorted intermediates to disk. Existing on-disk live-set already does this; mirror the pattern for the orphan side.
+- **Streaming archive upload**. Per-table archives are built fully in memory before upload. Streaming the tar.zstd into the multipart upload pipe halves the peak RSS for tables with many small files.
+- **Heap-merge for `shardIter`**. Cold-list merges 256 sorted shard streams via a flat sweep; a binary-heap merge is asymptotically tighter and matters when the per-shard stream count grows (e.g. wider sharding in v2).
+- **`ExistenceSet` memory bound**. v1 ships in-memory only (per §10.2 estimate, ~600 MB at 10⁷ blobs). Add spill-to-disk only when a real workload exhausts memory.
+
+### 9.3 Operability / observability
+
+- **Structured prune logs**. Today prune emits human-readable status lines; for cron / observability pipelines, add a `--log-format=json` option emitting one structured event per phase (mark-start, mark-done with counts, sweep-start, sweep-done with bytes-reclaimed, marker-release).
+- **Populate `BlobsTotal` and `OrphansHeldByGrace` in PruneReport**. Fields exist; values are zero in v1 because counting them adds a LIST pass. Cheap and useful for capacity planning.
+- **`BytesReclaimed` formatting**. Report carries raw bytes; surface `FormatBytes` rendering in CLI output.
+- **Upload / download progress logging**. v1 logs only at start/end of each archive. Per-blob progress (especially for download) helps operator confidence on large restores.
+- **`cas-status` historical trend**. Today reports a snapshot; persisting a small JSON history file (last N runs) would let `cas-status --trend` surface growth/shrink rates without external infra.
+
+### 9.4 Correctness defenses (low-likelihood, defense-in-depth)
+
+- **`ColdList` TOCTOU re-validation** (`pkg/cas/upload.go:243`). Narrow race: cold-list says blob present → prune deletes it past grace → upload skips re-upload → commits a backup pointing at a deleted blob. Mitigation: re-HEAD blobs that were skipped via cold-list, after the pre-commit prune-marker re-check, before writing `metadata.json`. Window today is bounded by `grace_blob` (24h default); with very short grace operators are advised to run prune outside upload windows.
+- **`Prune` defensive `cfg.Validate()` guard**. `Prune` trusts the caller has validated config; a misconfigured embedded use could pass through. Add a `cfg.Validate()` at entry as belt-and-suspenders.
+- **S3 `IfNoneMatch` startup probe**. AWS S3 supports `IfNoneMatch: "*"` since Nov 2024; older MinIO releases (pre-RELEASE.2024-11) silently ignore the header and the PUT succeeds unconditionally, defeating the marker lock. v1 documents the minimum MinIO version in the runbook; v2 should run a small startup probe (PUT a sentinel twice, expect the second to 412) and refuse to start if the backend silently overwrites.
+- **`RemoteStorage` interface compatibility note in changelog**. Phase 4 added `PutFileAbsoluteIfAbsent` and `ErrConditionalPutNotSupported` to `pkg/storage.RemoteStorage`. Any external downstream implementing this interface directly will fail to compile until they add the method. Flag in release notes.
+- **Downgrade warning for `LayoutVersion`**. Operators downgrading to a tool that doesn't recognize the persisted `BackupMetadata.CAS.LayoutVersion` get a refusal at restore time. Document the upgrade-then-downgrade hazard explicitly in the runbook.
+
+### 9.5 Test coverage (deferred — load-bearing tests already ship)
+
+- **Error-classification helper unit tests**. The `is404`-style helpers in `pkg/storage/{s3,azblob,gcs,cos,sftp,ftp}.go` have integration coverage via the Phase 5 smoke tests but lack focused unit tests with synthetic backend errors.
+- **`casstorage.Walk` key-reconstruction test**. The adapter at `pkg/cas/casstorage/backend_storage.go` reconstructs absolute keys when the underlying storage strips its configured prefix; covered via integration but worth a focused unit test.
+- **FTP `AllowUnsafeMarkers` happy-path tests**. Phase 5 covers the refusal path; the opt-in best-effort path (STAT+STOR+RNFR/RNTO) is exercised manually only.
+- **Explicit-zero-override unit test**. `--grace-blob=0s` and `--abandon-threshold=0s` flow through the `*Set` bools in `PruneOptions` to override non-zero config; integration covers it indirectly via the abandon-marker sweep tests but a focused unit test would lock the precedence rules.
+- **Cross-backup dedup integration test**. `TestMutationDedup` covers within-backup-pair dedup; a cross-backup test exercising "third backup reuses blobs from backup A and backup B" would lock the catalog-level dedup invariant.
+
+### 9.6 UX / docs polish
+
+- **`--data` flag is a no-op on v1 commands when CAS is enabled**. Already hidden in the CLI; documented in operator runbook. Remove entirely when CAS becomes the default in a future major version.
+- **`cas-delete --force`** to bypass stale-marker checks. Today operators clear stranded markers via `cas-prune --abandon-threshold=0s`; a direct `--force` flag on `cas-delete` is more discoverable.
+- **Help-text examples for common flows**. README has the headline flows; per-command `--help` could carry one or two example invocations each.
+- **Changelog entries**. The phased shipping has produced ~50 commits on `cas-phase1`; before merge, condense into a coherent CHANGELOG section that names the feature and references this design doc rather than the per-phase plan files (which are gitignored).
+
+### 9.7 Out of scope (not on any roadmap)
+
+- Garbage collection of metadata across replicas/clusters beyond what mark-and-sweep already handles.
+- Object Lock / immutability features beyond what's intrinsic to content addressing.
+- Cross-cluster blob sharing. Phase 1 mandates `cluster_id`; if cross-cluster dedup ever becomes a requirement, it's a v2 conversation with its own threat model (one cluster can poison another's blob store).
+- Adversarial-collision resistance on the content hash. The hash is whatever ClickHouse writes in `checksums.txt` (CityHash128 today); switching to a stronger hash is an upstream conversation, not a clickhouse-backup change.
 
 ## 9.1 Implementation-time decisions
 
@@ -527,22 +592,38 @@ Two-byte sharding gives ample headroom. One-byte (16 prefixes) would also work a
 - `--dry-run` for sanity checks
 - Operator runbook (when to run, what failures mean, manual recovery from `cas-verify` output)
 
-**Phase 3** — hardening (only as needed):
-- Per-blob resumable uploads (extend `pkg/resumable`)
+**Phase 3 (shipped)** — planner correctness:
+- Two-pass projection-aware part walker (extract-set + file walk) replacing the original recursive directory scan; closes the projection-path silent-skip class
+- `ExcludedTables` plumbed through `UploadOptions` so `--skip-object-disks` excludes by decoded `(db, table)` pair, not by `DiskInfo.Path` (which was empty)
+- Empty-`Parts` table guard in `uploadTableJSONs` (skips tables with `len(tp.parts) == 0` to avoid producing archives with no entries)
+- `validateChecksumsTxtFilename` hoisted above the `.proj` recursion branch, closing the path-traversal corner
+
+**Phase 4 (shipped)** — atomic markers:
+- New `PutFileAbsoluteIfAbsent(ctx, key, r, size) (created bool, err error)` on `pkg/storage.RemoteStorage`, with `ErrConditionalPutNotSupported` sentinel
+- Implementations: S3 `IfNoneMatch: "*"` on direct PutObject (bypasses `s3manager.Uploader` because markers are <1KB); Azure `If-None-Match: *`; GCS `Conditions{DoesNotExist: true}`; COS `If-None-Match: *`; SFTP `OpenFile(O_WRONLY|O_CREATE|O_EXCL)` mapping to `SSH_FXF_EXCL`; FTP refuses by default, opts into STAT+STOR+RNFR/RNTO best-effort with `cas.allow_unsafe_markers`
+- Symmetric relative-key `PutFileIfAbsent` on the `cas.Backend` adapter (so casstorage marker writes go through the configured `<root>/<cluster>/cas/...` prefix instead of bucket-root)
+- `WriteInProgressMarker` and `WritePruneMarker` return `(created, err)`; upload/prune branch on `!created` and surface a diagnostic naming the existing marker's host + start time
+
+**Phase 5 (shipped)** — backend smoke tests:
+- testcontainers-driven integration coverage for MinIO, Azurite, fake-gcs-server, and OpenSSH-server SFTP; FTP exercised via proftpd in the refusal path. 16 CAS integration tests pass (15 PASS, 1 SKIP), spanning 5 of 6 backends
+- Surfaced and fixed 4 pre-existing storage-layer bugs (SFTP/FTP `WalkAbsolute` and `DeleteFile` not-found handling) that CAS exercises but v1 paths never hit
+
+**Phase 6 (shipped)** — P1 defects from external review:
+- Inprogress-marker cleanup on the StatFile-recheck error branch and on the metadata.json commit failure (steps 11b and 12) — previously leaked the marker, blocking the backup name for `abandon_threshold` (default 7 days)
+- `cas-prune --dry-run --unlock` is now a no-op rather than deleting the real prune marker
+- `cas-{download,restore} --data-only` returns `ErrNotImplemented` instead of silently doing a full download
+- Zero-`ModTime` markers (FTP `LIST` without MLSD facts) are treated as fresh; zero-`ModTime` blobs are treated as inside grace — closes the data-loss path where prune sweeps every active marker on FTP-like backends
+- Object-disk preflight now scans `metadata.json` rather than only the local shadow tree, catching fully-remote tables that have no local part directories
+- `--skip-object-disks` exclusions are computed against decoded `(db, table)` names (matching planUpload's lookup) rather than the encoded shadow directory names
+
+**Phase 7 (planned)** — performance and operability:
+- See §9.2 (performance) and §9.3 (operability) for the consolidated backlog. None of these are correctness gates; they are response to real workload measurements.
 - Performance benchmarks against representative datasets. **TODO**: pin concrete success targets before benchmarking. Suggested starting points (operator to confirm):
   - **Mutation dedup**: post-mutation backup uploads ≤ 5% of unmutated backup size on a 100TB-with-one-mutated-column scenario (the headline value-prop).
   - **Cold full backup**: within 1.2× of v1's wall-clock for the same dataset (slight overhead acceptable due to per-file HEAD checks).
   - **Repeat-of-same-data backup**: < 5 min wall-clock for 100TB if all blobs are already present (cold-list dominates).
   - **Restore**: within 1.5× of v1's wall-clock (slower due to per-blob fetches; acceptable trade for chain-free).
-- Stress tests for the prune-lock + grace-period correctness paths
-
-**Deferred (post-v1 of CAS)**:
-- Hash-on-download verification
-- Refcount-delta or blob-manifest optimization for prune (decide based on real GC measurements)
-- Distributed locking via S3 conditional writes
-- `cas-fsck` repair tool
-- Object-disk support
-- Convergent encryption
+- Stress tests for the prune-lock + grace-period correctness paths under sustained concurrent upload load.
 
 ### 10.4 Ship-gating tests
 
