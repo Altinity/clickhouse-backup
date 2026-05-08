@@ -62,12 +62,17 @@ func (s *storageBackend) Walk(ctx context.Context, prefix string, recursive bool
 	// MetadataJSONPath / BlobPath / etc.), so we reconstruct here by
 	// stripping any leading '/' (path.Join artifact in S3.Walk) and
 	// re-prepending the requested prefix.
-	prefix = strings.TrimSuffix(prefix, "/")
-	return s.bd.Walk(ctx, prefix+"/", recursive, func(_ context.Context, rf storage.RemoteFile) error {
-		rel := strings.TrimPrefix(rf.Name(), "/")
-		abs := prefix + "/" + rel
+	return s.bd.Walk(ctx, strings.TrimSuffix(prefix, "/")+"/", recursive, func(_ context.Context, rf storage.RemoteFile) error {
+		abs := reconstructAbsoluteKey(prefix, rf.Name())
 		return fn(cas.RemoteFile{Key: abs, Size: rf.Size(), ModTime: rf.LastModified()})
 	})
+}
+
+// reconstructAbsoluteKey rebuilds the absolute object key from the prefix
+// passed to Walk and the (possibly relative) name returned by the underlying
+// pkg/storage backend (which may strip the prefix and may prepend a leading "/").
+func reconstructAbsoluteKey(prefix, relName string) string {
+	return strings.TrimSuffix(prefix, "/") + "/" + strings.TrimPrefix(relName, "/")
 }
 
 // isNotFound returns true if err indicates the object doesn't exist.
