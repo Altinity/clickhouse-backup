@@ -19,10 +19,10 @@ import (
 // cutoff. The Key is the absolute object key (i.e. what BlobPath would
 // produce), suitable for direct DeleteFile.
 type OrphanCandidate struct {
-	Hash    Hash128
-	Key     string
-	Size    int64
-	ModTime time.Time
+	Hash    Hash128   `json:"hash"`
+	Key     string    `json:"key"`
+	Size    int64     `json:"size"`
+	ModTime time.Time `json:"mod_time"`
 }
 
 // SweepStats holds aggregate counters produced by a single SweepOrphans call.

@@ -41,17 +41,20 @@ type PruneOptions struct {
 // PruneReport summarizes what a Prune run did. Returned even on error so
 // callers can log partial progress.
 type PruneReport struct {
-	DryRun                bool
-	LiveBackups           int
-	BlobsTotal            uint64
-	OrphanBlobsConsidered uint64
-	OrphansHeldByGrace    uint64
-	OrphansDeleted        uint64
-	BlobDeleteFailures    int
-	BytesReclaimed        int64
-	AbandonedMarkersFound int
-	MetadataOrphansFound  int
-	DurationSeconds       float64
+	DryRun                bool              `json:"dry_run"`
+	LiveBackups           int               `json:"live_backups"`
+	BlobsTotal            uint64            `json:"blobs_total"`
+	OrphanBlobsConsidered uint64            `json:"orphan_blobs_considered"`
+	OrphansHeldByGrace    uint64            `json:"orphans_held_by_grace"`
+	OrphansDeleted        uint64            `json:"orphans_deleted"`
+	BlobDeleteFailures    int               `json:"blob_delete_failures"`
+	BytesReclaimed        int64             `json:"bytes_reclaimed"`
+	AbandonedMarkersFound int               `json:"abandoned_markers_found"`
+	MetadataOrphansFound  int               `json:"metadata_orphans_found"`
+	DurationSeconds       float64           `json:"duration_seconds"`
+	// DryRunCandidates lists every blob that would be deleted in a dry-run.
+	// Only populated when DryRun=true; nil otherwise.
+	DryRunCandidates      []OrphanCandidate `json:"dry_run_candidates,omitempty"`
 }
 
 // Prune performs mark-and-sweep garbage collection of orphan blobs and
@@ -232,8 +235,13 @@ func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*Prun
 	// Step 11: delete orphan blobs (parallel, bounded).
 	if opts.DryRun {
 		for _, c := range cands {
-			log.Info().Str("key", c.Key).Time("mod_time", c.ModTime).Int64("size", c.Size).Msg("cas-prune dry-run: would delete")
+			log.Info().
+				Str("key", c.Key).
+				Time("mod_time", c.ModTime).
+				Int64("size", c.Size).
+				Msg("cas-prune dry-run: would delete")
 		}
+		rep.DryRunCandidates = cands
 	} else {
 		log.Info().Int("count", len(cands)).Msg("cas-prune: deleting orphan blobs")
 		n, bytes, failures, err := deleteBlobs(ctx, b, cands, 32)
@@ -702,6 +710,20 @@ func PrintPruneReport(r *PruneReport, w io.Writer) error {
 	if r.BlobDeleteFailures > 0 {
 		if _, err := fmt.Fprintf(w, "  Blob delete failures: %d\n", r.BlobDeleteFailures); err != nil {
 			return err
+		}
+	}
+	if len(r.DryRunCandidates) > 0 {
+		if _, err := fmt.Fprintf(w, "Would delete:\n"); err != nil {
+			return err
+		}
+		for _, c := range r.DryRunCandidates {
+			if _, err := fmt.Fprintf(w, "  %s  (%s, modified %s)\n",
+				c.Key,
+				utils.FormatBytes(uint64(c.Size)),
+				c.ModTime.UTC().Format("2006-01-02T15:04:05Z"),
+			); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

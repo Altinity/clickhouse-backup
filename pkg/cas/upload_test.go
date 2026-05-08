@@ -894,8 +894,8 @@ func TestUpload_RefusesIfInprogressMarkerPresent(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected Upload to refuse when inprogress marker is present")
 	}
-	if !strings.Contains(err.Error(), "another cas-upload is in progress") {
-		t.Errorf("error should mention concurrent upload; got: %v", err)
+	if !strings.Contains(err.Error(), "is in progress for") {
+		t.Errorf("error should mention concurrent operation in progress; got: %v", err)
 	}
 }
 
