@@ -79,3 +79,16 @@ func TestCASSmokeAzure(t *testing.T) {
 	runCASBackendSmoke(t, env, r,
 		"cas_smoke_azure_db", "cas_smoke_azure_t", "cas_smoke_azure_bk")
 }
+
+// TestCASSmokeSFTP exercises the full CAS lifecycle through the SFTP
+// backend (panubo/sshd container). Verifies the OpenFile(O_EXCL) ->
+// SSH_FXF_EXCL path added in Phase 4 T3 works against OpenSSH-server.
+func TestCASSmokeSFTP(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+	defer env.Cleanup(t, r)
+
+	env.casBootstrapWith(r, "smoke_sftp", "config-sftp-emulator.yaml", "")
+	runCASBackendSmoke(t, env, r,
+		"cas_smoke_sftp_db", "cas_smoke_sftp_t", "cas_smoke_sftp_bk")
+}

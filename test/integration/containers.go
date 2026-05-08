@@ -764,7 +764,7 @@ func (tc *TestContainers) clickHouseBinds(curDir, configsDir string) []string {
 		"config-gcs.yml", "config-gcs-custom-endpoint.yml", "config-gcs-emulator.yml",
 		"config-s3.yml", "config-s3-embedded.yml", "config-s3-embedded-url.yml",
 		"config-s3-embedded-local.yml", "config-s3-nodelete.yml", "config-s3-plain-embedded.yml",
-		"config-sftp-auth-key.yaml", "config-sftp-auth-password.yaml",
+		"config-sftp-auth-key.yaml", "config-sftp-auth-password.yaml", "config-sftp-emulator.yaml",
 	}
 	// template files (copied with .template suffix)
 	templateFiles := []string{

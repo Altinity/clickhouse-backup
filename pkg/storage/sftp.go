@@ -128,6 +128,13 @@ func (sftp *SFTP) DeleteFile(ctx context.Context, key string) error {
 	fileStat, err := sftp.sftpClient.Stat(filePath)
 	if err != nil {
 		sftp.Debug("[SFTP_DEBUG] Delete::STAT %s return error %v", filePath, err)
+		// A non-existent file is not an error for a delete operation —
+		// treat it as an idempotent no-op, same as S3/GCS/AzBlob
+		// (e.g. cas-delete walks + deletes the metadata subtree after
+		// already deleting metadata.json in the first step).
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return errors.WithMessage(err, "SFTP DeleteFile Stat")
 	}
 	if fileStat.IsDir() {
@@ -178,6 +185,14 @@ func (sftp *SFTP) WalkAbsolute(ctx context.Context, prefix string, recursive boo
 		walker := sftp.sftpClient.Walk(prefix)
 		for walker.Step() {
 			if err := walker.Err(); err != nil {
+				// A non-existent directory is an expected condition during
+				// CAS cold-list (the blob/<shard>/ directories don't exist
+				// until the first upload). Return empty, not an error — the
+				// same semantics that S3/GCS/AzBlob provide for missing
+				// prefixes.
+				if os.IsNotExist(err) {
+					return nil
+				}
 				return errors.WithMessage(err, "SFTP WalkAbsolute walker.Err")
 			}
 			entry := walker.Stat()
@@ -198,6 +213,10 @@ func (sftp *SFTP) WalkAbsolute(ctx context.Context, prefix string, recursive boo
 		entries, err := sftp.sftpClient.ReadDir(prefix)
 		if err != nil {
 			sftp.Debug("[SFTP_DEBUG] Walk::NonRecursive::ReadDir %s return error %v", prefix, err)
+			// Non-existent directory → return empty, same as object-store semantics.
+			if os.IsNotExist(err) {
+				return nil
+			}
 			return errors.WithMessage(err, "SFTP WalkAbsolute ReadDir")
 		}
 		for _, entry := range entries {

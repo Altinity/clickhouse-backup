@@ -52,10 +52,12 @@ func (env *TestEnvironment) casBootstrapWith(r *require.Assertions, clusterID, b
 		// /data (tmpfs); there is no clean path-based wipe. Rely on
 		// unique cluster IDs and the tests' own cas-delete + cas-prune
 		// cleanup at the end.
-	case "config-sftp-auth-password.yaml":
+	case "config-sftp-auth-password.yaml", "config-sftp-emulator.yaml":
 		// SFTP: path: /root -> /root/cas/<id>/ on the sshd container.
+		// Create the directory after wiping: sftp.Walk fails on non-existent
+		// directories, so we need it to exist before cas-upload runs cold-list.
 		_ = env.DockerExec("sshd", "sh", "-c",
-			fmt.Sprintf("rm -rf /root/cas/%s/", clusterID))
+			fmt.Sprintf("rm -rf /root/cas/%s/ && mkdir -p /root/cas/%s/", clusterID, clusterID))
 	case "config-ftp.yaml":
 		// FTP: path: /backup -> /backup/cas/<id>/ on the ftp container.
 		_ = env.DockerExec("ftp", "sh", "-c",
