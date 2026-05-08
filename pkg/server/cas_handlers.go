@@ -84,7 +84,7 @@ func (api *APIServer) httpCASUploadHandler(w http.ResponseWriter, r *http.Reques
 	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("cas-upload", 0, func() error {
-			b := backup.NewBackuper(cfg)
+			b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
 			return b.CASUpload(name, skipObjectDisks, dryRun, false, api.clickhouseBackupVersion, commandId, waitForPrune)
 		})
 		if err != nil {
@@ -158,7 +158,7 @@ func (api *APIServer) httpCASDownloadHandler(w http.ResponseWriter, r *http.Requ
 	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("cas-download", 0, func() error {
-			b := backup.NewBackuper(cfg)
+			b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
 			return b.CASDownload(name, tablePattern, partitions, schemaOnly, dataOnly, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
@@ -324,7 +324,7 @@ func (api *APIServer) httpCASRestoreHandler(w http.ResponseWriter, r *http.Reque
 	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("cas-restore", 0, func() error {
-			b := backup.NewBackuper(cfg)
+			b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
 			return b.CASRestore(
 				name, tablePattern,
 				dbMapping, tableMapping, partitions, skipProjections,
@@ -396,7 +396,7 @@ func (api *APIServer) httpCASDeleteHandler(w http.ResponseWriter, r *http.Reques
 	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("cas-delete", 0, func() error {
-			b := backup.NewBackuper(cfg)
+			b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
 			return b.CASDelete(name, commandId, waitForPrune)
 		})
 		if err != nil {
@@ -443,7 +443,7 @@ func (api *APIServer) httpCASVerifyHandler(w http.ResponseWriter, r *http.Reques
 	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("cas-verify", 0, func() error {
-			b := backup.NewBackuper(cfg)
+			b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
 			return b.CASVerify(name, true, commandId)
 		})
 		if err != nil {
@@ -506,7 +506,7 @@ func (api *APIServer) httpCASPruneHandler(w http.ResponseWriter, r *http.Request
 	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("cas-prune", 0, func() error {
-			b := backup.NewBackuper(cfg)
+			b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
 			return b.CASPrune(dryRun, graceBlob, abandonThreshold, unlock, commandId)
 		})
 		if err != nil {
@@ -529,7 +529,7 @@ func (api *APIServer) httpCASStatusHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	b := backup.NewBackuper(cfg)
+	b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
 	report, statusErr := b.CASStatusJSON(status.NotFromAPI)
 	if statusErr != nil {
 		api.writeError(w, http.StatusInternalServerError, "cas-status", statusErr)

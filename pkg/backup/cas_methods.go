@@ -79,8 +79,9 @@ func (b *Backuper) ensureCAS(ctx context.Context, backupName string) (cas.Backen
 
 	// One-shot startup banner when operating in any unsafe-marker mode so
 	// the risk is visible in logs even when the operator never reads the
-	// runbook. Fires at most once per Backuper lifetime.
-	b.casUnsafeBannerOnce.Do(func() {
+	// runbook. Fires at most once per CASProbeState lifetime (i.e. once per
+	// daemon server start in API mode; once per process in CLI mode).
+	b.casProbeState.bannerOnce.Do(func() {
 		if b.cfg.CAS.SkipConditionalPutProbe {
 			log.Warn().Msg("cas: cas.skip_conditional_put_probe=true — conditional-put compliance NOT verified; if the backend silently ignores If-None-Match, marker locks are unsafe and concurrent uploads may corrupt backups. Use only on backends you have independently confirmed honor the precondition.")
 		}
@@ -96,21 +97,26 @@ func (b *Backuper) ensureCAS(ctx context.Context, backupName string) (cas.Backen
 }
 
 // maybeProbeCondPut runs the conditional-put startup probe at most once per
-// Backuper. Skipped if cas.skip_conditional_put_probe=true. The probe is
+// CASProbeState. Skipped if cas.skip_conditional_put_probe=true. The probe is
 // called by every CAS command that writes a marker (cas-upload non-dry-run,
 // cas-prune non-dry-run, cas-delete). Read-only paths (cas-status,
 // cas-verify, cas-download, cas-restore, dry-run flows) skip it entirely,
 // ensuring they work with read-only credentials and don't mutate remote
 // storage.
+//
+// In daemon (APIServer) mode b.casProbeState is the server-level singleton, so
+// the probe fires exactly once per server lifetime regardless of how many
+// requests arrive. In CLI mode each process gets a fresh CASProbeState, so
+// the probe fires once per invocation.
 func (b *Backuper) maybeProbeCondPut(ctx context.Context, backend cas.Backend) error {
 	if b.cfg.CAS.SkipConditionalPutProbe {
 		return nil
 	}
-	b.casProbeOnce.Do(func() {
+	b.casProbeState.probeOnce.Do(func() {
 		cp := b.cfg.CAS.ClusterPrefix()
-		b.casProbeErr = cas.ProbeConditionalPut(ctx, backend, cp)
+		b.casProbeState.probeErr = cas.ProbeConditionalPut(ctx, backend, cp)
 	})
-	return b.casProbeErr
+	return b.casProbeState.probeErr
 }
 
 // snapshotObjectDiskHitsFromDisks is the pure, testable core of the snapshot

@@ -52,6 +52,10 @@ type APIServer struct {
 	metrics                 *metrics.APIMetrics
 	routes                  []string
 	clickhouseBackupVersion string
+	// casProbeState is shared across all per-request Backuper instances so the
+	// conditional-put probe and unsafe-marker WARN banner fire at most once per
+	// daemon lifetime rather than once per REST request.
+	casProbeState *backup.CASProbeState
 }
 
 // GetConfig returns the current config with read lock protection
@@ -106,6 +110,7 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 		clickhouseBackupVersion: clickhouseBackupVersion,
 		metrics:                 metrics.NewAPIMetrics(),
 		stop:                    make(chan struct{}),
+		casProbeState:           backup.NewCASProbeState(),
 	}
 	api.metrics.RegisterMetrics()
 

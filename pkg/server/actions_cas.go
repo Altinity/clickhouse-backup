@@ -51,7 +51,7 @@ func (api *APIServer) actionsCASHandler(command string, args []string, row statu
 		}
 		go func() {
 			err, _ := api.metrics.ExecuteWithMetrics("cas-upload", 0, func() error {
-				b := backup.NewBackuper(cfg)
+				b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
 				return b.CASUpload(name, skipObjectDisks, dryRun, false, api.clickhouseBackupVersion, commandId, waitForPrune)
 			})
 			status.Current.Stop(commandId, err)
@@ -71,7 +71,7 @@ func (api *APIServer) actionsCASHandler(command string, args []string, row statu
 		}
 		go func() {
 			err, _ := api.metrics.ExecuteWithMetrics("cas-download", 0, func() error {
-				b := backup.NewBackuper(cfg)
+				b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
 				return b.CASDownload(name, tablePattern, partitions, schemaOnly, false, api.clickhouseBackupVersion, commandId)
 			})
 			status.Current.Stop(commandId, err)
@@ -91,7 +91,7 @@ func (api *APIServer) actionsCASHandler(command string, args []string, row statu
 		}
 		go func() {
 			err, _ := api.metrics.ExecuteWithMetrics("cas-restore", 0, func() error {
-				b := backup.NewBackuper(cfg)
+				b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
 				return b.CASRestore(
 					name, opts.tablePattern,
 					opts.dbMapping, opts.tableMapping, opts.partitions, opts.skipProjections,
@@ -119,7 +119,7 @@ func (api *APIServer) actionsCASHandler(command string, args []string, row statu
 		}
 		go func() {
 			err, _ := api.metrics.ExecuteWithMetrics("cas-delete", 0, func() error {
-				b := backup.NewBackuper(cfg)
+				b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
 				return b.CASDelete(name, commandId, waitForPrune)
 			})
 			status.Current.Stop(commandId, err)
@@ -140,7 +140,7 @@ func (api *APIServer) actionsCASHandler(command string, args []string, row statu
 		name := utils.CleanBackupNameRE.ReplaceAllString(args[1], "")
 		go func() {
 			err, _ := api.metrics.ExecuteWithMetrics("cas-verify", 0, func() error {
-				b := backup.NewBackuper(cfg)
+				b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
 				return b.CASVerify(name, true, commandId)
 			})
 			status.Current.Stop(commandId, err)
@@ -159,7 +159,7 @@ func (api *APIServer) actionsCASHandler(command string, args []string, row statu
 		}
 		go func() {
 			err, _ := api.metrics.ExecuteWithMetrics("cas-prune", 0, func() error {
-				b := backup.NewBackuper(cfg)
+				b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
 				return b.CASPrune(dryRun, graceBlob, abandonThreshold, unlock, commandId)
 			})
 			status.Current.Stop(commandId, err)
@@ -174,7 +174,7 @@ func (api *APIServer) actionsCASHandler(command string, args []string, row statu
 	case "cas-status":
 		// cas-status is informational; run async so /backup/actions never blocks.
 		go func() {
-			b := backup.NewBackuper(cfg)
+			b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
 			_, reportErr := b.CASStatusJSON(commandId)
 			status.Current.Stop(commandId, reportErr)
 			if reportErr != nil {
