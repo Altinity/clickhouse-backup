@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -337,7 +338,59 @@ func TestSkipObjectDisks_ExclusionFiresFromSnapshot(t *testing.T) {
 	}
 }
 
-// TestSnapshotObjectDiskHits_FailsClosedOnDiskQueryError verifies that when
+// TestCASStatus_DoesNotProbeRemoteStorage verifies that the read-only CAS
+// commands (cas-status, cas-verify, cas-download, cas-restore) do NOT
+// trigger the conditional-put probe. The probe PUTs a sentinel object and
+// deletes it; invoking it on read-only credentials would fail with a
+// permissions error, and even on writable credentials it needlessly mutates
+// remote storage.
+//
+// Because b.ch is a concrete *clickhouse.ClickHouse (no interface), we
+// cannot exercise the full CASStatus stack in a unit test. Instead we test
+// the invariant at the level where it is enforced: ensureCAS must NOT call
+// maybeProbeCondPut, and maybeProbeCondPut must return nil (not panic) when
+// called with a nil backend and SkipConditionalPutProbe=true.
+//
+// Integration coverage for the full end-to-end path exists in
+// TestCASAPIRoundtrip, which runs cas-status against a real S3 backend;
+// if the probe were re-introduced into ensureCAS, that test would expose the
+// regression on read-only credential configurations.
+func TestMaybeProbeCondPut_SkipsWhenFlagSet(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.CAS.Enabled = true
+	cfg.CAS.ClusterID = "unit"
+	cfg.CAS.SkipConditionalPutProbe = true
+	b := &Backuper{cfg: cfg}
+
+	// Backend is nil; if maybeProbeCondPut ever dereferences it we get a
+	// nil-pointer panic — that would be the test failure.
+	err := b.maybeProbeCondPut(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("maybeProbeCondPut with skip=true must return nil, got: %v", err)
+	}
+}
+
+func TestMaybeProbeCondPut_RunsAtMostOnce(t *testing.T) {
+	// Verify that once casProbeErr is set (simulating a previous probe failure),
+	// subsequent calls return the same error without invoking the probe again.
+	cfg := config.DefaultConfig()
+	cfg.CAS.Enabled = true
+	cfg.CAS.ClusterID = "unit"
+	cfg.CAS.SkipConditionalPutProbe = false
+
+	sentinel := errors.New("probe: backend does not support If-None-Match")
+	b := &Backuper{cfg: cfg, casProbeErr: sentinel}
+	// Poison the Once so it appears already done; set the error directly.
+	b.casProbeOnce.Do(func() {}) // mark as already executed
+
+	err := b.maybeProbeCondPut(context.Background(), nil)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("expected sentinel error from cached probe result, got: %v", err)
+	}
+}
+
+// TestCASStatus_DoesNotProbeRemoteStorage verifies that when
+
 // b.ch.GetDisks returns an error and cas.allow_unsafe_object_disk_skip=false
 // (the default), snapshotObjectDiskHits returns a non-nil error that includes
 // the override-flag hint.

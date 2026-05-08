@@ -77,21 +77,6 @@ func (b *Backuper) ensureCAS(ctx context.Context, backupName string) (cas.Backen
 		b.ch.Close()
 	}
 
-	// Run the conditional-put probe once per Backuper lifetime. This detects
-	// backends (older MinIO <2024-11, some Ceph RGW) that silently ignore
-	// If-None-Match: *, which would defeat marker locks and risk data loss.
-	// Operators can opt out via cas.skip_conditional_put_probe=true.
-	if !b.cfg.CAS.SkipConditionalPutProbe {
-		b.casProbeOnce.Do(func() {
-			cp := b.cfg.CAS.ClusterPrefix()
-			b.casProbeErr = cas.ProbeConditionalPut(ctx, backend, cp)
-		})
-		if b.casProbeErr != nil {
-			closer()
-			return nil, func() {}, b.casProbeErr
-		}
-	}
-
 	// One-shot startup banner when operating in any unsafe-marker mode so
 	// the risk is visible in logs even when the operator never reads the
 	// runbook. Fires at most once per Backuper lifetime.
@@ -108,6 +93,24 @@ func (b *Backuper) ensureCAS(ctx context.Context, backupName string) (cas.Backen
 	})
 
 	return backend, closer, nil
+}
+
+// maybeProbeCondPut runs the conditional-put startup probe at most once per
+// Backuper. Skipped if cas.skip_conditional_put_probe=true. The probe is
+// called by every CAS command that writes a marker (cas-upload non-dry-run,
+// cas-prune non-dry-run, cas-delete). Read-only paths (cas-status,
+// cas-verify, cas-download, cas-restore, dry-run flows) skip it entirely,
+// ensuring they work with read-only credentials and don't mutate remote
+// storage.
+func (b *Backuper) maybeProbeCondPut(ctx context.Context, backend cas.Backend) error {
+	if b.cfg.CAS.SkipConditionalPutProbe {
+		return nil
+	}
+	b.casProbeOnce.Do(func() {
+		cp := b.cfg.CAS.ClusterPrefix()
+		b.casProbeErr = cas.ProbeConditionalPut(ctx, backend, cp)
+	})
+	return b.casProbeErr
 }
 
 // snapshotObjectDiskHitsFromDisks is the pure, testable core of the snapshot
@@ -433,6 +436,13 @@ func (b *Backuper) CASUpload(backupName string, skipObjectDisks, dryRun bool, ba
 		}
 		uploadOpts.ExcludedTables = excluded
 	}
+	// Run the conditional-put probe only for real (non-dry-run) uploads that
+	// will actually write a marker. Dry-run and read-only commands skip it.
+	if !dryRun {
+		if err := b.maybeProbeCondPut(ctx, backend); err != nil {
+			return err
+		}
+	}
 	res, uploadErr := cas.Upload(ctx, backend, b.cfg.CAS, backupName, uploadOpts)
 	if uploadErr != nil {
 		return uploadErr
@@ -659,6 +669,10 @@ func (b *Backuper) CASDelete(backupName string, commandId int, waitForPrune time
 		return err
 	}
 	defer closer()
+	// cas-delete always writes a tombstone marker; always probe.
+	if err := b.maybeProbeCondPut(ctx, backend); err != nil {
+		return err
+	}
 	if err := cas.Delete(ctx, backend, b.cfg.CAS, backupName, cas.DeleteOptions{WaitForPrune: waitForPrune}); err != nil {
 		return err
 	}
@@ -769,6 +783,13 @@ func (b *Backuper) CASPrune(dryRun bool, graceBlob, abandonThreshold string, unl
 		}
 		opts.AbandonThreshold = d
 		opts.AbandonThresholdSet = true
+	}
+	// Run the conditional-put probe only for real (non-dry-run) prune runs
+	// that write a prune marker. Dry-run and read-only commands skip it.
+	if !dryRun {
+		if err := b.maybeProbeCondPut(ctx, backend); err != nil {
+			return err
+		}
 	}
 	rep, err := cas.Prune(ctx, backend, b.cfg.CAS, opts)
 	if rep != nil {
