@@ -1,3 +1,9 @@
+# vNEXT (unreleased)
+
+NEW FEATURES
+
+- add experimental Content-Addressable Storage (CAS) backups via new `cas-upload`, `cas-download`, `cas-restore`, `cas-delete`, `cas-verify`, `cas-prune`, `cas-status` commands. CAS deduplicates file content across backups (especially effective for mutated parts) and removes the incremental-chain dependency — every CAS backup is independently restorable. Available in CLI and REST API. Configure via new `cas:` config block; see [docs/cas-design.md](docs/cas-design.md) and [docs/cas-operator-runbook.md](docs/cas-operator-runbook.md). Object-disk and client-side-encryption tables not yet supported.
+
 # v2.6.43
 
 NEW FEATURES
