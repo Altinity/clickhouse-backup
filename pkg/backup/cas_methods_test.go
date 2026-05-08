@@ -250,6 +250,41 @@ func (r *fakeStoragePolicyResolver) DiskType(disk string) (string, error) {
 	return r.diskType[disk], nil
 }
 
+// TestSnapshotObjectDiskHits_DecodesNames verifies that ObjectDiskHit
+// returns DECODED (db, table) names that match what planUpload reads
+// from the per-table metadata JSON. Without this, --skip-object-disks
+// silently no-ops for tables with special characters in identifiers.
+func TestSnapshotObjectDiskHits_DecodesNames(t *testing.T) {
+	root := t.TempDir()
+	must := func(err error) { t.Helper(); if err != nil { t.Fatal(err) } }
+
+	// Synthesize a shadow tree for db1.my-table on disk_s3 (the dir
+	// names are TablePathEncode'd by clickhouse-backup create).
+	shadowPart := filepath.Join(root, "shadow", "db1", "my%2Dtable", "disk_s3", "all_1_1_0")
+	must(os.MkdirAll(shadowPart, 0o755))
+	must(os.WriteFile(filepath.Join(shadowPart, "checksums.txt"),
+		[]byte("checksums format version: 2\n0 files:\n"), 0o644))
+
+	// Plus the matching metadata JSON with the DECODED (db, table) name.
+	must(os.MkdirAll(filepath.Join(root, "metadata", "db1"), 0o755))
+	must(os.WriteFile(filepath.Join(root, "metadata", "db1", "my%2Dtable.json"),
+		[]byte(`{"database":"db1","table":"my-table"}`), 0o644))
+
+	b := &Backuper{}
+	hits, err := b.snapshotObjectDiskHitsFromDisks(root, map[string]string{
+		"disk_s3": "s3",  // lowercase to match IsObjectDiskType's lowercase map
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected exactly 1 hit; got %d: %+v", len(hits), hits)
+	}
+	if hits[0].Database != "db1" || hits[0].Table != "my-table" {
+		t.Errorf("hit should be db1.my-table (decoded); got %+v", hits[0])
+	}
+}
+
 // TestSkipObjectDisks_ExclusionFiresFromSnapshot verifies that when the
 // CLI sets --skip-object-disks, the snapshot-derived hits flow through
 // to UploadOptions.ExcludedTables, and that the exclusion set contains

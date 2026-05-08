@@ -126,7 +126,19 @@ func (b *Backuper) snapshotObjectDiskHitsFromDisks(localBackupDir string, diskTy
 				if !cas.IsObjectDiskType(diskType) {
 					continue
 				}
-				h := cas.ObjectDiskHit{Database: db, Table: table, Disk: disk, DiskType: diskType}
+				// Read the table's metadata JSON to get decoded (db, table) names.
+				// Fall back to the encoded directory names if the JSON is missing or
+				// unparseable (we still want to report a hit; downstream filtering may
+				// not match perfectly but the operator gets visibility).
+				decodedDB, decodedTable := db, table
+				metaPath := filepath.Join(localBackupDir, "metadata", db, table+".json")
+				if body, readErr := os.ReadFile(metaPath); readErr == nil {
+					var tm metadata.TableMetadata
+					if jsonErr := json.Unmarshal(body, &tm); jsonErr == nil && tm.Database != "" && tm.Table != "" {
+						decodedDB, decodedTable = tm.Database, tm.Table
+					}
+				}
+				h := cas.ObjectDiskHit{Database: decodedDB, Table: decodedTable, Disk: disk, DiskType: diskType}
 				if _, dup := seen[h]; dup {
 					continue
 				}
