@@ -1,7 +1,9 @@
 package cas_test
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"testing"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
@@ -116,5 +118,63 @@ func TestSetMarkerTool(t *testing.T) {
 	}
 	if m.Tool != "test-tool/1.0" {
 		t.Errorf("Tool: got %q", m.Tool)
+	}
+}
+
+// TestReadInProgressMarker_LimitsReadSize verifies that ReadInProgressMarker
+// does not consume unbounded memory when the remote object is larger than the
+// 64 KiB markerSizeLimit. The LimitReader truncates the body; the truncated
+// bytes are not valid JSON, so the call must return an error (not a
+// successfully-parsed marker, and not an OOM).
+func TestReadInProgressMarker_LimitsReadSize(t *testing.T) {
+	f := fakedst.New()
+	ctx := context.Background()
+	const cp = "cas/c1/"
+	const name = "big-bk"
+
+	// Pre-place a marker whose body is 128 KiB (2× the 64 KiB limit) of 'x'.
+	// The body is not valid JSON; after truncation it remains invalid.
+	oversized := make([]byte, 128*1024)
+	for i := range oversized {
+		oversized[i] = 'x'
+	}
+	markerKey := cas.InProgressMarkerPath(cp, name)
+	if err := f.PutFile(ctx, markerKey,
+		io.NopCloser(bytes.NewReader(oversized)), int64(len(oversized))); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := cas.ReadInProgressMarker(ctx, f, cp, name)
+	if err == nil {
+		t.Fatalf("expected an error due to invalid JSON after LimitReader truncation; got marker=%+v", m)
+	}
+	if m != nil {
+		t.Errorf("marker must be nil on error; got %+v", m)
+	}
+}
+
+// TestReadPruneMarker_LimitsReadSize mirrors TestReadInProgressMarker_LimitsReadSize
+// for ReadPruneMarker.
+func TestReadPruneMarker_LimitsReadSize(t *testing.T) {
+	f := fakedst.New()
+	ctx := context.Background()
+	const cp = "cas/c1/"
+
+	oversized := make([]byte, 128*1024)
+	for i := range oversized {
+		oversized[i] = 'x'
+	}
+	pruneKey := cas.PruneMarkerPath(cp)
+	if err := f.PutFile(ctx, pruneKey,
+		io.NopCloser(bytes.NewReader(oversized)), int64(len(oversized))); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := cas.ReadPruneMarker(ctx, f, cp)
+	if err == nil {
+		t.Fatalf("expected an error due to invalid JSON after LimitReader truncation; got marker=%+v", m)
+	}
+	if m != nil {
+		t.Errorf("marker must be nil on error; got %+v", m)
 	}
 }

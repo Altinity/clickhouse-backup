@@ -1,6 +1,7 @@
 package cas_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -239,6 +240,49 @@ func TestDelete_RefusesWhenAlreadyDeleting(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cas-delete") {
 		t.Errorf("error should mention cas-delete; got: %v", err)
+	}
+}
+
+// TestDelete_RefusesOnUnreadableMarker verifies the path where:
+//  1. metadata.json exists (the backup is committed)
+//  2. An inprogress marker also exists (ipOK=true, mdOK=true branch)
+//  3. ReadInProgressMarker returns a non-nil error (transient/corrupt read)
+//
+// Delete must return an error containing "cannot read marker" AND must NOT
+// delete the marker (preserving visibility for operators and concurrent
+// processes).
+//
+// The unreadable-marker condition is induced by pre-placing a 128 KiB body of
+// 'x' characters — twice the 64 KiB markerSizeLimit enforced by getBytes's
+// LimitReader. After truncation the body is not valid JSON, so
+// ReadInProgressMarker returns a JSON parse error → readErr != nil.
+func TestDelete_RefusesOnUnreadableMarker(t *testing.T) {
+	f, cfg, name := setupUploaded(t)
+	cp := cfg.ClusterPrefix()
+	markerKey := cas.InProgressMarkerPath(cp, name)
+
+	// Place an oversized (128 KiB) non-JSON marker alongside the committed
+	// metadata.json so the ipOK && mdOK branch is entered.
+	oversized := make([]byte, 128*1024)
+	for i := range oversized {
+		oversized[i] = 'x'
+	}
+	if err := f.PutFile(context.Background(), markerKey,
+		io.NopCloser(bytes.NewReader(oversized)), int64(len(oversized))); err != nil {
+		t.Fatal(err)
+	}
+
+	err := cas.Delete(context.Background(), f, cfg, name, cas.DeleteOptions{})
+	if err == nil {
+		t.Fatal("expected Delete to fail when ReadInProgressMarker returns an error")
+	}
+	if !strings.Contains(err.Error(), "cannot read marker") {
+		t.Errorf("error should contain 'cannot read marker'; got: %v", err)
+	}
+
+	// The marker must still be present: Delete must not have removed it.
+	if _, _, ok, _ := f.StatFile(context.Background(), markerKey); !ok {
+		t.Error("marker must NOT be deleted when Delete refuses due to an unreadable marker")
 	}
 }
 

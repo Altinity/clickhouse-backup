@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 )
@@ -483,6 +484,26 @@ func TestMaybeProbeCondPut_RunsAtMostOnce(t *testing.T) {
 // Because we cannot trivially inject a custom GetDisks error through the
 // concrete type, this test is skipped with a clear explanation. Integration
 // coverage for the fail-closed path exists in the e2e/cas suite.
+// TestIsCASBackupRemote_DisabledShortCircuits verifies that isCASBackupRemote
+// returns false immediately when cfg.Enabled=false, without attempting any
+// storage operation. The "no storage access" invariant is demonstrated by
+// passing dst=nil: if the early-return guard is absent the function would
+// dereference a nil *storage.BackupDestination and panic.
+func TestIsCASBackupRemote_DisabledShortCircuits(t *testing.T) {
+	cfg := cas.Config{
+		Enabled:    false,
+		RootPrefix: "cas/",
+		ClusterID:  "test",
+	}
+	// dst is intentionally nil. A dereference before the Enabled guard fires
+	// would cause a nil-pointer panic, which Go's testing framework treats as
+	// a test failure.
+	got := isCASBackupRemote(context.Background(), nil, cfg, "anyname")
+	if got {
+		t.Error("isCASBackupRemote must return false when cfg.Enabled=false")
+	}
+}
+
 func TestSnapshotObjectDiskHits_FailsClosedOnDiskQueryError(t *testing.T) {
 	t.Skip("b.ch is a concrete *clickhouse.ClickHouse with no stub interface; " +
 		"fail-closed behaviour on GetDisks errors is covered by e2e/cas integration tests. " +
