@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,17 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/require"
 )
+
+// casSkipIfClickHouseTooOld skips the calling CAS test on ClickHouse versions
+// that lack features the CAS tests rely on (min_rows_for_wide_part / repeat() /
+// system.disks columns). 21.0 is the conservative cutoff covering all CAS test
+// fixtures.
+func casSkipIfClickHouseTooOld(t *testing.T) {
+	t.Helper()
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.0") < 0 {
+		t.Skipf("CAS tests require ClickHouse 21.0+, got %s", os.Getenv("CLICKHOUSE_VERSION"))
+	}
+}
 
 // casConfigPath is the in-container path of the on-the-fly config used by all
 // cas-* integration tests. Generated in casBootstrapWith by appending a `cas:`
@@ -104,6 +116,7 @@ func (env *TestEnvironment) casBackupNoError(r *require.Assertions, args ...stri
 // create → cas-upload → cas-status → drop → cas-restore → verify rows →
 // cas-delete → cas-status (gone). See docs/cas-design.md §10.4 Phase 1.
 func TestCASRoundtrip(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)
@@ -172,6 +185,7 @@ func TestCASRoundtrip(t *testing.T) {
 // TestCASCrossModeGuards verifies the §6.2.2 isolation between v1 and CAS
 // backups: each command must refuse to operate on the other layout's backups.
 func TestCASCrossModeGuards(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)
@@ -241,6 +255,7 @@ func TestCASCrossModeGuards(t *testing.T) {
 // TestCASVerify covers cas-verify happy path. Stretch: induce a missing-blob
 // failure by surgically deleting one object in MinIO and re-running verify.
 func TestCASVerify(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)

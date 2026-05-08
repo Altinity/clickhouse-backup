@@ -58,6 +58,7 @@ func runCASBackendSmoke(t *testing.T, env *TestEnvironment, r *require.Assertion
 // PutFileAbsoluteIfAbsent (Conditions{DoesNotExist: true}) path
 // works end-to-end against a real-ish server.
 func TestCASSmokeGCS(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)
@@ -71,6 +72,7 @@ func TestCASSmokeGCS(t *testing.T) {
 // Verifies the Azure backend's PutFileAbsoluteIfAbsent (If-None-Match)
 // path added in Phase 4 T4.
 func TestCASSmokeAzure(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)
@@ -84,6 +86,7 @@ func TestCASSmokeAzure(t *testing.T) {
 // backend (panubo/sshd container). Verifies the OpenFile(O_EXCL) ->
 // SSH_FXF_EXCL path added in Phase 4 T3 works against OpenSSH-server.
 func TestCASSmokeSFTP(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)
@@ -98,6 +101,7 @@ func TestCASSmokeSFTP(t *testing.T) {
 // write time with a clear "atomic markers not supported" diagnostic
 // rather than silently corrupting state.
 func TestCASSmokeFTPRefusesByDefault(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)
@@ -134,6 +138,7 @@ func TestCASSmokeFTPRefusesByDefault(t *testing.T) {
 // Note: this path has a documented small race window; the test asserts
 // only that the happy path works, not concurrency safety.
 func TestCASSmokeFTPOptIn(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)

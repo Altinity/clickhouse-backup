@@ -902,7 +902,9 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:                item.BackupName,
-				Kind:                "v1",
+				// Kind omitted for v1 entries (omitempty) so legacy ClickHouse
+				// integration tables that don't set input_format_skip_unknown_fields
+				// (CH < 21.1) keep parsing /backup/list output.
 				Created:             item.CreationDate.In(time.Local).Format(common.TimeFormat),
 				Size:                item.GetFullSize(),
 				DataSize:            item.DataSize,
@@ -942,7 +944,9 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			fullSize := item.GetFullSize()
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:                item.BackupName,
-				Kind:                "v1",
+				// Kind omitted for v1 entries (omitempty) so legacy ClickHouse
+				// integration tables that don't set input_format_skip_unknown_fields
+				// (CH < 21.1) keep parsing /backup/list output.
 				Created:             item.CreationDate.In(time.Local).Format(common.TimeFormat),
 				Size:                fullSize,
 				DataSize:            item.DataSize,

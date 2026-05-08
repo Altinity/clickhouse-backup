@@ -18,6 +18,7 @@ import (
 // flow over the REST API, mirroring the v1 API roundtrip pattern in
 // serverAPI_test.go.
 func TestCASAPIRoundtrip(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)
@@ -166,5 +167,6 @@ func casAPIWaitForOperation(t *testing.T, env *TestEnvironment, r *require.Asser
 // TestCASAPI_ListMixedBackups — kind=cas presence is already covered by
 // TestCASAPIRoundtrip; a full mixed (v1 + CAS) list flow is deferred.
 func TestCASAPI_ListMixedBackups(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	t.Skip("kind=cas presence covered by TestCASAPIRoundtrip; full mixed-list flow deferred")
 }

@@ -17,6 +17,7 @@ import (
 // the first because all unmutated column files are byte-identical and
 // dedup against the existing blob store.
 func TestCASMutationDedup(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)

@@ -25,6 +25,7 @@ import (
 // object-store mutations that MinIO's erasure-coded storage layout does not
 // allow us to inject reliably from a filesystem write.
 func TestCASPruneSmoke(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)
@@ -78,6 +79,7 @@ func TestCASPruneSmoke(t *testing.T) {
 // pruning must reclaim its unique blobs but keep the shared ones. After
 // deleting all backups + pruning, every blob must be reclaimed.
 func TestCASPruneEndToEndDedupeReclaim(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)

@@ -499,8 +499,11 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	// in pkg/cas/config.go), so it persists across env-pool reuse and surfaces
 	// as a bucket-not-empty failure in checkObjectStorageIsEmpty for the next
 	// non-CAS test on the same slot. Sweep every per-backend CAS path.
-	_ = env.DockerExec("minio", "bash", "-c", "rm -rf /minio/data/clickhouse/backup/cluster/*/cas/")
-	_ = env.DockerExec("gcs", "sh", "-c", "rm -rf /data/altinity-qa-test/backup/cluster/*/cas/ 2>/dev/null || true")
+	// After removing cas/, also rmdir any now-empty parent directories so MinIO's
+	// fs-backed listing doesn't surface them as "bucket not empty" for the next
+	// non-CAS test on this slot.
+	_ = env.DockerExec("minio", "bash", "-c", "rm -rf /minio/data/clickhouse/backup/cluster/*/cas/ && find /minio/data/clickhouse/backup -mindepth 1 -type d -empty -delete 2>/dev/null; rmdir /minio/data/clickhouse/backup 2>/dev/null || true")
+	_ = env.DockerExec("gcs", "sh", "-c", "rm -rf /data/altinity-qa-test/backup/cluster/*/cas/ 2>/dev/null && find /data/altinity-qa-test/backup -mindepth 1 -type d -empty -delete 2>/dev/null; rmdir /data/altinity-qa-test/backup 2>/dev/null || true")
 	_ = env.DockerExec("sshd", "sh", "-c", "rm -rf /root/cas/ 2>/dev/null || true")
 	_ = env.DockerExec("ftp", "sh", "-c", "rm -rf /home/test_backup/backup/cas/ /home/ftpusers/test_backup/backup/cas/ /backup/cas/ 2>/dev/null || true")
 

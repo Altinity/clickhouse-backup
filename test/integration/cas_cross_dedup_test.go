@@ -13,6 +13,7 @@ import (
 // uploaded in two earlier independent backups should reuse those blobs
 // instead of re-uploading them.
 func TestCASCrossBackupDedup(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)

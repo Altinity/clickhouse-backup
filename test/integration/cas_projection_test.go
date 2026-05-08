@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"testing"
 	"time"
 )
@@ -12,6 +13,10 @@ import (
 // inserts data, cas-uploads, drops, cas-restores, and verifies row count
 // and projection definition both survive.
 func TestCASRoundtripWithProjection(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.0") < 0 {
+		t.Skip("system.projections requires ClickHouse 23.0+")
+	}
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)
@@ -60,6 +65,7 @@ func TestCASRoundtripWithProjection(t *testing.T) {
 // TestCASRoundtripWithEmptyTable creates two tables, leaves one empty,
 // uploads, drops both, restores, and asserts both schemas come back.
 func TestCASRoundtripWithEmptyTable(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)
@@ -103,6 +109,7 @@ func TestCASRoundtripWithEmptyTable(t *testing.T) {
 // object-disk-backed disk; if not present, skip with a clear message —
 // the unit test in T1 covers the plumbing in isolation.
 func TestCASUploadSkipObjectDisks(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)

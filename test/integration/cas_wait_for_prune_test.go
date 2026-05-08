@@ -13,6 +13,7 @@ import (
 // after a few seconds, and verifies cas-upload --wait-for-prune polls past
 // the obstruction.
 func TestCASUploadWaitsForPrune(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)
@@ -62,6 +63,7 @@ func TestCASUploadWaitsForPrune(t *testing.T) {
 
 // TestCASUploadWaitTimeout verifies the timeout path.
 func TestCASUploadWaitTimeout(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)

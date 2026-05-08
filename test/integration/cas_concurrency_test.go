@@ -41,6 +41,7 @@ rm -f /tmp/inject_marker_tmp
 // already present in the bucket. We pre-populate the marker via mc cp
 // into MinIO to simulate a concurrent in-flight upload.
 func TestCASUploadRefusesConcurrent(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)
@@ -80,6 +81,7 @@ func TestCASUploadRefusesConcurrent(t *testing.T) {
 // when a prune marker is already held, AND that the existing marker
 // survives the failed second run.
 func TestCASPruneRefusesConcurrent(t *testing.T) {
+	casSkipIfClickHouseTooOld(t)
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)
