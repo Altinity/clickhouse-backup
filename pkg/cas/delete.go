@@ -24,6 +24,9 @@ type DeleteOptions struct {
 // longer listable, and the orphan per-table JSONs/archives will be
 // swept by the future prune (or via manual cleanup, until prune ships).
 func Delete(ctx context.Context, b Backend, cfg Config, name string, opts DeleteOptions) error {
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("cas: delete: invalid config: %w", err)
+	}
 	if err := validateName(name); err != nil {
 		return err
 	}

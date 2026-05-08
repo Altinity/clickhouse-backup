@@ -249,3 +249,26 @@ func TestCASConfig_WaitForPruneRejectsBadDuration(t *testing.T) {
 		t.Errorf("error should mention wait_for_prune, got: %v", err)
 	}
 }
+
+// TestConfig_DurationsZeroWithoutValidate locks the contract that
+// GraceBlobDuration and AbandonThresholdDuration return 0 when Validate has
+// not been called. Delete/Download/Verify/Status guard on cfg.Validate() at
+// entry precisely because callers who skip Validate would silently get zero
+// durations.
+func TestConfig_DurationsZeroWithoutValidate(t *testing.T) {
+	cfg := Config{
+		Enabled:          true,
+		ClusterID:        "c",
+		RootPrefix:       "cas/",
+		InlineThreshold:  100,
+		GraceBlob:        "24h",
+		AbandonThreshold: "168h",
+	}
+	// NO call to Validate() — durations must be zero.
+	if d := cfg.GraceBlobDuration(); d != 0 {
+		t.Errorf("GraceBlobDuration without Validate: got %s, want 0", d)
+	}
+	if d := cfg.AbandonThresholdDuration(); d != 0 {
+		t.Errorf("AbandonThresholdDuration without Validate: got %s, want 0", d)
+	}
+}

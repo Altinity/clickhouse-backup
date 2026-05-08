@@ -47,6 +47,9 @@ type InProgressInfo struct {
 // Status performs a LIST-only bucket health summary for the given cluster.
 // No object bodies are fetched; only metadata returned by Walk/StatFile is used.
 func Status(ctx context.Context, b Backend, cfg Config) (*StatusReport, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("cas: status: invalid config: %w", err)
+	}
 	cp := cfg.ClusterPrefix()
 	r := &StatusReport{}
 

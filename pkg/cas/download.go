@@ -129,6 +129,9 @@ func randomHex8() string {
 // filesystem mount, so os.Rename is atomic. This always holds when both
 // are siblings under opts.LocalBackupDir.
 func Download(ctx context.Context, b Backend, cfg Config, name string, opts DownloadOptions) (_ *DownloadResult, err error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("cas: download: invalid config: %w", err)
+	}
 	if opts.LocalBackupDir == "" {
 		return nil, errors.New("cas: DownloadOptions.LocalBackupDir is required")
 	}
