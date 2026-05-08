@@ -2,6 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -10,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
@@ -373,4 +377,26 @@ func TestCASActionsDispatcher_LockedWhenBusy(t *testing.T) {
 // by the integration test TestCASAPI_ListMixedBackups.
 func TestHttpListHandler_KindFieldPresent(t *testing.T) {
 	t.Skip("requires live ClickHouse connection; covered by integration TestCASAPI_ListMixedBackups")
+}
+
+// TestCasDeleteHTTPStatus verifies the error-to-HTTP-status mapping in
+// isolation (the handler-level test exercises only the AllowParallel gate
+// because the real Backuper is hard to stub at the test layer).
+func TestCasDeleteHTTPStatus(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"prune in progress maps to 409", cas.ErrPruneInProgress, http.StatusConflict},
+		{"upload in progress maps to 409", cas.ErrUploadInProgress, http.StatusConflict},
+		{"wrapped prune in progress maps to 409", fmt.Errorf("wrapped: %w", cas.ErrPruneInProgress), http.StatusConflict},
+		{"unrelated error maps to 500", errors.New("disk full"), http.StatusInternalServerError},
+		{"backup-exists is NOT mapped (cas-upload-only sentinel)", cas.ErrBackupExists, http.StatusInternalServerError},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Equal(t, c.want, casDeleteHTTPStatus(c.err))
+		})
+	}
 }

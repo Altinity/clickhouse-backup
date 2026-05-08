@@ -395,17 +395,7 @@ func (api *APIServer) httpCASDeleteHandler(w http.ResponseWriter, r *http.Reques
 	status.Current.Stop(commandId, deleteErr)
 
 	if deleteErr != nil {
-		code := http.StatusInternalServerError
-		if errors.Is(deleteErr, cas.ErrPruneInProgress) {
-			code = http.StatusConflict
-		}
-		if errors.Is(deleteErr, cas.ErrUploadInProgress) {
-			code = http.StatusConflict
-		}
-		if errors.Is(deleteErr, cas.ErrBackupExists) {
-			code = http.StatusConflict
-		}
-		api.writeError(w, code, "cas-delete", deleteErr)
+		api.writeError(w, casDeleteHTTPStatus(deleteErr), "cas-delete", deleteErr)
 		return
 	}
 
@@ -545,4 +535,16 @@ func (api *APIServer) httpCASStatusHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	api.sendJSONEachRow(w, http.StatusOK, report)
+}
+
+// casDeleteHTTPStatus maps a cas.Delete error to an HTTP status code.
+// Permanent-state conflicts → 409 so retry loops don't spin on 500.
+// ErrBackupExists is intentionally NOT mapped here: it's only returned from
+// cas-upload (pkg/cas/upload.go), never from cas.Delete. Add it back with a
+// comment if a future code path makes it reachable.
+func casDeleteHTTPStatus(err error) int {
+	if errors.Is(err, cas.ErrPruneInProgress) || errors.Is(err, cas.ErrUploadInProgress) {
+		return http.StatusConflict
+	}
+	return http.StatusInternalServerError
 }

@@ -47,6 +47,7 @@ type PruneReport struct {
 	OrphanBlobsConsidered uint64
 	OrphansHeldByGrace    uint64
 	OrphansDeleted        uint64
+	BlobDeleteFailures    int
 	BytesReclaimed        int64
 	AbandonedMarkersFound int
 	MetadataOrphansFound  int
@@ -115,6 +116,11 @@ func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*Prun
 	if err != nil {
 		return rep, err
 	}
+	log.Info().
+		Int("markers_total", len(fresh)+len(abandoned)).
+		Int("abandoned", len(abandoned)).
+		Int("fresh", len(fresh)).
+		Msg("cas-prune: classified markers")
 	if len(fresh) > 0 {
 		return rep, freshInProgressError(fresh)
 	}
@@ -163,6 +169,7 @@ func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*Prun
 		return rep, fmt.Errorf("cas-prune: list live backups: %w", err)
 	}
 	rep.LiveBackups = len(backups)
+	log.Info().Int("count", len(backups)).Msg("cas-prune: building mark set across live backups")
 
 	// Step 6: build mark set by walking each live backup's per-table
 	// archives and extracting checksums.txt entries above the inline
@@ -188,6 +195,7 @@ func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*Prun
 	if err := mw.Close(); err != nil {
 		return rep, fmt.Errorf("cas-prune: close mark set: %w", err)
 	}
+	log.Info().Uint64("refs", mw.Count()).Msg("cas-prune: mark set complete")
 
 	// Steps 8-9: stream compare against blob store, filter by grace.
 	mr, err := OpenMarkSetReader(marksPath)
@@ -202,6 +210,11 @@ func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*Prun
 	rep.BlobsTotal = sweepStats.BlobsTotal
 	rep.OrphansHeldByGrace = sweepStats.OrphansHeldByGrace
 	rep.OrphanBlobsConsidered = uint64(len(cands))
+	log.Info().
+		Uint64("blobs_total", sweepStats.BlobsTotal).
+		Uint64("orphans_held_by_grace", sweepStats.OrphansHeldByGrace).
+		Int("orphans_to_delete", len(cands)).
+		Msg("cas-prune: sweep complete")
 
 	// Step 10: metadata-orphan subtree sweep.
 	metaOrphans, err := findMetadataOrphans(ctx, b, cp)
@@ -220,12 +233,20 @@ func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*Prun
 	// Step 11: delete orphan blobs (parallel, bounded).
 	if opts.DryRun {
 		for _, c := range cands {
-			fmt.Printf("cas-prune (dry-run): would delete %s (modTime=%s, size=%d)\n", c.Key, c.ModTime, c.Size)
+			log.Info().Str("key", c.Key).Time("mod_time", c.ModTime).Int64("size", c.Size).Msg("cas-prune dry-run: would delete")
 		}
 	} else {
-		n, bytes, err := deleteBlobs(ctx, b, cands, 32)
+		log.Info().Int("count", len(cands)).Msg("cas-prune: deleting orphan blobs")
+		n, bytes, failures, err := deleteBlobs(ctx, b, cands, 32)
 		rep.OrphansDeleted = uint64(n)
 		rep.BytesReclaimed = bytes
+		rep.BlobDeleteFailures = failures
+		log.Info().
+			Uint64("orphans_deleted", rep.OrphansDeleted).
+			Int64("bytes_reclaimed", rep.BytesReclaimed).
+			Int("failures", failures).
+			Float64("wall_seconds", time.Since(start).Seconds()).
+			Msg("cas-prune: done")
 		if err != nil {
 			return rep, fmt.Errorf("cas-prune: delete blobs: %w", err)
 		}
@@ -280,7 +301,7 @@ func freshInProgressError(fresh []inProgressMarker) error {
 	parts := make([]string, len(fresh))
 	for i, m := range fresh {
 		if m.ModTime.IsZero() {
-			parts[i] = fmt.Sprintf("%s (age=unknown — FTP server returned no ModTime; use --unlock if confirmed stale)", m.Backup)
+			parts[i] = fmt.Sprintf("%s (age=unknown — FTP server returned no ModTime)", m.Backup)
 		} else {
 			parts[i] = fmt.Sprintf("%s (age=%s)", m.Backup, m.Age.Round(time.Second))
 		}
@@ -466,9 +487,10 @@ func findMetadataOrphans(ctx context.Context, b Backend, cp string) ([]string, e
 
 // deleteBlobs deletes the given orphan candidates with bounded parallelism.
 // Returns the number successfully deleted, the cumulative bytes reclaimed,
-// and the first error encountered (if any). Subsequent candidates after an
-// error are still attempted; the error propagates after the wait.
-func deleteBlobs(ctx context.Context, b Backend, cands []OrphanCandidate, parallelism int) (int, int64, error) {
+// the total number of failures, and the first error encountered (if any).
+// Subsequent candidates after an error are still attempted; the error
+// propagates after the wait.
+func deleteBlobs(ctx context.Context, b Backend, cands []OrphanCandidate, parallelism int) (int, int64, int, error) {
 	if parallelism <= 0 {
 		parallelism = 32
 	}
@@ -476,6 +498,7 @@ func deleteBlobs(ctx context.Context, b Backend, cands []OrphanCandidate, parall
 		mu       sync.Mutex
 		count    int
 		bytes    int64
+		failures int
 		firstErr error
 		wg       sync.WaitGroup
 	)
@@ -488,7 +511,9 @@ func deleteBlobs(ctx context.Context, b Backend, cands []OrphanCandidate, parall
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			if err := b.DeleteFile(ctx, c.Key); err != nil {
+				log.Warn().Err(err).Str("key", c.Key).Msg("cas-prune: delete orphan blob failed")
 				mu.Lock()
+				failures++
 				if firstErr == nil {
 					firstErr = err
 				}
@@ -502,7 +527,7 @@ func deleteBlobs(ctx context.Context, b Backend, cands []OrphanCandidate, parall
 		}()
 	}
 	wg.Wait()
-	return count, bytes, firstErr
+	return count, bytes, failures, firstErr
 }
 
 // PrintPruneReport renders a human-readable report to w.
@@ -517,7 +542,7 @@ func PrintPruneReport(r *PruneReport, w io.Writer) error {
 		markerVerb = "would be swept"
 		orphanVerb = "would be swept"
 	}
-	_, err := fmt.Fprintf(w, "%s:\n  Live backups        : %d\n  Orphan candidates   : %d\n  Orphans deleted     : %d\n  Bytes reclaimed     : %s (%d)\n  Abandoned markers   : %d %s\n  Metadata orphans    : %d %s\n  Wall clock          : %.2fs\n",
+	if _, err := fmt.Fprintf(w, "%s:\n  Live backups        : %d\n  Orphan candidates   : %d\n  Orphans deleted     : %d\n  Bytes reclaimed     : %s (%d)\n  Abandoned markers   : %d %s\n  Metadata orphans    : %d %s\n  Wall clock          : %.2fs\n",
 		prefix,
 		r.LiveBackups,
 		r.OrphanBlobsConsidered,
@@ -529,6 +554,13 @@ func PrintPruneReport(r *PruneReport, w io.Writer) error {
 		r.MetadataOrphansFound,
 		orphanVerb,
 		r.DurationSeconds,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+	if r.BlobDeleteFailures > 0 {
+		if _, err := fmt.Fprintf(w, "  Blob delete failures: %d\n", r.BlobDeleteFailures); err != nil {
+			return err
+		}
+	}
+	return nil
 }
