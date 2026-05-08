@@ -281,6 +281,11 @@ func (sftp *SFTP) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.
 		if isSFTPAlreadyExists(err) {
 			return false, nil
 		}
+		// Some servers (proftpd, OpenSSH SFTPv3) return generic SSH_FX_FAILURE
+		// when O_EXCL hits an existing file. Disambiguate via Stat.
+		if _, statErr := sftp.sftpClient.Stat(key); statErr == nil {
+			return false, nil
+		}
 		return false, errors.WithMessage(err, "SFTP PutFileAbsoluteIfAbsent OpenFile")
 	}
 	defer func() {
