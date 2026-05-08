@@ -181,3 +181,77 @@ func TestCASDeleteHandler_LockedWhenBusy(t *testing.T) {
 
 	require.Equal(t, 423, rr.Code)
 }
+
+// ---------- cas-verify ----------
+
+// TestCASVerifyHandler_AsyncAck verifies that POST /backup/cas-verify/{name}
+// returns 200 with an acknowledged asyncAck body immediately.
+func TestCASVerifyHandler_AsyncAck(t *testing.T) {
+	api := newTestAPI(t)
+	api.config.API.AllowParallel = true
+
+	req := httptest.NewRequest("POST", "/backup/cas-verify/mybackup", nil)
+	req = mux.SetURLVars(req, map[string]string{"name": "mybackup"})
+	rr := httptest.NewRecorder()
+
+	api.httpCASVerifyHandler(rr, req)
+
+	require.Equal(t, 200, rr.Code)
+	var ack asyncAck
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &ack))
+	require.Equal(t, "acknowledged", ack.Status)
+	require.Equal(t, "cas-verify", ack.Operation)
+	require.Equal(t, "mybackup", ack.BackupName)
+	require.NotEmpty(t, ack.OperationId)
+}
+
+// ---------- cas-prune ----------
+
+// TestCASPruneHandler_AsyncAck verifies that POST /backup/cas-prune
+// returns 200 with an acknowledged asyncAck body immediately.
+func TestCASPruneHandler_AsyncAck(t *testing.T) {
+	api := newTestAPI(t)
+	api.config.API.AllowParallel = true
+
+	req := httptest.NewRequest("POST", "/backup/cas-prune", nil)
+	rr := httptest.NewRecorder()
+
+	api.httpCASPruneHandler(rr, req)
+
+	require.Equal(t, 200, rr.Code)
+	var ack asyncAck
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &ack))
+	require.Equal(t, "acknowledged", ack.Status)
+	require.Equal(t, "cas-prune", ack.Operation)
+	require.NotEmpty(t, ack.OperationId)
+}
+
+// TestCASPruneHandler_PassesQueryParams verifies that dry-run and grace-blob
+// are reflected in the status command string that was started.
+func TestCASPruneHandler_PassesQueryParams(t *testing.T) {
+	api := newTestAPI(t)
+	api.config.API.AllowParallel = true
+
+	req := httptest.NewRequest("POST", "/backup/cas-prune?dry-run&grace-blob=0s", nil)
+	rr := httptest.NewRecorder()
+
+	api.httpCASPruneHandler(rr, req)
+
+	require.Equal(t, 200, rr.Code)
+	var ack asyncAck
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &ack))
+	require.NotEmpty(t, ack.OperationId)
+
+	// Retrieve the started command from status and verify it contains the flags.
+	rows := status.Current.GetStatus(false, "", 10)
+	found := false
+	for _, row := range rows {
+		if row.OperationId == ack.OperationId {
+			require.Contains(t, row.Command, "--dry-run")
+			require.Contains(t, row.Command, "--grace-blob=0s")
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "operation not found in status log")
+}

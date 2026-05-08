@@ -413,3 +413,113 @@ func (api *APIServer) httpCASDeleteHandler(w http.ResponseWriter, r *http.Reques
 		BackupName: name,
 	})
 }
+
+// httpCASVerifyHandler handles POST /backup/cas-verify/{name}
+func (api *APIServer) httpCASVerifyHandler(w http.ResponseWriter, r *http.Request) {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
+		log.Warn().Err(ErrAPILocked).Send()
+		api.writeError(w, http.StatusLocked, "cas-verify", ErrAPILocked)
+		return
+	}
+	cfg, err := api.ReloadConfig(w, "cas-verify")
+	if err != nil {
+		return
+	}
+
+	name := utils.CleanBackupNameRE.ReplaceAllString(mux.Vars(r)["name"], "")
+	if name == "" {
+		api.writeError(w, http.StatusBadRequest, "cas-verify", fmt.Errorf("name required"))
+		return
+	}
+
+	fullCommand := fmt.Sprintf("cas-verify %s", name)
+	query := r.URL.Query()
+	operationId, _ := uuid.NewUUID()
+	callback, err := parseCallback(query)
+	if err != nil {
+		log.Error().Err(err).Send()
+		api.writeError(w, http.StatusBadRequest, "cas-verify", err)
+		return
+	}
+
+	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	go func() {
+		err, _ := api.metrics.ExecuteWithMetrics("cas-verify", 0, func() error {
+			b := backup.NewBackuper(cfg)
+			return b.CASVerify(name, true, commandId)
+		})
+		if err != nil {
+			log.Error().Msgf("cas-verify error: %v", err)
+			status.Current.Stop(commandId, err)
+			api.errorCallback(context.Background(), err, operationId.String(), callback)
+			return
+		}
+		status.Current.Stop(commandId, nil)
+		api.successCallback(context.Background(), operationId.String(), callback)
+	}()
+
+	api.sendJSONEachRow(w, http.StatusOK, newAsyncAck("cas-verify", name, operationId.String()))
+}
+
+// httpCASPruneHandler handles POST /backup/cas-prune
+func (api *APIServer) httpCASPruneHandler(w http.ResponseWriter, r *http.Request) {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
+		log.Warn().Err(ErrAPILocked).Send()
+		api.writeError(w, http.StatusLocked, "cas-prune", ErrAPILocked)
+		return
+	}
+	cfg, err := api.ReloadConfig(w, "cas-prune")
+	if err != nil {
+		return
+	}
+
+	query := r.URL.Query()
+	_, dryRun := api.getQueryParameter(query, "dry-run")
+	graceBlob := query.Get("grace-blob")
+	abandonThreshold := query.Get("abandon-threshold")
+	_, unlock := api.getQueryParameter(query, "unlock")
+
+	if unlock {
+		log.Warn().Msg("cas-prune --unlock invoked via API; operator override of stranded marker")
+	}
+
+	fullCommand := "cas-prune"
+	if dryRun {
+		fullCommand += " --dry-run"
+	}
+	if graceBlob != "" {
+		fullCommand += " --grace-blob=" + graceBlob
+	}
+	if abandonThreshold != "" {
+		fullCommand += " --abandon-threshold=" + abandonThreshold
+	}
+	if unlock {
+		fullCommand += " --unlock"
+	}
+
+	operationId, _ := uuid.NewUUID()
+	callback, err := parseCallback(query)
+	if err != nil {
+		log.Error().Err(err).Send()
+		api.writeError(w, http.StatusBadRequest, "cas-prune", err)
+		return
+	}
+
+	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	go func() {
+		err, _ := api.metrics.ExecuteWithMetrics("cas-prune", 0, func() error {
+			b := backup.NewBackuper(cfg)
+			return b.CASPrune(dryRun, graceBlob, abandonThreshold, unlock, commandId)
+		})
+		if err != nil {
+			log.Error().Msgf("cas-prune error: %v", err)
+			status.Current.Stop(commandId, err)
+			api.errorCallback(context.Background(), err, operationId.String(), callback)
+			return
+		}
+		status.Current.Stop(commandId, nil)
+		api.successCallback(context.Background(), operationId.String(), callback)
+	}()
+
+	api.sendJSONEachRow(w, http.StatusOK, newAsyncAck("cas-prune", "", operationId.String()))
+}
