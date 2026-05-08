@@ -29,6 +29,51 @@ type ObjectDiskHit struct {
 	DiskType string
 }
 
+// IsEncryptedObjectDisk reports whether disk is an encrypted disk layered on
+// top of an object disk (e.g. encryption-over-S3). Mirrors the v1 logic in
+// (*Backuper).isDiskTypeEncryptedObject; we duplicate it here rather than
+// import from pkg/backup to keep pkg/cas free of that dependency (avoids an
+// import cycle — pkg/backup already imports pkg/cas via
+// pkg/backup/cas_methods.go).
+func IsEncryptedObjectDisk(disk DiskInfo, disks []DiskInfo) bool {
+	if disk.Type != "encrypted" {
+		return false
+	}
+	for _, d := range disks {
+		if d.Name == disk.Name {
+			continue
+		}
+		if !strings.HasPrefix(disk.Path, d.Path) {
+			continue
+		}
+		if IsObjectDiskType(d.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+// objectDiskTypeFor returns the DiskType label for an ObjectDiskHit. For
+// direct object disks it returns disk.Type (e.g. "s3"). For
+// encrypted-over-object disks it returns "encrypted/<underlying>" so that
+// operator-facing messages make the layering explicit (e.g. "encrypted/s3").
+func objectDiskTypeFor(disk DiskInfo, disks []DiskInfo) string {
+	if IsObjectDiskType(disk.Type) {
+		return disk.Type
+	}
+	if disk.Type == "encrypted" {
+		for _, d := range disks {
+			if d.Name == disk.Name {
+				continue
+			}
+			if strings.HasPrefix(disk.Path, d.Path) && IsObjectDiskType(d.Type) {
+				return "encrypted/" + d.Type
+			}
+		}
+	}
+	return disk.Type
+}
+
 // DetectObjectDiskTables walks tables and returns all (db, table, disk) where
 // the table has at least one DataPath that lives under an object-disk.
 //
@@ -36,6 +81,10 @@ type ObjectDiskHit struct {
 // A DataPath is considered "on disk D" if it has D.Path as a prefix. The
 // longest-matching prefix wins (so a disk at "/var/lib/clickhouse/disks/s3/"
 // is matched before one at "/var/lib/clickhouse/").
+//
+// Both direct object disks (s3, azure_blob_storage, etc.) and encrypted disks
+// layered on top of object disks (encrypted-over-S3) are detected. The latter
+// mirrors the v1 isDiskTypeEncryptedObject logic in pkg/backup/backuper.go.
 func DetectObjectDiskTables(tables []TableInfo, disks []DiskInfo) []ObjectDiskHit {
 	// Pre-sort disks by Path length descending so we can do longest-prefix
 	// matching with a simple loop.
@@ -56,10 +105,11 @@ func DetectObjectDiskTables(tables []TableInfo, disks []DiskInfo) []ObjectDiskHi
 			if !ok {
 				continue
 			}
-			if !objectDiskTypes[d.Type] {
+			isObj := IsObjectDiskType(d.Type) || IsEncryptedObjectDisk(d, disks)
+			if !isObj {
 				continue
 			}
-			h := ObjectDiskHit{Database: t.Database, Table: t.Name, Disk: d.Name, DiskType: d.Type}
+			h := ObjectDiskHit{Database: t.Database, Table: t.Name, Disk: d.Name, DiskType: objectDiskTypeFor(d, disks)}
 			if _, dup := seen[h]; dup {
 				continue
 			}

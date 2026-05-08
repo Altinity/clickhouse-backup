@@ -124,3 +124,43 @@ func TestDetectObjectDiskTables_EmptyInputs(t *testing.T) {
 		t.Fatal("empty")
 	}
 }
+
+func TestIsEncryptedObjectDisk(t *testing.T) {
+	disks := []cas.DiskInfo{
+		{Name: "s3_disk", Type: "s3", Path: "/var/lib/clickhouse/disks/s3/"},
+		{Name: "encrypted_s3", Type: "encrypted", Path: "/var/lib/clickhouse/disks/s3/encrypted/"},
+		{Name: "azure_disk", Type: "azure_blob_storage", Path: "/var/lib/clickhouse/disks/azure/"},
+		{Name: "encrypted_az", Type: "encrypted", Path: "/var/lib/clickhouse/disks/azure/encrypted/"},
+		{Name: "encrypted_local", Type: "encrypted", Path: "/var/lib/clickhouse/disks/local/encrypted/"},
+		{Name: "default", Type: "local", Path: "/var/lib/clickhouse/"},
+	}
+	if !cas.IsEncryptedObjectDisk(disks[1], disks) {
+		t.Error("encrypted-over-s3 should classify as object")
+	}
+	if !cas.IsEncryptedObjectDisk(disks[3], disks) {
+		t.Error("encrypted-over-azure should classify as object")
+	}
+	if cas.IsEncryptedObjectDisk(disks[4], disks) {
+		t.Error("encrypted-over-local should NOT classify as object")
+	}
+	if cas.IsEncryptedObjectDisk(disks[0], disks) {
+		t.Error("direct s3 (not encrypted) should return false from this helper")
+	}
+}
+
+func TestDetectObjectDiskTables_IncludesEncryptedOverS3(t *testing.T) {
+	disks := []cas.DiskInfo{
+		{Name: "s3_disk", Type: "s3", Path: "/disks/s3/"},
+		{Name: "encrypted_s3", Type: "encrypted", Path: "/disks/s3/encrypted/"},
+	}
+	tables := []cas.TableInfo{
+		{Database: "db", Name: "t", DataPaths: []string{"/disks/s3/encrypted/store/data/db/t/"}},
+	}
+	hits := cas.DetectObjectDiskTables(tables, disks)
+	if len(hits) != 1 {
+		t.Fatalf("expected 1 hit, got %+v", hits)
+	}
+	if hits[0].DiskType != "encrypted/s3" {
+		t.Errorf("DiskType should reflect encrypted-over-s3, got %q", hits[0].DiskType)
+	}
+}
