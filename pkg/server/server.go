@@ -252,6 +252,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	r.HandleFunc("/backup/cas-delete/{name}", api.httpCASDeleteHandler).Methods("POST")
 	r.HandleFunc("/backup/cas-verify/{name}", api.httpCASVerifyHandler).Methods("POST")
 	r.HandleFunc("/backup/cas-prune", api.httpCASPruneHandler).Methods("POST")
+	r.HandleFunc("/backup/cas-status", api.httpCASStatusHandler).Methods("GET")
 	r.HandleFunc("/backup/download/{name}", api.httpDownloadHandler).Methods("POST")
 	r.HandleFunc("/backup/restore/{name}", api.httpRestoreHandler).Methods("POST")
 	r.HandleFunc("/backup/restore_remote/{name}", api.httpRestoreRemoteHandler).Methods("POST")

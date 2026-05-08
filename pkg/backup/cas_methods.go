@@ -681,6 +681,22 @@ func (b *Backuper) CASStatus(commandId int) error {
 	return cas.PrintStatus(r, os.Stdout)
 }
 
+// CASStatusJSON returns a structured status report suitable for HTTP responses.
+// It is the structured-data counterpart to CASStatus (which prints to stdout).
+func (b *Backuper) CASStatusJSON(commandId int) (*cas.StatusReport, error) {
+	ctx, cancel, err := b.setupCASContext(commandId)
+	if err != nil {
+		return nil, err
+	}
+	defer cancel()
+	backend, closer, err := b.ensureCAS(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	defer closer()
+	return cas.Status(ctx, backend, b.cfg.CAS)
+}
+
 // CASPrune runs mark-and-sweep GC against the configured CAS cluster.
 // graceHours / abandonDays are CLI overrides (0 = use config). unlock is
 // the operator escape hatch for a stranded prune.marker.

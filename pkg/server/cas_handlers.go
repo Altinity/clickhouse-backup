@@ -523,3 +523,20 @@ func (api *APIServer) httpCASPruneHandler(w http.ResponseWriter, r *http.Request
 
 	api.sendJSONEachRow(w, http.StatusOK, newAsyncAck("cas-prune", "", operationId.String()))
 }
+
+// httpCASStatusHandler handles GET /backup/cas-status
+func (api *APIServer) httpCASStatusHandler(w http.ResponseWriter, r *http.Request) {
+	cfg, err := api.ReloadConfig(w, "cas-status")
+	if err != nil {
+		return
+	}
+
+	b := backup.NewBackuper(cfg)
+	report, statusErr := b.CASStatusJSON(0)
+	if statusErr != nil {
+		api.writeError(w, http.StatusInternalServerError, "cas-status", statusErr)
+		return
+	}
+
+	api.sendJSONEachRow(w, http.StatusOK, report)
+}

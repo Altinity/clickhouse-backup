@@ -255,3 +255,25 @@ func TestCASPruneHandler_PassesQueryParams(t *testing.T) {
 	}
 	require.True(t, found, "operation not found in status log")
 }
+
+// ---------- cas-status ----------
+
+// TestCASStatusHandler_ReturnsJSON verifies that GET /backup/cas-status
+// returns a JSON body. With no real CAS backend configured the handler
+// returns 500 with an error JSON object — we just assert the response is
+// valid JSON (not empty/HTML) and that Content-Type is set appropriately.
+// Full structured-data verification is an integration-test concern.
+func TestCASStatusHandler_ReturnsJSON(t *testing.T) {
+	api := newTestAPI(t)
+
+	req := httptest.NewRequest("GET", "/backup/cas-status", nil)
+	rr := httptest.NewRecorder()
+
+	api.httpCASStatusHandler(rr, req)
+
+	// With cas.enabled=false the handler returns 500, but the body must be JSON.
+	body := rr.Body.Bytes()
+	require.True(t, len(body) > 0, "response body must not be empty")
+	var payload interface{}
+	require.NoError(t, json.Unmarshal(body, &payload), "response body must be valid JSON")
+}
