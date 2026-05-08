@@ -501,10 +501,15 @@ func (b *Backuper) CASDownload(backupName, tablePattern string, partitions []str
 		return errors.New("cas-download: backup name is required")
 	}
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-	if pidErr := pidlock.CheckAndCreatePidFile(backupName, "cas-download"); pidErr != nil {
+	// Use "cas-download-<backupName>" as the pidlock key so that concurrent
+	// cas-download and cas-restore runs (which also hold this lock during
+	// their download phase) mutually exclude each other without colliding
+	// with the inner v1 pidlock key (plain <backupName>) used by b.Restore.
+	casDownloadLockName := "cas-download-" + backupName
+	if pidErr := pidlock.CheckAndCreatePidFile(casDownloadLockName, "cas-download"); pidErr != nil {
 		return pidErr
 	}
-	defer pidlock.RemovePidFile(backupName)
+	defer pidlock.RemovePidFile(casDownloadLockName)
 
 	ctx, cancel, err := b.setupCASContext(commandId)
 	if err != nil {
@@ -560,13 +565,24 @@ func (b *Backuper) CASRestore(
 		return errors.New("cas-restore: backup name is required")
 	}
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-	// No pidlock here: the inner v1 b.Restore (invoked via runV1 below)
-	// acquires its own pidlock at pkg/backup/restore.go for the actual
-	// mutation phase. Acquiring here too would self-deadlock — pidlock
-	// has no same-PID exemption, so the inner acquire would fail with
-	// "another clickhouse-backup `cas-restore` command is already running".
-	// The cas-download phase mutates only a local temp directory; concurrent
-	// same-name cas-restore calls are caught when both reach b.Restore.
+	// Outer pidlock around the cas-download phase only. The inner v1
+	// b.Restore (invoked via runV1 below) acquires its own pidlock at
+	// pkg/backup/restore.go for the actual mutation phase. Holding both
+	// would self-deadlock since pidlock has no same-PID exemption — so we
+	// release the cas-download lock before the v1 handoff. Two concurrent
+	// cas-restore runs of the same backup name now serialize on the
+	// cas-download phase (preventing staging-swap races) and then again
+	// on the inner v1 lock.
+	casDownloadLockName := "cas-download-" + backupName
+	if pidErr := pidlock.CheckAndCreatePidFile(casDownloadLockName, "cas-download"); pidErr != nil {
+		return pidErr
+	}
+	casDownloadLockReleased := false
+	defer func() {
+		if !casDownloadLockReleased {
+			pidlock.RemovePidFile(casDownloadLockName)
+		}
+	}()
 
 	ctx, cancel, err := b.setupCASContext(commandId)
 	if err != nil {
@@ -611,7 +627,15 @@ func (b *Backuper) CASRestore(
 	// V1 restore handoff: cas.Restore materializes the backup at
 	// <LocalBackupDir>/<name> and calls this closure with that absolute path.
 	// We then delegate to b.Restore using the v1 positional argument list.
+	// Release the cas-download pidlock first so the inner b.Restore can
+	// acquire its own pidlock (under the plain backupName key); pidlock
+	// has no same-PID exemption, so holding both would self-deadlock.
 	runV1 := func(ctx context.Context, _ string, ro cas.RestoreOptions) error {
+		// cas.Download has completed; the staging-swap race window is closed.
+		// Release the outer cas-download lock before b.Restore takes its own.
+		pidlock.RemovePidFile(casDownloadLockName)
+		casDownloadLockReleased = true
+
 		// b.Restore looks the backup up by name under b.DefaultDataPath/backup/,
 		// which is exactly where cas.Download placed it.
 		return b.Restore(

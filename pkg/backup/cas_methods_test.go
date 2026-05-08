@@ -13,6 +13,83 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 )
 
+// TestCASRestore_PidlockPreventsConcurrentCASDownload verifies that
+// CASRestore returns a pidlock error when a concurrent process already holds
+// the "cas-download-<backupName>" lock. This guards against the staging-dir
+// swap race described in the review-wave-4 P2-b finding.
+func TestCASRestore_PidlockPreventsConcurrentCASDownload(t *testing.T) {
+	const backupName = "cas_test_concurrent_restore"
+	lockName := "cas-download-" + backupName
+
+	// Simulate a concurrent cas-download / cas-restore already running by
+	// pre-acquiring the cas-download pidlock for this backup name.
+	if err := pidlock.CheckAndCreatePidFile(lockName, "cas-download"); err != nil {
+		t.Fatalf("pre-acquire pidlock failed: %v", err)
+	}
+	defer pidlock.RemovePidFile(lockName)
+
+	cfg := config.DefaultConfig()
+	cfg.CAS.Enabled = false // no remote storage needed; we want an early return
+	b := &Backuper{cfg: cfg}
+
+	// CASRestore must fail with a pidlock error BEFORE reaching ensureCAS.
+	err := b.CASRestore(
+		backupName, "", nil, nil, nil, nil,
+		false, false, false, false,
+		false, false, false, false,
+		"", -1,
+	)
+	if err == nil {
+		t.Fatal("expected CASRestore to fail with a pidlock error when cas-download lock is held")
+	}
+	if !strings.Contains(err.Error(), "already running") {
+		t.Errorf("expected 'already running' pidlock error; got: %v", err)
+	}
+
+	// Release the lock and confirm that a fresh CASRestore call no longer
+	// fails on the pidlock (it will fail on cas.enabled=false instead —
+	// that's fine; we just want to confirm the lock path is correct).
+	pidlock.RemovePidFile(lockName)
+
+	err2 := b.CASRestore(
+		backupName, "", nil, nil, nil, nil,
+		false, false, false, false,
+		false, false, false, false,
+		"", -1,
+	)
+	if err2 != nil && strings.Contains(err2.Error(), "already running") {
+		t.Errorf("after lock release, CASRestore should not fail on pidlock; got: %v", err2)
+	}
+	// Expected failure is cas.enabled=false — any other error is fine too.
+	// The important invariant is: no "already running" error after release.
+}
+
+// TestCASDownload_PidlockPreventsConcurrentRuns verifies that CASDownload
+// also holds the "cas-download-<backupName>" lock, serializing with
+// concurrent cas-restore runs on the same backup name.
+func TestCASDownload_PidlockPreventsConcurrentRuns(t *testing.T) {
+	const backupName = "cas_test_concurrent_download"
+	lockName := "cas-download-" + backupName
+
+	// Pre-acquire the lock as if another cas-download or cas-restore is running.
+	if err := pidlock.CheckAndCreatePidFile(lockName, "cas-download"); err != nil {
+		t.Fatalf("pre-acquire pidlock failed: %v", err)
+	}
+	defer pidlock.RemovePidFile(lockName)
+
+	cfg := config.DefaultConfig()
+	cfg.CAS.Enabled = false
+	b := &Backuper{cfg: cfg}
+
+	err := b.CASDownload(backupName, "", nil, false, false, "", -1)
+	if err == nil {
+		t.Fatal("expected CASDownload to fail with a pidlock error when cas-download lock is held")
+	}
+	if !strings.Contains(err.Error(), "already running") {
+		t.Errorf("expected 'already running' pidlock error; got: %v", err)
+	}
+}
+
 // TestCASRestore_PidlockRegression encodes the contract that the cas-restore
 // path must not double-acquire the per-backup pidlock. Before the fix,
 // CASRestore took the lock and then b.Restore re-acquired it, deadlocking on
