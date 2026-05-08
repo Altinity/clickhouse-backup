@@ -405,6 +405,12 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)
 				return
 			}
+		case "cas-upload", "cas-download", "cas-restore", "cas-delete", "cas-verify", "cas-prune", "cas-status":
+			actionsResults, err = api.actionsCASHandler(command, args, row, actionsResults)
+			if err != nil {
+				api.writeError(w, http.StatusInternalServerError, row.Command, err)
+				return
+			}
 		default:
 			api.writeError(w, http.StatusBadRequest, row.Command, errors.New("unknown command"))
 			return
@@ -836,20 +842,25 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	type casListSummary struct {
+		UploadedAt string `json:"uploaded_at,omitempty"`
+	}
 	type backupJSON struct {
-		Name                string `json:"name"`
-		Created             string `json:"created"`
-		Size                uint64 `json:"size,omitempty"`
-		DataSize            uint64 `json:"data_size,omitempty"`
-		ObjectDiskSize      uint64 `json:"object_disk_size,omitempty"`
-		MetadataSize        uint64 `json:"metadata_size"`
-		RBACSize            uint64 `json:"rbac_size,omitempty"`
-		ConfigSize          uint64 `json:"config_size,omitempty"`
-		NamedCollectionSize uint64 `json:"named_collection_size,omitempty"`
-		CompressedSize      uint64 `json:"compressed_size,omitempty"`
-		Location            string `json:"location"`
-		RequiredBackup      string `json:"required"`
-		Desc                string `json:"desc"`
+		Name                string          `json:"name"`
+		Kind                string          `json:"kind,omitempty"` // "v1" or "cas"; omitted on legacy clients for back-compat
+		Created             string          `json:"created"`
+		Size                uint64          `json:"size,omitempty"`
+		DataSize            uint64          `json:"data_size,omitempty"`
+		ObjectDiskSize      uint64          `json:"object_disk_size,omitempty"`
+		MetadataSize        uint64          `json:"metadata_size"`
+		RBACSize            uint64          `json:"rbac_size,omitempty"`
+		ConfigSize          uint64          `json:"config_size,omitempty"`
+		NamedCollectionSize uint64          `json:"named_collection_size,omitempty"`
+		CompressedSize      uint64          `json:"compressed_size,omitempty"`
+		Location            string          `json:"location"`
+		RequiredBackup      string          `json:"required"`
+		Desc                string          `json:"desc"`
+		CAS                 *casListSummary `json:"cas,omitempty"`
 	}
 	backupsJSON := make([]backupJSON, 0)
 	cfg, err := api.ReloadConfig(w, "list")
@@ -886,6 +897,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:                item.BackupName,
+				Kind:                "v1",
 				Created:             item.CreationDate.In(time.Local).Format(common.TimeFormat),
 				Size:                item.GetFullSize(),
 				DataSize:            item.DataSize,
@@ -925,6 +937,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			fullSize := item.GetFullSize()
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:                item.BackupName,
+				Kind:                "v1",
 				Created:             item.CreationDate.In(time.Local).Format(common.TimeFormat),
 				Size:                fullSize,
 				DataSize:            item.DataSize,
@@ -944,6 +957,25 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		api.metrics.NumberBackupsRemoteBroken.Set(float64(brokenBackups))
 		api.metrics.NumberBackupsRemote.Set(float64(len(remoteBackups)))
+	}
+	// Merge CAS backups into the list when CAS is enabled and remote storage is
+	// configured. Failures are logged and swallowed so that a CAS-side error
+	// never prevents the v1 list from being returned.
+	if cfg.CAS.Enabled && cfg.General.RemoteStorage != "none" && (where == "remote" || !wherePresent) {
+		casB := backup.NewBackuper(cfg)
+		for _, item := range casB.CollectRemoteCASBackups(ctx) {
+			uploadedAt := item.CreationDate.In(time.Local).Format(common.TimeFormat)
+			backupsJSON = append(backupsJSON, backupJSON{
+				Name:     item.BackupName,
+				Kind:     "cas",
+				Created:  uploadedAt,
+				Location: "remote",
+				Desc:     item.Description,
+				CAS: &casListSummary{
+					UploadedAt: uploadedAt,
+				},
+			})
+		}
 	}
 	api.sendJSONEachRow(w, http.StatusOK, backupsJSON)
 	status.Current.Stop(commandId, nil)
