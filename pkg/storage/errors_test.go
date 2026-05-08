@@ -159,4 +159,3 @@ func TestStorage_NotFoundClassification(t *testing.T) {
 func gcsErrObjectNotExist() error {
 	return gcsGetErrObjectNotExist()
 }
-

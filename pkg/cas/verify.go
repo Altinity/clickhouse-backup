@@ -99,6 +99,9 @@ func buildVerifySet(ctx context.Context, b Backend, cp, name string, bm *metadat
 		}
 
 		for disk := range tm.Parts {
+			if err := validateRemoteFilesystemName("disk", disk); err != nil {
+				return nil, fmt.Errorf("cas-verify: %w", err)
+			}
 			archPath := PartArchivePath(cp, name, disk, tt.Database, tt.Table)
 			archRC, err := b.GetFile(ctx, archPath)
 			if err != nil {

@@ -199,4 +199,3 @@ EOF
 - `Multiple` codec (`0x91`) is **not** handled by `ch-go/compress.Reader`. Per the spec it isn't used for `checksums.txt`, so the parser surfaces a "compression 0x91 not implemented" error if encountered — matching the spec's "rarely used" note.
 - v1 is rejected with "format too old", matching the C++ reference.
 - `Parse` returns an error for v5 (and `ParseMinimalistic` rejects non-5) so you can't accidentally cross the wires.
-

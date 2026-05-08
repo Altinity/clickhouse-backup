@@ -48,8 +48,8 @@ type PruneReport struct {
 	OrphansHeldByGrace    uint64
 	OrphansDeleted        uint64
 	BytesReclaimed        int64
-	AbandonedMarkersSwept int
-	MetadataOrphansSwept  int
+	AbandonedMarkersFound int
+	MetadataOrphansFound  int
 	DurationSeconds       float64
 }
 
@@ -155,7 +155,7 @@ func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*Prun
 			}
 		}
 	}
-	rep.AbandonedMarkersSwept = len(abandoned)
+	rep.AbandonedMarkersFound = len(abandoned)
 
 	// Step 5: list live backups (subtrees with metadata.json).
 	backups, err := listLiveBackups(ctx, b, cp)
@@ -215,7 +215,7 @@ func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*Prun
 			}
 		}
 	}
-	rep.MetadataOrphansSwept = len(metaOrphans)
+	rep.MetadataOrphansFound = len(metaOrphans)
 
 	// Step 11: delete orphan blobs (parallel, bounded).
 	if opts.DryRun {
@@ -279,7 +279,11 @@ func classifyInProgress(ctx context.Context, b Backend, cp string, abandon time.
 func freshInProgressError(fresh []inProgressMarker) error {
 	parts := make([]string, len(fresh))
 	for i, m := range fresh {
-		parts[i] = fmt.Sprintf("%s (age=%s)", m.Backup, m.Age.Round(time.Second))
+		if m.ModTime.IsZero() {
+			parts[i] = fmt.Sprintf("%s (age=unknown — FTP server returned no ModTime; use --unlock if confirmed stale)", m.Backup)
+		} else {
+			parts[i] = fmt.Sprintf("%s (age=%s)", m.Backup, m.Age.Round(time.Second))
+		}
 	}
 	return fmt.Errorf("cas-prune: refuse to run while %d in-progress upload(s) are fresh: %s — wait for them, or run 'cas-prune --abandon-threshold=0s' if confirmed dead",
 		len(fresh), strings.Join(parts, ", "))
@@ -327,6 +331,9 @@ func accumulateRefsForBackup(ctx context.Context, b Backend, cp, name string, mw
 			return fmt.Errorf("read table metadata for %s.%s: %w", tt.Database, tt.Table, err)
 		}
 		for disk := range tm.Parts {
+			if err := validateRemoteFilesystemName("disk", disk); err != nil {
+				return err
+			}
 			archKey := PartArchivePath(cp, name, disk, tt.Database, tt.Table)
 			if err := accumulateRefsFromArchive(ctx, b, archKey, threshold, mw); err != nil {
 				return fmt.Errorf("accumulate refs from %s: %w", archKey, err)
@@ -504,17 +511,24 @@ func PrintPruneReport(r *PruneReport, w io.Writer) error {
 	if r.DryRun {
 		prefix = "cas-prune (dry-run)"
 	}
-	_, err := fmt.Fprintf(w, "%s:\n  Live backups        : %d\n  Orphan candidates   : %d\n  Orphans deleted     : %d\n  Bytes reclaimed     : %s (%d)\n  Abandoned markers   : %d swept\n  Metadata orphans    : %d swept\n  Wall clock          : %.2fs\n",
+	markerVerb := "swept"
+	orphanVerb := "swept"
+	if r.DryRun {
+		markerVerb = "would be swept"
+		orphanVerb = "would be swept"
+	}
+	_, err := fmt.Fprintf(w, "%s:\n  Live backups        : %d\n  Orphan candidates   : %d\n  Orphans deleted     : %d\n  Bytes reclaimed     : %s (%d)\n  Abandoned markers   : %d %s\n  Metadata orphans    : %d %s\n  Wall clock          : %.2fs\n",
 		prefix,
 		r.LiveBackups,
 		r.OrphanBlobsConsidered,
 		r.OrphansDeleted,
 		utils.FormatBytes(uint64(r.BytesReclaimed)),
 		r.BytesReclaimed,
-		r.AbandonedMarkersSwept,
-		r.MetadataOrphansSwept,
+		r.AbandonedMarkersFound,
+		markerVerb,
+		r.MetadataOrphansFound,
+		orphanVerb,
 		r.DurationSeconds,
 	)
 	return err
 }
-

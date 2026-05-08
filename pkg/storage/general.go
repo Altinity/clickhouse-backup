@@ -249,6 +249,7 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 			}
 			trimmed := strings.TrimSuffix(p, "/")
 			if backupName == trimmed || strings.HasPrefix(o.Name(), p) {
+				log.Warn().Str("name", o.Name()).Str("matched_prefix", p).Msg("BackupList: skipping entry that matches a CAS skip prefix; rename or move if it was an unrelated v1 backup")
 				return nil
 			}
 		}

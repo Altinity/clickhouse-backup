@@ -126,8 +126,8 @@ func TestPrune_SweepsAbandonedMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.AbandonedMarkersSwept != 1 {
-		t.Errorf("AbandonedMarkersSwept: got %d want 1", rep.AbandonedMarkersSwept)
+	if rep.AbandonedMarkersFound != 1 {
+		t.Errorf("AbandonedMarkersFound: got %d want 1", rep.AbandonedMarkersFound)
 	}
 	if _, _, exists, _ := f.StatFile(ctx, cas.InProgressMarkerPath(cp, "bk_dead")); exists {
 		t.Error("abandoned marker should be deleted by prune")
@@ -286,8 +286,8 @@ func TestPrune_MetadataOrphanSubtreeSwept(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.MetadataOrphansSwept != 1 {
-		t.Errorf("MetadataOrphansSwept: got %d want 1", rep.MetadataOrphansSwept)
+	if rep.MetadataOrphansFound != 1 {
+		t.Errorf("MetadataOrphansFound: got %d want 1", rep.MetadataOrphansFound)
 	}
 	// Subtree gone.
 	if _, _, exists, _ := f.StatFile(ctx, cas.TableMetaPath(cp, "halfdeleted", "db", "t")); exists {
@@ -479,7 +479,7 @@ func TestPrune_ExplicitZeroOverridesConfigAbandon(t *testing.T) {
 		AbandonThresholdSet: true,
 	})
 	require.NoError(t, err, "explicit zero abandon-threshold must not block on fresh in-progress marker")
-	require.Equal(t, 1, rep.AbandonedMarkersSwept, "fresh marker must be swept with abandon-threshold=0")
+	require.Equal(t, 1, rep.AbandonedMarkersFound, "fresh marker must be swept with abandon-threshold=0")
 
 	// The marker must be gone.
 	if _, _, exists, _ := f.StatFile(ctx, cas.InProgressMarkerPath(cp, "bk_fresh_but_dead")); exists {

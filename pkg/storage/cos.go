@@ -438,8 +438,7 @@ func (c *COS) deleteKeysConcurrent(ctx context.Context, keys []string) error {
 			_, err := c.client.Object.Delete(ctx, key)
 			if err != nil {
 				// Check if it's a "not found" error - that's OK
-				var cosErr *cos.ErrorResponse
-				if errors.As(err, &cosErr) && cosErr.Code == "NoSuchKey" {
+				if cosIsNotFound(err) {
 					mu.Lock()
 					deletedCount++
 					mu.Unlock()
