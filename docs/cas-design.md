@@ -415,6 +415,26 @@ cas:
 
 `inline_threshold` is read from config at upload time and **persisted** in `BackupMetadata.CAS.InlineThreshold`. Restore uses the persisted value, never the current config (§6.2.1).
 
+### 6.12 Compatibility notes
+
+**Breaking interface change** (Phase 4). The CAS work added two new methods and one sentinel error to the public `pkg/storage.RemoteStorage` interface:
+
+```go
+type RemoteStorage interface {
+    // ... existing methods ...
+    PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (created bool, err error)
+    PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (created bool, err error)
+}
+
+var ErrConditionalPutNotSupported = errors.New("conditional PutFile not supported by this backend")
+```
+
+External code that implements `RemoteStorage` directly (private forks with custom backends, third-party plugins) will fail to build until they add the two methods. Implementations that lack a native atomic-create primitive should return `ErrConditionalPutNotSupported`; CAS commands then refuse on those backends unless `cas.allow_unsafe_markers=true`.
+
+**Backend version requirements.** S3-compatible stores must honor `If-None-Match: "*"` on `PutObject` for marker locks to be safe. AWS S3 supports it natively. MinIO requires release `RELEASE.2024-11-07T00-52-20Z` or newer; older versions silently ignore the header. CAS performs a one-shot startup probe on the first command (writes a sentinel twice and asserts the second write reports not-created); operators on confirmed-good backends can skip it via `cas.skip_conditional_put_probe=true`. Ceph RGW and other S3-compatible stores have not been validated against the probe; prefer one of the natively-supported backends in production.
+
+**LayoutVersion downgrade.** Operators downgrading clickhouse-backup to a release that doesn't recognize the persisted `BackupMetadata.CAS.LayoutVersion` will see a refusal at restore time with a clear error. Upgrade-then-downgrade-then-restore is the failure mode; document the build matrix you support.
+
 ## 7. Reuse vs. new code
 
 ### Reused as-is

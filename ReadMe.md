@@ -31,7 +31,9 @@ For that reason, it's required to run `clickhouse-backup` on the same host or sa
 - **Support for incremental backups on remote storage**
 - **Smart deduplicating backups** with the `cas-*` commands — every backup is independent, only changed data is uploaded, and mutations don't blow up your storage bill (see below)
 
-## Smart deduplicating backups (opt-in)
+## Smart deduplicating backups (opt-in, ⚠️ EXPERIMENTAL)
+
+> **EXPERIMENTAL.** The `cas-*` commands and on-disk layout are still under active development; future releases may bump `LayoutVersion` in a way that requires re-uploading existing CAS backups. Do not rely on CAS as the sole copy of production data yet — keep a parallel v1 backup (or a copy outside the CAS namespace) until the feature is marked stable. Evaluate it on non-critical workloads first; report issues. See [`docs/cas-design.md`](docs/cas-design.md) for the full design.
 
 Most backup tools force a tradeoff: full backups eat storage and bandwidth, while incremental backups are smaller but chain together — losing or rotating the wrong base backup breaks every dependent restore. ClickHouse mutations make this worse: a single `ALTER TABLE ... UPDATE` can rewrite one column and rename the part, leaving 99% of the bytes identical to the previous version but invisible to chain-based dedup.
 
