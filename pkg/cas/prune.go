@@ -191,10 +191,12 @@ func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*Prun
 		return rep, fmt.Errorf("cas-prune: open mark set: %w", err)
 	}
 	defer mr.Close()
-	cands, err := SweepOrphans(ctx, b, cp, mr, grace, t0)
+	cands, sweepStats, err := SweepOrphans(ctx, b, cp, mr, grace, t0)
 	if err != nil {
 		return rep, fmt.Errorf("cas-prune: sweep: %w", err)
 	}
+	rep.BlobsTotal = sweepStats.BlobsTotal
+	rep.OrphansHeldByGrace = sweepStats.OrphansHeldByGrace
 	rep.OrphanBlobsConsidered = uint64(len(cands))
 
 	// Step 10: metadata-orphan subtree sweep.

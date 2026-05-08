@@ -70,7 +70,7 @@ func TestSweep_ReturnsOnlyUnreferencedAndOldEnough(t *testing.T) {
 	marks := buildMarkSet(t, []cas.Hash128{h1, h2, h5})
 	defer marks.Close()
 
-	cands, err := cas.SweepOrphans(context.Background(), f, cp, marks, time.Hour, now)
+	cands, _, err := cas.SweepOrphans(context.Background(), f, cp, marks, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestSweep_RespectsGracePeriodPrecisely(t *testing.T) {
 	marks := buildMarkSet(t, nil) // empty marks → all blobs are orphans
 	defer marks.Close()
 
-	cands, err := cas.SweepOrphans(context.Background(), f, cp, marks, time.Hour, now)
+	cands, _, err := cas.SweepOrphans(context.Background(), f, cp, marks, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestSweep_RespectsGracePeriodPrecisely(t *testing.T) {
 	putBlobAt(t, f, cp, h, now.Add(-time.Hour-time.Nanosecond))
 	marks2 := buildMarkSet(t, nil)
 	defer marks2.Close()
-	cands, err = cas.SweepOrphans(context.Background(), f, cp, marks2, time.Hour, now)
+	cands, _, err = cas.SweepOrphans(context.Background(), f, cp, marks2, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestSweep_AllReferenced_NoCandidates(t *testing.T) {
 	marks := buildMarkSet(t, hs)
 	defer marks.Close()
 
-	cands, err := cas.SweepOrphans(context.Background(), f, cp, marks, time.Hour, now)
+	cands, _, err := cas.SweepOrphans(context.Background(), f, cp, marks, time.Hour, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestSweep_EmptyBucket(t *testing.T) {
 	marks := buildMarkSet(t, nil)
 	defer marks.Close()
 
-	cands, err := cas.SweepOrphans(context.Background(), f, "cas/c1/", marks, time.Hour, time.Now())
+	cands, _, err := cas.SweepOrphans(context.Background(), f, "cas/c1/", marks, time.Hour, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestSweep_ManyShardsParallel(t *testing.T) {
 	marks := buildMarkSet(t, nil) // empty: every blob is an orphan
 	defer marks.Close()
 
-	cands, err := cas.SweepOrphans(context.Background(), f, cp, marks, time.Hour, time.Now())
+	cands, _, err := cas.SweepOrphans(context.Background(), f, cp, marks, time.Hour, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

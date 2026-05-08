@@ -24,6 +24,16 @@ type OrphanCandidate struct {
 	ModTime time.Time
 }
 
+// SweepStats holds aggregate counters produced by a single SweepOrphans call.
+type SweepStats struct {
+	// BlobsTotal is the total number of blobs enumerated during the sweep,
+	// regardless of whether they are live-referenced or orphaned.
+	BlobsTotal uint64
+	// OrphansHeldByGrace counts orphan blobs (not referenced by any live
+	// backup) that were skipped because they fell inside the grace window.
+	OrphansHeldByGrace uint64
+}
+
 // SweepOrphans walks every cas/<cluster>/blob/<aa>/ prefix in parallel,
 // collects candidate blobs (those not in marks), and filters to those
 // strictly older than t0-grace. The mark set MUST be sorted (i.e. produced
@@ -31,7 +41,7 @@ type OrphanCandidate struct {
 //
 // parallelism caps simultaneous shard walks; <=0 falls back to 32. The
 // returned slice has no specified order.
-func SweepOrphans(ctx context.Context, b Backend, clusterPrefix string, marks *MarkSetReader, grace time.Duration, t0 time.Time) ([]OrphanCandidate, error) {
+func SweepOrphans(ctx context.Context, b Backend, clusterPrefix string, marks *MarkSetReader, grace time.Duration, t0 time.Time) ([]OrphanCandidate, SweepStats, error) {
 	cutoff := t0.Add(-grace)
 	const parallelism = 32
 
@@ -65,17 +75,17 @@ func SweepOrphans(ctx context.Context, b Backend, clusterPrefix string, marks *M
 
 	for i, s := range shards {
 		if s.err != nil {
-			return nil, fmt.Errorf("cas-sweep: shard %02x: %w", i, s.err)
+			return nil, SweepStats{}, fmt.Errorf("cas-sweep: shard %02x: %w", i, s.err)
 		}
 	}
 
 	// Stream-merge the 256 sorted shards into a single sorted iterator,
 	// then walk it side-by-side with the mark set.
-	candidates, err := streamCompareWithMarks(shards, marks, cutoff)
+	candidates, stats, err := streamCompareWithMarks(shards, marks, cutoff)
 	if err != nil {
-		return nil, err
+		return nil, SweepStats{}, err
 	}
-	return candidates, nil
+	return candidates, stats, nil
 }
 
 type remoteBlob struct {
@@ -126,8 +136,8 @@ func parseHashFromKey(key, prefix string) (Hash128, bool) {
 
 // streamCompareWithMarks merges the sorted shard outputs with the sorted
 // mark stream and emits OrphanCandidate for any blob not in marks AND older
-// than cutoff.
-func streamCompareWithMarks(shards []shardOutForCompare, marks *MarkSetReader, cutoff time.Time) ([]OrphanCandidate, error) {
+// than cutoff. It also returns SweepStats with aggregate counters.
+func streamCompareWithMarks(shards []shardOutForCompare, marks *MarkSetReader, cutoff time.Time) ([]OrphanCandidate, SweepStats, error) {
 	// Flatten shards in sorted order. Shards are already individually
 	// sorted; flatten via heap merge.
 	it := newShardIter(shards)
@@ -145,16 +155,18 @@ func streamCompareWithMarks(shards []shardOutForCompare, marks *MarkSetReader, c
 		return nil
 	}
 	if err := advanceMark(); err != nil {
-		return nil, err
+		return nil, SweepStats{}, err
 	}
 
 	var out []OrphanCandidate
+	var stats SweepStats
 	for it.valid {
 		blob := it.current
+		stats.BlobsTotal++
 		// Advance mark stream past anything strictly less than blob.hash.
 		for haveMark && hashLess(mark, blob.hash) {
 			if err := advanceMark(); err != nil {
-				return nil, err
+				return nil, SweepStats{}, err
 			}
 		}
 		if !(haveMark && mark == blob.hash) {
@@ -163,17 +175,21 @@ func streamCompareWithMarks(shards []shardOutForCompare, marks *MarkSetReader, c
 				log.Warn().
 					Str("key", blob.key).
 					Msg("cas-sweep: blob has zero ModTime (likely FTP LIST without MLSD); skipping (treating as inside grace window)")
+				stats.OrphansHeldByGrace++
 			} else if blob.modTime.Before(cutoff) {
 				out = append(out, OrphanCandidate{
 					Hash: blob.hash, Key: blob.key, ModTime: blob.modTime, Size: blob.size,
 				})
+			} else {
+				// Orphan but within the grace window — held for now.
+				stats.OrphansHeldByGrace++
 			}
 		}
 		if err := it.advance(); err != nil {
-			return nil, err
+			return nil, SweepStats{}, err
 		}
 	}
-	return out, nil
+	return out, stats, nil
 }
 
 // shardOutForCompare is an alias used by streamCompareWithMarks. We keep

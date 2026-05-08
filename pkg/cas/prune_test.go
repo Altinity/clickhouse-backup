@@ -293,6 +293,56 @@ func TestPrune_MetadataOrphanSubtreeSwept(t *testing.T) {
 	}
 }
 
+// TestPrune_ReportCountersPopulated verifies that BlobsTotal and
+// OrphansHeldByGrace are correctly populated in the PruneReport.
+// It constructs a fake backend with:
+//   - 1 live-referenced blob (hLive)
+//   - 1 stale orphan older than grace (hStaleOrphan) — will be deleted
+//   - 1 fresh orphan within grace (hFreshOrphan) — held by grace
+func TestPrune_ReportCountersPopulated(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	ctx := context.Background()
+	cp := cfg.ClusterPrefix()
+
+	hLive := cas.Hash128{Low: 0xA1, High: 0xA1}
+	hStaleOrphan := cas.Hash128{Low: 0xB2, High: 0xB2}
+	hFreshOrphan := cas.Hash128{Low: 0xC3, High: 0xC3}
+
+	// Upload a backup that references hLive.
+	uploadTestBackup(t, f, cfg, "bk-live", hLive)
+
+	// Manually place stale and fresh orphan blobs.
+	for _, h := range []cas.Hash128{hStaleOrphan, hFreshOrphan} {
+		if err := f.PutFile(ctx, cas.BlobPath(cp, h), io.NopCloser(bytes.NewReader([]byte("x"))), 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Age the live blob and stale orphan past grace; fresh orphan stays inside.
+	ageBlob(t, f, cfg, hLive, 2*time.Hour)
+	ageBlob(t, f, cfg, hStaleOrphan, 2*time.Hour)
+	ageBlob(t, f, cfg, hFreshOrphan, 30*time.Minute)
+
+	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{GraceBlob: time.Hour, GraceBlobSet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 3 blobs total: hLive + hStaleOrphan + hFreshOrphan.
+	if rep.BlobsTotal != 3 {
+		t.Errorf("BlobsTotal: got %d want 3", rep.BlobsTotal)
+	}
+	// hFreshOrphan is an orphan but within grace → held.
+	if rep.OrphansHeldByGrace != 1 {
+		t.Errorf("OrphansHeldByGrace: got %d want 1", rep.OrphansHeldByGrace)
+	}
+	// hStaleOrphan should be deleted.
+	if rep.OrphansDeleted != 1 {
+		t.Errorf("OrphansDeleted: got %d want 1", rep.OrphansDeleted)
+	}
+}
+
 func TestPrune_RefusesWhenDisabled(t *testing.T) {
 	cfg := testCfg(1024)
 	cfg.Enabled = false
