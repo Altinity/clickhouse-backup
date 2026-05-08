@@ -1050,6 +1050,79 @@ func TestUpload_AbortsIfColdListedBlobDisappearsBeforeCommit(t *testing.T) {
 	}
 }
 
+// TestUpload_AbortsIfColdListedBlobIsWrongSize verifies that if a blob was
+// skipped during upload (because cold-list said it already existed) but the
+// remote object has a different size from what checksums.txt recorded, Upload
+// returns an error containing "size mismatch" and does NOT write metadata.json.
+// This is a defense-in-depth check: content-addressed keys should never hold
+// wrong-size data under normal operation, but a buggy backend or interrupted
+// PUT could leave a truncated object at the key.
+func TestUpload_AbortsIfColdListedBlobIsWrongSize(t *testing.T) {
+	ctx := context.Background()
+	f := fakedst.New()
+	// Use a threshold low enough that data.bin (1024 bytes) is treated as a blob.
+	cfg := testCfg(100)
+	cp := cfg.ClusterPrefix()
+
+	// Build a local backup with one part containing a 1024-byte data.bin blob.
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "p1",
+		Files: []testfixtures.FileSpec{
+			{Name: "columns.txt", Size: 23, HashLow: 1, HashHigh: 100},
+			{Name: "primary.idx", Size: 8, HashLow: 2, HashHigh: 100},
+			{Name: "data.bin", Size: 1024, HashLow: 3, HashHigh: 100},
+		},
+	}}
+	lb := testfixtures.Build(t, parts)
+
+	// Seed a first upload so the blob lands in the backend at the CAS key.
+	_, err := cas.Upload(ctx, f, cfg, "seed-backup", cas.UploadOptions{LocalBackupDir: lb.Root})
+	if err != nil {
+		t.Fatalf("seed upload failed: %v", err)
+	}
+
+	// Find the blob key uploaded during seeding.
+	blobPrefix := cp + "blob/"
+	var coldHitKey string
+	if err := f.Walk(ctx, blobPrefix, true, func(rf cas.RemoteFile) error {
+		coldHitKey = rf.Key
+		return nil
+	}); err != nil {
+		t.Fatalf("Walk to find blob key: %v", err)
+	}
+	if coldHitKey == "" {
+		t.Fatal("no blob found in backend after seed upload")
+	}
+
+	// Install a StatHook that reports the blob as present but with a wrong
+	// (truncated) size. ColdList uses Walk (not StatFile), so it will still
+	// see the blob as present and uploadMissingBlobs will skip it. Step 11c
+	// calls StatFile, sees size != expected, and must abort.
+	f.SetStatHook(func(key string) (int64, time.Time, bool, error, bool) {
+		if key == coldHitKey {
+			// Return wrong size (1 byte instead of the real 1024 bytes).
+			return 1, time.Time{}, true, nil, true
+		}
+		return 0, time.Time{}, false, nil, false
+	})
+
+	// The second upload for "test-backup" should abort at step 11c.
+	_, err = cas.Upload(ctx, f, cfg, "test-backup", cas.UploadOptions{LocalBackupDir: lb.Root})
+	if err == nil {
+		t.Fatal("expected Upload to abort when cold-listed blob has wrong size")
+	}
+	if !strings.Contains(err.Error(), "size mismatch") {
+		t.Errorf("error should mention 'size mismatch'; got: %v", err)
+	}
+
+	// metadata.json must NOT have been written.
+	f.SetStatHook(nil)
+	_, _, exists, _ := f.StatFile(ctx, cas.MetadataJSONPath(cp, "test-backup"))
+	if exists {
+		t.Error("metadata.json was written despite cold-listed blob having wrong size")
+	}
+}
+
 // TestUpload_WaitsForPruneMarker verifies that Upload waits for the prune
 // marker to disappear (within WaitForPrune) rather than refusing immediately.
 func TestUpload_WaitsForPruneMarker(t *testing.T) {

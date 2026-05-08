@@ -301,18 +301,24 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 		return nil, fmt.Errorf("cas: in-progress marker for %q was swept (upload exceeded abandon_threshold); aborting", name)
 	}
 
-	// 11c. Re-validate cold-listed blobs (closes ColdList TOCTOU vs concurrent prune).
+	// 11c. Re-validate cold-listed blobs (closes ColdList TOCTOU vs concurrent
+	//      prune) AND verify size matches checksums.txt (defense-in-depth
+	//      against a stale/truncated object at a content-addressed key).
 	//      A prune that ran past 11a's check could have deleted a blob we
 	//      decided to skip in step 8 because cold-list said it was present.
-	for _, blobKey := range skippedColdList {
-		_, _, exists, err := b.StatFile(ctx, blobKey)
+	for _, sb := range skippedColdList {
+		sz, _, exists, err := b.StatFile(ctx, sb.Key)
 		if err != nil {
 			_ = DeleteInProgressMarker(ctx, b, cp, name)
-			return nil, fmt.Errorf("cas: re-check cold-listed blob %s: %w", blobKey, err)
+			return nil, fmt.Errorf("cas: re-check cold-listed blob %s: %w", sb.Key, err)
 		}
 		if !exists {
 			_ = DeleteInProgressMarker(ctx, b, cp, name)
-			return nil, fmt.Errorf("cas: cold-listed blob %s disappeared before commit (concurrent prune?); aborting", blobKey)
+			return nil, fmt.Errorf("cas: cold-listed blob %s disappeared before commit (concurrent prune?); aborting", sb.Key)
+		}
+		if sz != sb.Size {
+			_ = DeleteInProgressMarker(ctx, b, cp, name)
+			return nil, fmt.Errorf("cas: cold-listed blob %s size mismatch: remote=%d, expected=%d (per checksums.txt); aborting to prevent corrupt backup", sb.Key, sz, sb.Size)
 		}
 	}
 
@@ -724,12 +730,22 @@ func tableFilterAllows(filter []string, db, table string) bool {
 	return false
 }
 
+// skippedBlob records a blob that was dedup'd via cold-list (i.e. already
+// present in the remote). The Size field is the expected byte count from
+// the local checksums.txt, used by step 11c to detect stale/truncated
+// objects at content-addressed keys (defense-in-depth).
+type skippedBlob struct {
+	Key  string
+	Hash Hash128
+	Size int64 // expected, from checksums.txt via blobRef
+}
+
 // uploadMissingBlobs PUTs every blob in plan.blobs that is not in the
 // existing set. Concurrency capped by parallelism (<=0 → 16).
 // skipped contains the full object keys of blobs that were skipped because
 // cold-list reported them as already present; callers re-validate these
 // before committing to close the ColdList TOCTOU window.
-func uploadMissingBlobs(ctx context.Context, b Backend, cp string, plan *uploadPlan, existing *ExistenceSet, parallelism int) (uploaded int, bytesUp int64, skipped []string, err error) {
+func uploadMissingBlobs(ctx context.Context, b Backend, cp string, plan *uploadPlan, existing *ExistenceSet, parallelism int) (uploaded int, bytesUp int64, skipped []skippedBlob, err error) {
 	if parallelism <= 0 {
 		parallelism = 16
 	}
@@ -740,13 +756,17 @@ func uploadMissingBlobs(ctx context.Context, b Backend, cp string, plan *uploadP
 	var jobs []job
 	for h, ref := range plan.blobs {
 		if existing.Has(h) {
-			skipped = append(skipped, BlobPath(cp, h))
+			skipped = append(skipped, skippedBlob{
+				Key:  BlobPath(cp, h),
+				Hash: h,
+				Size: int64(ref.Size),
+			})
 			continue
 		}
 		jobs = append(jobs, job{h: h, ref: ref})
 	}
 	// Deterministic ordering of skipped aids debugging/tests.
-	sort.Strings(skipped)
+	sort.Slice(skipped, func(i, j int) bool { return skipped[i].Key < skipped[j].Key })
 	// Deterministic ordering aids debugging/tests.
 	sort.Slice(jobs, func(i, j int) bool {
 		if jobs[i].h.High != jobs[j].h.High {

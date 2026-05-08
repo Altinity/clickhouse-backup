@@ -16,7 +16,7 @@ func TestDefaultConfig(t *testing.T) {
 	if c.RootPrefix != "cas/" {
 		t.Errorf("RootPrefix: got %q", c.RootPrefix)
 	}
-	if c.InlineThreshold != 524288 {
+	if c.InlineThreshold != 262144 {
 		t.Errorf("InlineThreshold: got %d", c.InlineThreshold)
 	}
 	if c.GraceBlob != "24h" {
