@@ -1,5 +1,12 @@
 # vNEXT (unreleased)
 
+BREAKING CHANGES
+
+- ⚠️ **DO NOT downgrade to a pre-CAS binary if CAS data exists in your bucket.** The pre-CAS binary has no knowledge of the `cas/` skip prefix and will treat the CAS namespace as a broken v1 backup. The next `clean remote_broken` run, or `BackupsToKeepRemote` retention cron, will silently DELETE all CAS data. Recovery procedures: see [docs/cas-operator-runbook.md](docs/cas-operator-runbook.md) "Binary rollback procedure".
+- The `pkg/storage.RemoteStorage` interface gains two required methods: `PutFileAbsoluteIfAbsent(ctx, key, r, size) (created bool, err error)` and `PutFileIfAbsent(ctx, key, r, size) (created bool, err error)`. Any third-party `RemoteStorage` implementation must add these methods to compile. Implementors that don't support atomic create-only-if-absent should return `pkg/storage.ErrConditionalPutNotSupported`; CAS commands then refuse on those backends unless `cas.allow_unsafe_markers=true`.
+- The `pkg/storage.BackupDestination.BackupList` signature gains a fourth `skipPrefixes []string` parameter. External callers must pass `nil` (or the result of `cas.Config.SkipPrefixes()`) to compile. Internal callers in this repo are updated.
+- A v1 backup literally named `"cas"` will be silently filtered after upgrade (the default `cas.root_prefix` is `"cas/"`). Rename or move any such backup before upgrading. The new binary logs an ERROR for each skipped entry and rejects future creation of names that collide with the CAS skip-prefix.
+
 NEW FEATURES
 
 - add experimental Content-Addressable Storage (CAS) backups via new `cas-upload`, `cas-download`, `cas-restore`, `cas-delete`, `cas-verify`, `cas-prune`, `cas-status` commands. CAS deduplicates file content across backups (especially effective for mutated parts) and removes the incremental-chain dependency — every CAS backup is independently restorable. Available in CLI and REST API. Configure via new `cas:` config block; see [docs/cas-design.md](docs/cas-design.md) and [docs/cas-operator-runbook.md](docs/cas-operator-runbook.md). Object-disk and client-side-encryption tables not yet supported.
