@@ -507,6 +507,19 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	_ = env.DockerExec("sshd", "sh", "-c", "rm -rf /root/cas/ 2>/dev/null || true")
 	_ = env.DockerExec("ftp", "sh", "-c", "rm -rf /home/test_backup/backup/cas/ /home/ftpusers/test_backup/backup/cas/ /backup/cas/ 2>/dev/null || true")
 
+	// Backstop for CAS tests that fail mid-flight (e.g. system.projections
+	// query on CH < 23, or any other unexpected error before the test's
+	// trailing dropDatabase / cas-delete runs). Without this, leaked
+	// cas_*_db databases and cas_*_bk local backups break unrelated
+	// downstream tests on the same env-pool slot (TestServerAPI counts
+	// local backups; TestTablePatterns SHOW CREATE DATABASE every db).
+	if strings.HasPrefix(t.Name(), "TestCAS") {
+		_ = env.DockerExec("clickhouse", "bash", "-c", "rm -rf /var/lib/clickhouse/backup/*")
+		_, _ = env.DockerExecOut("clickhouse", "bash", "-c",
+			"clickhouse-client --query \"SELECT name FROM system.databases WHERE name LIKE 'cas_%'\" | "+
+				"xargs -r -I{} clickhouse-client --query \"DROP DATABASE IF EXISTS \\`{}\\` SYNC\"")
+	}
+
 	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" || strings.HasPrefix(t.Name(), "TestEmbedded") {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/backups_s3")
 	}
