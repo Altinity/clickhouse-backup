@@ -28,6 +28,7 @@ type MarkSetWriter struct {
 	buf       []Hash128
 	runs      []string
 	closed    bool
+	written   uint64
 }
 
 // NewMarkSetWriter opens a new writer that will produce a sorted, deduped
@@ -59,11 +60,16 @@ func (w *MarkSetWriter) Write(h Hash128) error {
 		return fmt.Errorf("markset: writer is closed")
 	}
 	w.buf = append(w.buf, h)
+	w.written++
 	if len(w.buf) >= w.chunk {
 		return w.spill()
 	}
 	return nil
 }
+
+// Count returns the total number of hashes written (including duplicates before
+// deduplication). Available after the first Write call.
+func (w *MarkSetWriter) Count() uint64 { return w.written }
 
 // Close flushes the final in-memory chunk and merges all runs into finalPath.
 // The temporary run directory is removed on success. Calling Close more than

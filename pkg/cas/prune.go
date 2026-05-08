@@ -173,7 +173,8 @@ func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*Prun
 
 	// Step 6: build mark set by walking each live backup's per-table
 	// archives and extracting checksums.txt entries above the inline
-	// threshold (those that went to the blob store).
+	// threshold (those that went to the blob store).  The archive-download
+	// phase (the hot loop) is parallelised with a bounded goroutine pool.
 	marksDir, err := os.MkdirTemp("", "cas-prune-marks-*")
 	if err != nil {
 		return rep, fmt.Errorf("cas-prune: temp dir: %w", err)
@@ -184,13 +185,11 @@ func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*Prun
 	if err != nil {
 		return rep, fmt.Errorf("cas-prune: mark set: %w", err)
 	}
-	for _, bk := range backups {
-		// Step 7 fail-closed: any error reading a live backup aborts the
-		// run BEFORE any blob is deleted.
-		if err := accumulateRefsForBackup(ctx, b, cp, bk, mw); err != nil {
-			_ = mw.Close()
-			return rep, fmt.Errorf("cas-prune: cannot read live backup %q: %w", bk, err)
-		}
+	// Step 7 fail-closed: any error reading a live backup aborts the
+	// run BEFORE any blob is deleted.
+	if err := buildMarkSetParallel(ctx, b, cp, backups, mw, 16); err != nil {
+		_ = mw.Close()
+		return rep, err
 	}
 	if err := mw.Close(); err != nil {
 		return rep, fmt.Errorf("cas-prune: close mark set: %w", err)
@@ -330,12 +329,192 @@ func listLiveBackups(ctx context.Context, b Backend, cp string) ([]string, error
 	return backups, err
 }
 
+// pruneArchiveJob is one (backup, archiveKey, threshold) tuple collected
+// during Phase 1 of buildMarkSetParallel.
+type pruneArchiveJob struct {
+	backup    string
+	archKey   string
+	threshold uint64
+}
+
+// buildMarkSetParallel implements the mark phase in three steps:
+//
+// Phase 1 (serial): for every live backup, read metadata.json + per-table
+// JSONs and collect all archive keys into a flat slice. This is cheap
+// (small JSON reads; no archive download).
+//
+// Phase 2 (parallel, bounded pool of `parallelism` goroutines): download and
+// parse each archive, extract above-threshold hash references into a per-
+// goroutine local buffer.
+//
+// Phase 3 (serial): merge all per-goroutine buffers into the MarkSetWriter.
+// This avoids needing a mutex on Write and keeps MarkSetWriter single-threaded.
+//
+// parallelism <=0 defaults to 16.
+func buildMarkSetParallel(ctx context.Context, b Backend, cp string, backups []string, mw *MarkSetWriter, parallelism int) error {
+	if parallelism <= 0 {
+		parallelism = 16
+	}
+
+	// --- Phase 1: collect all archive jobs (serial, cheap) ---
+	var jobs []pruneArchiveJob
+	for _, bkName := range backups {
+		bm, err := readBackupMetadata(ctx, b, cp, bkName)
+		if err != nil {
+			return fmt.Errorf("cas-prune: cannot read live backup %q: read metadata.json: %w", bkName, err)
+		}
+		if bm.CAS == nil {
+			return fmt.Errorf("cas-prune: cannot read live backup %q: backup metadata has no CAS field; cannot prune", bkName)
+		}
+		threshold := bm.CAS.InlineThreshold
+		for _, tt := range bm.Tables {
+			tm, err := readTableMetadata(ctx, b, cp, bkName, tt.Database, tt.Table)
+			if err != nil {
+				return fmt.Errorf("cas-prune: cannot read live backup %q: read table metadata for %s.%s: %w", bkName, tt.Database, tt.Table, err)
+			}
+			for disk := range tm.Parts {
+				if err := validateRemoteFilesystemName("disk", disk); err != nil {
+					return fmt.Errorf("cas-prune: cannot read live backup %q: %w", bkName, err)
+				}
+				jobs = append(jobs, pruneArchiveJob{
+					backup:    bkName,
+					archKey:   PartArchivePath(cp, bkName, disk, tt.Database, tt.Table),
+					threshold: threshold,
+				})
+			}
+		}
+	}
+	total := len(jobs)
+	log.Info().Int("archives", total).Msg("cas-prune: mark phase starting parallel archive downloads")
+
+	// --- Phase 2: parallel archive download + parse ---
+	// Each goroutine accumulates hashes into its own local slice to avoid
+	// locking the MarkSetWriter.
+	type result struct {
+		hashes []Hash128
+		err    error
+	}
+	results := make([]result, len(jobs))
+
+	sem := make(chan struct{}, parallelism)
+	var wg sync.WaitGroup
+	var (
+		mu       sync.Mutex
+		firstErr error
+	)
+	processed := 0
+
+	for idx, job := range jobs {
+		idx, job := idx, job
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			mu.Lock()
+			already := firstErr != nil
+			mu.Unlock()
+			if already {
+				return
+			}
+
+			hashes, err := collectRefsFromArchive(ctx, b, job.archKey, job.threshold)
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("cas-prune: cannot read live backup %q: accumulate refs from %s: %w", job.backup, job.archKey, err)
+				}
+				mu.Unlock()
+				return
+			}
+			results[idx] = result{hashes: hashes}
+
+			mu.Lock()
+			processed++
+			if processed%100 == 0 {
+				n := processed
+				mu.Unlock()
+				log.Info().Int("processed", n).Int("total", total).Msg("cas-prune: mark phase progress")
+			} else {
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	if firstErr != nil {
+		return firstErr
+	}
+
+	// --- Phase 3: serial merge into MarkSetWriter ---
+	for _, r := range results {
+		for _, h := range r.hashes {
+			if err := mw.Write(h); err != nil {
+				return fmt.Errorf("cas-prune: mark set write: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+// collectRefsFromArchive streams one archive, parses every checksums.txt it
+// contains, and returns all above-threshold hashes. It is the parallel-safe
+// counterpart to accumulateRefsFromArchive; it returns hashes rather than
+// writing to a MarkSetWriter so callers can merge results without locking.
+func collectRefsFromArchive(ctx context.Context, b Backend, archKey string, threshold uint64) ([]Hash128, error) {
+	rc, err := b.GetFile(ctx, archKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	zr, err := zstd.NewReader(rc)
+	if err != nil {
+		return nil, fmt.Errorf("zstd: %w", err)
+	}
+	defer zr.Close()
+	tr := tar.NewReader(zr)
+	var out []Hash128
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return out, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("tar: %w", err)
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		if !strings.HasSuffix(hdr.Name, "/checksums.txt") {
+			continue
+		}
+		body, err := io.ReadAll(tr)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", hdr.Name, err)
+		}
+		parsed, err := checksumstxt.Parse(bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", hdr.Name, err)
+		}
+		for _, c := range parsed.Files {
+			if c.FileSize <= threshold {
+				continue
+			}
+			out = append(out, Hash128{Low: c.FileHash.Low, High: c.FileHash.High})
+		}
+	}
+}
+
 // accumulateRefsForBackup reads the per-table archives of one backup,
 // parses the embedded checksums.txt files, and writes every above-threshold
 // hash to the mark set. The persisted CAS params (InlineThreshold) are
 // read from the backup's own metadata.json — never from current config —
 // so prune is correct even if cfg.InlineThreshold has been retuned since
 // the backup was written.
+//
+// Deprecated: retained for reference; the mark phase now uses
+// buildMarkSetParallel instead of calling this function in a serial loop.
 func accumulateRefsForBackup(ctx context.Context, b Backend, cp, name string, mw *MarkSetWriter) error {
 	bm, err := readBackupMetadata(ctx, b, cp, name)
 	if err != nil {

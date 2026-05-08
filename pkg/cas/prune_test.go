@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -559,6 +560,54 @@ func TestPrune_ZeroLiveBackupsRespectsGrace(t *testing.T) {
 	require.Equal(t, uint64(0), rep.OrphanBlobsConsidered, "fresh blobs held by grace, not candidates")
 	require.Equal(t, uint64(0), rep.OrphansDeleted, "fresh blobs must survive default 24h grace")
 	require.Equal(t, uint64(3), rep.OrphansHeldByGrace, "all 3 fresh orphans held by grace")
+}
+
+// TestPrune_ParallelMarkPhaseStillCorrect verifies the parallel mark phase
+// (buildMarkSetParallel) produces a complete and correct mark set when
+// multiple live backups each reference distinct blobs. Running under -race
+// guards against data races in the pool.
+func TestPrune_ParallelMarkPhaseStillCorrect(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	ctx := context.Background()
+	cp := cfg.ClusterPrefix()
+
+	// 5 backups, each with a unique blob hash. Prune must retain all 5.
+	blobHashes := []cas.Hash128{
+		{Low: 0x0A, High: 0x01},
+		{Low: 0x0B, High: 0x02},
+		{Low: 0x0C, High: 0x03},
+		{Low: 0x0D, High: 0x04},
+		{Low: 0x0E, High: 0x05},
+	}
+	for i, h := range blobHashes {
+		uploadTestBackup(t, f, cfg, fmt.Sprintf("bk%d", i+1), h)
+	}
+
+	// Place an orphan blob older than grace — should be swept.
+	hOrphan := cas.Hash128{Low: 0xFF, High: 0xFF}
+	if err := f.PutFile(ctx, cas.BlobPath(cp, hOrphan),
+		io.NopCloser(bytes.NewReader([]byte("x"))), 1); err != nil {
+		t.Fatal(err)
+	}
+	ageBlob(t, f, cfg, hOrphan, 2*time.Hour)
+
+	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{GraceBlob: time.Hour, GraceBlobSet: true})
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+
+	// Exactly one orphan should be deleted.
+	if rep.OrphansDeleted != 1 {
+		t.Errorf("OrphansDeleted: got %d want 1", rep.OrphansDeleted)
+	}
+
+	// All 5 referenced blobs must survive.
+	for i, h := range blobHashes {
+		if _, _, exists, _ := f.StatFile(ctx, cas.BlobPath(cp, h)); !exists {
+			t.Errorf("bk%d referenced blob was incorrectly deleted", i+1)
+		}
+	}
 }
 
 func TestPrintPruneReport_FormatsBytes(t *testing.T) {
