@@ -426,6 +426,67 @@ func TestPrune_RefusesIfAnotherPruneRunning(t *testing.T) {
 	}
 }
 
+// TestPrune_ExplicitZeroOverridesConfigGrace verifies that passing
+// GraceBlobSet=true with GraceBlob=0 bypasses the non-zero cfg.GraceBlob
+// (24h in testCfg) and immediately prunes a freshly-created orphan blob.
+func TestPrune_ExplicitZeroOverridesConfigGrace(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024) // GraceBlob is "24h" after Validate()
+	ctx := context.Background()
+	cp := cfg.ClusterPrefix()
+
+	// Place a fresh orphan blob (not referenced by any backup, modtime = now).
+	hFreshOrphan := cas.Hash128{Low: 0xDE, High: 0xAD}
+	if err := f.PutFile(ctx, cas.BlobPath(cp, hFreshOrphan), io.NopCloser(bytes.NewReader([]byte("x"))), 1); err != nil {
+		t.Fatal(err)
+	}
+	// modtime stays at "now" — within the 24h config grace, so a normal run
+	// would hold it. With explicit --grace-blob=0s it must be swept.
+
+	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{
+		GraceBlob:    0,
+		GraceBlobSet: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), rep.OrphansHeldByGrace, "explicit zero must override 24h config grace")
+	require.Equal(t, uint64(1), rep.OrphansDeleted, "fresh orphan must be deleted with grace=0")
+
+	// Double-check the blob is actually gone.
+	if _, _, exists, _ := f.StatFile(ctx, cas.BlobPath(cp, hFreshOrphan)); exists {
+		t.Error("fresh orphan must be deleted when --grace-blob=0s overrides 24h config")
+	}
+}
+
+// TestPrune_ExplicitZeroOverridesConfigAbandon verifies that passing
+// AbandonThresholdSet=true with AbandonThreshold=0 bypasses the non-zero
+// cfg.AbandonThreshold (168h in testCfg) and treats every in-progress marker
+// as abandoned — allowing prune to proceed and sweep it.
+func TestPrune_ExplicitZeroOverridesConfigAbandon(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024) // AbandonThreshold is "168h" after Validate()
+	ctx := context.Background()
+	cp := cfg.ClusterPrefix()
+
+	// Write a fresh in-progress marker (modtime = now). Under the 168h config
+	// threshold it would block prune. With explicit --abandon-threshold=0s every
+	// marker has age >= 0 == threshold and is classified as abandoned.
+	if _, err := cas.WriteInProgressMarker(ctx, f, cp, "bk_fresh_but_dead", "host-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{
+		AbandonThreshold:    0,
+		AbandonThresholdSet: true,
+	})
+	require.NoError(t, err, "explicit zero abandon-threshold must not block on fresh in-progress marker")
+	require.Equal(t, 1, rep.AbandonedMarkersSwept, "fresh marker must be swept with abandon-threshold=0")
+
+	// The marker must be gone.
+	if _, _, exists, _ := f.StatFile(ctx, cas.InProgressMarkerPath(cp, "bk_fresh_but_dead")); exists {
+		t.Error("in-progress marker must be deleted when --abandon-threshold=0s overrides 168h config")
+	}
+}
+
 func TestPrintPruneReport_FormatsBytes(t *testing.T) {
 	var buf bytes.Buffer
 	err := cas.PrintPruneReport(&cas.PruneReport{BytesReclaimed: 1572864}, &buf)
