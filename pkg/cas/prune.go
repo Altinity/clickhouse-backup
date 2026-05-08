@@ -551,55 +551,6 @@ func readTableMetadata(ctx context.Context, b Backend, cp, name, db, table strin
 	return &tm, nil
 }
 
-// accumulateRefsFromArchive streams a tar.zstd per-table archive, extracts
-// every checksums.txt body, parses it, and writes every above-threshold
-// (filename, size, hash) entry's hash into the mark set.
-func accumulateRefsFromArchive(ctx context.Context, b Backend, archKey string, threshold uint64, mw *MarkSetWriter) error {
-	rc, err := b.GetFile(ctx, archKey)
-	if err != nil {
-		return err
-	}
-	defer rc.Close()
-	zr, err := zstd.NewReader(rc)
-	if err != nil {
-		return fmt.Errorf("zstd: %w", err)
-	}
-	defer zr.Close()
-	tr := tar.NewReader(zr)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("tar: %w", err)
-		}
-		if hdr.Typeflag != tar.TypeReg {
-			continue
-		}
-		if !strings.HasSuffix(hdr.Name, "/checksums.txt") {
-			continue
-		}
-		body, err := io.ReadAll(tr)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", hdr.Name, err)
-		}
-		parsed, err := checksumstxt.Parse(bytes.NewReader(body))
-		if err != nil {
-			return fmt.Errorf("parse %s: %w", hdr.Name, err)
-		}
-		for _, c := range parsed.Files {
-			if c.FileSize <= threshold {
-				continue
-			}
-			h := Hash128{Low: c.FileHash.Low, High: c.FileHash.High}
-			if err := mw.Write(h); err != nil {
-				return err
-			}
-		}
-	}
-}
-
 // findMetadataOrphans returns prefixes under cas/<c>/metadata/<X>/ where
 // the catalog truth (metadata.json) is absent. Such subtrees represent
 // half-completed deletions whose per-table JSONs / archives should be
