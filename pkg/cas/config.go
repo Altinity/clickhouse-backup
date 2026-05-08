@@ -57,7 +57,7 @@ func DefaultConfig() Config {
 		Enabled:          false,
 		ClusterID:        "",
 		RootPrefix:       "cas/",
-		InlineThreshold:  524288, // 512 KiB
+		InlineThreshold:  262144, // 256 KiB
 		GraceBlob:        "24h",
 		AbandonThreshold: "168h", // 7 days
 	}
