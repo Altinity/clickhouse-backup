@@ -127,3 +127,19 @@ func TestCASSmokeFTPRefusesByDefault(t *testing.T) {
 	_, _ = env.casBackup("delete", "local", backupName)
 	r.NoError(env.dropDatabase(dbName, true))
 }
+
+// TestCASSmokeFTPOptIn verifies that with cas.allow_unsafe_markers=true
+// the FTP backend's best-effort STAT -> STOR-to-tmp -> RNFR/RNTO marker
+// path (Phase 4 T7) supports a full CAS upload -> restore round-trip.
+// Note: this path has a documented small race window; the test asserts
+// only that the happy path works, not concurrency safety.
+func TestCASSmokeFTPOptIn(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+	defer env.Cleanup(t, r)
+
+	env.casBootstrapWith(r, "smoke_ftp_optin", "config-ftp-emulator.yaml",
+		"  allow_unsafe_markers: true\n")
+	runCASBackendSmoke(t, env, r,
+		"cas_smoke_ftp_optin_db", "cas_smoke_ftp_optin_t", "cas_smoke_ftp_optin_bk")
+}

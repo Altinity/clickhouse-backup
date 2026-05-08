@@ -131,7 +131,33 @@ func (f *FTP) DeleteFile(ctx context.Context, key string) error {
 	if err != nil {
 		return errors.WithMessage(err, "FTP DeleteFile getConnection")
 	}
-	if err := client.RemoveDirRecur(path.Join(f.Config.Path, key)); err != nil {
+	fullPath := path.Join(f.Config.Path, key)
+	// Determine whether the target is a file or directory so we can use
+	// the appropriate deletion primitive:
+	//  - Regular file  → client.Delete (DELE), which is correct for marker files.
+	//  - Directory     → RemoveDirRecur (recursive CWD+LIST+DELETE+RMD).
+	//  - 550 (missing) → no-op (idempotent delete, same as S3/GCS/AzBlob/SFTP).
+	//
+	// We cannot use RemoveDirRecur for files: it calls ChangeDir first, which
+	// fails with 550 when given a file path — proftpd cannot CWD into a file.
+	// Using FileSize is the cheapest "is it a file?" probe; it returns 550 on
+	// directories too, so we then fall through to RemoveDirRecur.
+	if _, statErr := client.FileSize(fullPath); statErr == nil {
+		// It's a regular file — delete directly.
+		if delErr := client.Delete(fullPath); delErr != nil {
+			if strings.HasPrefix(delErr.Error(), "550") {
+				return nil // raced with concurrent delete; treat as no-op
+			}
+			return errors.WithMessage(delErr, "FTP DeleteFile Delete")
+		}
+		return nil
+	}
+	// Either a directory or it doesn't exist. Try RemoveDirRecur and treat
+	// 550 (not found / not a directory) as a successful no-op.
+	if err := client.RemoveDirRecur(fullPath); err != nil {
+		if strings.HasPrefix(err.Error(), "550") {
+			return nil
+		}
 		return errors.WithMessage(err, "FTP DeleteFile RemoveDirRecur")
 	}
 	return nil
@@ -175,6 +201,13 @@ func (f *FTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, p
 	walker := client.Walk(prefix)
 	for walker.Next() {
 		if err := walker.Err(); err != nil {
+			// proftpd returns 550 when the prefix doesn't exist (e.g.,
+			// CAS cold-list walking blob/<shard>/ before any upload).
+			// Return empty, not an error — same semantics as the
+			// non-recursive path above and as S3/GCS/AzBlob/SFTP.
+			if strings.HasPrefix(err.Error(), "550") {
+				return nil
+			}
 			return errors.WithMessage(err, "FTP WalkAbsolute walker.Err")
 		}
 		entry := walker.Stat()
