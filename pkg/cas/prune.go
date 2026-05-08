@@ -275,7 +275,7 @@ func freshInProgressError(fresh []inProgressMarker) error {
 	for i, m := range fresh {
 		parts[i] = fmt.Sprintf("%s (age=%s)", m.Backup, m.Age.Round(time.Second))
 	}
-	return fmt.Errorf("cas-prune: refuse to run while %d in-progress upload(s) are fresh: %s — wait for them or run cas-prune --unlock manually after confirming they're abandoned",
+	return fmt.Errorf("cas-prune: refuse to run while %d in-progress upload(s) are fresh: %s — wait for them, or run 'cas-prune --abandon-threshold=0s' if confirmed dead",
 		len(fresh), strings.Join(parts, ", "))
 }
 

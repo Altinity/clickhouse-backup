@@ -99,6 +99,14 @@ func TestPrune_RefusesIfFreshInProgressMarker(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "in-progress upload") {
 		t.Fatalf("want fresh-inprogress refusal, got rep=%+v err=%v", rep, err)
 	}
+	// Anti-regression: the error must point operators at --abandon-threshold,
+	// not at --unlock (which removes the prune.marker, not inprogress markers).
+	if !strings.Contains(err.Error(), "--abandon-threshold") {
+		t.Errorf("error should point operators at --abandon-threshold; got: %v", err)
+	}
+	if strings.Contains(err.Error(), "--unlock") {
+		t.Errorf("error should not suggest --unlock for inprogress markers; got: %v", err)
+	}
 }
 
 func TestPrune_SweepsAbandonedMarker(t *testing.T) {
