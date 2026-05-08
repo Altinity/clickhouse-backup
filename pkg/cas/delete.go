@@ -54,11 +54,23 @@ func Delete(ctx context.Context, b Backend, cfg Config, name string, opts Delete
 		// stale upload marker (upload committed but failed to clean up); proceed
 		// with a warning.
 		existing, readErr := ReadInProgressMarker(ctx, b, cp, name)
-		if readErr == nil && existing.Tool == "cas-delete" {
+		if readErr != nil {
+			return fmt.Errorf("cas-delete: cannot read marker for %q: %w; refusing", name, readErr)
+		}
+		if existing.Tool == "cas-delete" {
 			return fmt.Errorf("cas-delete: another %s is in progress for %q on host=%s started=%s; wait for it to finish",
 				existing.Tool, name, existing.Host, existing.StartedAt)
 		}
 		log.Warn().Str("backup", name).Msg("cas-delete: stale inprogress marker present alongside committed metadata.json; proceeding")
+		// Register a defer to clean up the stale upload marker on any outcome
+		// (success or error). Best-effort: log but don't mask the primary error.
+		defer func() {
+			cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if delErr := b.DeleteFile(cleanCtx, InProgressMarkerPath(cp, name)); delErr != nil {
+				log.Warn().Err(delErr).Str("backup", name).Msg("cas-delete: release stale upload marker")
+			}
+		}()
 	case !ipOK && !mdOK:
 		// If a v1 backup exists at the root with this name, surface the
 		// proper cross-mode refusal. Operators who type a v1 backup name
@@ -115,13 +127,9 @@ func Delete(ctx context.Context, b Backend, cfg Config, name string, opts Delete
 		return fmt.Errorf("cas-delete: cleanup subtree: %w", err)
 	}
 
-	// Step 6: best-effort cleanup of the stale upload inprogress marker (ipOK path).
-	// Our own delete marker is released by the defer above.
-	if ipOK {
-		if err := b.DeleteFile(ctx, InProgressMarkerPath(cp, name)); err != nil {
-			log.Warn().Err(err).Str("backup", name).Msg("cas-delete: failed to delete stale inprogress marker (will be swept by next prune)")
-		}
-	}
+	// Step 6: stale upload inprogress marker (ipOK path) is released by the
+	// defer registered in the ipOK&&mdOK branch above. Our own delete marker
+	// (written in the !ipOK path) is released by the defer in that branch.
 	return nil
 }
 
