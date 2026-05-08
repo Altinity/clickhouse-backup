@@ -1,7 +1,6 @@
 package cas
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -886,23 +885,66 @@ func uploadMissingBlobs(ctx context.Context, b Backend, cp string, plan *uploadP
 }
 
 // uploadPartArchives builds and PUTs one tar.zstd per (disk, db, table).
+//
+// Each archive is written to a temporary file on disk rather than a
+// bytes.Buffer so that the compressed bytes never accumulate in RAM.
+// WriteArchive streams the zstd-compressed tar directly into the tempfile;
+// after the write completes the file is seeked back to the start and passed
+// to b.PutFile with the exact byte count.  The tempfile is removed in a
+// deferred cleanup regardless of whether the PUT succeeds or fails.
 func uploadPartArchives(ctx context.Context, b Backend, cp, name string, plan *uploadPlan) (int, int64, error) {
 	count := 0
 	var totalBytes int64
-	for _, key := range plan.tableKeys {
-		tp := plan.tables[key]
+	for _, planKey := range plan.tableKeys {
+		tp := plan.tables[planKey]
 		if len(tp.archiveEntries) == 0 {
 			continue
 		}
-		var buf bytes.Buffer
-		if err := WriteArchive(&buf, tp.archiveEntries); err != nil {
+
+		// Write the compressed archive to a tempfile to avoid buffering the
+		// entire compressed output in memory.
+		tmp, err := os.CreateTemp("", "cas-archive-*.tar.zstd")
+		if err != nil {
+			return count, totalBytes, fmt.Errorf("cas: create temp archive for %s/%s/%s: %w", tp.Disk, tp.DB, tp.Table, err)
+		}
+		tmpPath := tmp.Name()
+		cleanup := func() {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+		}
+
+		if err := WriteArchive(tmp, tp.archiveEntries); err != nil {
+			cleanup()
 			return count, totalBytes, fmt.Errorf("cas: write archive %s/%s/%s: %w", tp.Disk, tp.DB, tp.Table, err)
 		}
-		key := PartArchivePath(cp, name, tp.Disk, tp.DB, tp.Table)
-		size := int64(buf.Len())
-		if err := putBytes(ctx, b, key, buf.Bytes()); err != nil {
-			return count, totalBytes, fmt.Errorf("cas: put archive %s: %w", key, err)
+		if err := tmp.Sync(); err != nil {
+			cleanup()
+			return count, totalBytes, fmt.Errorf("cas: sync archive %s/%s/%s: %w", tp.Disk, tp.DB, tp.Table, err)
 		}
+		size, err := tmp.Seek(0, io.SeekCurrent)
+		if err != nil {
+			cleanup()
+			return count, totalBytes, fmt.Errorf("cas: seek archive %s/%s/%s: %w", tp.Disk, tp.DB, tp.Table, err)
+		}
+		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+			cleanup()
+			return count, totalBytes, fmt.Errorf("cas: rewind archive %s/%s/%s: %w", tp.Disk, tp.DB, tp.Table, err)
+		}
+
+		objKey := PartArchivePath(cp, name, tp.Disk, tp.DB, tp.Table)
+		if err := b.PutFile(ctx, objKey, io.NopCloser(tmp), size); err != nil {
+			cleanup()
+			return count, totalBytes, fmt.Errorf("cas: put archive %s: %w", objKey, err)
+		}
+		cleanup()
+
+		log.Info().
+			Str("disk", tp.Disk).
+			Str("db", tp.DB).
+			Str("table", tp.Table).
+			Int64("compressed_bytes", size).
+			Msg("cas-upload: per-table archive uploaded")
+
 		count++
 		totalBytes += size
 	}

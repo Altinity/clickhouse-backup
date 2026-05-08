@@ -1347,3 +1347,71 @@ func TestTableFilterMatches(t *testing.T) {
 		})
 	}
 }
+
+// TestUploadPartArchives_TempfileCleanedOnError verifies that when PutFile
+// returns an error, the temporary archive file is removed and Upload returns
+// a non-nil error.  Uses SetPutHook on the fakedst to inject an error only
+// for part-archive keys (which contain "/parts/").
+func TestUploadPartArchives_TempfileCleanedOnError(t *testing.T) {
+	lb := testfixtures.Build(t, []testfixtures.PartSpec{smallPart("p1", 0)})
+	f := fakedst.New()
+
+	// Capture the os.TempDir() pattern before we run so we can check for
+	// leftover files after the (expected) failure.
+	tmpDir := os.TempDir()
+
+	// Snapshot existing cas-archive-* files so we only count new ones.
+	existingBefore := casArchiveFiles(t, tmpDir)
+
+	// Inject an error for every part-archive PUT (keys contain "/parts/").
+	f.SetPutHook(func(key string) (error, bool) {
+		if strings.Contains(key, "/parts/") {
+			return errors.New("injected PutFile failure"), true
+		}
+		return nil, false
+	})
+
+	cfg := testCfg(100)
+	_, err := cas.Upload(context.Background(), f, cfg, "b1", cas.UploadOptions{
+		LocalBackupDir: lb.Root,
+	})
+	if err == nil {
+		t.Fatal("expected Upload to return an error when PutFile fails, got nil")
+	}
+
+	// No leftover cas-archive-*.tar.zstd files should remain.
+	after := casArchiveFiles(t, tmpDir)
+	leaked := 0
+	for _, p := range after {
+		found := false
+		for _, q := range existingBefore {
+			if p == q {
+				found = true
+				break
+			}
+		}
+		if !found {
+			leaked++
+			t.Errorf("leaked tempfile: %s", p)
+		}
+	}
+	if leaked > 0 {
+		t.Errorf("total leaked tempfiles: %d", leaked)
+	}
+}
+
+// casArchiveFiles returns all cas-archive-*.tar.zstd paths in dir.
+func casArchiveFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir(%s): %v", dir, err)
+	}
+	var out []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "cas-archive-") && strings.HasSuffix(e.Name(), ".tar.zstd") {
+			out = append(out, filepath.Join(dir, e.Name()))
+		}
+	}
+	return out
+}
