@@ -878,8 +878,12 @@ func TestUpload_RefusesIfInprogressMarkerPresent(t *testing.T) {
 	ctx := context.Background()
 
 	// Pre-write a marker simulating another host's upload in flight.
-	if _, err := cas.WriteInProgressMarker(ctx, f, cfg.ClusterPrefix(), "bk", "host-other"); err != nil {
-		t.Fatalf("WriteInProgressMarker setup: %v", err)
+	// Use the explicit-tool variant so the assertion below can pin both
+	// the tool name and the host — a tighter regression guard than the
+	// generic "is in progress for" substring (which would pass for any
+	// tool name).
+	if _, err := cas.WriteInProgressMarkerWithTool(ctx, f, cfg.ClusterPrefix(), "bk", "host-other", "cas-upload"); err != nil {
+		t.Fatalf("WriteInProgressMarkerWithTool setup: %v", err)
 	}
 
 	// Build a synthetic local backup; the upload should refuse before
@@ -894,8 +898,9 @@ func TestUpload_RefusesIfInprogressMarkerPresent(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected Upload to refuse when inprogress marker is present")
 	}
-	if !strings.Contains(err.Error(), "is in progress for") {
-		t.Errorf("error should mention concurrent operation in progress; got: %v", err)
+	msg := err.Error()
+	if !strings.Contains(msg, "cas-upload") || !strings.Contains(msg, "in progress") || !strings.Contains(msg, "host-other") {
+		t.Errorf("error should mention conflicting tool=cas-upload, in-progress, and host=host-other; got: %v", err)
 	}
 }
 

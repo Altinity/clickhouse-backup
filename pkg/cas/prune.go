@@ -241,7 +241,10 @@ func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*Prun
 				Int64("size", c.Size).
 				Msg("cas-prune dry-run: would delete")
 		}
-		rep.DryRunCandidates = cands
+		// Defensive copy: don't share the live slice with the caller. The
+		// report may outlive cands if downstream code (e.g. PrintPruneReport)
+		// runs after Prune returns.
+		rep.DryRunCandidates = append([]OrphanCandidate(nil), cands...)
 	} else {
 		log.Info().Int("count", len(cands)).Msg("cas-prune: deleting orphan blobs")
 		n, bytes, failures, err := deleteBlobs(ctx, b, cands, 32)
