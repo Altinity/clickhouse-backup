@@ -15,6 +15,24 @@ import (
 // Excludes anything that could be misinterpreted as a path component.
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9._\-+:]+$`)
 
+// NameCollidesWithCASPrefix returns true if name equals any configured CAS
+// skip-prefix (stripped of its trailing slash). This prevents creating a v1
+// backup whose name would later disappear under v1 retention after CAS is
+// enabled (BackupList skips entries whose name matches a CAS skip-prefix).
+// The check is the same in both the v1 Upload path and the CAS Upload path.
+//
+// Example: with default RootPrefix "cas/", SkipPrefixes returns ["cas/"],
+// so a v1 backup named "cas" would be silently skipped by BackupList.
+// This function rejects that name at upload time instead.
+func NameCollidesWithCASPrefix(name string, casCfg Config) bool {
+	for _, p := range casCfg.SkipPrefixes() {
+		if name == strings.TrimSuffix(p, "/") {
+			return true
+		}
+	}
+	return false
+}
+
 // validateName enforces backup-name rules: 1..128 chars, character set
 // [A-Za-z0-9._\-+:], and not a dot-only string ("." / ".." / "..." etc.).
 // Dot-only names pass the regex but are nonsensical and could enable subtle

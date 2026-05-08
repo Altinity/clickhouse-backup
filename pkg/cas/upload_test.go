@@ -1587,3 +1587,24 @@ func TestUpload_CancelledContextStillReleasesMarker(t *testing.T) {
 		t.Error("inprogress marker still present after cancelled-ctx Upload — detached cleanup context not working")
 	}
 }
+
+// TestUpload_RejectsNameCollidingWithCASPrefix verifies that a backup name
+// equal to the CAS root-prefix segment (e.g. "cas" when root_prefix="cas/")
+// is rejected at upload time with a descriptive error. This prevents operators
+// from accidentally creating a v1 backup that would be silently excluded by
+// BackupList skip-prefix filtering once CAS is enabled.
+func TestUpload_RejectsNameCollidingWithCASPrefix(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(100) // root_prefix="cas/", so "cas" collides
+
+	// No local backup dir needed; the name check happens before any I/O.
+	_, err := cas.Upload(context.Background(), f, cfg, "cas", cas.UploadOptions{
+		LocalBackupDir: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("Upload with colliding name: expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "collides") {
+		t.Errorf("error should mention collision, got: %v", err)
+	}
+}

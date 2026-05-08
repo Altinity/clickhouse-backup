@@ -163,6 +163,9 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+	if NameCollidesWithCASPrefix(name, cfg) {
+		return nil, fmt.Errorf("cas-upload: backup name %q collides with the CAS skip-prefix %q; choose a different name to prevent this backup from being silently skipped by v1 list/retention operations", name, name+"/")
+	}
 	cp := cfg.ClusterPrefix()
 
 	// 2. Refuse if prune.marker exists (with optional wait).
