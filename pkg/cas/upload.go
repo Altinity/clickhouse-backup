@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -692,7 +693,18 @@ func walkPartFiles(partRoot, partName string, extractSet map[string]extractEntry
 			plan.totalFiles++
 			plan.totalBytes += entry.Size
 			plan.blobFiles++
-			if _, dup := plan.blobs[entry.Hash]; !dup {
+			if existing, dup := plan.blobs[entry.Hash]; dup {
+				// Same hash, but checksums.txt files in different parts
+				// declare conflicting sizes — malformed input. Refuse loudly
+				// rather than silently committing a metadata.json that
+				// references an ambiguous hash/size pair.
+				if existing.Size != entry.Size {
+					return fmt.Errorf("cas: malformed checksums.txt: hash %x/%x has conflicting sizes %d and %d (in parts %s and %s)",
+						entry.Hash.High, entry.Hash.Low, existing.Size, entry.Size, existing.LocalPath, path)
+				}
+				// Same hash AND same size — genuine content-addressed dedup
+				// (e.g. hardlinked files across parts). Keep the existing entry.
+			} else {
 				plan.blobs[entry.Hash] = blobRef{LocalPath: path, Size: entry.Size}
 			}
 			return nil
@@ -729,6 +741,22 @@ func tableFilterAllows(filter []string, db, table string) bool {
 	}
 	return false
 }
+
+// countingReadCloser wraps an io.ReadCloser and counts bytes read through it.
+// Used in uploadMissingBlobs to verify the actual number of bytes streamed to
+// PutFile matches the size declared in checksums.txt.
+type countingReadCloser struct {
+	rc io.ReadCloser
+	n  int64
+}
+
+func (c *countingReadCloser) Read(p []byte) (int, error) {
+	n, err := c.rc.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+func (c *countingReadCloser) Close() error { return c.rc.Close() }
 
 // skippedBlob records a blob that was dedup'd via cold-list (i.e. already
 // present in the remote). The Size field is the expected byte count from
@@ -814,11 +842,26 @@ func uploadMissingBlobs(ctx context.Context, b Backend, cp string, plan *uploadP
 			// behaviors compatible by closing here ourselves (double-close
 			// of *os.File is a no-op error we ignore).
 			defer f.Close()
-			err = b.PutFile(ctx, BlobPath(cp, j.h), f, int64(j.ref.Size))
+			cr := &countingReadCloser{rc: f}
+			err = b.PutFile(ctx, BlobPath(cp, j.h), cr, int64(j.ref.Size))
 			if err != nil {
 				mu.Lock()
 				if firstErr == nil {
 					firstErr = fmt.Errorf("cas: put blob %s: %w", BlobPath(cp, j.h), err)
+				}
+				mu.Unlock()
+				return
+			}
+			// Verify that the number of bytes actually streamed to PutFile
+			// matches the size declared in checksums.txt. A mismatch means
+			// the local file was mutated (truncated/grown) between planning
+			// and upload — committing metadata.json in this state would
+			// reference a hash/size pair that doesn't match the stored bytes.
+			if cr.n != int64(j.ref.Size) {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("cas: blob %s size mismatch: uploaded=%d expected=%d (per checksums.txt)",
+						BlobPath(cp, j.h), cr.n, j.ref.Size)
 				}
 				mu.Unlock()
 				return
@@ -1007,4 +1050,3 @@ func readDir(dir string) ([]string, error) {
 	sort.Strings(names)
 	return names, nil
 }
-

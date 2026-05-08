@@ -1181,6 +1181,100 @@ func TestUpload_RefusesAfterWaitTimeout(t *testing.T) {
 	}
 }
 
+// TestUpload_AbortsIfBlobFileMutatedBeforeUpload verifies that if a local
+// blob file is truncated between planning (buildExtractSet sees it as 1024 bytes
+// in checksums.txt) and the actual PutFile streaming, the counting reader detects
+// the size mismatch and Upload returns an error containing "size mismatch".
+// metadata.json must NOT be committed.
+func TestUpload_AbortsIfBlobFileMutatedBeforeUpload(t *testing.T) {
+	ctx := context.Background()
+	// Use threshold=100 so data.bin (1024 bytes) is classified as a blob.
+	cfg := testCfg(100)
+	cp := cfg.ClusterPrefix()
+
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "p1",
+		Files: []testfixtures.FileSpec{
+			{Name: "columns.txt", Size: 23, HashLow: 1, HashHigh: 100},
+			{Name: "data.bin", Size: 1024, HashLow: 3, HashHigh: 100},
+		},
+	}}
+	lb := testfixtures.Build(t, parts)
+
+	// Truncate data.bin to 0 bytes AFTER buildExtractSet will read checksums.txt
+	// (which happens during planUpload) but BEFORE the blob file is actually read.
+	// In practice we truncate before Upload is called at all: buildExtractSet only
+	// calls os.Stat to verify existence, not to read content, so the plan phase
+	// succeeds. The size mismatch is only detected when uploadMissingBlobs opens and
+	// streams the file through the countingReadCloser.
+	blobPath := filepath.Join(lb.Root, "shadow", "db1", "t1", "default", "p1", "data.bin")
+	if err := os.Truncate(blobPath, 0); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+
+	f := fakedst.New()
+	_, err := cas.Upload(ctx, f, cfg, "bk", cas.UploadOptions{LocalBackupDir: lb.Root})
+	if err == nil {
+		t.Fatal("expected Upload to abort when blob file is truncated before upload")
+	}
+	if !strings.Contains(err.Error(), "size mismatch") {
+		t.Errorf("error should mention 'size mismatch'; got: %v", err)
+	}
+
+	// metadata.json must NOT have been written.
+	if _, _, exists, _ := f.StatFile(ctx, cas.MetadataJSONPath(cp, "bk")); exists {
+		t.Error("metadata.json was committed despite blob size mismatch")
+	}
+}
+
+// TestPlanUpload_RejectsConflictingHashSize verifies that buildExtractSet (via
+// planUpload / Upload) refuses to proceed when two different parts list the
+// same content hash with different sizes in their checksums.txt files. This is
+// malformed input that would otherwise silently produce a metadata.json
+// referencing an ambiguous hash/size pair.
+func TestPlanUpload_RejectsConflictingHashSize(t *testing.T) {
+	ctx := context.Background()
+	// Use threshold=100 so 1024-byte files are treated as blobs.
+	cfg := testCfg(100)
+
+	// Synthesize two parts that share the same hash (Low=999, High=999) but
+	// declare different sizes (1024 vs 2048) — malformed but possible if
+	// checksums.txt is hand-crafted or corrupted.
+	parts := []testfixtures.PartSpec{
+		{
+			Disk: "default", DB: "db1", Table: "t1", Name: "p1",
+			Files: []testfixtures.FileSpec{
+				{Name: "data.bin", Size: 1024, HashLow: 999, HashHigh: 999},
+			},
+		},
+		{
+			Disk: "default", DB: "db1", Table: "t1", Name: "p2",
+			Files: []testfixtures.FileSpec{
+				// Same hash, different size — this is the malformed case.
+				// We write 2048 real bytes so the file exists on disk, but
+				// we then rewrite checksums.txt to claim size=2048 with the
+				// same hash as p1.
+				{Name: "data.bin", Size: 2048, HashLow: 999, HashHigh: 999},
+			},
+		},
+	}
+	lb := testfixtures.Build(t, parts)
+
+	f := fakedst.New()
+	_, err := cas.Upload(ctx, f, cfg, "bk", cas.UploadOptions{LocalBackupDir: lb.Root})
+	if err == nil {
+		t.Fatal("expected Upload to fail when two parts have the same hash with conflicting sizes")
+	}
+	if !strings.Contains(err.Error(), "conflicting sizes") {
+		t.Errorf("error should mention 'conflicting sizes'; got: %v", err)
+	}
+
+	// metadata.json must NOT have been written.
+	if _, _, exists, _ := f.StatFile(ctx, cas.MetadataJSONPath(cfg.ClusterPrefix(), "bk")); exists {
+		t.Error("metadata.json was committed despite conflicting hash/size")
+	}
+}
+
 // TestUpload_LeaksNoMarkerOnCommitError verifies that a PutFile failure
 // on metadata.json at step 12 cleans up the in-progress marker before
 // returning the error.
