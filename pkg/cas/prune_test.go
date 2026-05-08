@@ -208,7 +208,7 @@ func TestPrune_Unlock(t *testing.T) {
 	ctx := context.Background()
 	cp := cfg.ClusterPrefix()
 
-	if _, err := cas.WritePruneMarker(ctx, f, cp, "host-stuck"); err != nil {
+	if _, _, err := cas.WritePruneMarker(ctx, f, cp, "host-stuck"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -265,5 +265,37 @@ func TestPrune_RefusesWhenDisabled(t *testing.T) {
 	_, err := cas.Prune(context.Background(), fakedst.New(), cfg, cas.PruneOptions{})
 	if err == nil || !strings.Contains(err.Error(), "cas.enabled=false") {
 		t.Fatalf("want cas.enabled=false error, got %v", err)
+	}
+}
+
+// TestPrune_RefusesIfAnotherPruneRunning verifies that a second cas-prune
+// run refuses cleanly when another prune is in flight, AND that the
+// existing marker is not deleted by the failing run's deferred cleanup.
+// The latter assertion is the regression guard for the original
+// "deferred-delete races second prune" bug.
+func TestPrune_RefusesIfAnotherPruneRunning(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	ctx := context.Background()
+
+	// Pre-write a prune marker simulating another prune in flight.
+	runID, created, err := cas.WritePruneMarker(ctx, f, cfg.ClusterPrefix(), "host-other")
+	if err != nil || !created {
+		t.Fatalf("WritePruneMarker setup: created=%v err=%v", created, err)
+	}
+	_ = runID
+
+	_, err = cas.Prune(ctx, f, cfg, cas.PruneOptions{})
+	if err == nil {
+		t.Fatal("expected Prune to refuse when marker is already held")
+	}
+	if !strings.Contains(err.Error(), "another prune is in progress") {
+		t.Errorf("error should mention concurrent prune; got: %v", err)
+	}
+
+	// Critical: the existing marker must NOT have been deleted by the
+	// failing prune's defer. Without the scoped-defer fix it would be.
+	if _, _, exists, _ := f.StatFile(ctx, cas.PruneMarkerPath(cfg.ClusterPrefix())); !exists {
+		t.Error("prune marker should survive a refused second prune")
 	}
 }

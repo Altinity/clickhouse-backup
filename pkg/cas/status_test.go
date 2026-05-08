@@ -74,7 +74,7 @@ func TestStatus_DetectsPruneMarker(t *testing.T) {
 	f := fakedst.New()
 	cfg := testCfg(100)
 	ctx := context.Background()
-	if _, err := cas.WritePruneMarker(ctx, f, cfg.ClusterPrefix(), "h1"); err != nil {
+	if _, _, err := cas.WritePruneMarker(ctx, f, cfg.ClusterPrefix(), "h1"); err != nil {
 		t.Fatal(err)
 	}
 	r, err := cas.Status(ctx, f, cfg)

@@ -65,25 +65,23 @@ func DeleteInProgressMarker(ctx context.Context, b Backend, clusterPrefix, backu
 	return b.DeleteFile(ctx, InProgressMarkerPath(clusterPrefix, backup))
 }
 
-// WritePruneMarker writes the prune marker and returns the random run-id so
-// the caller can verify after read-back (race detection per §6.7 step 2).
-func WritePruneMarker(ctx context.Context, b Backend, clusterPrefix, host string) (runID string, err error) {
+// WritePruneMarker atomically creates cas/<cluster>/prune.marker. Returns
+// (runID, true, nil) on successful create; ("", false, nil) when another
+// prune already holds the marker; ("", false, ErrConditionalPutNotSupported)
+// for backends without atomic-create.
+func WritePruneMarker(ctx context.Context, b Backend, clusterPrefix, host string) (runID string, created bool, err error) {
 	if host == "" {
 		host = hostname()
 	}
-	runID, err = randomHex(8) // 16 hex chars
-	if err != nil {
-		return "", err
-	}
+	runID = randomRunID()
 	m := PruneMarker{Host: host, StartedAt: nowRFC3339(), RunID: runID, Tool: markerTool}
-	data, err := json.Marshal(m)
-	if err != nil {
-		return "", err
+	data, _ := json.Marshal(m)
+	created, err = b.PutFileIfAbsent(ctx, PruneMarkerPath(clusterPrefix),
+		io.NopCloser(bytes.NewReader(data)), int64(len(data)))
+	if !created || err != nil {
+		return "", created, err
 	}
-	if err := putBytes(ctx, b, PruneMarkerPath(clusterPrefix), data); err != nil {
-		return "", err
-	}
-	return runID, nil
+	return runID, true, nil
 }
 
 // ReadPruneMarker returns the parsed prune marker.
@@ -112,6 +110,16 @@ func randomHex(nBytes int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+// randomRunID returns a 16-hex-char random identifier. Panics only if the
+// OS entropy source is completely broken (effectively impossible in practice).
+func randomRunID() string {
+	id, err := randomHex(8)
+	if err != nil {
+		panic("cas: randomRunID: entropy unavailable: " + err.Error())
+	}
+	return id
 }
 
 func putBytes(ctx context.Context, b Backend, key string, data []byte) error {

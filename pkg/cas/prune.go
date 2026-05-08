@@ -57,10 +57,9 @@ type PruneReport struct {
 // docs/cas-design.md §6.7 for the algorithm.
 //
 // Concurrency: a single advisory marker (cas/<cluster>/prune.marker) is
-// written at start and released via defer. cas-upload and cas-delete refuse
-// to start when the marker is present. Two operators racing cas-prune on
-// different hosts both pass step 1 and one will lose the run-id read-back
-// check at step 2 and abort.
+// atomically created at step 2 via PutFileIfAbsent and released via a scoped
+// defer registered ONLY when this run owns the marker. A second concurrent
+// prune sees created=false and returns an error without touching the marker.
 func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*PruneReport, error) {
 	if !cfg.Enabled {
 		return nil, errors.New("cas: cas.enabled=false")
@@ -104,25 +103,29 @@ func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*Prun
 		return rep, freshInProgressError(fresh)
 	}
 
-	// Step 2: write prune marker, read back, validate run-id.
+	// Step 2: atomically create prune marker; defer cleanup only if we own it.
 	if !opts.DryRun {
-		runID, err := WritePruneMarker(ctx, b, cp, hostname())
+		runID, created, err := WritePruneMarker(ctx, b, cp, hostname())
 		if err != nil {
+			if errors.Is(err, ErrConditionalPutNotSupported) {
+				return rep, fmt.Errorf("cas-prune: backend cannot guarantee atomic markers; refusing (set cas.allow_unsafe_markers=true to override on FTP)")
+			}
 			return rep, fmt.Errorf("cas-prune: write marker: %w", err)
 		}
-		// Always release the marker on exit (success, error, panic).
+		if !created {
+			existing, readErr := ReadPruneMarker(ctx, b, cp)
+			if readErr != nil {
+				return rep, fmt.Errorf("cas-prune: another prune is in progress (could not read marker: %v)", readErr)
+			}
+			return rep, fmt.Errorf("cas-prune: another prune is in progress on host=%s started=%s run_id=%s",
+				existing.Host, existing.StartedAt, existing.RunID)
+		}
+		_ = runID // we already own the marker by virtue of created=true; runID is for diagnostics only
 		defer func() {
 			if delErr := b.DeleteFile(ctx, PruneMarkerPath(cp)); delErr != nil {
 				log.Warn().Err(delErr).Msg("cas-prune: failed to release prune.marker")
 			}
 		}()
-		m, err := ReadPruneMarker(ctx, b, cp)
-		if err != nil {
-			return rep, fmt.Errorf("cas-prune: read-back prune marker: %w", err)
-		}
-		if m.RunID != runID {
-			return rep, errors.New("cas-prune: concurrent prune detected; aborting")
-		}
 	}
 
 	// Step 3: T0 (used for grace cutoff)

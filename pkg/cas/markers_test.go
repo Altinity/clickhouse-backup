@@ -53,9 +53,12 @@ func TestInProgressMarker_DefaultsHost(t *testing.T) {
 func TestPruneMarker_RunIDReadBack(t *testing.T) {
 	f := fakedst.New()
 	ctx := context.Background()
-	runID, err := cas.WritePruneMarker(ctx, f, "cas/c1/", "host-a")
+	runID, created, err := cas.WritePruneMarker(ctx, f, "cas/c1/", "host-a")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("expected created=true on first write")
 	}
 	if len(runID) != 16 {
 		t.Errorf("runID len: got %d want 16", len(runID))
@@ -72,19 +75,29 @@ func TestPruneMarker_RunIDReadBack(t *testing.T) {
 	}
 }
 
-func TestPruneMarker_TwoCallsDifferentRunIDs(t *testing.T) {
+// TestPruneMarker_SecondWriteRefused verifies that WritePruneMarker returns
+// created=false when a marker already exists (atomic create semantics).
+func TestPruneMarker_SecondWriteRefused(t *testing.T) {
 	f := fakedst.New()
 	ctx := context.Background()
-	a, err := cas.WritePruneMarker(ctx, f, "cas/c1/", "h")
+	a, createdA, err := cas.WritePruneMarker(ctx, f, "cas/c1/", "h")
+	if err != nil || !createdA {
+		t.Fatalf("first write: created=%v err=%v", createdA, err)
+	}
+	_, createdB, err := cas.WritePruneMarker(ctx, f, "cas/c1/", "h")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := cas.WritePruneMarker(ctx, f, "cas/c1/", "h")
+	if createdB {
+		t.Error("second write should return created=false (marker already exists)")
+	}
+	// The first run's marker must still be intact.
+	m, err := cas.ReadPruneMarker(ctx, f, "cas/c1/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a == b {
-		t.Error("two run-ids must differ")
+	if m.RunID != a {
+		t.Errorf("marker should still hold first run-id %q; got %q", a, m.RunID)
 	}
 }
 
@@ -93,7 +106,7 @@ func TestSetMarkerTool(t *testing.T) {
 	ctx := context.Background()
 	cas.SetMarkerTool("test-tool/1.0")
 	defer cas.SetMarkerTool("clickhouse-backup")
-	_, err := cas.WritePruneMarker(ctx, f, "cas/c1/", "h")
+	_, _, err := cas.WritePruneMarker(ctx, f, "cas/c1/", "h")
 	if err != nil {
 		t.Fatal(err)
 	}
