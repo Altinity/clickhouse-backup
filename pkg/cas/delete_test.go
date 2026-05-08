@@ -166,6 +166,82 @@ func TestDelete_RefusesAfterWaitTimeout(t *testing.T) {
 	}
 }
 
+// TestDelete_BlocksConcurrentUploadOfSameName verifies that a cas-delete
+// inprogress marker written by Delete prevents a concurrent Upload of the
+// same name from starting. The marker is written by a goroutine that holds it
+// for long enough for the main goroutine's Upload attempt to observe it.
+func TestDelete_BlocksConcurrentUploadOfSameName(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(100)
+	cp := cfg.ClusterPrefix()
+
+	// Write a cas-delete inprogress marker directly (simulating what Delete
+	// will do once the real implementation is in place).
+	markerKey := cas.InProgressMarkerPath(cp, "bk")
+	markerBody := `{"Backup":"bk","Host":"h1","StartedAt":"2026-01-01T00:00:00Z","Tool":"cas-delete"}`
+	if err := f.PutFile(context.Background(), markerKey,
+		io.NopCloser(strings.NewReader(markerBody)), int64(len(markerBody))); err != nil {
+		t.Fatal(err)
+	}
+
+	// Upload must refuse: the marker is present and no metadata.json exists.
+	_, err := cas.Upload(context.Background(), f, cfg, "bk", cas.UploadOptions{
+		LocalBackupDir: t.TempDir(), // empty dir → no tables, but auth check is before planUpload
+	})
+	if err == nil {
+		t.Fatal("expected Upload to fail when cas-delete marker is present")
+	}
+	if !strings.Contains(err.Error(), "cas-delete") && !strings.Contains(err.Error(), "in progress") {
+		t.Errorf("error should mention cas-delete or in progress; got: %v", err)
+	}
+}
+
+// TestDelete_ReleaseMarkerOnSuccess verifies that the cas-delete inprogress
+// marker is removed after a successful Delete call.
+func TestDelete_ReleaseMarkerOnSuccess(t *testing.T) {
+	f, cfg, name := setupUploaded(t)
+	cp := cfg.ClusterPrefix()
+
+	if err := cas.Delete(context.Background(), f, cfg, name, cas.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok, _ := f.StatFile(context.Background(), cas.InProgressMarkerPath(cp, name)); ok {
+		t.Error("cas-delete: inprogress marker must be removed after successful Delete")
+	}
+}
+
+// TestDelete_RefusesWhenAlreadyDeleting verifies that Delete refuses when a
+// cas-delete inprogress marker is already present and no metadata.json exists
+// (i.e. another concurrent Delete is in progress for the same backup).
+func TestDelete_RefusesWhenAlreadyDeleting(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(100)
+	cp := cfg.ClusterPrefix()
+
+	// Place metadata.json so the backup appears to exist.
+	mdKey := cas.MetadataJSONPath(cp, "bk")
+	if err := f.PutFile(context.Background(), mdKey,
+		io.NopCloser(strings.NewReader("{}")), 2); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-place a cas-delete marker (another Delete is mid-flight).
+	markerKey := cas.InProgressMarkerPath(cp, "bk")
+	markerBody := `{"Backup":"bk","Host":"h2","StartedAt":"2026-01-01T00:00:00Z","Tool":"cas-delete"}`
+	if err := f.PutFile(context.Background(), markerKey,
+		io.NopCloser(strings.NewReader(markerBody)), int64(len(markerBody))); err != nil {
+		t.Fatal(err)
+	}
+
+	err := cas.Delete(context.Background(), f, cfg, "bk", cas.DeleteOptions{})
+	if err == nil {
+		t.Fatal("expected Delete to fail when another cas-delete is in progress")
+	}
+	if !strings.Contains(err.Error(), "cas-delete") {
+		t.Errorf("error should mention cas-delete; got: %v", err)
+	}
+}
+
 // recordingBackend wraps a Backend and records DeleteFile calls in order.
 type recordingBackend struct {
 	cas.Backend

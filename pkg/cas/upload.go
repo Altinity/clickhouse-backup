@@ -199,10 +199,14 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 		if !created {
 			existing, readErr := ReadInProgressMarker(ctx, b, cp, name)
 			if readErr != nil {
-				return nil, fmt.Errorf("cas: another cas-upload is in progress for %q (could not read marker: %v)", name, readErr)
+				return nil, fmt.Errorf("cas: another operation is in progress for %q (could not read marker: %v)", name, readErr)
 			}
-			return nil, fmt.Errorf("cas: another cas-upload is in progress for %q on host=%s started=%s; wait for it to finish or run cas-prune --abandon-threshold=0s if confirmed dead",
-				name, existing.Host, existing.StartedAt)
+			if existing.Tool == "cas-delete" {
+				return nil, fmt.Errorf("cas: another %s is in progress for %q on host=%s started=%s; wait for it to finish",
+					existing.Tool, name, existing.Host, existing.StartedAt)
+			}
+			return nil, fmt.Errorf("cas: another %s is in progress for %q on host=%s started=%s; wait for it to finish or run cas-prune --abandon-threshold=0s if confirmed dead",
+				existing.Tool, name, existing.Host, existing.StartedAt)
 		}
 	}
 

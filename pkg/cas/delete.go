@@ -2,6 +2,7 @@ package cas
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -47,6 +48,16 @@ func Delete(ctx context.Context, b Backend, cfg Config, name string, opts Delete
 	case ipOK && !mdOK:
 		return ErrUploadInProgress
 	case ipOK && mdOK:
+		// A marker exists alongside committed metadata.json. If the marker was
+		// written by another cas-delete (Tool=="cas-delete"), that delete is
+		// actively removing this backup — refuse to race it. Otherwise it is a
+		// stale upload marker (upload committed but failed to clean up); proceed
+		// with a warning.
+		existing, readErr := ReadInProgressMarker(ctx, b, cp, name)
+		if readErr == nil && existing.Tool == "cas-delete" {
+			return fmt.Errorf("cas-delete: another %s is in progress for %q on host=%s started=%s; wait for it to finish",
+				existing.Tool, name, existing.Host, existing.StartedAt)
+		}
 		log.Warn().Str("backup", name).Msg("cas-delete: stale inprogress marker present alongside committed metadata.json; proceeding")
 	case !ipOK && !mdOK:
 		// If a v1 backup exists at the root with this name, surface the
@@ -59,17 +70,53 @@ func Delete(ctx context.Context, b Backend, cfg Config, name string, opts Delete
 	}
 	// (the !ipOK && mdOK case is the normal path; fall through)
 
-	// Step 3: delete metadata.json FIRST
+	// Step 3: Write a cas-delete inprogress marker BEFORE touching metadata.json.
+	// This closes the race window where a concurrent cas-upload on another host sees
+	// no metadata.json (we deleted it in step 4) and no marker, treats the name as
+	// free, and starts uploading — only to have its just-written archives swept by
+	// our walkAndDeleteSubtree.  cas-upload's step-5 same-name check refuses when
+	// ANY inprogress marker exists (regardless of Tool), so this marker is sufficient
+	// to block it until we finish.
+	//
+	// When ipOK is true there is already a stale upload marker present; we skip
+	// writing our own (PutFileIfAbsent would return created=false anyway) and
+	// instead clean it up as we did before.
+	if !ipOK {
+		created, werr := WriteInProgressMarkerWithTool(ctx, b, cp, name, "", "cas-delete")
+		if werr != nil {
+			if errors.Is(werr, ErrConditionalPutNotSupported) {
+				return fmt.Errorf("cas-delete: backend cannot guarantee atomic markers; refusing")
+			}
+			return fmt.Errorf("cas-delete: write delete marker: %w", werr)
+		}
+		if !created {
+			// Another operation (upload or delete) raced us and wrote the marker first.
+			existing, readErr := ReadInProgressMarker(ctx, b, cp, name)
+			if readErr != nil {
+				return fmt.Errorf("cas-delete: another operation is in progress for %q (could not read marker: %v)", name, readErr)
+			}
+			return fmt.Errorf("cas-delete: another %s is in progress for %q on host=%s started=%s; wait for it to finish",
+				existing.Tool, name, existing.Host, existing.StartedAt)
+		}
+		defer func() {
+			if delErr := b.DeleteFile(ctx, InProgressMarkerPath(cp, name)); delErr != nil {
+				log.Warn().Err(delErr).Str("backup", name).Msg("cas-delete: release inprogress marker")
+			}
+		}()
+	}
+
+	// Step 4: delete metadata.json FIRST so the backup leaves the catalog atomically.
 	if err := b.DeleteFile(ctx, MetadataJSONPath(cp, name)); err != nil {
 		return fmt.Errorf("cas-delete: delete metadata.json: %w", err)
 	}
 
-	// Step 4: delete the rest of the subtree
+	// Step 5: delete the rest of the subtree
 	if err := walkAndDeleteSubtree(ctx, b, MetadataDir(cp, name)); err != nil {
 		return fmt.Errorf("cas-delete: cleanup subtree: %w", err)
 	}
 
-	// Step 5: best-effort cleanup of stale inprogress marker
+	// Step 6: best-effort cleanup of the stale upload inprogress marker (ipOK path).
+	// Our own delete marker is released by the defer above.
 	if ipOK {
 		if err := b.DeleteFile(ctx, InProgressMarkerPath(cp, name)); err != nil {
 			log.Warn().Err(err).Str("backup", name).Msg("cas-delete: failed to delete stale inprogress marker (will be swept by next prune)")

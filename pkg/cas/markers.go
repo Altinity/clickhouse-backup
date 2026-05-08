@@ -36,10 +36,21 @@ func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
 // already exists (another upload is in progress); (false, ErrConditionalPutNotSupported)
 // when the backend can't do atomic create.
 func WriteInProgressMarker(ctx context.Context, b Backend, clusterPrefix, backup, host string) (created bool, err error) {
+	return WriteInProgressMarkerWithTool(ctx, b, clusterPrefix, backup, host, markerTool)
+}
+
+// WriteInProgressMarkerWithTool is like WriteInProgressMarker but accepts an
+// explicit tool identifier written into the marker JSON. Use this when the
+// caller is not "cas-upload" (e.g. "cas-delete") so that concurrent operations
+// can surface the right diagnostic in error messages.
+func WriteInProgressMarkerWithTool(ctx context.Context, b Backend, clusterPrefix, backup, host, tool string) (created bool, err error) {
 	if host == "" {
 		host = hostname()
 	}
-	m := InProgressMarker{Backup: backup, Host: host, StartedAt: nowRFC3339(), Tool: markerTool}
+	if tool == "" {
+		tool = markerTool
+	}
+	m := InProgressMarker{Backup: backup, Host: host, StartedAt: nowRFC3339(), Tool: tool}
 	data, _ := json.Marshal(m)
 	return b.PutFileIfAbsent(ctx, InProgressMarkerPath(clusterPrefix, backup),
 		io.NopCloser(bytes.NewReader(data)), int64(len(data)))
