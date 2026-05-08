@@ -18,6 +18,7 @@ type Fake struct {
 	mu       sync.Mutex
 	files    map[string]fakeFile
 	statHook func(key string) (size int64, modTime time.Time, exists bool, err error, override bool)
+	putHook  func(key string) (err error, override bool)
 }
 
 type fakeFile struct {
@@ -47,6 +48,16 @@ func (f *Fake) SetStatHook(h func(key string) (int64, time.Time, bool, error, bo
 	f.statHook = h
 }
 
+// SetPutHook installs a function consulted by PutFile and PutFileIfAbsent
+// before the normal store. If the hook returns override=true and a non-nil
+// error, that error is returned instead of writing. Used by tests to inject
+// errors at specific keys.
+func (f *Fake) SetPutHook(h func(key string) (err error, override bool)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.putHook = h
+}
+
 // Len is a test helper for assertions.
 func (f *Fake) Len() int {
 	f.mu.Lock()
@@ -61,6 +72,14 @@ func (f *Fake) PutFile(ctx context.Context, key string, r io.ReadCloser, size in
 		return err
 	}
 	f.mu.Lock()
+	hook := f.putHook
+	f.mu.Unlock()
+	if hook != nil {
+		if err, override := hook(key); override && err != nil {
+			return err
+		}
+	}
+	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.files[key] = fakeFile{data: buf.Bytes(), modTime: time.Now()}
 	return nil
@@ -73,6 +92,14 @@ func (f *Fake) PutFileIfAbsent(ctx context.Context, key string, data io.ReadClos
 	_ = data.Close()
 	if err != nil {
 		return false, err
+	}
+	f.mu.Lock()
+	hook := f.putHook
+	f.mu.Unlock()
+	if hook != nil {
+		if err, override := hook(key); override && err != nil {
+			return false, err
+		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -500,8 +500,8 @@ func TestUpload_PreservesEmptyTable(t *testing.T) {
 // countingBackend wraps a Backend and counts PutFile calls per key.
 type countingBackend struct {
 	cas.Backend
-	mu     sync.Mutex
-	puts   map[string]int
+	mu   sync.Mutex
+	puts map[string]int
 }
 
 func newCountingBackend(b cas.Backend) *countingBackend {
@@ -613,8 +613,8 @@ func TestPlanPart_WithProjection_BlobsBothLevels(t *testing.T) {
 	parts := []testfixtures.PartSpec{{
 		Disk: "default", DB: "db1", Table: "t1", Name: "all_1_1_0",
 		Files: []testfixtures.FileSpec{
-			{Name: "data.bin", Size: 8192, HashLow: 1, HashHigh: 2},     // above threshold → blob
-			{Name: "columns.txt", Size: 16, HashLow: 3, HashHigh: 4},    // below → archive
+			{Name: "data.bin", Size: 8192, HashLow: 1, HashHigh: 2},  // above threshold → blob
+			{Name: "columns.txt", Size: 16, HashLow: 3, HashHigh: 4}, // below → archive
 		},
 		Projections: []testfixtures.ProjectionSpec{{
 			Name: "p1",
@@ -968,5 +968,45 @@ func TestUpload_LeaksNoMarkerOnRecheckError(t *testing.T) {
 	_, _, exists, _ := f.StatFile(context.Background(), markerKey)
 	if exists {
 		t.Error("in-progress marker leaked: still present after step 11b error path")
+	}
+}
+
+// TestUpload_LeaksNoMarkerOnCommitError verifies that a PutFile failure
+// on metadata.json at step 12 cleans up the in-progress marker before
+// returning the error.
+func TestUpload_LeaksNoMarkerOnCommitError(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	ctx := context.Background()
+
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "p1",
+		Files: []testfixtures.FileSpec{{Name: "data.bin", Size: 16, HashLow: 1, HashHigh: 2}},
+	}}
+	src := testfixtures.Build(t, parts)
+
+	metadataKey := cas.MetadataJSONPath(cfg.ClusterPrefix(), "bk")
+	f.SetPutHook(func(key string) (err error, override bool) {
+		if key == metadataKey {
+			return errors.New("simulated transient backend error"), true
+		}
+		return nil, false
+	})
+
+	_, err := cas.Upload(ctx, f, cfg, "bk", cas.UploadOptions{LocalBackupDir: src.Root})
+	if err == nil {
+		t.Fatal("expected Upload to error when metadata.json PUT fails")
+	}
+	if !strings.Contains(err.Error(), "put metadata.json") {
+		t.Errorf("error should mention metadata.json; got: %v", err)
+	}
+
+	// Clear the hook so the post-call StatFile reads actual backend state.
+	f.SetPutHook(nil)
+
+	markerKey := cas.InProgressMarkerPath(cfg.ClusterPrefix(), "bk")
+	_, _, exists, _ := f.StatFile(context.Background(), markerKey)
+	if exists {
+		t.Error("in-progress marker leaked: still present after metadata.json failure")
 	}
 }

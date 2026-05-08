@@ -304,6 +304,7 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 		return nil, fmt.Errorf("cas: marshal metadata.json: %w", err)
 	}
 	if err := putBytes(ctx, b, MetadataJSONPath(cp, name), bmJSON); err != nil {
+		_ = DeleteInProgressMarker(ctx, b, cp, name)
 		return nil, fmt.Errorf("cas: put metadata.json: %w", err)
 	}
 
