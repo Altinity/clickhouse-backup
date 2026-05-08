@@ -395,11 +395,17 @@ func (api *APIServer) httpCASDeleteHandler(w http.ResponseWriter, r *http.Reques
 	status.Current.Stop(commandId, deleteErr)
 
 	if deleteErr != nil {
+		code := http.StatusInternalServerError
 		if errors.Is(deleteErr, cas.ErrPruneInProgress) {
-			api.writeError(w, http.StatusConflict, "cas-delete", deleteErr)
-			return
+			code = http.StatusConflict
 		}
-		api.writeError(w, http.StatusInternalServerError, "cas-delete", deleteErr)
+		if errors.Is(deleteErr, cas.ErrUploadInProgress) {
+			code = http.StatusConflict
+		}
+		if errors.Is(deleteErr, cas.ErrBackupExists) {
+			code = http.StatusConflict
+		}
+		api.writeError(w, code, "cas-delete", deleteErr)
 		return
 	}
 
