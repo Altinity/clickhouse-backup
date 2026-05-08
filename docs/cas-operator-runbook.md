@@ -4,6 +4,38 @@ This runbook covers day-to-day operation of the content-addressable backup
 mode (`cas-*` commands). For the design rationale see
 [docs/cas-design.md](cas-design.md). For end-user usage see the README.
 
+## ⚠️ Binary rollback procedure (READ FIRST IF DOWNGRADING)
+
+> **🛑 STOP. Read this section before downgrading the clickhouse-backup binary if CAS data exists in your bucket.**
+
+Pre-CAS binaries (any release that does not include the `cas-*` commands) have **no knowledge of the `cas/` skip prefix**. When such a binary runs `clean remote_broken` — or when the scheduled `BackupsToKeepRemote` retention logic fires — it sees `cas/<cluster>/…` as a malformed v1 backup tree and **deletes the entire CAS namespace**, including all blob data and metadata. This is irrecoverable without an independent copy.
+
+**You have three safe options. Choose one before downgrading:**
+
+1. **Pin the new binary in place — do not downgrade.** The safest and simplest option. If the reason for downgrading is a bug in the new binary, fix the bug instead.
+
+2. **Move CAS data out of the bucket first.** Using your cloud console or CLI, rename (copy + delete) the `cas/` prefix to a different name that won't be touched by v1 retention (e.g. `cas-archived/`). The old binary will not see it. Restore the rename when the binary is upgraded again.
+
+   ```sh
+   # Example with mc (MinIO Client):
+   mc cp --recursive myminio/mybucket/cas/ myminio/mybucket/cas-archived/
+   mc rm --recursive --force myminio/mybucket/cas/
+
+   # Example with AWS CLI:
+   aws s3 cp s3://mybucket/cas/ s3://mybucket/cas-archived/ --recursive
+   aws s3 rm s3://mybucket/cas/ --recursive
+   ```
+
+3. **Disable v1 retention/cleanup jobs before downgrading, and keep them disabled until upgraded again.**
+   - Set `BackupsToKeepRemote: 0` in every config that touches this bucket.
+   - Remove `clean remote_broken` from all cron entries.
+   - Do **not** re-enable either until the binary is upgraded back to a CAS-aware release.
+   - Document this as a temporary state so it isn't forgotten.
+
+> **Warning:** There is no partial protection. A single `clean remote_broken` call from any pre-CAS host with access to the bucket is enough to destroy all CAS data. If you operate multiple hosts or automation pipelines, all of them must be updated or disabled before downgrading any one host.
+
+---
+
 ## First production deployment (start here)
 
 > ⚠️ **CAS is experimental.** The on-disk layout may change incompatibly
@@ -162,6 +194,21 @@ not do; expect them to land in later releases:
   clusters writing to the same bucket cannot dedup against each other.
 
 A consolidated v2 backlog with rationale lives in `docs/cas-design.md` §9.
+
+### Changing `cas.root_prefix`
+
+> **Warning:** Changing `cas.root_prefix` while CAS data exists at the old prefix (e.g. renaming `"cas/"` to `"snapshots/"`) silently exposes the old data to v1 retention and `clean remote_broken`. The old binary — and even the new binary running with the updated config — no longer skips `cas/` because the configured skip prefix has changed to `snapshots/`. Any scheduled `BackupsToKeepRemote` or `clean remote_broken` job that runs during or after the config flip will see the old `cas/` subtree as broken v1 backups and delete it.
+
+To migrate safely, do one of the following **before** flipping the config:
+
+- **Copy/move the old prefix to the new one first**, then update `cas.root_prefix`:
+  ```sh
+  # Move cas/ → snapshots/ before changing any config file.
+  mc cp --recursive myminio/mybucket/cas/ myminio/mybucket/snapshots/
+  mc rm --recursive --force myminio/mybucket/cas/
+  # Only now update cas.root_prefix: "snapshots/"
+  ```
+- **Disable v1 retention and `clean remote_broken` for the duration of the transition**, perform the copy/move, update the config, verify with `cas-status`, then re-enable retention.
 
 ---
 
