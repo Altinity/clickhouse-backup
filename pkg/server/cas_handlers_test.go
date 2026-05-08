@@ -161,3 +161,23 @@ func TestCASRestoreHandler_IgnoreDependenciesReturns400(t *testing.T) {
 
 	require.Equal(t, 400, rr.Code)
 }
+
+// ---------- cas-delete ----------
+
+// TestCASDeleteHandler_LockedWhenBusy verifies that the handler returns 423 when
+// AllowParallel=false and another operation is in progress.
+func TestCASDeleteHandler_LockedWhenBusy(t *testing.T) {
+	api := newTestAPI(t)
+	api.config.API.AllowParallel = false
+
+	cmdId, _ := status.Current.Start("some-other-op")
+	defer status.Current.Stop(cmdId, nil)
+
+	req := httptest.NewRequest("POST", "/backup/cas-delete/mybackup", nil)
+	req = mux.SetURLVars(req, map[string]string{"name": "mybackup"})
+	rr := httptest.NewRecorder()
+
+	api.httpCASDeleteHandler(rr, req)
+
+	require.Equal(t, 423, rr.Code)
+}

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 )
@@ -346,4 +348,68 @@ func (api *APIServer) httpCASRestoreHandler(w http.ResponseWriter, r *http.Reque
 	}()
 
 	api.sendJSONEachRow(w, http.StatusOK, newAsyncAck("cas-restore", name, operationId.String()))
+}
+
+// httpCASDeleteHandler handles POST /backup/cas-delete/{name}
+func (api *APIServer) httpCASDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
+		log.Warn().Err(ErrAPILocked).Send()
+		api.writeError(w, http.StatusLocked, "cas-delete", ErrAPILocked)
+		return
+	}
+	cfg, err := api.ReloadConfig(w, "cas-delete")
+	if err != nil {
+		return
+	}
+
+	name := utils.CleanBackupNameRE.ReplaceAllString(mux.Vars(r)["name"], "")
+	if name == "" {
+		api.writeError(w, http.StatusBadRequest, "cas-delete", fmt.Errorf("name required"))
+		return
+	}
+
+	query := r.URL.Query()
+	waitForPruneStr := query.Get("wait-for-prune")
+	var waitForPrune time.Duration
+	if waitForPruneStr != "" {
+		waitForPrune, err = time.ParseDuration(waitForPruneStr)
+		if err != nil {
+			api.writeError(w, http.StatusBadRequest, "cas-delete",
+				fmt.Errorf("wait-for-prune: %w", err))
+			return
+		}
+	} else {
+		waitForPrune = cfg.CAS.WaitForPruneDuration()
+	}
+
+	fullCommand := fmt.Sprintf("cas-delete %s", name)
+	if waitForPruneStr != "" {
+		fullCommand += " --wait-for-prune=" + waitForPruneStr
+	}
+
+	commandId, _ := status.Current.Start(fullCommand)
+	deleteErr, _ := api.metrics.ExecuteWithMetrics("cas-delete", 0, func() error {
+		b := backup.NewBackuper(cfg)
+		return b.CASDelete(name, commandId, waitForPrune)
+	})
+	status.Current.Stop(commandId, deleteErr)
+
+	if deleteErr != nil {
+		if errors.Is(deleteErr, cas.ErrPruneInProgress) {
+			api.writeError(w, http.StatusConflict, "cas-delete", deleteErr)
+			return
+		}
+		api.writeError(w, http.StatusInternalServerError, "cas-delete", deleteErr)
+		return
+	}
+
+	api.sendJSONEachRow(w, http.StatusOK, struct {
+		Status     string `json:"status"`
+		Operation  string `json:"operation"`
+		BackupName string `json:"backup_name"`
+	}{
+		Status:     "success",
+		Operation:  "cas-delete",
+		BackupName: name,
+	})
 }
