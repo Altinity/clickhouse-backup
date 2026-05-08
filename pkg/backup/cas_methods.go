@@ -601,7 +601,7 @@ func (b *Backuper) CASRestore(
 
 // CASDelete removes a CAS backup's metadata subtree (blob reclamation is the
 // next prune's responsibility).
-func (b *Backuper) CASDelete(backupName string, waitForPrune time.Duration) error {
+func (b *Backuper) CASDelete(backupName string, commandId int, waitForPrune time.Duration) error {
 	if backupName == "" {
 		return errors.New("cas-delete: backup name is required")
 	}
@@ -610,7 +610,7 @@ func (b *Backuper) CASDelete(backupName string, waitForPrune time.Duration) erro
 		return pidErr
 	}
 	defer pidlock.RemovePidFile(backupName)
-	ctx, cancel, err := b.setupCASContext(status.NotFromAPI)
+	ctx, cancel, err := b.setupCASContext(commandId)
 	if err != nil {
 		return err
 	}
@@ -629,12 +629,12 @@ func (b *Backuper) CASDelete(backupName string, waitForPrune time.Duration) erro
 
 // CASVerify performs a HEAD + size check on every blob referenced by the
 // backup, writing failures to stdout.
-func (b *Backuper) CASVerify(backupName string, jsonOut bool) error {
+func (b *Backuper) CASVerify(backupName string, jsonOut bool, commandId int) error {
 	if backupName == "" {
 		return errors.New("cas-verify: backup name is required")
 	}
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-	ctx, cancel, err := b.setupCASContext(status.NotFromAPI)
+	ctx, cancel, err := b.setupCASContext(commandId)
 	if err != nil {
 		return err
 	}
@@ -663,8 +663,8 @@ func (b *Backuper) CASVerify(backupName string, jsonOut bool) error {
 }
 
 // CASStatus prints a LIST-only health summary for the configured cluster.
-func (b *Backuper) CASStatus() error {
-	ctx, cancel, err := b.setupCASContext(status.NotFromAPI)
+func (b *Backuper) CASStatus(commandId int) error {
+	ctx, cancel, err := b.setupCASContext(commandId)
 	if err != nil {
 		return err
 	}
@@ -684,8 +684,8 @@ func (b *Backuper) CASStatus() error {
 // CASPrune runs mark-and-sweep GC against the configured CAS cluster.
 // graceHours / abandonDays are CLI overrides (0 = use config). unlock is
 // the operator escape hatch for a stranded prune.marker.
-func (b *Backuper) CASPrune(dryRun bool, graceBlob, abandonThreshold string, unlock bool) error {
-	ctx, cancel, err := b.setupCASContext(status.NotFromAPI)
+func (b *Backuper) CASPrune(dryRun bool, graceBlob, abandonThreshold string, unlock bool, commandId int) error {
+	ctx, cancel, err := b.setupCASContext(commandId)
 	if err != nil {
 		return err
 	}

@@ -180,7 +180,7 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 					return err
 				}
 				b := backup.NewBackuper(cfg)
-				return b.CASDelete(c.Args().First(), wait)
+				return b.CASDelete(c.Args().First(), c.Int("command-id"), wait)
 			},
 			Flags: append(rootFlags,
 				cli.StringFlag{
@@ -196,7 +196,7 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 			Description: "Walks the per-table archives, parses every checksums.txt, and HEAD-checks each referenced blob's existence and size. Exits non-zero if any failures are detected.",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CASVerify(c.Args().First(), c.Bool("json"))
+				return b.CASVerify(c.Args().First(), c.Bool("json"), c.Int("command-id"))
 			},
 			Flags: append(rootFlags,
 				cli.BoolFlag{
@@ -212,7 +212,7 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 			Description: "Counts backups and blobs, reports the prune marker (if any), and lists fresh / abandoned in-progress upload markers. No object bodies are fetched.",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CASStatus()
+				return b.CASStatus(c.Int("command-id"))
 			},
 			Flags: rootFlags,
 		},
@@ -223,7 +223,7 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 			Description: "Mark-and-sweep GC: walks every live backup's per-table archives, builds a sorted on-disk reference set, then lists the blob store and deletes orphans older than cas.grace_blob. Holds an advisory cas/<cluster>/prune.marker — concurrent cas-upload and cas-delete refuse while it's held. See docs/cas-design.md §6.7 and docs/cas-operator-runbook.md.",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CASPrune(c.Bool("dry-run"), c.String("grace-blob"), c.String("abandon-threshold"), c.Bool("unlock"))
+				return b.CASPrune(c.Bool("dry-run"), c.String("grace-blob"), c.String("abandon-threshold"), c.Bool("unlock"), c.Int("command-id"))
 			},
 			Flags: append(rootFlags,
 				cli.BoolFlag{
