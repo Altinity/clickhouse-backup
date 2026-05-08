@@ -642,6 +642,138 @@ func TestDownloadBlobs_RejectsTruncatedBlob(t *testing.T) {
 	}
 }
 
+// failingArchiveBackend wraps a real Backend but returns an error for any
+// key that contains "/parts/" — simulating a mid-download archive failure.
+type failingArchiveBackend struct{ inner cas.Backend }
+
+func (fb *failingArchiveBackend) GetFile(ctx context.Context, key string) (io.ReadCloser, error) {
+	if strings.Contains(key, "/parts/") {
+		return nil, errors.New("simulated archive download failure")
+	}
+	return fb.inner.GetFile(ctx, key)
+}
+func (fb *failingArchiveBackend) PutFile(ctx context.Context, key string, r io.ReadCloser, size int64) error {
+	return fb.inner.PutFile(ctx, key, r, size)
+}
+func (fb *failingArchiveBackend) PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, size int64) (bool, error) {
+	return fb.inner.PutFileIfAbsent(ctx, key, r, size)
+}
+func (fb *failingArchiveBackend) StatFile(ctx context.Context, key string) (int64, time.Time, bool, error) {
+	return fb.inner.StatFile(ctx, key)
+}
+func (fb *failingArchiveBackend) DeleteFile(ctx context.Context, key string) error {
+	return fb.inner.DeleteFile(ctx, key)
+}
+func (fb *failingArchiveBackend) Walk(ctx context.Context, prefix string, recursive bool, fn func(cas.RemoteFile) error) error {
+	return fb.inner.Walk(ctx, prefix, recursive, fn)
+}
+
+// TestDownload_LeavesNoStaleMetadataOnFailure verifies that a failed archive
+// download does NOT leave a directory at finalDir that looks like a valid v1
+// backup (i.e. contains metadata.json).
+func TestDownload_LeavesNoStaleMetadataOnFailure(t *testing.T) {
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "all_1_1_0",
+		Files: []testfixtures.FileSpec{
+			{Name: "columns.txt", Size: 8, HashLow: 1, HashHigh: 0},
+			{Name: "data.bin", Size: 1024, HashLow: 42, HashHigh: 7, Bytes: makeBlobBytes(0xAB)},
+		},
+	}}
+
+	lb := testfixtures.Build(t, parts)
+	real := fakedst.New()
+	cfg := testCfg(100)
+
+	if _, err := cas.Upload(context.Background(), real, cfg, "b1", cas.UploadOptions{LocalBackupDir: lb.Root}); err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+
+	// Wrap backend to fail on archive fetches.
+	wrapped := &failingArchiveBackend{inner: real}
+
+	dlRoot := t.TempDir()
+	finalDir := filepath.Join(dlRoot, "b1")
+
+	_, err := cas.Download(context.Background(), wrapped, cfg, "b1", cas.DownloadOptions{
+		LocalBackupDir: dlRoot,
+	})
+	if err == nil {
+		t.Fatal("expected Download to fail on archive error, got nil")
+	}
+
+	// The final directory must either not exist, or must not contain
+	// metadata.json — otherwise a v1 restore would accept it as valid.
+	if _, statErr := os.Stat(filepath.Join(finalDir, "metadata.json")); statErr == nil {
+		t.Error("metadata.json must NOT exist at finalDir after a failed download (stale partial state)")
+	}
+
+	// No staging directory siblings should remain.
+	entries, err2 := os.ReadDir(dlRoot)
+	if err2 != nil {
+		t.Fatalf("ReadDir dlRoot: %v", err2)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".cas-staging-") {
+			t.Errorf("leftover staging directory found: %s", e.Name())
+		}
+	}
+}
+
+// TestDownload_AtomicReplaceOfStaleSameNameDirectory verifies that a
+// successful Download replaces any pre-existing same-name directory, so
+// the new content is always what's visible at finalDir.
+func TestDownload_AtomicReplaceOfStaleSameNameDirectory(t *testing.T) {
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "all_1_1_0",
+		Files: []testfixtures.FileSpec{
+			{Name: "columns.txt", Size: 8, HashLow: 1, HashHigh: 0},
+		},
+	}}
+
+	lb := testfixtures.Build(t, parts)
+	real := fakedst.New()
+	cfg := testCfg(100)
+
+	if _, err := cas.Upload(context.Background(), real, cfg, "b1", cas.UploadOptions{LocalBackupDir: lb.Root}); err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+
+	dlRoot := t.TempDir()
+	finalDir := filepath.Join(dlRoot, "b1")
+
+	// Pre-populate finalDir with a stale metadata.json.
+	if err := os.MkdirAll(finalDir, 0o755); err != nil {
+		t.Fatalf("mkdir finalDir: %v", err)
+	}
+	staleContent := []byte(`{"backup_name":"stale","data_format":"directory"}`)
+	if err := os.WriteFile(filepath.Join(finalDir, "metadata.json"), staleContent, 0o640); err != nil {
+		t.Fatalf("write stale metadata.json: %v", err)
+	}
+
+	if _, err := cas.Download(context.Background(), real, cfg, "b1", cas.DownloadOptions{
+		LocalBackupDir: dlRoot,
+	}); err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+
+	// The stale content must have been replaced.
+	newContent, err := os.ReadFile(filepath.Join(finalDir, "metadata.json"))
+	if err != nil {
+		t.Fatalf("read metadata.json: %v", err)
+	}
+	if bytes.Equal(newContent, staleContent) {
+		t.Error("metadata.json still contains stale content — atomic replace did not happen")
+	}
+	// The new content must be valid JSON with backup_name = "b1".
+	var bm metadata.BackupMetadata
+	if err := json.Unmarshal(newContent, &bm); err != nil {
+		t.Fatalf("parse new metadata.json: %v", err)
+	}
+	if bm.BackupName != "b1" {
+		t.Errorf("new metadata.json: backup_name=%q want b1", bm.BackupName)
+	}
+}
+
 // TestDownload_DataOnlyRefuses verifies that --data-only is rejected
 // loudly because CAS doesn't yet implement the data-only path.
 // Until the feature ships, silently no-op'ing is worse than refusing.

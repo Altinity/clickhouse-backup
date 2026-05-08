@@ -2,6 +2,8 @@ package cas
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -100,10 +102,33 @@ func validateChecksumsTxtFilename(name string) error {
 	return nil
 }
 
+// randomHex8 returns 8 random hex characters for use in staging dir names.
+func randomHex8() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand.Read only fails on catastrophic OS failures; panic is
+		// appropriate here rather than silently producing a fixed suffix.
+		panic("cas: crypto/rand.Read failed: " + err.Error())
+	}
+	return hex.EncodeToString(b[:])
+}
+
 // Download materializes a v1-shaped local backup directory from a CAS
 // backup. Implements docs/cas-design.md §6.5 (the cas-download portion;
 // cas-restore is layered on top in Task 14).
-func Download(ctx context.Context, b Backend, cfg Config, name string, opts DownloadOptions) (*DownloadResult, error) {
+//
+// Atomicity: Download writes all content into a hidden staging directory
+// (a sibling of finalDir named ".<name>.cas-staging-<random8hex>") and
+// only renames it to finalDir after ALL downloads succeed. A failed or
+// interrupted download therefore never leaves a directory at finalDir that
+// looks like a valid v1 backup. Any pre-existing finalDir is removed
+// immediately before the rename; re-running over a partial or stale
+// same-name directory is safe and produces a clean result.
+//
+// Assumption: opts.LocalBackupDir and the staging sibling are on the same
+// filesystem mount, so os.Rename is atomic. This always holds when both
+// are siblings under opts.LocalBackupDir.
+func Download(ctx context.Context, b Backend, cfg Config, name string, opts DownloadOptions) (_ *DownloadResult, err error) {
 	if opts.LocalBackupDir == "" {
 		return nil, errors.New("cas: DownloadOptions.LocalBackupDir is required")
 	}
@@ -129,14 +154,26 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 
 	cp := cfg.ClusterPrefix()
 
-	// 2. Set up local layout.
-	localDir := filepath.Join(opts.LocalBackupDir, name)
-	if err := os.MkdirAll(localDir, 0o755); err != nil {
-		return nil, fmt.Errorf("cas: mkdir %s: %w", localDir, err)
+	// 2. Set up local layout using a staging directory.
+	//    All writes go to stageDir; it is renamed to finalDir only after
+	//    all downloads succeed.
+	finalDir := filepath.Join(opts.LocalBackupDir, name)
+	stageDir := filepath.Join(opts.LocalBackupDir, "."+name+".cas-staging-"+randomHex8())
+
+	if err := os.MkdirAll(stageDir, 0o755); err != nil {
+		return nil, fmt.Errorf("cas: mkdir staging %s: %w", stageDir, err)
 	}
+	// Clean up staging dir on any error path.
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(stageDir)
+		}
+	}()
 
 	res := &DownloadResult{
-		LocalBackupDir: localDir,
+		// Callers see the final (post-rename) path. We update this to
+		// finalDir after the rename succeeds.
+		LocalBackupDir: finalDir,
 		BackupName:     name,
 	}
 
@@ -162,16 +199,14 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 		if partsFilter != nil {
 			tm.Parts = filterParts(tm.Parts, partsFilter)
 		}
-		// Save to local disk under metadata/<enc_db>/<enc_table>.json.
-		if err := saveLocalTableMetadata(localDir, tm); err != nil {
+		// Save to staging dir under metadata/<enc_db>/<enc_table>.json.
+		if err := saveLocalTableMetadata(stageDir, tm); err != nil {
 			return nil, err
 		}
 		tables = append(tables, tableEntry{DB: tt.Database, Table: tt.Table, TM: *tm})
 	}
 
-	// 5. Save root metadata.json (post per-table writes so a failure mid-
-	// download leaves the catalog untouched on disk; Save order doesn't
-	// matter for correctness — both are required for restore).
+	// 5. Save root metadata.json into the staging dir.
 	//
 	// We strip BackupMetadata.CAS from the local copy so that the existing
 	// v1 restore flow accepts the handoff. The cross-mode guard in
@@ -184,7 +219,7 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 	bmLocal := *bm
 	bmLocal.CAS = nil
 	bmLocal.Tables = inScope
-	bmPath := filepath.Join(localDir, "metadata.json")
+	bmPath := filepath.Join(stageDir, "metadata.json")
 	bmBody, err := json.MarshalIndent(&bmLocal, "", "\t")
 	if err != nil {
 		return nil, fmt.Errorf("cas: marshal local metadata.json: %w", err)
@@ -194,6 +229,11 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 	}
 
 	if opts.SchemaOnly {
+		// Schema-only: rename staging → final and return. No archive/blob
+		// downloads needed; the staging dir is a valid (schema-only) backup.
+		if err := atomicSwapDir(stageDir, finalDir); err != nil {
+			return nil, err
+		}
 		return res, nil
 	}
 
@@ -234,11 +274,11 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 			estimateArchiveBytes += sz
 		}
 	}
-	// Best-effort free-space check on the local dir's filesystem. We
+	// Best-effort free-space check on the staging dir's filesystem. We
 	// only have archive sizes here; blob bytes get added during extraction
 	// pass below. With a 1.1x safety multiplier this catches gross-shortage
 	// cases without delaying the download with a second round-trip.
-	if err := checkFreeSpace(localDir, estimateArchiveBytes); err != nil {
+	if err := checkFreeSpace(stageDir, estimateArchiveBytes); err != nil {
 		return nil, err
 	}
 
@@ -248,7 +288,7 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 		parallelism = 16
 	}
 
-	if err := downloadArchives(ctx, b, archives, localDir, parallelism); err != nil {
+	if err := downloadArchives(ctx, b, archives, stageDir, parallelism); err != nil {
 		return nil, err
 	}
 	res.PerTableArchives = len(archives)
@@ -266,7 +306,7 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 				if err := validateRemoteFilesystemName("part name", p.Name); err != nil {
 					return nil, err
 				}
-				partDir := filepath.Join(localDir, "shadow",
+				partDir := filepath.Join(stageDir, "shadow",
 					common.TablePathEncode(te.DB),
 					common.TablePathEncode(te.Table),
 					disk, p.Name)
@@ -277,7 +317,7 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 		}
 	}
 	// Re-check free space now that we know blob bytes too.
-	if err := checkFreeSpace(localDir, estimateBlobBytes); err != nil {
+	if err := checkFreeSpace(stageDir, estimateBlobBytes); err != nil {
 		return nil, err
 	}
 
@@ -288,7 +328,27 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 	res.BlobsFetched = fetched
 	res.BytesFetched = bytesFetched
 
+	// 9. All downloads succeeded: atomically replace finalDir with stageDir.
+	if err := atomicSwapDir(stageDir, finalDir); err != nil {
+		return nil, err
+	}
 	return res, nil
+}
+
+// atomicSwapDir removes any pre-existing directory at dst and renames src
+// to dst. Both must be on the same filesystem (siblings under the same
+// parent is sufficient). The removal+rename is not itself atomic at the OS
+// level, but it ensures finalDir is never left in a partial state: either
+// the old content is still there (if RemoveAll fails) or the new content is
+// fully present (if Rename succeeds).
+func atomicSwapDir(src, dst string) error {
+	if err := os.RemoveAll(dst); err != nil {
+		return fmt.Errorf("cas: remove stale dir %s: %w", dst, err)
+	}
+	if err := os.Rename(src, dst); err != nil {
+		return fmt.Errorf("cas: rename %s → %s: %w", src, dst, err)
+	}
+	return nil
 }
 
 // selectTables filters bm.Tables by an exact "db.table" filter list.
