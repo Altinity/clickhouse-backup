@@ -12,6 +12,8 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas/internal/fakedst"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas/internal/testfixtures"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
+	"github.com/stretchr/testify/require"
 )
 
 // uploadTestBackup builds a synthetic local backup with one part containing
@@ -412,4 +414,14 @@ func TestPrune_RefusesIfAnotherPruneRunning(t *testing.T) {
 	if _, _, exists, _ := f.StatFile(ctx, cas.PruneMarkerPath(cfg.ClusterPrefix())); !exists {
 		t.Error("prune marker should survive a refused second prune")
 	}
+}
+
+func TestPrintPruneReport_FormatsBytes(t *testing.T) {
+	var buf bytes.Buffer
+	err := cas.PrintPruneReport(&cas.PruneReport{BytesReclaimed: 1572864}, &buf)
+	require.NoError(t, err)
+	out := buf.String()
+	// 1572864 bytes = 1.5 MiB; assert FormatBytes-style rendering is present
+	require.Contains(t, out, utils.FormatBytes(1572864))
+	require.Contains(t, out, "(1572864)")
 }

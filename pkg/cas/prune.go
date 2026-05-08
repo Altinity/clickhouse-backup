@@ -16,6 +16,7 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/checksumstxt"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/klauspost/compress/zstd"
 	"github.com/rs/zerolog/log"
 )
@@ -500,11 +501,12 @@ func PrintPruneReport(r *PruneReport, w io.Writer) error {
 	if r.DryRun {
 		prefix = "cas-prune (dry-run)"
 	}
-	_, err := fmt.Fprintf(w, "%s:\n  Live backups        : %d\n  Orphan candidates   : %d\n  Orphans deleted     : %d\n  Bytes reclaimed     : %d\n  Abandoned markers   : %d swept\n  Metadata orphans    : %d swept\n  Wall clock          : %.2fs\n",
+	_, err := fmt.Fprintf(w, "%s:\n  Live backups        : %d\n  Orphan candidates   : %d\n  Orphans deleted     : %d\n  Bytes reclaimed     : %s (%d)\n  Abandoned markers   : %d swept\n  Metadata orphans    : %d swept\n  Wall clock          : %.2fs\n",
 		prefix,
 		r.LiveBackups,
 		r.OrphanBlobsConsidered,
 		r.OrphansDeleted,
+		utils.FormatBytes(uint64(r.BytesReclaimed)),
 		r.BytesReclaimed,
 		r.AbandonedMarkersSwept,
 		r.MetadataOrphansSwept,
