@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"os"
@@ -248,11 +249,45 @@ func (sftp *SFTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadClos
 	return nil
 }
 
-// PutFileAbsoluteIfAbsent stub — replaced by a native implementation in a
-// later task. Returns ErrConditionalPutNotSupported so callers refuse
-// atomicity-required operations cleanly.
+// PutFileAbsoluteIfAbsent atomically creates the file at key only if it
+// doesn't already exist, using the SFTP O_EXCL flag (SSH_FXF_EXCL on the
+// wire). Mandatory in SFTPv3+; honored by OpenSSH and most third-party
+// servers. Returns (false, nil) if the file already exists.
 func (sftp *SFTP) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
-	return false, ErrConditionalPutNotSupported
+	if err := sftp.sftpClient.MkdirAll(path.Dir(key)); err != nil {
+		log.Warn().Msgf("sftp.sftpClient.MkdirAll(%s) err=%v", path.Dir(key), err)
+	}
+	f, err := sftp.sftpClient.OpenFile(key, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	if err != nil {
+		if isSFTPAlreadyExists(err) {
+			return false, nil
+		}
+		return false, errors.WithMessage(err, "SFTP PutFileAbsoluteIfAbsent OpenFile")
+	}
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			log.Warn().Msgf("can't close %s err=%v", key, cerr)
+		}
+	}()
+	if _, err := f.ReadFrom(r); err != nil {
+		// Best-effort cleanup: if the write failed mid-stream, remove the
+		// partial file so the next attempt sees the slot as available.
+		_ = sftp.sftpClient.Remove(key)
+		return false, errors.WithMessage(err, "SFTP PutFileAbsoluteIfAbsent ReadFrom")
+	}
+	return true, nil
+}
+
+// isSFTPAlreadyExists returns true if err is the SFTP server's response
+// to opening with O_EXCL when the target exists. The pkg/sftp library
+// surfaces this with varying wrapping depending on the protocol version
+// and server; we cover both os.ErrExist and the textual fallback.
+func isSFTPAlreadyExists(err error) bool {
+	if stderrors.Is(err, os.ErrExist) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "file exists") || strings.Contains(msg, "file already exists")
 }
 
 func (sftp *SFTP) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
