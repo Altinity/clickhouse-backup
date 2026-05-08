@@ -532,7 +532,7 @@ func (api *APIServer) httpCASStatusHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	b := backup.NewBackuper(cfg)
-	report, statusErr := b.CASStatusJSON(0)
+	report, statusErr := b.CASStatusJSON(status.NotFromAPI)
 	if statusErr != nil {
 		api.writeError(w, http.StatusInternalServerError, "cas-status", statusErr)
 		return

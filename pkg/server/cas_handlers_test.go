@@ -279,6 +279,22 @@ func TestCASStatusHandler_ReturnsJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &payload), "response body must be valid JSON")
 }
 
+// TestCASStatusHandler_FreshServerReturns200OrEmpty verifies that GET
+// /backup/cas-status does not fail with the "commandId=0 not exists" sentinel
+// error on a fresh server.  With CAS disabled in the default config the handler
+// returns http.StatusInternalServerError, but for the correct reason
+// (cas.enabled=false), not the stale commandId=0 lookup bug introduced by
+// passing bare 0 instead of status.NotFromAPI.
+func TestCASStatusHandler_FreshServerReturns200OrEmpty(t *testing.T) {
+	api := newTestAPI(t)
+	req := httptest.NewRequest("GET", "/backup/cas-status", nil)
+	rr := httptest.NewRecorder()
+	api.httpCASStatusHandler(rr, req)
+	// The fix ensures the error is NOT the old "commandId=0 not exists" sentinel.
+	require.NotContains(t, rr.Body.String(), "commandId=0 not exists",
+		"GET /backup/cas-status must not fail with the old commandId=0 sentinel; body=%s", rr.Body.String())
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Task 7: /backup/actions dispatcher
 // ──────────────────────────────────────────────────────────────────────────────
