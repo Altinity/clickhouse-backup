@@ -58,7 +58,7 @@ func (env *TestEnvironment) casBootstrapWith(r *require.Assertions, clusterID, b
 		// directories, so we need it to exist before cas-upload runs cold-list.
 		_ = env.DockerExec("sshd", "sh", "-c",
 			fmt.Sprintf("rm -rf /root/cas/%s/ && mkdir -p /root/cas/%s/", clusterID, clusterID))
-	case "config-ftp.yaml":
+	case "config-ftp.yaml", "config-ftp-emulator.yaml":
 		// FTP: path: /backup -> /backup/cas/<id>/ on the ftp container.
 		_ = env.DockerExec("ftp", "sh", "-c",
 			fmt.Sprintf("rm -rf /backup/cas/%s/ /home/test_backup/backup/cas/%s/", clusterID, clusterID))

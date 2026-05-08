@@ -760,7 +760,7 @@ func (tc *TestContainers) clickHouseBinds(curDir, configsDir string) []string {
 		"config-azblob.yml", "config-azblob-embedded.yml", "config-azblob-embedded-url.yml",
 		"config-custom-kopia.yml", "config-custom-restic.yml", "config-custom-rsync.yml",
 		"config-database-mapping.yml",
-		"config-ftp.yaml", "config-ftp-old.yaml",
+		"config-ftp.yaml", "config-ftp-old.yaml", "config-ftp-emulator.yaml",
 		"config-gcs.yml", "config-gcs-custom-endpoint.yml", "config-gcs-emulator.yml",
 		"config-s3.yml", "config-s3-embedded.yml", "config-s3-embedded-url.yml",
 		"config-s3-embedded-local.yml", "config-s3-nodelete.yml", "config-s3-plain-embedded.yml",

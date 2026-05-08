@@ -92,3 +92,38 @@ func TestCASSmokeSFTP(t *testing.T) {
 	runCASBackendSmoke(t, env, r,
 		"cas_smoke_sftp_db", "cas_smoke_sftp_t", "cas_smoke_sftp_bk")
 }
+
+// TestCASSmokeFTPRefusesByDefault verifies that on the FTP backend, with
+// cas.allow_unsafe_markers unset, cas-upload refuses cleanly at marker
+// write time with a clear "atomic markers not supported" diagnostic
+// rather than silently corrupting state.
+func TestCASSmokeFTPRefusesByDefault(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+	defer env.Cleanup(t, r)
+
+	env.casBootstrapWith(r, "smoke_ftp_refuse", "config-ftp-emulator.yaml", "")
+
+	const (
+		dbName     = "cas_smoke_ftp_refuse_db"
+		tableName  = "cas_smoke_ftp_refuse_t"
+		backupName = "cas_smoke_ftp_refuse_bk"
+	)
+	r.NoError(env.dropDatabase(dbName, true))
+	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(r, fmt.Sprintf(
+		"CREATE TABLE `%s`.`%s` (id UInt64) ENGINE=MergeTree ORDER BY id", dbName, tableName))
+	env.queryWithNoError(r, fmt.Sprintf(
+		"INSERT INTO `%s`.`%s` SELECT number FROM numbers(10)", dbName, tableName))
+
+	env.casBackupNoError(r, "create", "--tables", dbName+".*", backupName)
+
+	out, err := env.casBackup("cas-upload", backupName)
+	r.Error(err, "cas-upload on FTP without allow_unsafe_markers must refuse; out=%s", out)
+	r.Contains(out, "backend cannot guarantee atomic markers",
+		"refusal message should be present; got: %s", out)
+
+	// Cleanup local backup so subsequent FTP tests start fresh.
+	_, _ = env.casBackup("delete", "local", backupName)
+	r.NoError(env.dropDatabase(dbName, true))
+}
