@@ -105,6 +105,43 @@ func (a *alwaysCreatesBackend) Walk(_ context.Context, _ string, _ bool, _ func(
 	return nil
 }
 
+// TestProbeConditionalPut_SkipsWhenBackendReturnsNotSupported verifies that the
+// probe returns nil (gracefully skipped) when the backend's PutFileIfAbsent
+// returns ErrConditionalPutNotSupported on the first write. This preserves the
+// original UX where the marker-write layer produces the operator-facing
+// "backend cannot guarantee atomic markers" diagnostic instead of a probe error.
+func TestProbeConditionalPut_SkipsWhenBackendReturnsNotSupported(t *testing.T) {
+	b := &notSupportedBackend{}
+	err := cas.ProbeConditionalPut(context.Background(), b, "cas/test-cluster/")
+	if err != nil {
+		t.Errorf("expected nil (probe gracefully skipped), got: %v", err)
+	}
+}
+
+// notSupportedBackend is a cas.Backend stub whose PutFileIfAbsent returns
+// (false, ErrConditionalPutNotSupported), simulating FTP and similar backends
+// that correctly advertise they don't support conditional create.
+type notSupportedBackend struct{}
+
+func (n *notSupportedBackend) PutFileIfAbsent(_ context.Context, _ string, r io.ReadCloser, _ int64) (bool, error) {
+	_ = r.Close()
+	return false, cas.ErrConditionalPutNotSupported
+}
+func (n *notSupportedBackend) PutFile(_ context.Context, _ string, r io.ReadCloser, _ int64) error {
+	_ = r.Close()
+	return nil
+}
+func (n *notSupportedBackend) GetFile(_ context.Context, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(nil)), nil
+}
+func (n *notSupportedBackend) StatFile(_ context.Context, _ string) (int64, time.Time, bool, error) {
+	return 0, time.Time{}, false, nil
+}
+func (n *notSupportedBackend) DeleteFile(_ context.Context, _ string) error { return nil }
+func (n *notSupportedBackend) Walk(_ context.Context, _ string, _ bool, _ func(cas.RemoteFile) error) error {
+	return nil
+}
+
 // errOnPutBackend is a cas.Backend stub that returns an error from PutFileIfAbsent.
 type errOnPutBackend struct{ err error }
 

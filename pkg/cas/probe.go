@@ -30,6 +30,15 @@ func ProbeConditionalPut(ctx context.Context, b Backend, clusterPrefix string) e
 
 	// First write: try to establish the sentinel.
 	created1, err := b.PutFileIfAbsent(ctx, key, io.NopCloser(bytes.NewReader(body1)), int64(len(body1)))
+	if errors.Is(err, ErrConditionalPutNotSupported) {
+		// Backend correctly reports it doesn't support conditional create.
+		// Skip the probe — the upload/prune marker-write will refuse naturally
+		// with the existing operator-facing diagnostic ("backend cannot guarantee
+		// atomic markers..."), preserving the original UX. The probe is for
+		// detecting backends that LIE about supporting conditional-create, not
+		// for re-doing what the marker-write layer already does correctly.
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("cas conditional-put probe: first write: %w", err)
 	}
