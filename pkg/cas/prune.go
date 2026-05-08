@@ -147,7 +147,9 @@ func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*Prun
 		}
 		_ = runID // we already own the marker by virtue of created=true; runID is for diagnostics only
 		defer func() {
-			if delErr := b.DeleteFile(ctx, PruneMarkerPath(cp)); delErr != nil {
+			cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if delErr := b.DeleteFile(cleanCtx, PruneMarkerPath(cp)); delErr != nil {
 				log.Warn().Err(delErr).Msg("cas-prune: failed to release prune.marker")
 			}
 		}()

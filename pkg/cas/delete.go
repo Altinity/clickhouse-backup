@@ -111,7 +111,9 @@ func Delete(ctx context.Context, b Backend, cfg Config, name string, opts Delete
 				existing.Tool, name, existing.Host, existing.StartedAt)
 		}
 		defer func() {
-			if delErr := b.DeleteFile(ctx, InProgressMarkerPath(cp, name)); delErr != nil {
+			cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if delErr := b.DeleteFile(cleanCtx, InProgressMarkerPath(cp, name)); delErr != nil {
 				log.Warn().Err(delErr).Str("backup", name).Msg("cas-delete: release inprogress marker")
 			}
 		}()

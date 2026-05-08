@@ -669,3 +669,54 @@ func TestPrune_BlobDeleteFailuresCounted(t *testing.T) {
 	require.NoError(t, cas.PrintPruneReport(rep, &buf))
 	require.Contains(t, buf.String(), "Blob delete failures: 2")
 }
+
+// ctxRespectingPruneBackend wraps cas.Backend and makes Walk fail with
+// context.Canceled when the passed context is already cancelled. This lets
+// TestPrune_CancelledContextStillReleasesMarker exercise the deferred
+// cleanup path with a pre-cancelled operation context.
+type ctxRespectingPruneBackend struct {
+	cas.Backend
+}
+
+func (c *ctxRespectingPruneBackend) Walk(ctx context.Context, prefix string, recursive bool, fn func(cas.RemoteFile) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.Backend.Walk(ctx, prefix, recursive, fn)
+}
+
+// TestPrune_CancelledContextStillReleasesMarker verifies detached-context
+// cleanup (#2) for Prune: when the operation context is cancelled before Prune
+// returns, the deferred cleanup uses a fresh context.Background()-derived ctx
+// and still removes the prune.marker.
+func TestPrune_CancelledContextStillReleasesMarker(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	cp := cfg.ClusterPrefix()
+
+	// Upload a backup so there's something to prune.
+	uploadTestBackup(t, f, cfg, "bk1", cas.Hash128{Low: 0x10, High: 0x10})
+
+	// Use a pre-cancelled context. ctxRespectingPruneBackend translates it into
+	// a Walk error inside listLiveBackups, so Prune errors out after writing
+	// the prune.marker — exercising the deferred cleanup path.
+	cancelCtx, cancelFn := context.WithCancel(context.Background())
+	cancelFn() // cancel immediately
+
+	_, err := cas.Prune(cancelCtx, &ctxRespectingPruneBackend{f}, cfg, cas.PruneOptions{
+		GraceBlob:    time.Hour,
+		GraceBlobSet: true,
+	})
+	if err == nil {
+		t.Fatal("expected Prune to fail with cancelled context")
+	}
+
+	// The prune.marker must be absent — the deferred cleanup ran with a
+	// detached context even though the operation ctx was already cancelled.
+	markerKey := cas.PruneMarkerPath(cp)
+	if _, _, exists, statErr := f.StatFile(context.Background(), markerKey); statErr != nil {
+		t.Fatalf("StatFile(prune.marker): %v", statErr)
+	} else if exists {
+		t.Error("prune.marker still present after cancelled-ctx Prune — detached cleanup context not working")
+	}
+}
