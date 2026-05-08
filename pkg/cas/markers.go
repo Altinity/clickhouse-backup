@@ -137,11 +137,16 @@ func putBytes(ctx context.Context, b Backend, key string, data []byte) error {
 	return b.PutFile(ctx, key, io.NopCloser(bytes.NewReader(data)), int64(len(data)))
 }
 
+// markerSizeLimit is the maximum number of bytes we will read from a remote
+// marker file. Real markers are ~200 B; 64 KiB is a safe ceiling that prevents
+// a corrupt / malicious object from consuming unbounded memory.
+const markerSizeLimit = 64 * 1024
+
 func getBytes(ctx context.Context, b Backend, key string) ([]byte, error) {
 	rc, err := b.GetFile(ctx, key)
 	if err != nil {
 		return nil, err
 	}
 	defer rc.Close()
-	return io.ReadAll(rc)
+	return io.ReadAll(io.LimitReader(rc, markerSizeLimit))
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 
@@ -189,11 +190,9 @@ func extractBlobsFromArchive(r io.Reader, cp string, threshold uint64, seen map[
 
 // sortExpectedBlobs sorts blobs by Path for deterministic output.
 func sortExpectedBlobs(blobs []expectedBlob) {
-	for i := 1; i < len(blobs); i++ {
-		for j := i; j > 0 && blobs[j].Path < blobs[j-1].Path; j-- {
-			blobs[j], blobs[j-1] = blobs[j-1], blobs[j]
-		}
-	}
+	sort.Slice(blobs, func(i, j int) bool {
+		return blobs[i].Path < blobs[j].Path
+	})
 }
 
 // headAllInParallel performs HEAD (StatFile) on every blob and returns failures.

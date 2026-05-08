@@ -306,6 +306,14 @@ func (sftp *SFTP) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.
 		_ = sftp.sftpClient.Remove(key)
 		return false, errors.WithMessage(err, "SFTP PutFileAbsoluteIfAbsent ReadFrom")
 	}
+	// Explicitly close on success path so we propagate any flush/sync error.
+	// If close fails the file may be corrupt; remove it so the next caller
+	// sees the slot as available and can retry.
+	closed = true
+	if err := f.Close(); err != nil {
+		_ = sftp.sftpClient.Remove(key)
+		return false, errors.WithMessage(err, "SFTP PutFileAbsoluteIfAbsent Close")
+	}
 	return true, nil
 }
 

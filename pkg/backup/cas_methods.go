@@ -700,7 +700,8 @@ func (b *Backuper) CASDelete(backupName string, commandId int, waitForPrune time
 	if err := cas.Delete(ctx, backend, b.cfg.CAS, backupName, cas.DeleteOptions{WaitForPrune: waitForPrune}); err != nil {
 		return err
 	}
-	fmt.Printf("cas-delete: %s removed\n", backupName)
+	fmt.Printf("cas-delete: %s metadata removed\n", backupName)
+	fmt.Printf("cas-delete: blob storage will be reclaimed by the next cas-prune run\n")
 	return nil
 }
 
@@ -851,6 +852,9 @@ func splitTablePattern(p string) []string {
 // types a CAS backup name into a v1 command. Best-effort: returns false
 // on any storage error or when CAS is disabled (no namespace configured).
 func isCASBackupRemote(ctx context.Context, dst *storage.BackupDestination, cfg cas.Config, name string) bool {
+	if !cfg.Enabled {
+		return false
+	}
 	if cfg.RootPrefix == "" {
 		return false
 	}
