@@ -13,33 +13,60 @@ import (
 )
 
 // casConfigPath is the in-container path of the on-the-fly config used by all
-// cas-* integration tests. Generated in casBootstrap by appending a `cas:`
-// stanza to the stock config-s3.yml.
+// cas-* integration tests. Generated in casBootstrapWith by appending a `cas:`
+// stanza to a base config (config-s3.yml by default, or one of the per-backend
+// configs for the smoke-test suite).
 const casConfigPath = "/tmp/config-cas.yml"
 
-// casBootstrap writes a CAS-enabled config inside the clickhouse-backup
-// container at casConfigPath. Pattern: copy config-s3.yml, then append a
-// `cas:` stanza; configs/ is mounted read-only so we write into /tmp instead.
-//
-// clusterID is incorporated into root_prefix so concurrent tests in different
-// envPool slots can't trample each other's bucket layouts.
+// casBootstrap is the S3/MinIO default path; used by all the existing
+// CAS tests. New per-backend tests should call casBootstrapWith directly
+// with a different baseConfig name (one of config-gcs.yml,
+// config-azblob.yml, config-sftp-auth-password.yaml, config-ftp.yaml).
 func (env *TestEnvironment) casBootstrap(r *require.Assertions, clusterID string) {
-	// Wipe any leftover state from a previous test under THIS clusterID
-	// only. Tests may share the env across runs (RUN_PARALLEL=1 serializes
-	// on a single env), so wiping the entire backup tree would clobber
-	// concurrent tests' state.
-	//
-	// The S3 `path: backup/{cluster}/{shard}` (config-s3.yml) places objects
-	// at /minio/data/clickhouse/backup/cluster/0/cas/<clusterID>/... — NOT
-	// at /minio/data/clickhouse/backup/cas/<clusterID>/. Wipe the real path
-	// (older revisions of this helper got it wrong, leaving stale blobs
-	// across test reruns).
-	_ = env.DockerExec("minio", "bash", "-c",
-		fmt.Sprintf("rm -rf /minio/data/clickhouse/backup/cluster/0/cas/%s/", clusterID))
-	_ = env.DockerExec("minio", "bash", "-c", "mkdir -p /minio/data/clickhouse")
-	// Local backups must be wiped wholesale because v1 'create' rejects an
-	// existing same-named backup (regardless of CAS namespace). Test names
-	// embed the test prefix to avoid collisions across tests.
+	env.casBootstrapWith(r, clusterID, "config-s3.yml", "")
+}
+
+// casBootstrapWith writes a CAS-enabled config inside the clickhouse-backup
+// container at casConfigPath, using baseConfigName as the starting point
+// and appending the cas: stanza. casExtraYAML is appended verbatim to the
+// cas: block (used to set allow_unsafe_markers for the FTP opt-in test).
+//
+// Per-backend cleanup: each backend stores objects under a different
+// container path; the helper wipes only the cluster-id-scoped subtree so
+// concurrent tests in different envPool slots don't trample each other.
+func (env *TestEnvironment) casBootstrapWith(r *require.Assertions, clusterID, baseConfigName, casExtraYAML string) {
+	// Derive the per-backend storage container + path for cleanup.
+	switch baseConfigName {
+	case "config-s3.yml":
+		// MinIO: path: backup/{cluster}/{shard} -> /minio/data/clickhouse/backup/cluster/0/cas/<id>/
+		_ = env.DockerExec("minio", "bash", "-c",
+			fmt.Sprintf("rm -rf /minio/data/clickhouse/backup/cluster/0/cas/%s/", clusterID))
+		_ = env.DockerExec("minio", "bash", "-c", "mkdir -p /minio/data/clickhouse")
+	case "config-gcs.yml":
+		// fake-gcs-server: bucket=altinity-qa-test, path: backup/{cluster}/{shard}
+		_ = env.DockerExec("gcs", "sh", "-c",
+			fmt.Sprintf("rm -rf /data/altinity-qa-test/backup/cluster/0/cas/%s/", clusterID))
+		_ = env.DockerExec("gcs", "sh", "-c", "mkdir -p /data/altinity-qa-test")
+	case "config-azblob.yml":
+		// Azurite stores objects in an internal SQLite-backed tree under
+		// /data (tmpfs); there is no clean path-based wipe. Rely on
+		// unique cluster IDs and the tests' own cas-delete + cas-prune
+		// cleanup at the end.
+	case "config-sftp-auth-password.yaml":
+		// SFTP: path: /root -> /root/cas/<id>/ on the sshd container.
+		_ = env.DockerExec("sshd", "sh", "-c",
+			fmt.Sprintf("rm -rf /root/cas/%s/", clusterID))
+	case "config-ftp.yaml":
+		// FTP: path: /backup -> /backup/cas/<id>/ on the ftp container.
+		_ = env.DockerExec("ftp", "sh", "-c",
+			fmt.Sprintf("rm -rf /backup/cas/%s/ /home/test_backup/backup/cas/%s/", clusterID, clusterID))
+	default:
+		r.FailNow(fmt.Sprintf("casBootstrapWith: unsupported baseConfigName=%q", baseConfigName))
+	}
+
+	// Local backups must be wiped wholesale because v1 'create' rejects
+	// an existing same-named backup (regardless of CAS namespace). Test
+	// names embed the test prefix to avoid collisions across tests.
 	_ = env.DockerExec("clickhouse", "bash", "-c", "rm -rf /var/lib/clickhouse/backup/*")
 
 	casBlock := fmt.Sprintf(`
@@ -50,9 +77,9 @@ cas:
   inline_threshold: 1024
   grace_blob: 24h
   abandon_threshold: 168h
-`, clusterID)
-	cmd := fmt.Sprintf("cp /etc/clickhouse-backup/config-s3.yml %s && cat >>%s <<'CASEOF'%sCASEOF",
-		casConfigPath, casConfigPath, casBlock)
+%s`, clusterID, casExtraYAML)
+	cmd := fmt.Sprintf("cp /etc/clickhouse-backup/%s %s && cat >>%s <<'CASEOF'%sCASEOF",
+		baseConfigName, casConfigPath, casConfigPath, casBlock)
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", cmd)
 }
 
