@@ -180,6 +180,7 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 	// the contract §6.5 specifies.
 	bmLocal := *bm
 	bmLocal.CAS = nil
+	bmLocal.Tables = inScope
 	bmPath := filepath.Join(localDir, "metadata.json")
 	bmBody, err := json.MarshalIndent(&bmLocal, "", "\t")
 	if err != nil {

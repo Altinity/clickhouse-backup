@@ -196,6 +196,35 @@ func TestDownload_TableFilter(t *testing.T) {
 	}
 }
 
+// TestDownload_PartialFiltersBmLocal verifies that when cas-download is
+// called with TableFilter, the local metadata.json's Tables list is
+// filtered to match — not a copy of the full remote bm.Tables.
+func TestDownload_PartialFiltersBmLocal(t *testing.T) {
+	parts := []testfixtures.PartSpec{
+		{Disk: "default", DB: "db1", Table: "keep", Name: "p1",
+			Files: []testfixtures.FileSpec{{Name: "data.bin", Size: 4096, HashLow: 1, HashHigh: 1}}},
+		{Disk: "default", DB: "db1", Table: "drop", Name: "p1",
+			Files: []testfixtures.FileSpec{{Name: "data.bin", Size: 4096, HashLow: 2, HashHigh: 2}}},
+	}
+	_, _, _, root := uploadAndDownload(t, parts, "bk", cas.DownloadOptions{
+		TableFilter: []string{"db1.keep"},
+	})
+	body, err := os.ReadFile(filepath.Join(root, "bk", "metadata.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bm metadata.BackupMetadata
+	if err := json.Unmarshal(body, &bm); err != nil {
+		t.Fatal(err)
+	}
+	if len(bm.Tables) != 1 {
+		t.Fatalf("local bm.Tables should have 1 entry; got %d: %+v", len(bm.Tables), bm.Tables)
+	}
+	if bm.Tables[0].Database != "db1" || bm.Tables[0].Table != "keep" {
+		t.Errorf("local bm.Tables should be [db1.keep]; got %+v", bm.Tables)
+	}
+}
+
 func TestDownload_SchemaOnly(t *testing.T) {
 	parts := []testfixtures.PartSpec{
 		{Disk: "default", DB: "db1", Table: "t1", Name: "p1", Files: []testfixtures.FileSpec{
