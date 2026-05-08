@@ -208,3 +208,37 @@ func TestSkipPrefixes_EmptyRootPrefixReturnsNil(t *testing.T) {
 		t.Errorf("empty RootPrefix should return nil, got %v", got)
 	}
 }
+
+func TestCASConfig_WaitForPruneParses(t *testing.T) {
+	c := validEnabled()
+	c.WaitForPrune = "5m"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if got := c.WaitForPruneDuration(); got != 5*time.Minute {
+		t.Errorf("WaitForPruneDuration: got %v want 5m", got)
+	}
+}
+
+func TestCASConfig_WaitForPruneDefaultsZero(t *testing.T) {
+	c := validEnabled()
+	// WaitForPrune is intentionally absent / empty string
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if got := c.WaitForPruneDuration(); got != 0 {
+		t.Errorf("WaitForPruneDuration: got %v want 0", got)
+	}
+}
+
+func TestCASConfig_WaitForPruneRejectsBadDuration(t *testing.T) {
+	c := validEnabled()
+	c.WaitForPrune = "banana"
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("expected error for bad duration, got nil")
+	}
+	if !strings.Contains(err.Error(), "wait_for_prune") {
+		t.Errorf("error should mention wait_for_prune, got: %v", err)
+	}
+}

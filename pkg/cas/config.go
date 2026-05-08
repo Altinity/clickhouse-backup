@@ -24,6 +24,7 @@ type Config struct {
 	InlineThreshold  uint64 `yaml:"inline_threshold" envconfig:"CAS_INLINE_THRESHOLD"`
 	GraceBlob        string `yaml:"grace_blob" envconfig:"CAS_GRACE_BLOB"`
 	AbandonThreshold string `yaml:"abandon_threshold" envconfig:"CAS_ABANDON_THRESHOLD"`
+	WaitForPrune     string `yaml:"wait_for_prune" envconfig:"CAS_WAIT_FOR_PRUNE"`
 	// AllowUnsafeMarkers, when true, lets backends without native atomic-create
 	// (currently only FTP) write CAS markers using a stat-then-rename fallback
 	// with a documented race window. Default false; CAS refuses marker writes
@@ -33,6 +34,7 @@ type Config struct {
 	// Parsed by Validate(). Zero until Validate() runs.
 	graceBlobDur        time.Duration
 	abandonThresholdDur time.Duration
+	waitForPruneDur     time.Duration
 }
 
 // GraceBlobDuration returns the parsed grace_blob value. Returns 0 if
@@ -42,6 +44,10 @@ func (c Config) GraceBlobDuration() time.Duration { return c.graceBlobDur }
 // AbandonThresholdDuration returns the parsed abandon_threshold value.
 // Returns 0 if Validate() has not been called.
 func (c Config) AbandonThresholdDuration() time.Duration { return c.abandonThresholdDur }
+
+// WaitForPruneDuration returns the parsed wait_for_prune value. Returns 0 if
+// Validate() has not been called or wait_for_prune was not set.
+func (c Config) WaitForPruneDuration() time.Duration { return c.waitForPruneDur }
 
 // DefaultConfig returns the safe defaults. Enabled is false by default; CAS
 // is opt-in. ClusterID has no default — operators MUST set it explicitly when
@@ -146,5 +152,15 @@ func (c *Config) Validate() error {
 	}
 	c.graceBlobDur = gb
 	c.abandonThresholdDur = at
+	if c.WaitForPrune != "" {
+		wfp, err := time.ParseDuration(c.WaitForPrune)
+		if err != nil {
+			return fmt.Errorf("cas.wait_for_prune %q: %w", c.WaitForPrune, err)
+		}
+		if wfp < 0 {
+			return fmt.Errorf("cas.wait_for_prune must be >= 0, got %v", wfp)
+		}
+		c.waitForPruneDur = wfp
+	}
 	return nil
 }
