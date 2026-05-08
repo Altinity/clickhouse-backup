@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -13,7 +12,6 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 )
@@ -387,27 +385,31 @@ func (api *APIServer) httpCASDeleteHandler(w http.ResponseWriter, r *http.Reques
 		fullCommand += " --wait-for-prune=" + waitForPruneStr
 	}
 
-	commandId, _ := status.Current.Start(fullCommand)
-	deleteErr, _ := api.metrics.ExecuteWithMetrics("cas-delete", 0, func() error {
-		b := backup.NewBackuper(cfg)
-		return b.CASDelete(name, commandId, waitForPrune)
-	})
-	status.Current.Stop(commandId, deleteErr)
-
-	if deleteErr != nil {
-		api.writeError(w, casDeleteHTTPStatus(deleteErr), "cas-delete", deleteErr)
+	operationId, _ := uuid.NewUUID()
+	callback, err := parseCallback(query)
+	if err != nil {
+		log.Error().Err(err).Send()
+		api.writeError(w, http.StatusBadRequest, "cas-delete", err)
 		return
 	}
 
-	api.sendJSONEachRow(w, http.StatusOK, struct {
-		Status     string `json:"status"`
-		Operation  string `json:"operation"`
-		BackupName string `json:"backup_name"`
-	}{
-		Status:     "success",
-		Operation:  "cas-delete",
-		BackupName: name,
-	})
+	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	go func() {
+		err, _ := api.metrics.ExecuteWithMetrics("cas-delete", 0, func() error {
+			b := backup.NewBackuper(cfg)
+			return b.CASDelete(name, commandId, waitForPrune)
+		})
+		if err != nil {
+			log.Error().Msgf("cas-delete error: %v", err)
+			status.Current.Stop(commandId, err)
+			api.errorCallback(context.Background(), err, operationId.String(), callback)
+			return
+		}
+		status.Current.Stop(commandId, nil)
+		api.successCallback(context.Background(), operationId.String(), callback)
+	}()
+
+	api.sendJSONEachRow(w, http.StatusOK, newAsyncAck("cas-delete", name, operationId.String()))
 }
 
 // httpCASVerifyHandler handles POST /backup/cas-verify/{name}
@@ -537,14 +539,3 @@ func (api *APIServer) httpCASStatusHandler(w http.ResponseWriter, r *http.Reques
 	api.sendJSONEachRow(w, http.StatusOK, report)
 }
 
-// casDeleteHTTPStatus maps a cas.Delete error to an HTTP status code.
-// Permanent-state conflicts → 409 so retry loops don't spin on 500.
-// ErrBackupExists is intentionally NOT mapped here: it's only returned from
-// cas-upload (pkg/cas/upload.go), never from cas.Delete. Add it back with a
-// comment if a future code path makes it reachable.
-func casDeleteHTTPStatus(err error) int {
-	if errors.Is(err, cas.ErrPruneInProgress) || errors.Is(err, cas.ErrUploadInProgress) {
-		return http.StatusConflict
-	}
-	return http.StatusInternalServerError
-}
