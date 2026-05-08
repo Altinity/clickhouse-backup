@@ -151,6 +151,39 @@ func TestSweep_EmptyBucket(t *testing.T) {
 	}
 }
 
+// TestSweep_ZeroModTimeBlobIsSkipped verifies that a blob with a zero
+// ModTime is NOT classified as orphan-eligible — same conservative
+// choice as the marker side: false-positive cleanup would delete live
+// blobs on FTP backends that return zero ModTime.
+func TestSweep_ZeroModTimeBlobIsSkipped(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	cp := cfg.ClusterPrefix()
+	ctx := context.Background()
+
+	// Create an orphan blob with zero ModTime.
+	hOrphan := cas.Hash128{Low: 0xab, High: 0x10}
+	_ = f.PutFile(ctx, cas.BlobPath(cp, hOrphan), io.NopCloser(bytes.NewReader([]byte("x"))), 1)
+	f.SetModTime(cas.BlobPath(cp, hOrphan), time.Time{})
+
+	// Empty mark set → the only path SweepOrphans uses is the orphan-vs-cutoff
+	// branch. Without the zero-ModTime guard, the blob would be classified
+	// as orphan past grace.
+	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{
+		GraceBlob:    time.Nanosecond,
+		GraceBlobSet: true,
+	})
+	if err != nil {
+		t.Fatalf("Prune unexpectedly errored: %v", err)
+	}
+	if rep.OrphansDeleted != 0 {
+		t.Errorf("zero-ModTime blob was reaped (OrphansDeleted=%d); expected 0", rep.OrphansDeleted)
+	}
+	if _, _, exists, _ := f.StatFile(ctx, cas.BlobPath(cp, hOrphan)); !exists {
+		t.Error("zero-ModTime blob was deleted; expected to survive")
+	}
+}
+
 func TestSweep_ManyShardsParallel(t *testing.T) {
 	f := fakedst.New()
 	cp := "cas/c1/"

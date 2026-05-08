@@ -251,6 +251,13 @@ func classifyInProgress(ctx context.Context, b Backend, cp string, abandon time.
 		if name == "" || strings.Contains(name, "/") {
 			return nil
 		}
+		if rf.ModTime.IsZero() {
+			log.Warn().
+				Str("backup", name).
+				Msg("cas-prune: in-progress marker has zero ModTime (likely FTP LIST without MLSD); classifying as fresh")
+			fresh = append(fresh, inProgressMarker{Backup: name, ModTime: rf.ModTime, Age: 0})
+			return nil
+		}
 		age := now.Sub(rf.ModTime)
 		m := inProgressMarker{Backup: name, ModTime: rf.ModTime, Age: age}
 		if age >= abandon {

@@ -294,6 +294,36 @@ func TestPrune_RefusesWhenDisabled(t *testing.T) {
 	}
 }
 
+// TestPrune_ZeroModTimeMarkerIsFresh verifies that a marker with a
+// zero ModTime (e.g. FTP LIST without MLSD facts) is classified as
+// fresh, not abandoned. The conservative choice avoids the data-loss
+// path where prune sweeps a real in-progress upload.
+func TestPrune_ZeroModTimeMarkerIsFresh(t *testing.T) {
+	f := fakedst.New()
+	cp := testCfg(1024).ClusterPrefix()
+	ctx := context.Background()
+
+	// Place a marker with zero ModTime via the fake's hook.
+	if _, err := cas.WriteInProgressMarker(ctx, f, cp, "bk_zero", "host"); err != nil {
+		t.Fatal(err)
+	}
+	f.SetModTime(cas.InProgressMarkerPath(cp, "bk_zero"), time.Time{})
+
+	// Use a very small abandon threshold so a non-zero-ModTime marker
+	// would otherwise classify as abandoned.
+	rep, err := cas.Prune(ctx, f, testCfg(1024), cas.PruneOptions{
+		AbandonThreshold:    time.Nanosecond,
+		AbandonThresholdSet: true,
+	})
+	// The marker is fresh → Prune should refuse with the freshness error.
+	if err == nil {
+		t.Fatalf("expected Prune to refuse for fresh marker; rep=%+v", rep)
+	}
+	if !strings.Contains(err.Error(), "are fresh") {
+		t.Errorf("expected 'are fresh' in error; got: %v", err)
+	}
+}
+
 // TestPrune_RefusesIfAnotherPruneRunning verifies that a second cas-prune
 // run refuses cleanly when another prune is in flight, AND that the
 // existing marker is not deleted by the failing run's deferred cleanup.

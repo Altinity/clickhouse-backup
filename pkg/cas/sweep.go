@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 // OrphanCandidate identifies a blob that the sweep phase considers eligible
@@ -157,7 +159,11 @@ func streamCompareWithMarks(shards []shardOutForCompare, marks *MarkSetReader, c
 		}
 		if !(haveMark && mark == blob.hash) {
 			// Blob is not referenced by any live backup → orphan candidate.
-			if blob.modTime.Before(cutoff) {
+			if blob.modTime.IsZero() {
+				log.Warn().
+					Str("key", blob.key).
+					Msg("cas-sweep: blob has zero ModTime (likely FTP LIST without MLSD); skipping (treating as inside grace window)")
+			} else if blob.modTime.Before(cutoff) {
 				out = append(out, OrphanCandidate{
 					Hash: blob.hash, Key: blob.key, ModTime: blob.modTime, Size: blob.size,
 				})
