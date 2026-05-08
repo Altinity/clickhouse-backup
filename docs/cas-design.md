@@ -384,8 +384,14 @@ cas:
   enabled: false             # gate; set true to allow cas-* commands against this config
   cluster_id: ""             # REQUIRED, no default. Identifies the source cluster;
                              #   persisted in BackupMetadata.CAS.ClusterID.
-  root_prefix: "cas/"        # top-level prefix in the bucket. Effective per-cluster prefix
-                             #   is <root_prefix><cluster_id>/  (e.g. "cas/prod-shard-1/")
+  root_prefix: "cas/"        # top-level prefix in the bucket. MUST be a single path
+                             #   segment (e.g. "cas/" or "snapshots/"), not nested like
+                             #   "backups/cas/" — multi-segment values would escape v1
+                             #   list/retention/clean-broken protection. For nested
+                             #   layouts, set the underlying storage path (s3.path /
+                             #   sftp.path / etc.) and keep root_prefix as one segment.
+                             #   Effective per-cluster prefix is
+                             #   <root_prefix><cluster_id>/  (e.g. "cas/prod-shard-1/").
   inline_threshold: 262144   # bytes (256 KiB); ValidateBackup MUST reject 0 or > 1 GiB
   grace_blob: "24h"          # prune won't delete a blob younger than this. Go duration string.
   abandon_threshold: "168h"  # 7 days; in-progress markers older than this are auto-cleaned. Go duration string.

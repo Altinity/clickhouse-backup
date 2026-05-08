@@ -153,6 +153,19 @@ func (c *Config) Validate() error {
 	if strings.Contains(c.RootPrefix, "..") || strings.HasPrefix(c.RootPrefix, "/") {
 		return fmt.Errorf("cas.root_prefix %q must not contain %q or start with %q", c.RootPrefix, "..", "/")
 	}
+	// Multi-segment root_prefix (e.g. "backups/cas/") would escape v1 list/
+	// retention/clean-broken protection: BackupList walks the bucket root
+	// at depth 0 and emits single-segment entries like "backups", but
+	// SkipPrefixes returns "backups/cas/", so the equality/HasPrefix check
+	// in pkg/storage/general.go::BackupList misses the parent directory
+	// and v1 may treat the CAS parent as a broken v1 backup. v1 of CAS
+	// requires a single-segment root_prefix; for nested layouts, set the
+	// underlying BackupDestination path (s3.path / sftp.path / etc.) to
+	// the parent and keep cas.root_prefix as a single segment.
+	trimmed := strings.TrimSuffix(c.RootPrefix, "/")
+	if strings.Contains(trimmed, "/") {
+		return fmt.Errorf("cas.root_prefix %q must be a single path segment (e.g. \"cas/\"); for nested layouts, set the storage backend path (s3.path / sftp.path / etc.) and keep cas.root_prefix as one segment", c.RootPrefix)
+	}
 	if c.InlineThreshold == 0 || c.InlineThreshold > MaxInline {
 		return fmt.Errorf("cas.inline_threshold must be in (0, %d], got %d", MaxInline, c.InlineThreshold)
 	}

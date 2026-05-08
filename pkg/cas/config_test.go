@@ -82,7 +82,11 @@ func TestValidate_RejectsEmptyClusterID(t *testing.T) {
 }
 
 func TestValidate_RejectsBadRootPrefix(t *testing.T) {
-	for _, bad := range []string{"", "cas/../escape/", "/abs/path/", "..", "/cas/"} {
+	for _, bad := range []string{"", "cas/../escape/", "/abs/path/", "..", "/cas/",
+		// Multi-segment root_prefix would escape v1 list/retention/clean-broken
+		// protection (the depth-0 BackupList walk emits single-segment names).
+		"backups/cas/", "a/b/c/", "deep/cas",
+	} {
 		c := validEnabled()
 		c.RootPrefix = bad
 		if err := c.Validate(); err == nil {
