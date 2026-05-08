@@ -252,6 +252,18 @@ func (b *Backuper) CollectRemoteCASBackups(ctx context.Context) []BackupInfo {
 	if b.cfg.General.RemoteStorage == "none" || b.cfg.General.RemoteStorage == "custom" {
 		return nil
 	}
+	// Macros in storage paths (e.g. {shard}, {cluster}) require an open
+	// ClickHouse connection before NewBackupDestination is called so that
+	// ApplyMacros can resolve them. Mirror the pattern used in
+	// GetRemoteBackups and CollectLocalBackups: connect if not already open,
+	// and defer Close so we don't leave a dangling connection.
+	if !b.ch.IsOpen {
+		if err := b.ch.Connect(); err != nil {
+			log.Warn().Msgf("CollectRemoteCASBackups: ch.Connect failed: %v", err)
+			return nil
+		}
+		defer b.ch.Close()
+	}
 	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
 	if err != nil {
 		log.Warn().Msgf("CollectRemoteCASBackups NewBackupDestination: %v", err)
