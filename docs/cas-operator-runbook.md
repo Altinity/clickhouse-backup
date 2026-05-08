@@ -224,3 +224,54 @@ Alerts to consider:
 
 A simple cron entry to dump `cas-status` to a log every 15 minutes makes
 all of the above trivially monitorable via your existing log pipeline.
+
+## REST API endpoints
+
+In daemon mode (`clickhouse-backup server`), the CAS commands are available
+via HTTP on the same port as the v1 API endpoints (default `:7171`):
+
+| Method | Path | Maps to CLI |
+|--------|------|-------------|
+| POST | `/backup/cas-upload/{name}` | `cas-upload` |
+| POST | `/backup/cas-download/{name}` | `cas-download` |
+| POST | `/backup/cas-restore/{name}` | `cas-restore` |
+| POST | `/backup/cas-delete/{name}` | `cas-delete` |
+| POST | `/backup/cas-verify/{name}` | `cas-verify` |
+| POST | `/backup/cas-prune` | `cas-prune` |
+| GET  | `/backup/cas-status` | `cas-status` |
+
+Async commands (`cas-upload`, `cas-download`, `cas-restore`, `cas-verify`,
+`cas-prune`) return an `acknowledged` JSON envelope with an `operation_id`;
+poll `GET /backup/status?operationid=<id>` for completion. `cas-delete` and
+`cas-status` are synchronous and return the result directly.
+
+CLI flags map to query parameters of the same name, e.g.:
+
+```sh
+# async upload
+curl -XPOST 'http://localhost:7171/backup/cas-upload/my_backup?skip-object-disks&wait-for-prune=5m'
+
+# async restore with drop-and-recreate
+curl -XPOST 'http://localhost:7171/backup/cas-restore/my_backup?rm'
+
+# async prune — dry run
+curl -XPOST 'http://localhost:7171/backup/cas-prune?dry-run'
+
+# sync delete
+curl -XPOST 'http://localhost:7171/backup/cas-delete/my_backup'
+
+# poll completion
+curl -s 'http://localhost:7171/backup/status?operationid=<id>' | jq .
+```
+
+`GET /backup/list[/remote]` now includes CAS backups alongside v1 entries.
+Each entry carries a `"kind"` field (`"v1"` or `"cas"`), and CAS entries
+include a `"cas"` sub-object with `unique_blobs`, `blob_bytes`, and
+`cluster_id`.
+
+`POST /backup/actions` recognizes the same `cas-*` verbs in the command
+body, e.g. `{"command": "cas-upload mybk --skip-object-disks"}`.
+
+The `cas-prune --unlock` flag is also available via `?unlock=true`. It
+overrides a stranded prune marker; use with the same operator confidence
+required when running the CLI form.

@@ -674,6 +674,11 @@ Display a list of all operations from start of API server: `curl -s localhost:71
 - Optional string query argument `filter` to filter actions on server side.
 - Optional string query argument `last` to show only the last `N` actions.
 
+### CAS endpoints
+
+For CAS commands (`cas-upload`, `cas-restore`, etc.), see the corresponding
+`/backup/cas-*` endpoints documented in [docs/cas-operator-runbook.md](docs/cas-operator-runbook.md).
+
 ## Examples
 
 - [Simple cron script for daily backups and remote upload](Examples.md#simple-cron-script-for-daily-backups-and-remote-upload)
