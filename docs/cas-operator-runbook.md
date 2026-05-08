@@ -147,6 +147,29 @@ If your backend is FTP and you have not set `cas.allow_unsafe_markers`,
 `cas-upload` and `cas-prune` will refuse with an `ErrConditionalPutNotSupported`-derived
 message at marker-write time.
 
+### CI smoke-test coverage
+
+The atomic-marker primitive is exercised end-to-end against a real-or-
+emulator server in CI for these backends:
+
+| Backend | Integration test | Emulator |
+|---|---|---|
+| s3 | `TestCAS*` (11 tests covering upload, restore, prune, projections, empty tables, concurrency) | MinIO `latest` |
+| gcs | `TestCASSmokeGCS` (full upload → restore → delete → prune cycle) | fake-gcs-server `latest` |
+| azblob | `TestCASSmokeAzure` (same cycle) | Azurite `latest` |
+| sftp | `TestCASSmokeSFTP` (same cycle) | OpenSSH-server (panubo/sshd `latest`) |
+| ftp | `TestCASSmokeFTPRefusesByDefault` + `TestCASSmokeFTPOptIn` | proftpd `latest` |
+| cos | none — no Tencent COS emulator available | rely on SDK correctness; report regressions to maintainers |
+
+S3 has the most thorough coverage (11 tests covering concurrency,
+partial restore, projections, etc.). The other backends have a single
+smoke test each that proves the core upload/restore path works through
+that backend's atomic-marker primitive. The smoke tests catch SDK-level
+wiring bugs (e.g., the `casstorage` adapter calling the wrong method
+that Phase 4 T12 caught) but do not cover concurrency edge cases on
+non-S3 backends; if a real-world race is suspected on Azure / GCS / SFTP /
+FTP, request a follow-up.
+
 ## Recovering from `cas-verify` failures
 
 `cas-verify` reports three failure kinds:
