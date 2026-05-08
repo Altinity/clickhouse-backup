@@ -15,8 +15,9 @@ import (
 
 // Fake is an in-memory implementation of cas.Backend for use in tests.
 type Fake struct {
-	mu    sync.Mutex
-	files map[string]fakeFile
+	mu       sync.Mutex
+	files    map[string]fakeFile
+	statHook func(key string) (size int64, modTime time.Time, exists bool, err error, override bool)
 }
 
 type fakeFile struct {
@@ -35,6 +36,15 @@ func (f *Fake) SetModTime(key string, t time.Time) {
 		e.modTime = t
 		f.files[key] = e
 	}
+}
+
+// SetStatHook installs a function consulted by StatFile before its normal
+// lookup. If the hook returns override=true, its other return values are
+// used verbatim. Used by tests to inject errors at specific keys.
+func (f *Fake) SetStatHook(h func(key string) (int64, time.Time, bool, error, bool)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.statHook = h
 }
 
 // Len is a test helper for assertions.
@@ -84,6 +94,14 @@ func (f *Fake) GetFile(ctx context.Context, key string) (io.ReadCloser, error) {
 }
 
 func (f *Fake) StatFile(ctx context.Context, key string) (int64, time.Time, bool, error) {
+	f.mu.Lock()
+	hook := f.statHook
+	f.mu.Unlock()
+	if hook != nil {
+		if size, modTime, exists, err, override := hook(key); override {
+			return size, modTime, exists, err
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	e, ok := f.files[key]

@@ -926,3 +926,47 @@ func TestUpload_TableFilter_WithSpecialChars(t *testing.T) {
 		t.Errorf("filter let a non-matching table through; %s present", skip)
 	}
 }
+
+// TestUpload_LeaksNoMarkerOnRecheckError verifies that a StatFile failure
+// at step 11b (the upload's own-marker re-check) cleans up the in-progress
+// marker before returning the error. Without the cleanup, the marker
+// persists for up to abandon_threshold (7 days) and locks out future cas-upload
+// invocations of the same backup name.
+func TestUpload_LeaksNoMarkerOnRecheckError(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	ctx := context.Background()
+
+	// Build a tiny synthetic backup so Upload reaches step 11b.
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "p1",
+		Files: []testfixtures.FileSpec{{Name: "data.bin", Size: 16, HashLow: 1, HashHigh: 2}},
+	}}
+	src := testfixtures.Build(t, parts)
+
+	// Hook fakedst to inject a StatFile error specifically on the
+	// in-progress marker key, AFTER the marker has been written.
+	markerKey := cas.InProgressMarkerPath(cfg.ClusterPrefix(), "bk")
+	f.SetStatHook(func(key string) (size int64, modTime time.Time, exists bool, err error, override bool) {
+		if key == markerKey {
+			return 0, time.Time{}, false, errors.New("simulated transient backend error"), true
+		}
+		return 0, time.Time{}, false, nil, false
+	})
+
+	_, err := cas.Upload(ctx, f, cfg, "bk", cas.UploadOptions{LocalBackupDir: src.Root})
+	if err == nil {
+		t.Fatal("expected Upload to error when StatFile on own marker fails")
+	}
+	if !strings.Contains(err.Error(), "re-check inprogress marker") {
+		t.Errorf("error should mention re-check; got: %v", err)
+	}
+
+	// The cleanup must have run despite the error path.
+	// Clear the hook so we can check the actual backend state.
+	f.SetStatHook(nil)
+	_, _, exists, _ := f.StatFile(context.Background(), markerKey)
+	if exists {
+		t.Error("in-progress marker leaked: still present after step 11b error path")
+	}
+}

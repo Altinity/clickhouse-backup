@@ -290,8 +290,10 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 	}
 	// 11b. our own inprogress marker
 	if _, _, exists, err := b.StatFile(ctx, InProgressMarkerPath(cp, name)); err != nil {
+		_ = DeleteInProgressMarker(ctx, b, cp, name)
 		return nil, fmt.Errorf("cas: re-check inprogress marker: %w", err)
 	} else if !exists {
+		// The marker is already gone (swept by an over-eager prune); no cleanup needed.
 		return nil, fmt.Errorf("cas: in-progress marker for %q was swept (upload exceeded abandon_threshold); aborting", name)
 	}
 
