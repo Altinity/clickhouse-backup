@@ -558,13 +558,19 @@ This section is the consolidated backlog of items raised across the design-inter
 
 ### 9.4 Correctness defenses (low-likelihood, defense-in-depth)
 
-- **S3 `IfNoneMatch` startup probe**. AWS S3 supports `IfNoneMatch: "*"` since Nov 2024; older MinIO releases (pre-RELEASE.2024-11) silently ignore the header and the PUT succeeds unconditionally, defeating the marker lock. v1 documents the minimum MinIO version in the runbook; v2 should run a small startup probe (PUT a sentinel twice, expect the second to 412) and refuse to start if the backend silently overwrites.
-- **`RemoteStorage` interface compatibility note in changelog**. Phase 4 added `PutFileAbsoluteIfAbsent` and `ErrConditionalPutNotSupported` to `pkg/storage.RemoteStorage`. Any external downstream implementing this interface directly will fail to compile until they add the method. Flag in release notes.
-- **Downgrade warning for `LayoutVersion`**. Operators downgrading to a tool that doesn't recognize the persisted `BackupMetadata.CAS.LayoutVersion` get a refusal at restore time. Document the upgrade-then-downgrade hazard explicitly in the runbook.
+- **Downgrade warning for `LayoutVersion`**. Operators downgrading to a tool that doesn't recognize the persisted `BackupMetadata.CAS.LayoutVersion` get a refusal at restore time. Document the upgrade-then-downgrade hazard explicitly in the runbook (the operator runbook has a "Binary rollback procedure" section as of wave-5; that warning is about the v1 retention path, not LayoutVersion mismatches at restore time. Both warnings should coexist).
+- **`pkg/pidlock` TOCTOU**. The shared pidlock implementation does read-then-check-then-write across three non-atomic steps. Two concurrent callers can both pass the liveness check and write competing PID files. This is a whole-tool concern (v1 and CAS both use it), not CAS-specific; CAS has worked around it for the cas-download phase via separate prefixes (Phase 8 P2-b) but the underlying race remains. Replace with `O_CREAT|O_EXCL` or a sync.Mutex keyed by lock name.
+- **Probe-key cleanup on prune**. `pkg/cas/probe.go` writes a sentinel under `<clusterPrefix>cas-conditional-put-probe-<random>` and deletes it before returning. If the process crashes between the first PutFileIfAbsent and the deferred Delete, the sentinel persists. Prune today does not sweep the cluster root for these. Cheap fix: have prune walk and delete `<clusterPrefix>cas-conditional-put-probe-*` keys older than e.g. 1 hour, OR write probe keys under `<clusterPrefix>tmp/` and have prune sweep that subtree.
+
+### 9.4.x Storage-layer cleanup
+
+- **`FTP.AllowUnsafeMarkers` field exposure on the storage struct**. `pkg/storage/ftp.go:35` exports `AllowUnsafeMarkers bool` so the CAS layer can wire the config flag through `pkg/storage/general.go`'s NewBackupDestination. No other backend embeds a CAS-specific policy field on its struct — the asymmetry leaks CAS semantics into the storage abstraction. Cleanup options: (a) make it unexported and add a setter the CAS layer calls; (b) remove from the struct and have the CAS layer wrap PutFileIfAbsent with the fallback above the storage interface. Refactor preference, not a correctness bug.
 
 ### 9.5 Test coverage (deferred — load-bearing tests already ship)
 
-- **Real-production error-classification tests for GCS/COS/FTP backends**. Phase 7 added `pkg/storage/errors_test.go` with focused not-found tests, but the GCS/COS/FTP subtests call mirror-functions defined in the test file rather than the production code paths (S3 calls real production code via httptest; azblob and SFTP are explicit `t.Skip` with pointers to integration coverage). Tighten by extracting the production classifiers into named exported helpers and calling them from the test.
+- **`TestPrune_FailClosedOnNilCASMetadata`**. If a v1-style `metadata.json` lands in `cas/<cluster>/metadata/`, all subsequent prune runs abort with "no CAS field". Behavior is correct; lock it with a focused unit test asserting (a) the abort, (b) zero blobs deleted in that run.
+- **`TestBackupList_SkipsV1BackupNamedSameasCASPrefix`**. Wave-A added a WARN log when `BackupList` skips an entry matching a CAS prefix. Add a test that an entry literally named `"cas"` is correctly skipped, while `"casematch"` is NOT — verifies the equality vs. HasPrefix branches.
+- **`TestListRemoteCAS_WalkError`**. `pkg/backup/list.go::CollectRemoteCASBackups` swallows walk errors and returns an empty slice. Add a unit test that asserts a walk error is logged but not propagated, so a future refactor doesn't accidentally break the fail-open contract.
 
 ### 9.6 UX / docs polish
 
