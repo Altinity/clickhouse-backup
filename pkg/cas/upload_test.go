@@ -1594,17 +1594,32 @@ func TestUpload_CancelledContextStillReleasesMarker(t *testing.T) {
 // from accidentally creating a v1 backup that would be silently excluded by
 // BackupList skip-prefix filtering once CAS is enabled.
 func TestUpload_RejectsNameCollidingWithCASPrefix(t *testing.T) {
-	f := fakedst.New()
 	cfg := testCfg(100) // root_prefix="cas/", so "cas" collides
 
-	// No local backup dir needed; the name check happens before any I/O.
-	_, err := cas.Upload(context.Background(), f, cfg, "cas", cas.UploadOptions{
-		LocalBackupDir: t.TempDir(),
+	t.Run("exact_collision_rejected", func(t *testing.T) {
+		f := fakedst.New()
+		_, err := cas.Upload(context.Background(), f, cfg, "cas", cas.UploadOptions{
+			LocalBackupDir: t.TempDir(),
+		})
+		if err == nil {
+			t.Fatal("Upload with colliding name: expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "collides") {
+			t.Errorf("error should mention collision, got: %v", err)
+		}
 	})
-	if err == nil {
-		t.Fatal("Upload with colliding name: expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "collides") {
-		t.Errorf("error should mention collision, got: %v", err)
-	}
+
+	t.Run("prefix_match_NOT_rejected", func(t *testing.T) {
+		// "casematch" starts with "cas" but is not equal to it. The collision
+		// guard must be exact-match, not prefix-match — otherwise it would
+		// over-reject legitimate names. Upload may still error for other
+		// reasons (no local backup contents) but NOT for collision.
+		f := fakedst.New()
+		_, err := cas.Upload(context.Background(), f, cfg, "casematch", cas.UploadOptions{
+			LocalBackupDir: t.TempDir(),
+		})
+		if err != nil && strings.Contains(err.Error(), "collides") {
+			t.Errorf("name 'casematch' must NOT trigger collision error; got: %v", err)
+		}
+	})
 }

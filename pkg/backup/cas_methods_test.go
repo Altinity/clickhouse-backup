@@ -603,3 +603,31 @@ func TestSnapshotObjectDiskHits_AllowUnsafeBypassesDiskQueryError(t *testing.T) 
 		"To add unit coverage, extract a DiskQuerier interface from (*ClickHouse).GetDisks " +
 		"and inject it into Backuper.")
 }
+
+// TestCASUpload_UnlockRefusesIncompatibleFlags locks the operator-facing
+// guard that --unlock cannot be combined with --dry-run or --skip-object-disks
+// (--unlock is a stranded-marker recovery action, not an upload).
+func TestCASUpload_UnlockRefusesIncompatibleFlags(t *testing.T) {
+	cfg := config.DefaultConfig()
+	b := NewBackuper(cfg)
+	cases := []struct {
+		name             string
+		unlock, dryRun   bool
+		skipObjectDisks  bool
+		wantErrSubstring string
+	}{
+		{"unlock_with_dryrun", true, true, false, "--dry-run"},
+		{"unlock_with_skip_object_disks", true, false, true, "--skip-object-disks"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := b.CASUpload("bk", c.skipObjectDisks, c.dryRun, c.unlock, "v0", -1, 0)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), c.wantErrSubstring) {
+				t.Errorf("error should mention %q; got: %v", c.wantErrSubstring, err)
+			}
+		})
+	}
+}
