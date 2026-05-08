@@ -345,6 +345,16 @@ func TestPrune_ReportCountersPopulated(t *testing.T) {
 	}
 }
 
+func TestPrune_RejectsInvalidConfig(t *testing.T) {
+	ctx := context.Background()
+	b := fakedst.New()
+	// Enabled=true but no ClusterID → Validate must reject it.
+	cfg := cas.Config{Enabled: true}
+	_, err := cas.Prune(ctx, b, cfg, cas.PruneOptions{})
+	require.Error(t, err)
+	require.Contains(t, strings.ToLower(err.Error()), "cluster_id")
+}
+
 func TestPrune_RefusesWhenDisabled(t *testing.T) {
 	cfg := testCfg(1024)
 	cfg.Enabled = false

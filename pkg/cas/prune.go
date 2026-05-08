@@ -62,6 +62,9 @@ type PruneReport struct {
 // defer registered ONLY when this run owns the marker. A second concurrent
 // prune sees created=false and returns an error without touching the marker.
 func Prune(ctx context.Context, b Backend, cfg Config, opts PruneOptions) (*PruneReport, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("cas: prune: invalid config: %w", err)
+	}
 	if !cfg.Enabled {
 		return nil, errors.New("cas: cas.enabled=false")
 	}
