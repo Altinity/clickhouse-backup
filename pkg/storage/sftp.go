@@ -288,14 +288,21 @@ func (sftp *SFTP) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.
 		}
 		return false, errors.WithMessage(err, "SFTP PutFileAbsoluteIfAbsent OpenFile")
 	}
+	closed := false
 	defer func() {
-		if cerr := f.Close(); cerr != nil {
-			log.Warn().Msgf("can't close %s err=%v", key, cerr)
+		if !closed {
+			if cerr := f.Close(); cerr != nil {
+				log.Warn().Msgf("can't close %s err=%v", key, cerr)
+			}
 		}
 	}()
 	if _, err := f.ReadFrom(r); err != nil {
 		// Best-effort cleanup: if the write failed mid-stream, remove the
 		// partial file so the next attempt sees the slot as available.
+		// Close the file handle first — some SFTP servers refuse to delete
+		// an open file.
+		closed = true
+		_ = f.Close()
 		_ = sftp.sftpClient.Remove(key)
 		return false, errors.WithMessage(err, "SFTP PutFileAbsoluteIfAbsent ReadFrom")
 	}
