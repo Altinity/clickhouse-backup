@@ -208,16 +208,27 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 
 	// 5. Save root metadata.json into the staging dir.
 	//
-	// We strip BackupMetadata.CAS from the local copy so that the existing
-	// v1 restore flow accepts the handoff. The cross-mode guard in
-	// pkg/backup/restore.go refuses to operate on backups where CAS != nil
-	// — that guard is intentional for direct v1 invocation, but cas-restore
-	// has already validated the backup at the CAS layer and is materializing
-	// a v1-shaped local layout. Stripping the field here keeps the on-disk
-	// layout indistinguishable from a v1 directory-format backup, which is
-	// the contract §6.5 specifies.
+	// We keep BackupMetadata.CAS populated in the local copy but set the
+	// Handoff flag to true. This serves two purposes:
+	//
+	//  (a) The v1 early-refusal guard in pkg/backup/restore.go (which returns
+	//      ErrCASBackup when CAS != nil) is updated to allow Handoff backups,
+	//      so cas-restore can invoke the v1 path on the materialized layout.
+	//
+	//  (b) The two object-disk-skip guards later in restore.go check
+	//      "backupMetadata.CAS == nil" to decide whether to call
+	//      downloadObjectDiskParts. With CAS != nil those guards correctly
+	//      skip the call — CAS backups never carry object-disk metadata files,
+	//      so any attempt to download them would fail with "file not found".
+	//
+	// Previously CAS was nil-ed, which silently defeated (b): on a target
+	// cluster where the table lives on an object-storage disk, v1 would call
+	// downloadObjectDiskParts and fail because CAS never wrote those files.
+	// See docs/superpowers/plans/2026-05-08-cas-review-wave-5.md §N3.
 	bmLocal := *bm
-	bmLocal.CAS = nil
+	handoffCAS := *bm.CAS
+	handoffCAS.Handoff = true
+	bmLocal.CAS = &handoffCAS
 	bmLocal.Tables = inScope
 	bmPath := filepath.Join(stageDir, "metadata.json")
 	bmBody, err := json.MarshalIndent(&bmLocal, "", "\t")

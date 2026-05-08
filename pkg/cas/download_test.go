@@ -62,9 +62,13 @@ func TestDownload_RoundTripBytes(t *testing.T) {
 	lb, _, _, root := uploadAndDownload(t, parts, "b1", cas.DownloadOptions{})
 	localBackupDir := filepath.Join(root, "b1")
 
-	// Check root metadata.json: parseable. CAS field is intentionally stripped
-	// from the LOCAL copy (so v1 restore handoff works); the REMOTE
-	// metadata.json keeps it. See pkg/cas/download.go for rationale.
+	// Check root metadata.json: parseable. The LOCAL copy keeps CAS populated
+	// but with Handoff = true so that:
+	//   (a) the v1 early-refusal guard allows cas-restore handoff backups, and
+	//   (b) the object-disk-skip guards (which check CAS == nil) continue to
+	//       fire and skip downloadObjectDiskParts (CAS never wrote those files).
+	// The REMOTE metadata.json has CAS.Handoff = false.
+	// See pkg/cas/download.go and docs/superpowers/plans/2026-05-08-cas-review-wave-5.md §N3.
 	bmBody, err := os.ReadFile(filepath.Join(localBackupDir, "metadata.json"))
 	if err != nil {
 		t.Fatalf("read root metadata.json: %v", err)
@@ -73,8 +77,11 @@ func TestDownload_RoundTripBytes(t *testing.T) {
 	if err := json.Unmarshal(bmBody, &bm); err != nil {
 		t.Fatalf("parse local metadata.json: %v", err)
 	}
-	if bm.CAS != nil {
-		t.Fatal("local metadata.json: CAS field MUST be stripped (v1 restore would refuse otherwise)")
+	if bm.CAS == nil {
+		t.Fatal("local metadata.json: CAS field MUST be preserved for object-disk-skip guards to fire")
+	}
+	if !bm.CAS.Handoff {
+		t.Fatal("local metadata.json: CAS.Handoff MUST be true to allow v1 early-refusal guard to pass")
 	}
 	if bm.DataFormat != "directory" {
 		t.Errorf("DataFormat: got %q want directory", bm.DataFormat)
@@ -771,6 +778,50 @@ func TestDownload_AtomicReplaceOfStaleSameNameDirectory(t *testing.T) {
 	}
 	if bm.BackupName != "b1" {
 		t.Errorf("new metadata.json: backup_name=%q want b1", bm.BackupName)
+	}
+}
+
+// TestDownload_WritesHandoffCAS verifies that the local metadata.json written
+// by cas-download preserves the CAS field with Handoff = true (N3 fix).
+//
+// This is the contract that makes the v1 object-disk-skip guards reachable
+// during cas-restore: the guards check "backupMetadata.CAS == nil" and skip
+// downloadObjectDiskParts when CAS is set. Previously CAS was nil-ed which
+// silently defeated those guards and caused restore failures when a table's
+// target disk was object-backed.
+func TestDownload_WritesHandoffCAS(t *testing.T) {
+	parts := []testfixtures.PartSpec{{
+		Disk: "default", DB: "db1", Table: "t1", Name: "all_1_1_0",
+		Files: []testfixtures.FileSpec{
+			{Name: "columns.txt", Size: 8, HashLow: 1, HashHigh: 0},
+		},
+	}}
+	_, _, _, root := uploadAndDownload(t, parts, "bk", cas.DownloadOptions{})
+
+	body, err := os.ReadFile(filepath.Join(root, "bk", "metadata.json"))
+	if err != nil {
+		t.Fatalf("read metadata.json: %v", err)
+	}
+	var bm metadata.BackupMetadata
+	if err := json.Unmarshal(body, &bm); err != nil {
+		t.Fatalf("parse metadata.json: %v", err)
+	}
+
+	// CAS must NOT be nil: the object-disk-skip guards in restore.go fire
+	// only when CAS != nil.
+	if bm.CAS == nil {
+		t.Fatal("local metadata.json must have CAS != nil so v1 object-disk-skip guards fire")
+	}
+
+	// Handoff must be true: the v1 early-refusal guard allows the handoff
+	// only when CAS.Handoff == true.
+	if !bm.CAS.Handoff {
+		t.Fatal("local metadata.json must have CAS.Handoff = true to pass v1 early-refusal guard")
+	}
+
+	// LayoutVersion and InlineThreshold must be preserved from the remote.
+	if bm.CAS.LayoutVersion != cas.LayoutVersion {
+		t.Errorf("CAS.LayoutVersion: got %d want %d", bm.CAS.LayoutVersion, cas.LayoutVersion)
 	}
 }
 

@@ -138,7 +138,14 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	// CAS-format backups are restored exclusively via the cas-restore CLI
 	// (pkg/cas.Restore); the v1 path looks up state (parts on disk, embedded
 	// metadata, object-disk descriptors) that CAS layouts do not carry.
-	if backupMetadata.CAS != nil {
+	//
+	// Exception: when cas-download has materialized a v1-shaped local backup
+	// for the cas-restore handoff it sets CAS.Handoff = true in the local
+	// metadata.json to signal "this layout was written by cas-restore; v1
+	// restore is permitted here, and object-disk handling must be skipped."
+	// The two downloadObjectDiskParts guards below already check CAS == nil
+	// and skip the call when CAS is set (including the Handoff case).
+	if backupMetadata.CAS != nil && !backupMetadata.CAS.Handoff {
 		return cas.ErrCASBackup
 	}
 	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
