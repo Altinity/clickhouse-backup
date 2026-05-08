@@ -993,7 +993,11 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 			if !part.Required {
 				continue
 			}
-			existsPath := path.Join(b.DiskToPathMap[disk], "backup", remoteBackup.RequiredBackup, "shadow", dbAndTableDir, disk, part.Name)
+			// existsPath must point at the active (rebalanced) disk because that's where
+			// findDiffFileExist routes the source download for parts with RebalancedDisk set.
+			// Using the original disk would yield a missing/relative path and produce a
+			// cross-device hardlink later in makePartHardlinks.
+			existsPath := path.Join(activeDiskPath, "backup", remoteBackup.RequiredBackup, "shadow", dbAndTableDir, activeDisk, part.Name)
 			_, statErr := os.Stat(existsPath)
 			if statErr != nil && !os.IsNotExist(statErr) {
 				return 0, errors.Wrapf(statErr, "%s stat return error", existsPath)
@@ -1015,9 +1019,13 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 					}
 				}
 				partForDownload := part
-				diskForDownload := disk
+				// diskForDownload follows the active (rebalanced) disk so findDiffBackupFilesRemote
+				// computes paths under the same physical disk as existsPath/newPath.
+				diskForDownload := activeDisk
 				capturedExistsPath := existsPath
 				capturedNewPath := newPath
+				// capturedDisk is the original map key for table.Parts; do not switch to activeDisk
+				// or table.Parts[capturedDisk][idx] would index the wrong slice.
 				capturedDisk := disk
 				idx := i
 				downloadDiffGroup.Go(func() error {
