@@ -68,6 +68,12 @@ func (c *COS) Close(ctx context.Context) error {
 	return nil
 }
 
+// cosIsNotFound reports whether err is a "NoSuchKey" response from Tencent COS.
+func cosIsNotFound(err error) bool {
+	var cosErr *cos.ErrorResponse
+	return errors.As(err, &cosErr) && cosErr.Code == "NoSuchKey"
+}
+
 func (c *COS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 	return c.StatFileAbsolute(ctx, path.Join(c.Config.Path, key))
 }
@@ -76,9 +82,7 @@ func (c *COS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, err
 	// @todo - COS Stat file max size is 5Gb
 	resp, err := c.client.Object.Get(ctx, key, nil)
 	if err != nil {
-		var cosErr *cos.ErrorResponse
-		ok := errors.As(err, &cosErr)
-		if ok && cosErr.Code == "NoSuchKey" {
+		if cosIsNotFound(err) {
 			return nil, ErrNotFound
 		}
 		return nil, errors.WithMessage(err, "COS StatFileAbsolute Get")

@@ -21,6 +21,12 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// ftpIsNotFound reports whether err is a 550 response from the FTP server,
+// which all paths in this backend treat as "object/directory does not exist".
+func ftpIsNotFound(err error) bool {
+	return err != nil && strings.HasPrefix(err.Error(), "550")
+}
+
 type FTP struct {
 	clients            *pool.ObjectPool
 	Config             *config.FTPConfig
@@ -104,7 +110,7 @@ func (f *FTP) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, err
 	entries, err := client.List(dir)
 	if err != nil {
 		// proftpd return 550 error if `dir` not exists
-		if strings.HasPrefix(err.Error(), "550") {
+		if ftpIsNotFound(err) {
 			return nil, ErrNotFound
 		}
 		return nil, errors.WithMessage(err, "FTP StatFileAbsolute List")
@@ -145,7 +151,7 @@ func (f *FTP) DeleteFile(ctx context.Context, key string) error {
 	if _, statErr := client.FileSize(fullPath); statErr == nil {
 		// It's a regular file — delete directly.
 		if delErr := client.Delete(fullPath); delErr != nil {
-			if strings.HasPrefix(delErr.Error(), "550") {
+			if ftpIsNotFound(delErr) {
 				return nil // raced with concurrent delete; treat as no-op
 			}
 			return errors.WithMessage(delErr, "FTP DeleteFile Delete")
@@ -155,7 +161,7 @@ func (f *FTP) DeleteFile(ctx context.Context, key string) error {
 	// Either a directory or it doesn't exist. Try RemoveDirRecur and treat
 	// 550 (not found / not a directory) as a successful no-op.
 	if err := client.RemoveDirRecur(fullPath); err != nil {
-		if strings.HasPrefix(err.Error(), "550") {
+		if ftpIsNotFound(err) {
 			return nil
 		}
 		return errors.WithMessage(err, "FTP DeleteFile RemoveDirRecur")
@@ -178,7 +184,7 @@ func (f *FTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, p
 		f.returnConnectionToPool(ctx, "Walk", client)
 		if err != nil {
 			// proftpd return 550 error if prefix not exits
-			if strings.HasPrefix(err.Error(), "550") {
+			if ftpIsNotFound(err) {
 				return nil
 			}
 			return errors.WithMessage(err, "FTP WalkAbsolute List")
@@ -205,7 +211,7 @@ func (f *FTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, p
 			// CAS cold-list walking blob/<shard>/ before any upload).
 			// Return empty, not an error — same semantics as the
 			// non-recursive path above and as S3/GCS/AzBlob/SFTP.
-			if strings.HasPrefix(err.Error(), "550") {
+			if ftpIsNotFound(err) {
 				return nil
 			}
 			return errors.WithMessage(err, "FTP WalkAbsolute walker.Err")
@@ -399,7 +405,7 @@ func (f *FTP) deleteKeysConcurrent(ctx context.Context, keys []string) error {
 			err = client.RemoveDirRecur(key)
 			if err != nil {
 				// Check if it's a "not found" error - that's OK
-				if strings.HasPrefix(err.Error(), "550") {
+				if ftpIsNotFound(err) {
 					mu.Lock()
 					deletedCount++
 					mu.Unlock()

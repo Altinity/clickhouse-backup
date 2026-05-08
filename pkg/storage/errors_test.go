@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
-	"strings"
 	"testing"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -77,42 +76,28 @@ func TestStorage_NotFoundClassification(t *testing.T) {
 	})
 
 	// ── GCS ───────────────────────────────────────────────────────────────────
-	// The GCS path (pkg/storage/gcs.go:452) maps cloud.google.com/go/storage
-	// ErrObjectNotExist → ErrNotFound. The GCS client pools require live auth,
-	// so we verify the sentinel identity directly and document the exact check
-	// used in production rather than calling StatFileAbsolute.
-	//
-	// The production line is:
-	//   if errors.Is(err, storage.ErrObjectNotExist) { return nil, ErrNotFound }
-	//
-	// This subtest verifies that gcsNotFoundClassify (see helper below) — which
-	// is a verbatim copy of that one-liner — produces ErrNotFound, confirming
-	// the mapping intent is correct. If storage.ErrObjectNotExist were ever
-	// changed to a non-sentinel the test would break.
+	// The GCS path (pkg/storage/gcs.go) maps cloud.google.com/go/storage
+	// ErrObjectNotExist → ErrNotFound via the production helper gcsIsNotFound.
+	// The GCS client pools require live auth, so we verify the sentinel identity
+	// directly by calling the production helper rather than StatFileAbsolute.
 	//
 	// Integration coverage: TestIntegrationGCS / TestGCS_StatFile in
 	// test/integration/.
 	t.Run("gcs", func(t *testing.T) {
 		// Import-path note: "cloud.google.com/go/storage" is imported as
 		// "storage" in gcs.go but we access it here via the alias defined
-		// in gcs_sentinel_test.go (see gcsErrObjectNotExist below).
+		// in gcs_testhelper_test.go (see gcsErrObjectNotExist below).
 		syntheticErr := gcsErrObjectNotExist() // sentinel from helper below
-		mapped := gcsNotFoundClassify(syntheticErr)
-		if !errors.Is(mapped, ErrNotFound) {
-			t.Fatalf("GCS not-found classification: got %v, want ErrNotFound", mapped)
+		if !gcsIsNotFound(syntheticErr) {
+			t.Fatalf("GCS not-found classification: gcsIsNotFound(%v) = false, want true", syntheticErr)
 		}
 	})
 
 	// ── COS ───────────────────────────────────────────────────────────────────
-	// The COS path (pkg/storage/cos.go:80-83) checks cosErr.Code == "NoSuchKey".
-	// cos.ErrorResponse is a public struct, so we can construct a synthetic one
-	// and feed it through a copy of the exact classification logic used in
-	// production.
-	//
-	// The production lines are:
-	//   var cosErr *cos.ErrorResponse
-	//   ok := errors.As(err, &cosErr)
-	//   if ok && cosErr.Code == "NoSuchKey" { return nil, ErrNotFound }
+	// The COS path (pkg/storage/cos.go) checks cosErr.Code == "NoSuchKey" via
+	// the production helper cosIsNotFound. cos.ErrorResponse is a public struct,
+	// so we can construct a synthetic one and feed it directly to the production
+	// helper.
 	t.Run("cos", func(t *testing.T) {
 		syntheticErr := &cos.ErrorResponse{
 			Response: &http.Response{
@@ -125,9 +110,8 @@ func TestStorage_NotFoundClassification(t *testing.T) {
 			Message: "The specified key does not exist.",
 		}
 
-		mapped := cosNotFoundClassify(syntheticErr)
-		if !errors.Is(mapped, ErrNotFound) {
-			t.Fatalf("COS not-found classification: got %v, want ErrNotFound", mapped)
+		if !cosIsNotFound(syntheticErr) {
+			t.Fatalf("COS not-found classification: cosIsNotFound(%v) = false, want true", syntheticErr)
 		}
 	})
 
@@ -147,76 +131,32 @@ func TestStorage_NotFoundClassification(t *testing.T) {
 	})
 
 	// ── FTP ───────────────────────────────────────────────────────────────────
-	// The FTP path (pkg/storage/ftp.go:107-108,124) checks two things:
-	//   1. strings.HasPrefix(err.Error(), "550") for List errors (no such dir)
-	//   2. file not found in returned entries list (no file with that name)
-	// Both checks happen inside StatFileAbsolute after getConnectionFromPool,
-	// which dials a live FTP server.
-	//
-	// We verify the string-prefix classification pattern using a synthetic
-	// textproto.Error (the exact type returned by github.com/jlaffaye/ftp for
-	// protocol-level errors).
+	// The FTP path (pkg/storage/ftp.go) uses the production helper ftpIsNotFound
+	// which checks strings.HasPrefix(err.Error(), "550") for List/Delete errors.
+	// Both classification and the "file not found in entries list" path happen
+	// inside StatFileAbsolute after getConnectionFromPool (which dials a live
+	// FTP server). We exercise the production helper directly using a synthetic
+	// textproto.Error (the exact type returned by github.com/jlaffaye/ftp).
 	t.Run("ftp", func(t *testing.T) {
-		// Verify that a 550 textproto.Error string-matches the production check.
+		// Verify the production helper classifies a 550 error as not-found.
 		err550 := &textproto.Error{Code: 550, Msg: "No such file or directory"}
-		if !strings.HasPrefix(err550.Error(), "550") {
-			t.Fatalf("FTP 550 error string %q does not have prefix '550'", err550.Error())
-		}
-
-		// Verify the mapping via the helper (verbatim copy of production logic).
-		mapped := ftpNotFoundClassify(err550)
-		if !errors.Is(mapped, ErrNotFound) {
-			t.Fatalf("FTP not-found classification (550): got %v, want ErrNotFound", mapped)
+		if !ftpIsNotFound(err550) {
+			t.Fatalf("FTP not-found classification (550): ftpIsNotFound(%v) = false, want true", err550)
 		}
 
 		// Verify that a non-550 error is NOT classified as not-found.
 		err530 := &textproto.Error{Code: 530, Msg: "Not logged in"}
-		mapped2 := ftpNotFoundClassify(err530)
-		if errors.Is(mapped2, ErrNotFound) {
-			t.Fatal("FTP non-550 error was incorrectly classified as ErrNotFound")
+		if ftpIsNotFound(err530) {
+			t.Fatal("FTP non-550 error was incorrectly classified as not-found")
 		}
 	})
 }
 
-// ─── helpers that mirror the exact production classification logic ────────────
-
 // gcsErrObjectNotExist returns the GCS sentinel that the production code
-// compares against in StatFileAbsolute (gcs.go:452).
-// It lives in a separate helper so that the cloud.google.com/go/storage import
-// does not pollute the test file's own import block where it would collide with
-// the package-level "storage" identifier.
+// compares against in gcsIsNotFound (gcs.go). It lives in a separate file
+// (gcs_testhelper_test.go) so that the cloud.google.com/go/storage import
+// does not collide with the package-level "storage" identifier here.
 func gcsErrObjectNotExist() error {
 	return gcsGetErrObjectNotExist()
-}
-
-// gcsNotFoundClassify mirrors the exact classification in gcs.go:451-454.
-func gcsNotFoundClassify(err error) error {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, gcsGetErrObjectNotExist()) {
-		return ErrNotFound
-	}
-	return err
-}
-
-// cosNotFoundClassify mirrors the exact classification in cos.go:80-83.
-func cosNotFoundClassify(err error) error {
-	var cosErr *cos.ErrorResponse
-	if errors.As(err, &cosErr) && cosErr.Code == "NoSuchKey" {
-		return ErrNotFound
-	}
-	return err
-}
-
-// ftpNotFoundClassify mirrors the exact classification in ftp.go:106-108.
-func ftpNotFoundClassify(err error) error {
-	if err == nil {
-		return nil
-	}
-	if strings.HasPrefix(err.Error(), "550") {
-		return ErrNotFound
-	}
-	return err
 }
 

@@ -427,6 +427,11 @@ func (gcs *GCS) PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser
 	return gcs.PutFileAbsoluteIfAbsent(ctx, path.Join(gcs.Config.Path, key), r, localSize)
 }
 
+// gcsIsNotFound reports whether err means "object does not exist" in GCS.
+func gcsIsNotFound(err error) bool {
+	return errors.Is(err, storage.ErrObjectNotExist)
+}
+
 func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 	return gcs.StatFileAbsolute(ctx, path.Join(gcs.Config.Path, key))
 }
@@ -449,7 +454,7 @@ func (gcs *GCS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, e
 			objAttr, err = obj.Attrs(ctx)
 		}
 		if err != nil {
-			if errors.Is(err, storage.ErrObjectNotExist) {
+			if gcsIsNotFound(err) {
 				return nil, ErrNotFound
 			}
 			return nil, errors.WithMessage(err, "GCS StatFileAbsolute Attrs")
@@ -548,7 +553,7 @@ func (gcs *GCS) deleteKeysConcurrent(ctx context.Context, keys []string) error {
 			err = object.Delete(ctx)
 			if err != nil {
 				// Check if it's a "not found" error - that's OK
-				if errors.Is(err, storage.ErrObjectNotExist) {
+				if gcsIsNotFound(err) {
 					if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
 						log.Warn().Msgf("gcs.deleteKeysConcurrent: gcs.clientPool.ReturnObject error: %+v", pErr)
 					}
