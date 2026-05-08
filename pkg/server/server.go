@@ -246,6 +246,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	r.HandleFunc("/backup/clean/remote_broken", api.httpCleanRemoteBrokenHandler).Methods("POST")
 	r.HandleFunc("/backup/clean/local_broken", api.httpCleanLocalBrokenHandler).Methods("POST")
 	r.HandleFunc("/backup/upload/{name}", api.httpUploadHandler).Methods("POST")
+	r.HandleFunc("/backup/cas-upload/{name}", api.httpCASUploadHandler).Methods("POST")
 	r.HandleFunc("/backup/download/{name}", api.httpDownloadHandler).Methods("POST")
 	r.HandleFunc("/backup/restore/{name}", api.httpRestoreHandler).Methods("POST")
 	r.HandleFunc("/backup/restore_remote/{name}", api.httpRestoreRemoteHandler).Methods("POST")
