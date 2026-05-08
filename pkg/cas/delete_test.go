@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas/internal/fakedst"
@@ -28,7 +29,7 @@ func setupUploaded(t *testing.T) (*fakedst.Fake, cas.Config, string) {
 
 func TestDelete_HappyPath(t *testing.T) {
 	f, cfg, name := setupUploaded(t)
-	if err := cas.Delete(context.Background(), f, cfg, name); err != nil {
+	if err := cas.Delete(context.Background(), f, cfg, name, cas.DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	// metadata.json gone:
@@ -49,7 +50,7 @@ func TestDelete_HappyPath(t *testing.T) {
 func TestDelete_RefusesIfPruneInProgress(t *testing.T) {
 	f, cfg, name := setupUploaded(t)
 	_ = f.PutFile(context.Background(), cas.PruneMarkerPath(cfg.ClusterPrefix()), io.NopCloser(strings.NewReader("{}")), 2)
-	err := cas.Delete(context.Background(), f, cfg, name)
+	err := cas.Delete(context.Background(), f, cfg, name, cas.DeleteOptions{})
 	if !errors.Is(err, cas.ErrPruneInProgress) {
 		t.Fatalf("got %v", err)
 	}
@@ -60,7 +61,7 @@ func TestDelete_RefusesIfUploadInProgress(t *testing.T) {
 	cfg := testCfg(100)
 	_ = f.PutFile(context.Background(), cas.InProgressMarkerPath(cfg.ClusterPrefix(), "bk"), io.NopCloser(strings.NewReader("{}")), 2)
 	// metadata.json absent → upload in flight
-	err := cas.Delete(context.Background(), f, cfg, "bk")
+	err := cas.Delete(context.Background(), f, cfg, "bk", cas.DeleteOptions{})
 	if !errors.Is(err, cas.ErrUploadInProgress) {
 		t.Fatalf("got %v", err)
 	}
@@ -70,7 +71,7 @@ func TestDelete_StaleMarkerProceeds(t *testing.T) {
 	f, cfg, name := setupUploaded(t)
 	// simulate: upload committed metadata.json but failed to delete its marker
 	_ = f.PutFile(context.Background(), cas.InProgressMarkerPath(cfg.ClusterPrefix(), name), io.NopCloser(strings.NewReader("{}")), 2)
-	if err := cas.Delete(context.Background(), f, cfg, name); err != nil {
+	if err := cas.Delete(context.Background(), f, cfg, name, cas.DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	// marker also deleted now (best-effort cleanup)
@@ -82,7 +83,7 @@ func TestDelete_StaleMarkerProceeds(t *testing.T) {
 func TestDelete_BackupNotFound(t *testing.T) {
 	f := fakedst.New()
 	cfg := testCfg(100)
-	err := cas.Delete(context.Background(), f, cfg, "nope")
+	err := cas.Delete(context.Background(), f, cfg, "nope", cas.DeleteOptions{})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("got %v", err)
 	}
@@ -102,7 +103,7 @@ func TestDelete_OrderingMetadataFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := &recordingBackend{Backend: inner}
-	if err := cas.Delete(context.Background(), rec, cfg, "bk"); err != nil {
+	if err := cas.Delete(context.Background(), rec, cfg, "bk", cas.DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(rec.deletes) == 0 {
@@ -111,6 +112,57 @@ func TestDelete_OrderingMetadataFirst(t *testing.T) {
 	want := cas.MetadataJSONPath(cfg.ClusterPrefix(), "bk")
 	if rec.deletes[0] != want {
 		t.Errorf("first delete: got %q want %q", rec.deletes[0], want)
+	}
+}
+
+// TestDelete_WaitsForPruneMarker verifies that Delete waits for the prune
+// marker to disappear (within WaitForPrune) rather than refusing immediately.
+func TestDelete_WaitsForPruneMarker(t *testing.T) {
+	poll := 10 * time.Millisecond
+	cas.SetPollIntervalForTesting(&poll)
+	defer cas.SetPollIntervalForTesting(nil)
+
+	f, cfg, name := setupUploaded(t)
+	cp := cfg.ClusterPrefix()
+
+	// Pre-place prune marker; schedule deletion after 50ms.
+	if err := f.PutFile(context.Background(), cas.PruneMarkerPath(cp),
+		io.NopCloser(strings.NewReader("{}")), 2); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		_ = f.DeleteFile(context.Background(), cas.PruneMarkerPath(cp))
+	}()
+
+	if err := cas.Delete(context.Background(), f, cfg, name, cas.DeleteOptions{
+		WaitForPrune: 5 * time.Second,
+	}); err != nil {
+		t.Fatalf("Delete should succeed once marker is cleared; got: %v", err)
+	}
+}
+
+// TestDelete_RefusesAfterWaitTimeout verifies that Delete returns
+// ErrPruneInProgress when WaitForPrune elapses and the marker remains.
+func TestDelete_RefusesAfterWaitTimeout(t *testing.T) {
+	poll := 10 * time.Millisecond
+	cas.SetPollIntervalForTesting(&poll)
+	defer cas.SetPollIntervalForTesting(nil)
+
+	f, cfg, name := setupUploaded(t)
+	cp := cfg.ClusterPrefix()
+
+	// Pre-place prune marker permanently.
+	if err := f.PutFile(context.Background(), cas.PruneMarkerPath(cp),
+		io.NopCloser(strings.NewReader("{}")), 2); err != nil {
+		t.Fatal(err)
+	}
+
+	err := cas.Delete(context.Background(), f, cfg, name, cas.DeleteOptions{
+		WaitForPrune: 100 * time.Millisecond,
+	})
+	if !errors.Is(err, cas.ErrPruneInProgress) {
+		t.Fatalf("got err=%v; want ErrPruneInProgress", err)
 	}
 }
 

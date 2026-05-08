@@ -3,9 +3,17 @@ package cas
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/rs/zerolog/log"
 )
+
+// DeleteOptions configures a Delete run.
+type DeleteOptions struct {
+	// WaitForPrune, when > 0, polls the prune marker for up to this duration
+	// before giving up at delete step 1. 0 = refuse immediately (default).
+	WaitForPrune time.Duration
+}
 
 // Delete removes a CAS backup's metadata subtree. Blob reclamation is
 // reserved for Phase 2 (cas-prune); in Phase 1, deleted-backup blobs
@@ -14,17 +22,15 @@ import (
 // the rest of the subtree removal is interrupted, the backup is no
 // longer listable, and the orphan per-table JSONs/archives will be
 // swept by the future prune (or via manual cleanup, until prune ships).
-func Delete(ctx context.Context, b Backend, cfg Config, name string) error {
+func Delete(ctx context.Context, b Backend, cfg Config, name string, opts DeleteOptions) error {
 	if err := validateName(name); err != nil {
 		return err
 	}
 	cp := cfg.ClusterPrefix()
 
-	// Step 1: refuse if prune in progress
-	if _, _, ok, err := b.StatFile(ctx, PruneMarkerPath(cp)); err != nil {
-		return fmt.Errorf("cas-delete: stat prune marker: %w", err)
-	} else if ok {
-		return ErrPruneInProgress
+	// Step 1: refuse if prune in progress (with optional wait).
+	if err := waitForPrune(ctx, b, cp, opts.WaitForPrune); err != nil {
+		return err
 	}
 
 	// Step 2: stale-aware inprogress check

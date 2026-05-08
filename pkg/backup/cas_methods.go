@@ -619,7 +619,7 @@ func (b *Backuper) CASDelete(backupName string) error {
 		return err
 	}
 	defer closer()
-	if err := cas.Delete(ctx, backend, b.cfg.CAS, backupName); err != nil {
+	if err := cas.Delete(ctx, backend, b.cfg.CAS, backupName, cas.DeleteOptions{}); err != nil {
 		return err
 	}
 	fmt.Printf("cas-delete: %s removed\n", backupName)
