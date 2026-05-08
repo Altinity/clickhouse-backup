@@ -107,6 +107,9 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 	if opts.LocalBackupDir == "" {
 		return nil, errors.New("cas: DownloadOptions.LocalBackupDir is required")
 	}
+	if opts.DataOnly {
+		return nil, errors.New("cas: --data-only is not yet implemented for cas-download (use the v1 flow if you need data-only restoration)")
+	}
 
 	// 1. Validate root metadata + persisted CAS params.
 	bm, err := ValidateBackup(ctx, b, cfg, name)

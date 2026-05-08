@@ -82,10 +82,15 @@ type RestoreOptions struct {
 //     the underlying ValidateBackup + Download.
 //   - A descriptive error if --ignore-dependencies is set (CAS backups
 //     have no dependency chain).
+//   - A descriptive error if --data-only is set (CAS restore doesn't yet
+//     support data-only restoration).
 //   - Whatever runV1 returns.
 func Restore(ctx context.Context, b Backend, cfg Config, name string, opts RestoreOptions, runV1 V1RestoreFunc) error {
 	if opts.IgnoreDependencies {
 		return errors.New("cas: --ignore-dependencies is not applicable to CAS backups (no dependency chain)")
+	}
+	if opts.DataOnly {
+		return errors.New("cas: --data-only is not yet implemented for cas-restore (use the v1 flow if you need data-only restoration)")
 	}
 	if runV1 == nil {
 		return errors.New("cas: V1RestoreFunc not supplied; CLI binding must wire pkg/backup.Backuper.Restore")

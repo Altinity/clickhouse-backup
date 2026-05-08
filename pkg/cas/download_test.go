@@ -565,3 +565,23 @@ func TestDownload_RejectsTraversalPartName(t *testing.T) {
 		t.Errorf("expected 'unsafe part name' in error, got: %v", err)
 	}
 }
+
+// TestDownload_DataOnlyRefuses verifies that --data-only is rejected
+// loudly because CAS doesn't yet implement the data-only path.
+// Until the feature ships, silently no-op'ing is worse than refusing.
+func TestDownload_DataOnlyRefuses(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	ctx := context.Background()
+
+	_, err := cas.Download(ctx, f, cfg, "any", cas.DownloadOptions{
+		LocalBackupDir: t.TempDir(),
+		DataOnly:       true,
+	})
+	if err == nil {
+		t.Fatal("expected Download to refuse DataOnly")
+	}
+	if !strings.Contains(err.Error(), "data-only is not yet implemented") {
+		t.Errorf("error should mention 'data-only is not yet implemented'; got: %v", err)
+	}
+}

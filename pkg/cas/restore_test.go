@@ -132,3 +132,27 @@ func TestRestore_PropagatesDownloadError(t *testing.T) {
 		t.Errorf("callback called %d times despite Download failure; want 0", called)
 	}
 }
+
+// TestRestore_DataOnlyRefuses mirrors TestDownload_DataOnlyRefuses for the
+// restore entry point.
+func TestRestore_DataOnlyRefuses(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	ctx := context.Background()
+
+	err := cas.Restore(ctx, f, cfg, "any", cas.RestoreOptions{
+		DownloadOptions: cas.DownloadOptions{
+			LocalBackupDir: t.TempDir(),
+			DataOnly:       true,
+		},
+	}, func(ctx context.Context, localBackupDir string, opts cas.RestoreOptions) error {
+		t.Fatal("v1 restore should not be invoked when DataOnly is rejected")
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected Restore to refuse DataOnly")
+	}
+	if !strings.Contains(err.Error(), "data-only is not yet implemented") {
+		t.Errorf("error should mention 'data-only is not yet implemented'; got: %v", err)
+	}
+}
