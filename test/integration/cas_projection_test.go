@@ -17,7 +17,7 @@ func TestCASRoundtripWithProjection(t *testing.T) {
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)
 
-	// system.projections was added in ClickHouse 24.4. Earlier versions
+	// system.projections was added in ClickHouse 24.9. Earlier versions
 	// support PROJECTION syntax in CREATE TABLE but expose projections
 	// only via system.parts (parent_part_name) or table metadata.
 	var projTbl []struct {
@@ -26,7 +26,7 @@ func TestCASRoundtripWithProjection(t *testing.T) {
 	r.NoError(env.ch.Select(&projTbl,
 		"SELECT count() AS c FROM system.tables WHERE database='system' AND name='projections'"))
 	if len(projTbl) == 0 || projTbl[0].C == 0 {
-		t.Skip("system.projections not present in this ClickHouse version (added in 24.4)")
+		t.Skip("system.projections not present in this ClickHouse version (added in 24.9)")
 	}
 
 	env.casBootstrap(r, "proj_round")
