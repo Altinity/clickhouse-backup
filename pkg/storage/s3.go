@@ -300,6 +300,46 @@ func (s *S3) PutFile(ctx context.Context, key string, r io.ReadCloser, localSize
 	return s.PutFileAbsolute(ctx, path.Join(s.Config.Path, key), r, localSize)
 }
 
+// applyPutObjectEncryption mirrors the SSE / KMS / ACL / object-tag fields
+// from s.Config onto a PutObjectInput. Used by both the multipart-upload path
+// (PutFileAbsolute) and the conditional-PUT path (PutFileAbsoluteIfAbsent) so
+// marker writes inherit the same encryption context as data uploads.
+//
+// Operates on the input pointer in-place; nil-safe for unset config fields.
+func (s *S3) applyPutObjectEncryption(p *s3.PutObjectInput) {
+	if s.Config.ACL != "" {
+		p.ACL = s3types.ObjectCannedACL(s.Config.ACL)
+	}
+	if len(s.Config.ObjectLabels) > 0 {
+		tags := ""
+		for k, v := range s.Config.ObjectLabels {
+			if tags != "" {
+				tags += "&"
+			}
+			tags += k + "=" + v
+		}
+		p.Tagging = aws.String(tags)
+	}
+	if s.Config.SSE != "" {
+		p.ServerSideEncryption = s3types.ServerSideEncryption(s.Config.SSE)
+	}
+	if s.Config.SSEKMSKeyId != "" {
+		p.SSEKMSKeyId = aws.String(s.Config.SSEKMSKeyId)
+	}
+	if s.Config.SSECustomerAlgorithm != "" {
+		p.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
+	}
+	if s.Config.SSECustomerKey != "" {
+		p.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
+	}
+	if s.Config.SSECustomerKeyMD5 != "" {
+		p.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
+	}
+	if s.Config.SSEKMSEncryptionContext != "" {
+		p.SSEKMSEncryptionContext = aws.String(s.Config.SSEKMSEncryptionContext)
+	}
+}
+
 func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
 	params := s3.PutObjectInput{
 		Bucket:       aws.String(s.Config.Bucket),
@@ -310,40 +350,7 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 	if s.Config.CheckSumAlgorithm != "" {
 		params.ChecksumAlgorithm = s3types.ChecksumAlgorithm(s.Config.CheckSumAlgorithm)
 	}
-
-	// ACL shall be optional, fix https://github.com/Altinity/clickhouse-backup/issues/785
-	if s.Config.ACL != "" {
-		params.ACL = s3types.ObjectCannedACL(s.Config.ACL)
-	}
-	// https://github.com/Altinity/clickhouse-backup/issues/588
-	if len(s.Config.ObjectLabels) > 0 {
-		tags := ""
-		for k, v := range s.Config.ObjectLabels {
-			if tags != "" {
-				tags += "&"
-			}
-			tags += k + "=" + v
-		}
-		params.Tagging = aws.String(tags)
-	}
-	if s.Config.SSE != "" {
-		params.ServerSideEncryption = s3types.ServerSideEncryption(s.Config.SSE)
-	}
-	if s.Config.SSEKMSKeyId != "" {
-		params.SSEKMSKeyId = aws.String(s.Config.SSEKMSKeyId)
-	}
-	if s.Config.SSECustomerAlgorithm != "" {
-		params.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
-	}
-	if s.Config.SSECustomerKey != "" {
-		params.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
-	}
-	if s.Config.SSECustomerKeyMD5 != "" {
-		params.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
-	}
-	if s.Config.SSEKMSEncryptionContext != "" {
-		params.SSEKMSEncryptionContext = aws.String(s.Config.SSEKMSEncryptionContext)
-	}
+	s.applyPutObjectEncryption(&params)
 	var partSize int64
 	if s.Config.ChunkSize > 0 && (localSize+s.Config.ChunkSize-1)/s.Config.ChunkSize < s.Config.MaxPartsCount {
 		partSize = s.Config.ChunkSize
@@ -389,15 +396,12 @@ func (s *S3) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadC
 		StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
 		IfNoneMatch:  aws.String("*"),
 	}
-	if s.Config.ACL != "" {
-		params.ACL = s3types.ObjectCannedACL(s.Config.ACL)
-	}
-	if s.Config.SSE != "" {
-		params.ServerSideEncryption = s3types.ServerSideEncryption(s.Config.SSE)
-	}
-	if s.Config.SSEKMSKeyId != "" {
-		params.SSEKMSKeyId = aws.String(s.Config.SSEKMSKeyId)
-	}
+	// Apply the same SSE / KMS / ACL / checksum fields the multipart path uses
+	// (see PutFileAbsolute) so a marker write inherits the configured
+	// encryption context. Otherwise SSE-C / KMS-encryption-context configs that
+	// require the headers on every PUT will reject conditional writes or
+	// produce objects with mismatched encryption attributes.
+	s.applyPutObjectEncryption(params)
 	if _, err := s.client.PutObject(ctx, params); err != nil {
 		if isS3PreconditionFailed(err) {
 			return false, nil
