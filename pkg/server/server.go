@@ -2267,6 +2267,16 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 		api.metrics.NumberBackupsRemoteBroken.Set(0)
 	}
 
+	// Update CAS backup count gauge (fail-open: errors are logged and swallowed
+	// so that a CAS-side error never prevents v1 metric updates from completing).
+	cfg := api.GetConfig()
+	if cfg.CAS.Enabled && cfg.General.RemoteStorage != "none" {
+		casBackups := b.CollectRemoteCASBackups(ctx)
+		api.metrics.NumberCASBackupsRemote.Set(float64(len(casBackups)))
+	} else {
+		api.metrics.NumberCASBackupsRemote.Set(0)
+	}
+
 	if lastBackupCreateLocal != nil {
 		api.metrics.LastFinish["create"].Set(float64(lastBackupCreateLocal.Unix()))
 	}
