@@ -11,6 +11,7 @@ var objectDiskTypes = map[string]bool{
 	"s3":                 true,
 	"s3_plain":           true,
 	"azure_blob_storage": true,
+	"azure":              true, // legacy type emitted by older ClickHouse versions; pkg/backup/backuper.go:225 treats it as object disk too
 	"hdfs":               true,
 	"web":                true,
 }

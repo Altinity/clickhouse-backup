@@ -23,6 +23,17 @@ func TestIsObjectDiskType(t *testing.T) {
 	}
 }
 
+func TestIsObjectDiskType_LegacyAzure(t *testing.T) {
+	// pkg/backup/backuper.go:225 treats "azure" as an object disk on the v1 path.
+	// CAS must be consistent so it refuses uploads against legacy-typed disks too.
+	if !cas.IsObjectDiskType("azure") {
+		t.Error(`legacy "azure" must be recognized as object disk (parity with pkg/backup/backuper.go:225)`)
+	}
+	if !cas.IsObjectDiskType("azure_blob_storage") {
+		t.Error(`"azure_blob_storage" must be recognized as object disk`)
+	}
+}
+
 func sortHits(h []cas.ObjectDiskHit) {
 	sort.Slice(h, func(i, j int) bool {
 		if h[i].Database != h[j].Database {
