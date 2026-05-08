@@ -506,43 +506,6 @@ func collectRefsFromArchive(ctx context.Context, b Backend, archKey string, thre
 	}
 }
 
-// accumulateRefsForBackup reads the per-table archives of one backup,
-// parses the embedded checksums.txt files, and writes every above-threshold
-// hash to the mark set. The persisted CAS params (InlineThreshold) are
-// read from the backup's own metadata.json — never from current config —
-// so prune is correct even if cfg.InlineThreshold has been retuned since
-// the backup was written.
-//
-// Deprecated: retained for reference; the mark phase now uses
-// buildMarkSetParallel instead of calling this function in a serial loop.
-func accumulateRefsForBackup(ctx context.Context, b Backend, cp, name string, mw *MarkSetWriter) error {
-	bm, err := readBackupMetadata(ctx, b, cp, name)
-	if err != nil {
-		return fmt.Errorf("read metadata.json: %w", err)
-	}
-	if bm.CAS == nil {
-		return errors.New("backup metadata has no CAS field; cannot prune")
-	}
-	threshold := bm.CAS.InlineThreshold
-
-	for _, tt := range bm.Tables {
-		tm, err := readTableMetadata(ctx, b, cp, name, tt.Database, tt.Table)
-		if err != nil {
-			return fmt.Errorf("read table metadata for %s.%s: %w", tt.Database, tt.Table, err)
-		}
-		for disk := range tm.Parts {
-			if err := validateRemoteFilesystemName("disk", disk); err != nil {
-				return err
-			}
-			archKey := PartArchivePath(cp, name, disk, tt.Database, tt.Table)
-			if err := accumulateRefsFromArchive(ctx, b, archKey, threshold, mw); err != nil {
-				return fmt.Errorf("accumulate refs from %s: %w", archKey, err)
-			}
-		}
-	}
-	return nil
-}
-
 func readBackupMetadata(ctx context.Context, b Backend, cp, name string) (*metadata.BackupMetadata, error) {
 	rc, err := b.GetFile(ctx, MetadataJSONPath(cp, name))
 	if err != nil {
