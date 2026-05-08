@@ -1314,3 +1314,36 @@ func TestUpload_LeaksNoMarkerOnCommitError(t *testing.T) {
 		t.Error("in-progress marker leaked: still present after metadata.json failure")
 	}
 }
+
+func TestTableFilterMatches(t *testing.T) {
+	cases := []struct {
+		name     string
+		filter   []string
+		db, tbl  string
+		expected bool
+	}{
+		{"empty filter matches all", nil, "db", "t", true},
+		{"exact match", []string{"db.t"}, "db", "t", true},
+		{"db wildcard", []string{"db.*"}, "db", "anything", true},
+		{"db wildcard miss", []string{"db.*"}, "other", "t", false},
+		{"table wildcard", []string{"db.tab*"}, "db", "table_42", true},
+		{"table wildcard miss", []string{"db.tab*"}, "db", "other", false},
+		{"any database any table", []string{"*.*"}, "any", "any", true},
+		{"multiple patterns - any match", []string{"a.b", "c.d"}, "c", "d", true},
+		{"multiple patterns - none match", []string{"a.b", "c.d"}, "x", "y", false},
+		{"trimmed whitespace", []string{"  db.t  "}, "db", "t", true},
+		{"empty pattern in list ignored", []string{"", "db.t"}, "db", "t", true},
+		{"single bracket class", []string{"db.t[12]"}, "db", "t1", true},
+		{"single bracket class miss", []string{"db.t[12]"}, "db", "t3", false},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			got := cas.TableFilterMatches(c.filter, c.db, c.tbl)
+			if got != c.expected {
+				t.Errorf("TableFilterMatches(%v, %q, %q) = %v; want %v",
+					c.filter, c.db, c.tbl, got, c.expected)
+			}
+		})
+	}
+}

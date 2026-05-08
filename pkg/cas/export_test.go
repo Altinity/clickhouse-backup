@@ -21,3 +21,7 @@ func SetPollIntervalForTesting(d *time.Duration) {
 // ProbeKey is the exported test shim for the unexported probeKey constant.
 // Used by probe_test.go to assert sentinel cleanup.
 const ProbeKey = probeKey
+
+// TableFilterMatches is the exported test shim for the unexported tableFilterMatches.
+// Used by upload_test.go to verify glob-pattern semantics.
+var TableFilterMatches = tableFilterMatches

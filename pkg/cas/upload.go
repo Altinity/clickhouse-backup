@@ -28,9 +28,8 @@ type UploadOptions struct {
 	// <LocalBackupDir>/shadow/.
 	LocalBackupDir string
 
-	// TableFilter is an optional list of "db.table" exact-match filters.
-	// Empty means "all tables found under shadow/". (v1 of CAS uses exact
-	// match; glob support is a future enhancement — see TODO in planUpload.)
+	// TableFilter is an optional list of "db.table" glob patterns
+	// (filepath.Match semantics, mirroring v1 --tables). Empty = include all.
 	TableFilter []string
 
 	// SkipObjectDisks: when true, tables on object-disks (s3/azure/etc.)
@@ -456,7 +455,7 @@ func planUpload(root string, threshold uint64, filter []string, skipObjectDisks 
 	shadow := filepath.Join(root, "shadow")
 	for _, te := range tableEntries {
 		db, table := te.DB, te.Table
-		if !tableFilterAllows(filter, db, table) {
+		if !tableFilterMatches(filter, db, table) {
 			continue
 		}
 		if excluded[db+"."+table] {
@@ -726,15 +725,25 @@ func walkPartFiles(partRoot, partName string, extractSet map[string]extractEntry
 	})
 }
 
-// tableFilterAllows returns true if the given (db, table) is permitted
-// by the filter. Empty filter = allow-all. Match is exact "db.table"
-// for v1 of CAS; glob support deferred (TODO).
-func tableFilterAllows(filter []string, db, table string) bool {
+// tableFilterMatches returns true if any pattern in filter matches "db.table".
+// Empty filter = match-all. Patterns use filepath.Match semantics ("*", "?",
+// "[abc]") on the full "db.table" name, mirroring v1 (pkg/backup/table_pattern.go:93).
+// Patterns are trimmed of surrounding whitespace before matching.
+func tableFilterMatches(filter []string, db, table string) bool {
 	if len(filter) == 0 {
 		return true
 	}
 	full := db + "." + table
 	for _, f := range filter {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if matched, err := filepath.Match(f, full); err == nil && matched {
+			return true
+		}
+		// Also try exact match in case the pattern contains characters
+		// filepath.Match treats specially but the user meant literally.
 		if f == full {
 			return true
 		}

@@ -27,8 +27,8 @@ type DownloadOptions struct {
 	// <LocalBackupDir>/<name>/. The directory is created if missing.
 	LocalBackupDir string
 
-	// TableFilter is an optional list of "db.table" exact-match filters.
-	// Empty means all tables in the backup.
+	// TableFilter is an optional list of "db.table" glob patterns
+	// (filepath.Match semantics, mirroring v1 --tables). Empty = include all.
 	TableFilter []string
 
 	// Partitions is an optional part-name filter applied at the part level
@@ -351,21 +351,18 @@ func atomicSwapDir(src, dst string) error {
 	return nil
 }
 
-// selectTables filters bm.Tables by an exact "db.table" filter list.
-// Empty filter → all tables.
+// selectTables filters bm.Tables by a "db.table" glob pattern list.
+// Empty filter → all tables. Uses filepath.Match semantics, mirroring v1
+// --tables behaviour (pkg/backup/table_pattern.go:93).
 func selectTables(all []metadata.TableTitle, filter []string) []metadata.TableTitle {
 	if len(filter) == 0 {
 		out := make([]metadata.TableTitle, len(all))
 		copy(out, all)
 		return out
 	}
-	allow := make(map[string]bool, len(filter))
-	for _, f := range filter {
-		allow[f] = true
-	}
 	var out []metadata.TableTitle
 	for _, t := range all {
-		if allow[t.Database+"."+t.Table] {
+		if tableFilterMatches(filter, t.Database, t.Table) {
 			out = append(out, t)
 		}
 	}
