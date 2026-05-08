@@ -329,9 +329,13 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 	}
 
 	// 13. Mark committed BEFORE explicit delete so a panic during delete doesn't
-	// trigger the defer's redundant cleanup. Then best-effort delete the marker.
+	// trigger the defer's redundant cleanup. Use a detached context so caller
+	// cancellation (e.g. /backup/kill) immediately after a successful commit
+	// still releases the marker rather than leaving it for prune to sweep.
 	committed = true
-	if err := DeleteInProgressMarker(ctx, b, cp, name); err != nil {
+	cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cleanCancel()
+	if err := DeleteInProgressMarker(cleanCtx, b, cp, name); err != nil {
 		log.Warn().Err(err).Msg("cas: release inprogress marker after commit")
 	}
 

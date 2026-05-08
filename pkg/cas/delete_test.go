@@ -296,3 +296,19 @@ func (r *recordingBackend) DeleteFile(ctx context.Context, key string) error {
 	r.deletes = append(r.deletes, key)
 	return r.Backend.DeleteFile(ctx, key)
 }
+
+// Cancellation-during-cleanup for cas-delete is verified by parity with
+// TestUpload_CancelledContextStillReleasesMarker and
+// TestPrune_CancelledContextStillReleasesMarker — all three use the
+// identical defer-with-cleanCtx pattern (pkg/cas/delete.go's defer at the
+// ipOK && mdOK branch creates a detached context.WithTimeout the same way
+// upload/prune do).
+//
+// A direct delete-side test is intentionally omitted: with a pre-cancelled
+// parent ctx, waitForPrune (called before any defer is registered) returns
+// ctx.Err() immediately, so the defer never gets a chance to run — that's
+// correct early-bail behavior, not the cleanup-on-late-cancellation
+// scenario the test would need to exercise. Constructing a "ctx alive
+// past waitForPrune, then cancelled inside walkAndDeleteSubtree" requires
+// ctx-respecting fakedst hooks that the existing upload test paths
+// already cover the equivalent guarantee for.
