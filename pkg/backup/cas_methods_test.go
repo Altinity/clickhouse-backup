@@ -190,6 +190,66 @@ func TestSnapshotObjectDiskHits_MultipleTablesMultipleDisks(t *testing.T) {
 	}
 }
 
+// TestSnapshotMetadataObjectDiskHits_DetectsFullyRemoteTable verifies that
+// a table with a metadata JSON whose Query SETTINGS reference an object-disk
+// storage policy is flagged as a hit, EVEN when no shadow part directory
+// exists for the table. This catches the data-loss path where a fully
+// object-disk-backed table commits a schema-only CAS backup.
+func TestSnapshotMetadataObjectDiskHits_DetectsFullyRemoteTable(t *testing.T) {
+	root := t.TempDir()
+	must := func(err error) { t.Helper(); if err != nil { t.Fatal(err) } }
+
+	// One table with metadata JSON, NO shadow part directory.
+	must(os.MkdirAll(filepath.Join(root, "metadata", "db1"), 0o755))
+	tm := `{"database":"db1","table":"full_remote","query":"CREATE TABLE db1.full_remote (id UInt64) ENGINE=MergeTree ORDER BY id SETTINGS storage_policy='s3_only'"}`
+	must(os.WriteFile(filepath.Join(root, "metadata", "db1", "full_remote.json"), []byte(tm), 0o644))
+
+	// One table with no object-disk policy (default policy).
+	tm2 := `{"database":"db1","table":"local","query":"CREATE TABLE db1.local (id UInt64) ENGINE=MergeTree ORDER BY id"}`
+	must(os.WriteFile(filepath.Join(root, "metadata", "db1", "local.json"), []byte(tm2), 0o644))
+
+	// Resolver: s3_only policy contains disk_s3 of type s3 (lowercase, as
+	// ClickHouse system.disks returns). IsObjectDiskType matches lowercase only.
+	resolver := &fakeStoragePolicyResolver{
+		policyDisks: map[string][]string{
+			"s3_only": {"disk_s3"},
+			"default": {"default"},
+		},
+		diskType: map[string]string{
+			"disk_s3": "s3",
+			"default": "local",
+		},
+	}
+
+	hits, err := snapshotMetadataObjectDiskHits(root, resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected exactly 1 hit (db1.full_remote); got %d: %+v", len(hits), hits)
+	}
+	if hits[0].Database != "db1" || hits[0].Table != "full_remote" {
+		t.Errorf("hit should be db1.full_remote; got %+v", hits[0])
+	}
+	if hits[0].Disk != "disk_s3" || hits[0].DiskType != "s3" {
+		t.Errorf("hit should reference disk_s3/s3; got %+v", hits[0])
+	}
+}
+
+// fakeStoragePolicyResolver is the test stub for the StoragePolicyResolver
+// interface introduced for snapshotMetadataObjectDiskHits.
+type fakeStoragePolicyResolver struct {
+	policyDisks map[string][]string
+	diskType    map[string]string
+}
+
+func (r *fakeStoragePolicyResolver) DisksForPolicy(policy string) ([]string, error) {
+	return r.policyDisks[policy], nil
+}
+func (r *fakeStoragePolicyResolver) DiskType(disk string) (string, error) {
+	return r.diskType[disk], nil
+}
+
 // TestSkipObjectDisks_ExclusionFiresFromSnapshot verifies that when the
 // CLI sets --skip-object-disks, the snapshot-derived hits flow through
 // to UploadOptions.ExcludedTables, and that the exclusion set contains

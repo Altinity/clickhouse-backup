@@ -2,16 +2,20 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas/casstorage"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
@@ -151,6 +155,165 @@ func (b *Backuper) snapshotObjectDiskHits(ctx context.Context, localBackupDir st
 	return b.snapshotObjectDiskHitsFromDisks(localBackupDir, diskTypeByName)
 }
 
+// storagePolicyRE extracts the storage_policy name from a CREATE TABLE query.
+// Local copy of the logic in (*ClickHouse).ExtractStoragePolicy — kept here so
+// snapshotMetadataObjectDiskHits requires no live ClickHouse receiver and is
+// fully unit-testable.
+var storagePolicyRE = regexp.MustCompile(`SETTINGS.+storage_policy[^=]*=[^']*'([^']+)'`)
+
+// extractStoragePolicy returns the storage_policy value from a CREATE TABLE
+// query, defaulting to "default" when the SETTINGS clause is absent.
+func extractStoragePolicy(query string) string {
+	if m := storagePolicyRE.FindStringSubmatch(query); len(m) > 0 {
+		return m[1]
+	}
+	return "default"
+}
+
+// StoragePolicyResolver abstracts the live ClickHouse queries used by
+// snapshotMetadataObjectDiskHits. The production implementation is a
+// thin wrapper around (*Backuper).ch; tests inject a stub.
+type StoragePolicyResolver interface {
+	// DisksForPolicy returns the disk names attached to a storage policy.
+	// Should return ([], nil) for unknown policies.
+	DisksForPolicy(policy string) ([]string, error)
+	// DiskType returns the type of a disk (e.g. "S3", "ObjectStorage", "Local").
+	// Should return ("", nil) for unknown disks.
+	DiskType(disk string) (string, error)
+}
+
+// backuperResolver implements StoragePolicyResolver by reading from a
+// pre-fetched []clickhouse.Disk slice (each Disk has StoragePolicies
+// populated when GetDisks was called with enrich=true).
+type backuperResolver struct{ disks []clickhouse.Disk }
+
+func newBackuperResolver(disks []clickhouse.Disk) *backuperResolver {
+	return &backuperResolver{disks: disks}
+}
+
+func (r *backuperResolver) DisksForPolicy(policy string) ([]string, error) {
+	var out []string
+	for _, d := range r.disks {
+		for _, p := range d.StoragePolicies {
+			if p == policy {
+				out = append(out, d.Name)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (r *backuperResolver) DiskType(disk string) (string, error) {
+	for _, d := range r.disks {
+		if d.Name == disk {
+			return d.Type, nil
+		}
+	}
+	return "", nil
+}
+
+// snapshotMetadataObjectDiskHits enumerates per-table metadata JSONs in
+// the local backup directory and consults the resolver to determine each
+// table's source disk types. Returns hits for any table whose storage
+// policy includes an object-disk-typed disk. Caller is responsible for
+// merging with snapshotObjectDiskHits (which catches tables that DO have
+// shadow parts).
+func snapshotMetadataObjectDiskHits(localBackupDir string, resolver StoragePolicyResolver) ([]cas.ObjectDiskHit, error) {
+	metaRoot := filepath.Join(localBackupDir, "metadata")
+	st, err := os.Stat(metaRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if !st.IsDir() {
+		return nil, fmt.Errorf("metadata path %q is not a directory", metaRoot)
+	}
+	var hits []cas.ObjectDiskHit
+	seen := map[cas.ObjectDiskHit]struct{}{}
+	dbs, err := os.ReadDir(metaRoot)
+	if err != nil {
+		return nil, err
+	}
+	for _, dbe := range dbs {
+		if !dbe.IsDir() {
+			continue
+		}
+		files, err := os.ReadDir(filepath.Join(metaRoot, dbe.Name()))
+		if err != nil {
+			return nil, err
+		}
+		for _, fe := range files {
+			if !strings.HasSuffix(fe.Name(), ".json") {
+				continue
+			}
+			body, err := os.ReadFile(filepath.Join(metaRoot, dbe.Name(), fe.Name()))
+			if err != nil {
+				return nil, err
+			}
+			var tm metadata.TableMetadata
+			if err := json.Unmarshal(body, &tm); err != nil {
+				continue // skip malformed; not our problem here
+			}
+			policy := extractStoragePolicy(tm.Query)
+			disks, err := resolver.DisksForPolicy(policy)
+			if err != nil {
+				return nil, err
+			}
+			for _, disk := range disks {
+				dt, err := resolver.DiskType(disk)
+				if err != nil {
+					return nil, err
+				}
+				if !cas.IsObjectDiskType(dt) {
+					continue
+				}
+				h := cas.ObjectDiskHit{Database: tm.Database, Table: tm.Table, Disk: disk, DiskType: dt}
+				if _, dup := seen[h]; dup {
+					continue
+				}
+				seen[h] = struct{}{}
+				hits = append(hits, h)
+			}
+		}
+	}
+	return hits, nil
+}
+
+// mergeObjectDiskHits dedupes hits across two sources (shadow walk +
+// metadata-JSON enumeration). Order of the returned slice is not
+// guaranteed (callers that care should sort).
+func mergeObjectDiskHits(a, b []cas.ObjectDiskHit) []cas.ObjectDiskHit {
+	seen := map[cas.ObjectDiskHit]struct{}{}
+	out := make([]cas.ObjectDiskHit, 0, len(a)+len(b))
+	for _, h := range a {
+		if _, dup := seen[h]; !dup {
+			seen[h] = struct{}{}
+			out = append(out, h)
+		}
+	}
+	for _, h := range b {
+		if _, dup := seen[h]; !dup {
+			seen[h] = struct{}{}
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// snapshotMetadataObjectDiskHitsFromCH wraps the static
+// snapshotMetadataObjectDiskHits helper with a live ClickHouse query.
+// Best-effort: returns (nil, err) on failure; caller logs and falls back.
+func (b *Backuper) snapshotMetadataObjectDiskHitsFromCH(ctx context.Context, localBackupDir string) ([]cas.ObjectDiskHit, error) {
+	disks, err := b.ch.GetDisks(ctx, true)
+	if err != nil {
+		return nil, fmt.Errorf("get disks: %w", err)
+	}
+	return snapshotMetadataObjectDiskHits(localBackupDir, newBackuperResolver(disks))
+}
+
 // CASUpload uploads a local backup using the CAS layout.
 func (b *Backuper) CASUpload(backupName string, skipObjectDisks, dryRun bool, backupVersion string, commandId int) error {
 	if backupName == "" {
@@ -183,10 +346,20 @@ func (b *Backuper) CASUpload(backupName string, skipObjectDisks, dryRun bool, ba
 
 	// Snapshot-based pre-flight: read which disks the local backup actually
 	// uses, not which disks the live ClickHouse currently has.
-	hits, err := b.snapshotObjectDiskHits(ctx, fullLocal)
+	shadowHits, err := b.snapshotObjectDiskHits(ctx, fullLocal)
 	if err != nil {
 		return fmt.Errorf("cas-upload: snapshot pre-flight: %w", err)
 	}
+
+	// Augment with metadata-JSON-driven detection so fully-object-disk-backed
+	// tables (no shadow parts) are also caught. Best-effort: if the live-
+	// ClickHouse query fails we log and fall back to shadow-only.
+	metaHits, metaErr := b.snapshotMetadataObjectDiskHitsFromCH(ctx, fullLocal)
+	if metaErr != nil {
+		log.Warn().Err(metaErr).Msg("cas-upload: metadata-driven object-disk pre-flight failed; falling back to shadow-only detection")
+	}
+	hits := mergeObjectDiskHits(shadowHits, metaHits)
+
 	if !skipObjectDisks {
 		if len(hits) > 0 {
 			return fmt.Errorf("%w: %s",
