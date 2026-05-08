@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -1397,6 +1398,86 @@ func TestUploadPartArchives_TempfileCleanedOnError(t *testing.T) {
 	}
 	if leaked > 0 {
 		t.Errorf("total leaked tempfiles: %d", leaked)
+	}
+}
+
+// TestUpload_Step11c_ParallelRevalidation exercises the parallel step-11c
+// re-validation path with multiple cold-listed blobs and confirms that:
+//   - all referenced blobs survive (mark set is complete despite parallel build)
+//   - a disappearing blob is still detected under -race (no data races on firstErr)
+func TestUpload_Step11c_ParallelRevalidation(t *testing.T) {
+	ctx := context.Background()
+	f := fakedst.New()
+	// threshold=100 so the 1024-byte data.bin is treated as a blob
+	cfg := testCfg(100)
+	cp := cfg.ClusterPrefix()
+
+	// Build multiple parts, each with a distinct 1024-byte blob, so we get
+	// several cold-list hits on the second upload.
+	const numBlobs = 10
+	var parts []testfixtures.PartSpec
+	for i := 0; i < numBlobs; i++ {
+		parts = append(parts, testfixtures.PartSpec{
+			Disk: "default", DB: "db1", Table: "t1",
+			Name: fmt.Sprintf("p%d", i),
+			Files: []testfixtures.FileSpec{
+				{Name: "columns.txt", Size: 23, HashLow: uint64(i)*10 + 1, HashHigh: uint64(i) + 100},
+				{Name: "data.bin", Size: 1024, HashLow: uint64(i)*10 + 2, HashHigh: uint64(i) + 100},
+			},
+		})
+	}
+	lb := testfixtures.Build(t, parts)
+
+	// Seed upload — puts all blobs in the backend.
+	if _, err := cas.Upload(ctx, f, cfg, "seed", cas.UploadOptions{LocalBackupDir: lb.Root}); err != nil {
+		t.Fatalf("seed upload: %v", err)
+	}
+
+	// Second upload: all blobs are already present → all go through step-11c
+	// re-validation. Must succeed with no errors.
+	res, err := cas.Upload(ctx, f, cfg, "incr", cas.UploadOptions{
+		LocalBackupDir: lb.Root,
+		Parallelism:    4, // explicitly low to exercise pool boundary
+	})
+	if err != nil {
+		t.Fatalf("incremental upload: %v", err)
+	}
+	if res.BlobsUploaded != 0 {
+		t.Errorf("BlobsUploaded: got %d want 0 (all blobs already present)", res.BlobsUploaded)
+	}
+	if res.BlobsReused != numBlobs {
+		t.Errorf("BlobsReused: got %d want %d", res.BlobsReused, numBlobs)
+	}
+
+	// Now verify that a disappearing blob is still detected.
+	// Install a hook that makes ONE blob appear absent.
+	blobPrefix := cp + "blob/"
+	var anyBlobKey string
+	_ = f.Walk(ctx, blobPrefix, true, func(rf cas.RemoteFile) error {
+		if anyBlobKey == "" {
+			anyBlobKey = rf.Key
+		}
+		return nil
+	})
+	if anyBlobKey == "" {
+		t.Fatal("no blob keys found after seed upload")
+	}
+	f.SetStatHook(func(key string) (int64, time.Time, bool, error, bool) {
+		if key == anyBlobKey {
+			return 0, time.Time{}, false, nil, true // appears gone
+		}
+		return 0, time.Time{}, false, nil, false
+	})
+
+	_, err = cas.Upload(ctx, f, cfg, "incr2", cas.UploadOptions{
+		LocalBackupDir: lb.Root,
+		Parallelism:    4,
+	})
+	if err == nil {
+		t.Fatal("expected Upload to abort when cold-listed blob disappears")
+	}
+	if !strings.Contains(err.Error(), "cold-listed blob") {
+		t.Errorf("error should mention 'cold-listed blob'; got: %v", err)
 	}
 }
 

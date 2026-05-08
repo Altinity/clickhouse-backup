@@ -305,20 +305,11 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 	//      against a stale/truncated object at a content-addressed key).
 	//      A prune that ran past 11a's check could have deleted a blob we
 	//      decided to skip in step 8 because cold-list said it was present.
-	for _, sb := range skippedColdList {
-		sz, _, exists, err := b.StatFile(ctx, sb.Key)
-		if err != nil {
-			_ = DeleteInProgressMarker(ctx, b, cp, name)
-			return nil, fmt.Errorf("cas: re-check cold-listed blob %s: %w", sb.Key, err)
-		}
-		if !exists {
-			_ = DeleteInProgressMarker(ctx, b, cp, name)
-			return nil, fmt.Errorf("cas: cold-listed blob %s disappeared before commit (concurrent prune?); aborting", sb.Key)
-		}
-		if sz != sb.Size {
-			_ = DeleteInProgressMarker(ctx, b, cp, name)
-			return nil, fmt.Errorf("cas: cold-listed blob %s size mismatch: remote=%d, expected=%d (per checksums.txt); aborting to prevent corrupt backup", sb.Key, sz, sb.Size)
-		}
+	//      Parallelised with the same bounded-pool pattern as uploadMissingBlobs
+	//      to avoid O(skipped × RTT) serial latency on large incremental backups.
+	if revalErr := revalidateColdList(ctx, b, cp, name, skippedColdList, opts.Parallelism); revalErr != nil {
+		_ = DeleteInProgressMarker(ctx, b, cp, name)
+		return nil, revalErr
 	}
 
 	// 12. Commit: write root metadata.json.
@@ -882,6 +873,75 @@ func uploadMissingBlobs(ctx context.Context, b Backend, cp string, plan *uploadP
 	}
 	wg.Wait()
 	return uploaded, bytesUp, skipped, firstErr
+}
+
+// revalidateColdList performs step-11c of Upload in parallel: for every blob
+// that was skipped in uploadMissingBlobs (because cold-list said it existed),
+// StatFile is called to confirm the object is still present and the stored
+// size matches what checksums.txt recorded.  Concurrency is capped by
+// parallelism (<=0 → 16).
+//
+// Returns the first error encountered; all goroutines finish before returning
+// regardless, so there are no goroutine leaks on the error path.
+func revalidateColdList(ctx context.Context, b Backend, cp, name string, skipped []skippedBlob, parallelism int) error {
+	if parallelism <= 0 {
+		parallelism = 16
+	}
+	if len(skipped) == 0 {
+		return nil
+	}
+
+	var (
+		mu       sync.Mutex
+		firstErr error
+	)
+
+	sem := make(chan struct{}, parallelism)
+	var wg sync.WaitGroup
+	for _, sb := range skipped {
+		sb := sb
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			mu.Lock()
+			already := firstErr != nil
+			mu.Unlock()
+			if already {
+				return
+			}
+
+			sz, _, exists, err := b.StatFile(ctx, sb.Key)
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("cas: re-check cold-listed blob %s: %w", sb.Key, err)
+				}
+				mu.Unlock()
+				return
+			}
+			if !exists {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("cas: cold-listed blob %s disappeared before commit (concurrent prune?); aborting", sb.Key)
+				}
+				mu.Unlock()
+				return
+			}
+			if sz != sb.Size {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("cas: cold-listed blob %s size mismatch: remote=%d, expected=%d (per checksums.txt); aborting to prevent corrupt backup", sb.Key, sz, sb.Size)
+				}
+				mu.Unlock()
+				return
+			}
+		}()
+	}
+	wg.Wait()
+	return firstErr
 }
 
 // uploadPartArchives builds and PUTs one tar.zstd per (disk, db, table).
