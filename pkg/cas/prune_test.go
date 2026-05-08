@@ -487,6 +487,80 @@ func TestPrune_ExplicitZeroOverridesConfigAbandon(t *testing.T) {
 	}
 }
 
+// TestPrune_ZeroLiveBackupsAllOrphaned verifies that when there are no live
+// backups (no metadata.json present) and the operator explicitly passes
+// GraceBlobSet=true with GraceBlob=0, all orphan blobs are reclaimed
+// immediately. This locks the intentional "empty namespace + explicit zero
+// grace = wipe orphans" contract: the operator opts in deliberately.
+func TestPrune_ZeroLiveBackupsAllOrphaned(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024)
+	ctx := context.Background()
+	cp := cfg.ClusterPrefix()
+
+	// Place 3 orphan blobs — no metadata.json anywhere (zero live backups).
+	hA := cas.Hash128{Low: 0xAA, High: 0xBB}
+	hB := cas.Hash128{Low: 0xCC, High: 0xDD}
+	hC := cas.Hash128{Low: 0xEE, High: 0xFF}
+	for _, h := range []cas.Hash128{hA, hB, hC} {
+		if err := f.PutFile(ctx, cas.BlobPath(cp, h), io.NopCloser(bytes.NewReader([]byte("x"))), 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Blobs are fresh (modtime = now). With explicit zero grace they must be
+	// swept regardless; no backup pins them.
+
+	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{
+		GraceBlob:    0,
+		GraceBlobSet: true, // operator explicitly opted in — destructive by intent
+	})
+	require.NoError(t, err)
+	require.Equal(t, 0, rep.LiveBackups, "no metadata.json → LiveBackups must be 0")
+	require.Equal(t, uint64(3), rep.OrphanBlobsConsidered, "all 3 blobs are orphans")
+	require.Equal(t, uint64(3), rep.OrphansDeleted, "explicit zero grace must wipe all 3 orphans")
+	require.Equal(t, uint64(0), rep.OrphansHeldByGrace, "nothing held when grace=0")
+}
+
+// TestPrune_ZeroLiveBackupsRespectsGrace is the sibling of
+// TestPrune_ZeroLiveBackupsAllOrphaned. Same setup (no live backups, 3 fresh
+// orphan blobs) but the operator did NOT set an explicit grace — the
+// 24h config default applies. Because the blobs are freshly written they
+// fall inside the grace window and must be protected.
+//
+// Together the two tests document the contract:
+//   - explicit zero grace (GraceBlobSet=true, GraceBlob=0) → destructive by intent
+//   - default grace (GraceBlobSet=false)                   → conservative, protects fresh blobs
+func TestPrune_ZeroLiveBackupsRespectsGrace(t *testing.T) {
+	f := fakedst.New()
+	cfg := testCfg(1024) // GraceBlob is "24h" after Validate()
+	ctx := context.Background()
+	cp := cfg.ClusterPrefix()
+
+	// Place 3 fresh orphan blobs — no metadata.json (zero live backups).
+	hA := cas.Hash128{Low: 0x11, High: 0x22}
+	hB := cas.Hash128{Low: 0x33, High: 0x44}
+	hC := cas.Hash128{Low: 0x55, High: 0x66}
+	for _, h := range []cas.Hash128{hA, hB, hC} {
+		if err := f.PutFile(ctx, cas.BlobPath(cp, h), io.NopCloser(bytes.NewReader([]byte("x"))), 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Blobs stay fresh (modtime = now). Default 24h grace must hold them all.
+
+	rep, err := cas.Prune(ctx, f, cfg, cas.PruneOptions{
+		// GraceBlobSet intentionally left false → config default (24h) applies.
+	})
+	require.NoError(t, err)
+	require.Equal(t, 0, rep.LiveBackups, "no metadata.json → LiveBackups must be 0")
+	// OrphanBlobsConsidered counts blobs that made it past the grace filter
+	// (i.e. candidates for deletion). Fresh blobs never reach that stage, so
+	// the counter is 0 here — all 3 are gated out by grace before becoming
+	// candidates.
+	require.Equal(t, uint64(0), rep.OrphanBlobsConsidered, "fresh blobs held by grace, not candidates")
+	require.Equal(t, uint64(0), rep.OrphansDeleted, "fresh blobs must survive default 24h grace")
+	require.Equal(t, uint64(3), rep.OrphansHeldByGrace, "all 3 fresh orphans held by grace")
+}
+
 func TestPrintPruneReport_FormatsBytes(t *testing.T) {
 	var buf bytes.Buffer
 	err := cas.PrintPruneReport(&cas.PruneReport{BytesReclaimed: 1572864}, &buf)
