@@ -90,11 +90,9 @@ func TestCASAPIRoundtrip(t *testing.T) {
 	r.NoError(env.ch.SelectSingleRowNoCtx(&rows, fmt.Sprintf("SELECT count() FROM `%s`.`%s`", dbName, tbl)))
 	r.Equal(uint64(1000), rows, "restored row count mismatch")
 
-	// POST /backup/cas-delete/<bk> (sync)
-	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-		fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/cas-delete/%s'", bk))
-	r.NoError(err, "cas-delete: %s", out)
-	r.Contains(out, "success", "cas-delete output: %s", out)
+	// POST /backup/cas-delete/<bk> (async since wave-5 F13 — same pattern as upload/restore/prune).
+	opID = casAPIPostAndCaptureOpID(t, env, r, fmt.Sprintf("/backup/cas-delete/%s", bk))
+	casAPIWaitForOperation(t, env, r, opID, 60*time.Second)
 
 	// POST /backup/cas-prune (async)
 	opID = casAPIPostAndCaptureOpID(t, env, r, "/backup/cas-prune")

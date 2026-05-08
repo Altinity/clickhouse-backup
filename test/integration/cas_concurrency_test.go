@@ -62,10 +62,13 @@ func TestCASUploadRefusesConcurrent(t *testing.T) {
 	// S3 path: backup/{cluster}/{shard}/cas/{clusterID}/inprogress/{name}.marker
 	// casBootstrap used clusterID="concurrent_up"; path is backup/cluster/0/cas/concurrent_up/inprogress/concur_bk.marker
 	markerKey := "backup/cluster/0/cas/concurrent_up/inprogress/concur_bk.marker"
-	markerBody := `{"backup":"concur_bk","host":"other","started_at":"2026-05-08T00:00:00Z","tool":"test"}`
+	// Use tool="cas-upload" so the diagnostic surfaces the realistic
+	// upload-vs-upload conflict (post wave-5 N2, the diagnostic uses the
+	// marker's Tool field dynamically).
+	markerBody := `{"backup":"concur_bk","host":"other","started_at":"2026-05-08T00:00:00Z","tool":"cas-upload"}`
 	env.injectS3Object(r, markerKey, markerBody)
 
-	// Second cas-upload must refuse with "another cas-upload is in progress".
+	// Second cas-upload must refuse with a message naming the conflicting tool.
 	out, err := env.casBackup("cas-upload", "concur_bk")
 	r.Error(err, "second cas-upload must refuse while marker held; out=%s", out)
 	r.Contains(out, "another cas-upload is in progress", "out=%s", out)
