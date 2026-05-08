@@ -337,11 +337,38 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 	return nil
 }
 
-// PutFileAbsoluteIfAbsent stub — replaced by a native implementation in a
-// later task. Returns ErrConditionalPutNotSupported so callers refuse
-// atomicity-required operations cleanly.
+// PutFileAbsoluteIfAbsent atomically creates the object at key only if it
+// doesn't already exist, using Tencent COS's If-None-Match: "*" header.
+//
+// The Tencent Go SDK (github.com/tencentyun/cos-go-sdk-v5 v0.7.73) does not
+// expose a typed If-None-Match field on ObjectPutHeaderOptions, but it does
+// provide the cos.XOptionalKey / cos.XOptionalValue context mechanism which
+// injects arbitrary headers into any SDK call. We use that to send
+// "If-None-Match: *" on the PUT request. COS returns HTTP 412 when the object
+// already exists; this maps to (false, nil).
 func (c *COS) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
-	return false, ErrConditionalPutNotSupported
+	ifNoneMatch := make(http.Header)
+	ifNoneMatch.Set("If-None-Match", "*")
+	ctx = context.WithValue(ctx, cos.XOptionalKey, &cos.XOptionalValue{Header: &ifNoneMatch})
+
+	if _, err := c.client.Object.Put(ctx, key, r, nil); err != nil {
+		if isCOSPreconditionFailed(err) {
+			return false, nil
+		}
+		return false, errors.WithMessage(err, "COS PutFileAbsoluteIfAbsent Put")
+	}
+	return true, nil
+}
+
+// isCOSPreconditionFailed returns true when the error is a Tencent COS HTTP 412
+// (PreconditionFailed), which is what COS returns for If-None-Match: "*" when
+// the object already exists.
+func isCOSPreconditionFailed(err error) bool {
+	var cosErr *cos.ErrorResponse
+	if errors.As(err, &cosErr) && cosErr.Response != nil && cosErr.Response.StatusCode == http.StatusPreconditionFailed {
+		return true
+	}
+	return false
 }
 
 func (c *COS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
