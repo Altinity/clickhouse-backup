@@ -526,6 +526,17 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 		_ = env.DockerExec("ftp", "sh", "-c", "rm -rf /home/test_backup/backup/cas/ /home/ftpusers/test_backup/backup/cas/ /backup/cas/ 2>/dev/null || true")
 	}
 
+	// TestShadowCleanup{,OnFailure} explicitly run `clickhouse-backup clean`
+	// which wipes /var/lib/clickhouse/shadow/. ClickHouse subsequently creates
+	// an empty increment.txt on the next FREEZE attempt, which then fails with
+	// "File ... shadow/increment.txt is empty" in the next env-pool consumer
+	// (TestSkipDisk, TestCustomKopia, etc.). Remove the stale 0-byte file so
+	// ClickHouse re-creates it cleanly on the next FREEZE.
+	if strings.HasPrefix(t.Name(), "TestShadowCleanup") {
+		_ = env.DockerExec("clickhouse", "bash", "-c",
+			"if [ -f /var/lib/clickhouse/shadow/increment.txt ] && [ ! -s /var/lib/clickhouse/shadow/increment.txt ]; then rm -f /var/lib/clickhouse/shadow/increment.txt; fi")
+	}
+
 	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" || strings.HasPrefix(t.Name(), "TestEmbedded") {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/backups_s3")
 	}
