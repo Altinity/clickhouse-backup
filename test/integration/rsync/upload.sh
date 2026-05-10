@@ -20,10 +20,10 @@ done
 
 if [[ "" != "${BACKUP_KEEP_TO_REMOTE}" && "0" != "${BACKUP_KEEP_TO_REMOTE}" ]]; then
   BACKUP_LIST=$(${CUR_DIR}/list.sh)
-  BACKUP_COUNT=$(echo $BACKUP_LIST | wc -l)
-  if [[ $BACKUP_COUNT > $BACKUP_KEEP_TO_REMOTE ]]; then
-    let BACKUP_TO_NEED_DELETE=$BACKUP_COUNT - $BACKUP_KEEP_TO_REMOTE
-    BACKUP_TO_NEED_DELETE=$(echo $BACKUP_LIST | clickhouse-local --input-format="JSONEachRow" -q "SELECT backup_name FROM table ORDER BY creation_date LIMIT ${BACKUP_TO_NEED_DELETE}")
+  BACKUP_COUNT=$(echo "$BACKUP_LIST" | wc -l)
+  if [[ $BACKUP_COUNT -gt $BACKUP_KEEP_TO_REMOTE ]]; then
+    BACKUP_TO_NEED_DELETE=$((BACKUP_COUNT - BACKUP_KEEP_TO_REMOTE))
+    BACKUP_TO_NEED_DELETE=$(echo "$BACKUP_LIST" | clickhouse-local --input-format="JSONEachRow" -q "SELECT backup_name FROM table ORDER BY creation_date LIMIT ${BACKUP_TO_NEED_DELETE}")
     for backup_name in $BACKUP_TO_NEED_DELETE; do
       ${CUR_DIR}/delete.sh "${backup_name}"
     done
