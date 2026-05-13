@@ -1,3 +1,8 @@
+# v2.6.44
+
+BUG FIXES
+- fix [1356](https://github.com/Altinity/clickhouse-backup/issues/1356), retry batch deletion in `cleanBackupObjectDisks` so transient errors (e.g. GCS 503) during retention no longer leave orphaned objects in `object_disks_path`
+
 # v2.6.43
 
 NEW FEATURES
