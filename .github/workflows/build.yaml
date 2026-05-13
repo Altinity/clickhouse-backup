@@ -110,7 +110,8 @@ jobs:
           - '24.3'
           - '24.8'
           - '25.3'
-          - '25.8'
+# wait https://github.com/ClickHouse/ClickHouse/commit/393f47f4e1ed708d7dd48be09cc90f94e091359c, 25.8.24
+          - '25.8.21'
           - '26.3'
     steps:
       - name: Checkout project
@@ -213,7 +214,8 @@ jobs:
           - '24.3'
           - '24.8'
           - '25.3'
-          - '25.8'
+# wait https://github.com/ClickHouse/ClickHouse/commit/393f47f4e1ed708d7dd48be09cc90f94e091359c, 25.8.24
+          - '25.8.21'
           - '26.3'
     steps:
       - name: Checkout project
