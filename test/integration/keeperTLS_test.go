@@ -9,6 +9,26 @@ import (
 	"time"
 )
 
+const strictKeeperTLSXML = `<yandex>
+  <openSSL>
+    <client replace="replace">
+      <caConfig>/etc/clickhouse-server/keeper.crt</caConfig>
+      <certificateFile>/etc/clickhouse-server/keeper.crt</certificateFile>
+      <privateKeyFile>/etc/clickhouse-server/keeper.key</privateKeyFile>
+      <loadDefaultCAFile>true</loadDefaultCAFile>
+      <cacheSessions>true</cacheSessions>
+      <disableProtocols>sslv2,sslv3</disableProtocols>
+      <preferServerCiphers>true</preferServerCiphers>
+      <verificationMode replace="replace">relaxed</verificationMode>
+      <extendedVerification replace="replace">false</extendedVerification>
+      <invalidCertificateHandler replace="replace">
+        <name replace="replace">RejectCertificateHandler</name>
+      </invalidCertificateHandler>
+    </client>
+  </openSSL>
+</yandex>
+`
+
 func TestKeeperTLS(t *testing.T) {
 	if isTestShouldSkip("KEEPER_TLS_ENABLED") {
 		t.Skip("KEEPER_TLS_ENABLED is not set or false, skipping TestKeeperTLS")
@@ -19,6 +39,15 @@ func TestKeeperTLS(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 2*time.Minute)
+
+	// Install strict <openSSL><client> so ClickHouse verifies Keeper TLS certs
+	// (ssl.xml uses verificationMode=none — fine for most tests, but this test
+	// specifically validates the strict path). Restart so Poco reloads SSL context.
+	env.DockerExecNoError(r, "clickhouse", "bash", "-c",
+		fmt.Sprintf("cat > /etc/clickhouse-server/config.d/zz_keeper_tls.xml <<'XML'\n%s\nXML", strictKeeperTLSXML))
+	env.ch.Close()
+	r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
+	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 
 	// create table using ZooKeeper
 	dbName := "test_keeper_tls"
@@ -64,4 +93,9 @@ func TestKeeperTLS(t *testing.T) {
 	// cleanup
 	r.NoError(env.dropDatabase(dbName, false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
+
+	env.DockerExecNoError(r, "clickhouse", "rm", "-f", "/etc/clickhouse-server/config.d/zz_keeper_tls.xml")
+	env.ch.Close()
+	r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
+	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 }

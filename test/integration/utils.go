@@ -18,6 +18,7 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 
 	stdlog "log"
 
@@ -1502,6 +1503,24 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 		t.Fatal(err)
 	}
 	log.Debug().Msg("testBackupSpecifiedPartitions finish")
+}
+
+func runClickHouseClientInsertSystemBackupActions(r *require.Assertions, env *TestEnvironment, commands []string, needWait bool) {
+	sql := "INSERT INTO system.backup_actions(command) " + "VALUES ('" + strings.Join(commands, "'),('") + "')"
+	out, err := env.DockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("clickhouse client --echo -mn -q \"%s\"", sql))
+	r.NoError(err, "%s -> %s unexpected error: %v", sql, out, err)
+	if needWait {
+		for _, command := range commands {
+			for {
+				time.Sleep(500 * time.Millisecond)
+				var commandStatus string
+				r.NoError(env.ch.SelectSingleRowNoCtx(&commandStatus, "SELECT status FROM system.backup_actions WHERE command=?", command))
+				if commandStatus != status.InProgressStatus {
+					break
+				}
+			}
+		}
+	}
 }
 
 // Unused import placeholders to ensure compilation

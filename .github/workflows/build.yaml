@@ -110,8 +110,7 @@ jobs:
           - '24.3'
           - '24.8'
           - '25.3'
-# todo wait when resolve https://github.com/ClickHouse/ClickHouse/issues/103232
-          - '25.8.21'
+          - '25.8'
           - '26.3'
     steps:
       - name: Checkout project
@@ -214,8 +213,7 @@ jobs:
           - '24.3'
           - '24.8'
           - '25.3'
-# todo wait when resolve https://github.com/ClickHouse/ClickHouse/issues/103232
-          - '25.8.21'
+          - '25.8'
           - '26.3'
     steps:
       - name: Checkout project
