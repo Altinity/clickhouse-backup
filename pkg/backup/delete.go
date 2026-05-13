@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
@@ -19,6 +20,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/object_disk"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 
+	"github.com/eapache/go-resiliency/retrier"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 )
@@ -405,6 +407,7 @@ func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string
 		batchSize := b.cfg.General.DeleteBatchSize
 
 		log.Info().Msgf("cleanBackupObjectDisks: starting batch deletion for object disk backup %s using %s (batch_size=%d)", backupName, b.dst.Kind(), batchSize)
+		retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 
 		// Process deletion in batches to avoid loading all keys in memory
 		var keysToDelete []string
@@ -420,7 +423,9 @@ func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string
 
 			// When we've collected enough keys, delete them as a batch
 			if len(keysToDelete) >= batchSize {
-				deleteErr := batchDeleter.DeleteKeysFromObjectDiskBackupBatch(ctx, keysToDelete)
+				deleteErr := retry.RunCtx(ctx, func(ctx context.Context) error {
+					return batchDeleter.DeleteKeysFromObjectDiskBackupBatch(ctx, keysToDelete)
+				})
 				if deleteErr != nil {
 					return deleteErr
 				}
@@ -436,7 +441,9 @@ func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string
 
 		// Delete remaining keys
 		if len(keysToDelete) > 0 {
-			deleteErr := batchDeleter.DeleteKeysFromObjectDiskBackupBatch(ctx, keysToDelete)
+			deleteErr := retry.RunCtx(ctx, func(ctx context.Context) error {
+				return batchDeleter.DeleteKeysFromObjectDiskBackupBatch(ctx, keysToDelete)
+			})
 			if deleteErr != nil {
 				return totalDeleted, deleteErr
 			}
