@@ -16,6 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const cleanBrokenRetentionKeepGlob = "cbr_orphan_keep_*"
+
 // TestCleanBrokenRetention verifies that `clean_broken_retention`:
 //   - lists orphans (dry-run) without deleting,
 //   - on --commit removes orphans from both `path` and `object_disks_path`,
@@ -25,7 +27,7 @@ import (
 // Backends that need cloud credentials skip themselves when the corresponding env
 // var (GCS_TESTS, AZURE_TESTS, QA_TENCENT_SECRET_KEY) is unset.
 func TestCleanBrokenRetention(t *testing.T) {
-	cases := []cleanBrokenRetentionCase{
+	for _, tc := range []cleanBrokenRetentionCase{
 		s3CleanBrokenRetentionCase(),
 		sftpCleanBrokenRetentionCase(),
 		ftpCleanBrokenRetentionCase(),
@@ -33,12 +35,10 @@ func TestCleanBrokenRetention(t *testing.T) {
 		azblobCleanBrokenRetentionCase(),
 		gcsRealCleanBrokenRetentionCase(),
 		cosCleanBrokenRetentionCase(),
-	}
-
-	for _, tc := range cases {
+	} {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.skip() {
+			if tc.skip != nil && tc.skip() {
 				t.Skip(tc.skipReason)
 				return
 			}
@@ -48,22 +48,23 @@ func TestCleanBrokenRetention(t *testing.T) {
 }
 
 // cleanBrokenRetentionCase wires one remote-storage backend to the shared scenario.
-// plantOrphan, assertExists and assertGone are responsible for *physically* putting
-// or observing a top-level entry under the given root path on that backend.
+// plant/assertExists/assertGone are responsible for *physically* putting or observing
+// a top-level entry under the given root path on that backend.
 type cleanBrokenRetentionCase struct {
 	name           string
-	storageType    string
 	configFile     string
-	pathRoot       string // top-level prefix used by plantOrphan to simulate path orphans
-	objRoot        string // top-level prefix used by plantOrphan to simulate object-disk orphans
+	pathRoot       string
+	objRoot        string
 	skip           func() bool
 	skipReason     string
 	setup          func(env *TestEnvironment, r *require.Assertions)
-	plantOrphan    func(env *TestEnvironment, r *require.Assertions, root, name string)
-	assertExists   func(env *TestEnvironment, r *require.Assertions, root, name string)
-	assertGone     func(env *TestEnvironment, r *require.Assertions, root, name string)
-	finalEmptyType string // value passed to env.checkObjectStorageIsEmpty at end (empty = skip)
+	plant          orphanAction
+	assertExists   orphanAction
+	assertGone     orphanAction
+	finalEmptyType string // when non-empty, passed to env.checkObjectStorageIsEmpty at end
 }
+
+type orphanAction func(env *TestEnvironment, r *require.Assertions, root, name string)
 
 func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) {
 	env, r := NewTestEnvironment(t)
@@ -75,7 +76,7 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 		tc.setup(env, r)
 	}
 
-	tableName := fmt.Sprintf("default.clean_broken_retention_%s", strings.ToLower(tc.storageType))
+	tableName := fmt.Sprintf("default.clean_broken_retention_%s", strings.ToLower(tc.name))
 	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s(id UInt64) ENGINE=MergeTree() ORDER BY id", tableName))
 	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO %s SELECT number FROM numbers(50)", tableName))
 
@@ -84,21 +85,18 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 	orphanPath := fmt.Sprintf("cbr_orphan_path_%d", suffix)
 	orphanObj := fmt.Sprintf("cbr_orphan_obj_%d", suffix)
 	orphanKept := fmt.Sprintf("cbr_orphan_keep_%d", suffix)
-	keepGlob := fmt.Sprintf("cbr_orphan_keep_*")
 
 	log.Debug().Str("backend", tc.name).Msg("Create a live backup that must survive the cleanup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create_remote", "--tables", tableName, keepBackup)
 
 	log.Debug().Str("backend", tc.name).Msg("Plant orphans")
-	tc.plantOrphan(env, r, tc.pathRoot, orphanPath)
-	tc.plantOrphan(env, r, tc.objRoot, orphanObj)
-	tc.plantOrphan(env, r, tc.pathRoot, orphanKept)
-	tc.plantOrphan(env, r, tc.objRoot, orphanKept)
-
-	tc.assertExists(env, r, tc.pathRoot, orphanPath)
-	tc.assertExists(env, r, tc.objRoot, orphanObj)
-	tc.assertExists(env, r, tc.pathRoot, orphanKept)
-	tc.assertExists(env, r, tc.objRoot, orphanKept)
+	for _, p := range []struct{ root, name string }{
+		{tc.pathRoot, orphanPath}, {tc.objRoot, orphanObj},
+		{tc.pathRoot, orphanKept}, {tc.objRoot, orphanKept},
+	} {
+		tc.plant(env, r, p.root, p.name)
+		tc.assertExists(env, r, p.root, p.name)
+	}
 
 	log.Debug().Str("backend", tc.name).Msg("Dry-run lists orphans but deletes nothing")
 	dryRunOut, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "clean_broken_retention")
@@ -112,7 +110,7 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 	tc.assertExists(env, r, tc.objRoot, orphanObj)
 
 	log.Debug().Str("backend", tc.name).Msg("--commit with --keep glob deletes only unmatched orphans")
-	commitOut, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "clean_broken_retention", "--commit", "--keep="+keepGlob)
+	commitOut, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "clean_broken_retention", "--commit", "--keep="+cleanBrokenRetentionKeepGlob)
 	r.NoError(err, "commit failed: %s", commitOut)
 	r.Contains(commitOut, "clean_broken_retention: deleting")
 	tc.assertGone(env, r, tc.pathRoot, orphanPath)
@@ -138,277 +136,221 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 	}
 }
 
-// ---- helpers for backends that map remote storage to a docker-container filesystem ----
-
-func plantOnContainerFS(container string) func(env *TestEnvironment, r *require.Assertions, root, name string) {
-	return func(env *TestEnvironment, r *require.Assertions, root, name string) {
+// containerFSCase builds a case for a backend that maps its remote storage to a
+// path on the given docker container's filesystem.
+func containerFSCase(name, configFile, container, pathRoot, objRoot, finalEmptyType string) cleanBrokenRetentionCase {
+	plant := func(env *TestEnvironment, r *require.Assertions, root, name string) {
 		env.DockerExecNoError(r, container, "bash", "-c", fmt.Sprintf(
 			"mkdir -p %s/%s/sub && echo garbage > %s/%s/data.bin && echo garbage > %s/%s/sub/nested.bin",
 			root, name, root, name, root, name,
 		))
 	}
-}
-func assertContainerFSExists(container string) func(env *TestEnvironment, r *require.Assertions, root, name string) {
-	return func(env *TestEnvironment, r *require.Assertions, root, name string) {
+	exists := func(env *TestEnvironment, r *require.Assertions, root, name string) {
 		out, err := env.DockerExecOut(container, "ls", root+"/"+name)
 		r.NoError(err, "expected %s/%s to exist on %s, output: %s", root, name, container, out)
 	}
-}
-func assertContainerFSGone(container string) func(env *TestEnvironment, r *require.Assertions, root, name string) {
-	return func(env *TestEnvironment, r *require.Assertions, root, name string) {
-		out, err := env.DockerExecOut(container, "bash", "-c", fmt.Sprintf("ls %s/%s 2>/dev/null || true", root, name))
+	gone := func(env *TestEnvironment, r *require.Assertions, root, name string) {
+		out, _ := env.DockerExecOut(container, "bash", "-c", fmt.Sprintf("ls %s/%s 2>/dev/null || true", root, name))
 		r.Empty(strings.TrimSpace(out), "expected %s/%s on %s to be removed, ls returned: %s", root, name, container, out)
-		_ = err
+	}
+	return cleanBrokenRetentionCase{
+		name:           name,
+		configFile:     configFile,
+		pathRoot:       pathRoot,
+		objRoot:        objRoot,
+		plant:          plant,
+		assertExists:   exists,
+		assertGone:     gone,
+		finalEmptyType: finalEmptyType,
 	}
 }
 
-// ---- per-backend case factories ----
+// dockerRunSh runs an ephemeral container on the integration test network with the
+// given image, environment, and shell command. Returns combined stdout/stderr.
+func dockerRunSh(env *TestEnvironment, image, sh string, envVars ...string) (string, error) {
+	args := []string{"run", "--rm", "--network", env.tc.networkName}
+	for _, e := range envVars {
+		args = append(args, "-e", e)
+	}
+	args = append(args, image, "sh", "-c", sh)
+	return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", args...)
+}
 
 func s3CleanBrokenRetentionCase() cleanBrokenRetentionCase {
-	return cleanBrokenRetentionCase{
-		name:           "S3",
-		storageType:    "S3",
-		configFile:     "config-s3.yml",
-		pathRoot:       "/minio/data/clickhouse/backup/cluster/0",
-		objRoot:        "/minio/data/clickhouse/object_disk/cluster/0",
-		skip:           func() bool { return false },
-		plantOrphan:    plantOnContainerFS("minio"),
-		assertExists:   assertContainerFSExists("minio"),
-		assertGone:     assertContainerFSGone("minio"),
-		finalEmptyType: "S3",
-	}
+	return containerFSCase("S3", "config-s3.yml", "minio",
+		"/minio/data/clickhouse/backup/cluster/0",
+		"/minio/data/clickhouse/object_disk/cluster/0",
+		"S3")
 }
 
 func sftpCleanBrokenRetentionCase() cleanBrokenRetentionCase {
-	return cleanBrokenRetentionCase{
-		name:        "SFTP",
-		storageType: "SFTP",
-		configFile:  "config-sftp-auth-key.yaml",
-		pathRoot:    "/root",
-		objRoot:     "/object_disk",
-		skip:        func() bool { return false },
-		setup: func(env *TestEnvironment, r *require.Assertions) {
-			env.uploadSSHKeys(r, "clickhouse-backup")
-			env.DockerExecNoError(r, "sshd", "mkdir", "-p", "/object_disk")
-		},
-		plantOrphan:    plantOnContainerFS("sshd"),
-		assertExists:   assertContainerFSExists("sshd"),
-		assertGone:     assertContainerFSGone("sshd"),
-		finalEmptyType: "",
+	tc := containerFSCase("SFTP", "config-sftp-auth-key.yaml", "sshd", "/root", "/object_disk", "")
+	tc.setup = func(env *TestEnvironment, r *require.Assertions) {
+		env.uploadSSHKeys(r, "clickhouse-backup")
+		env.DockerExecNoError(r, "sshd", "mkdir", "-p", "/object_disk")
 	}
+	return tc
 }
 
 func ftpCleanBrokenRetentionCase() cleanBrokenRetentionCase {
-	homePrefix := "/home/test_backup"
+	home := "/home/test_backup"
 	if isAdvancedMode() {
-		homePrefix = "/home/ftpusers/test_backup"
+		home = "/home/ftpusers/test_backup"
 	}
-	return cleanBrokenRetentionCase{
-		name:        "FTP",
-		storageType: "FTP",
-		configFile:  "config-ftp.yaml",
-		pathRoot:    homePrefix + "/backup",
-		objRoot:     homePrefix + "/object_disk",
-		skip:        func() bool { return compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") <= 0 },
-		skipReason:  "FTP scenario only validated on ClickHouse > 21.8",
-		setup: func(env *TestEnvironment, r *require.Assertions) {
-			env.DockerExecNoError(r, "ftp", "sh", "-c", fmt.Sprintf("mkdir -p %s/backup %s/object_disk && chown -R test_backup:test_backup %s", homePrefix, homePrefix, homePrefix))
-		},
-		plantOrphan:    plantOnContainerFS("ftp"),
-		assertExists:   assertContainerFSExists("ftp"),
-		assertGone:     assertContainerFSGone("ftp"),
-		finalEmptyType: "",
+	tc := containerFSCase("FTP", "config-ftp.yaml", "ftp", home+"/backup", home+"/object_disk", "")
+	tc.skip = func() bool { return compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") <= 0 }
+	tc.skipReason = "FTP scenario only validated on ClickHouse > 21.8"
+	tc.setup = func(env *TestEnvironment, r *require.Assertions) {
+		env.DockerExecNoError(r, "ftp", "sh", "-c", fmt.Sprintf("mkdir -p %s/backup %s/object_disk && chown -R test_backup:test_backup %s", home, home, home))
 	}
+	return tc
 }
 
 func gcsEmulatorCleanBrokenRetentionCase() cleanBrokenRetentionCase {
-	return cleanBrokenRetentionCase{
-		name:           "GCS_EMULATOR",
-		storageType:    "GCS_EMULATOR",
-		configFile:     "config-gcs-custom-endpoint.yml",
-		pathRoot:       "/data/altinity-qa-test/backup/cluster/0",
-		objRoot:        "/data/altinity-qa-test/object_disks/cluster/0",
-		skip:           func() bool { return false },
-		plantOrphan:    plantOnContainerFS("gcs"),
-		assertExists:   assertContainerFSExists("gcs"),
-		assertGone:     assertContainerFSGone("gcs"),
-		finalEmptyType: "GCS_EMULATOR",
-	}
+	return containerFSCase("GCS_EMULATOR", "config-gcs-custom-endpoint.yml", "gcs",
+		"/data/altinity-qa-test/backup/cluster/0",
+		"/data/altinity-qa-test/object_disks/cluster/0",
+		"GCS_EMULATOR")
 }
 
 func gcsRealCleanBrokenRetentionCase() cleanBrokenRetentionCase {
-	// real GCS — uses gsutil from google/cloud-sdk:slim with credentials.json
-	// from the clickhouse-backup container (mounted via --volumes-from).
 	const bucket = "altinity-qa-test"
-	gsutilRun := func(env *TestEnvironment, r *require.Assertions, sh string) (string, error) {
-		return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker",
+	const image = "google/cloud-sdk:slim"
+	// All gsutil invocations need the service account activated first.
+	const authPrefix = "gcloud auth activate-service-account --key-file=$GOOGLE_APPLICATION_CREDENTIALS >/dev/null 2>&1 && "
+	gsutil := func(env *TestEnvironment, r *require.Assertions, sh string) string {
+		// --volumes-from gives us /etc/clickhouse-backup/credentials.json from the backup container.
+		args := []string{
 			"run", "--rm", "--network", env.tc.networkName,
 			"--volumes-from", env.tc.GetContainerID("clickhouse-backup"),
 			"-e", "GOOGLE_APPLICATION_CREDENTIALS=/etc/clickhouse-backup/credentials.json",
-			"google/cloud-sdk:slim",
-			"bash", "-c", sh,
-		)
+			image, "bash", "-c", authPrefix + sh,
+		}
+		out, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", args...)
+		r.NoError(err, "gsutil failed: %s", out)
+		return out
 	}
 	return cleanBrokenRetentionCase{
-		name:        "GCS",
-		storageType: "GCS",
-		configFile:  "config-gcs.yml",
-		pathRoot:    "backup/cluster/0",
-		objRoot:     "object_disks/cluster/0",
-		skip:        func() bool { return isTestShouldSkip("GCS_TESTS") },
-		skipReason:  "Skipping GCS integration tests (GCS_TESTS not set)",
+		name:       "GCS",
+		configFile: "config-gcs.yml",
+		pathRoot:   "backup/cluster/0",
+		objRoot:    "object_disks/cluster/0",
+		skip:       func() bool { return isTestShouldSkip("GCS_TESTS") },
+		skipReason: "Skipping GCS integration tests (GCS_TESTS not set)",
 		setup: func(env *TestEnvironment, r *require.Assertions) {
-			env.tc.pullImageIfNeeded(context.Background(), "google/cloud-sdk:slim")
+			env.tc.pullImageIfNeeded(context.Background(), image)
 		},
-		plantOrphan: func(env *TestEnvironment, r *require.Assertions, root, name string) {
-			objectPath := root + "/" + name
-			sh := fmt.Sprintf(
-				"gcloud auth activate-service-account --key-file=$GOOGLE_APPLICATION_CREDENTIALS >/dev/null 2>&1 && "+
-					"echo garbage > /tmp/data.bin && "+
-					"gsutil -q cp /tmp/data.bin gs://%s/%s/data.bin && "+
-					"gsutil -q cp /tmp/data.bin gs://%s/%s/sub/nested.bin",
-				bucket, objectPath, bucket, objectPath,
-			)
-			out, err := gsutilRun(env, r, sh)
-			r.NoError(err, "gcs plantOrphan failed: %s", out)
+		plant: func(env *TestEnvironment, r *require.Assertions, root, name string) {
+			obj := root + "/" + name
+			gsutil(env, r, fmt.Sprintf(
+				"echo garbage > /tmp/data.bin && gsutil -q cp /tmp/data.bin gs://%s/%s/data.bin && gsutil -q cp /tmp/data.bin gs://%s/%s/sub/nested.bin",
+				bucket, obj, bucket, obj))
 		},
 		assertExists: func(env *TestEnvironment, r *require.Assertions, root, name string) {
-			objectPath := root + "/" + name
-			sh := fmt.Sprintf("gcloud auth activate-service-account --key-file=$GOOGLE_APPLICATION_CREDENTIALS >/dev/null 2>&1 && gsutil ls gs://%s/%s/", bucket, objectPath)
-			out, err := gsutilRun(env, r, sh)
-			r.NoError(err, "gcs assertExists failed for %s: %s", objectPath, out)
-			r.Contains(out, "gs://"+bucket+"/"+objectPath+"/", "expected listing to contain %s", objectPath)
+			obj := root + "/" + name
+			out := gsutil(env, r, fmt.Sprintf("gsutil ls gs://%s/%s/", bucket, obj))
+			r.Contains(out, "gs://"+bucket+"/"+obj+"/", "expected listing to contain %s", obj)
 		},
 		assertGone: func(env *TestEnvironment, r *require.Assertions, root, name string) {
-			objectPath := root + "/" + name
-			sh := fmt.Sprintf("gcloud auth activate-service-account --key-file=$GOOGLE_APPLICATION_CREDENTIALS >/dev/null 2>&1 && gsutil ls gs://%s/%s/** 2>&1 || true", bucket, objectPath)
-			out, _ := gsutilRun(env, r, sh)
-			r.NotContains(out, "gs://"+bucket+"/"+objectPath, "expected no blobs under gs://%s/%s, got: %s", bucket, objectPath, out)
+			obj := root + "/" + name
+			out := gsutil(env, r, fmt.Sprintf("gsutil ls gs://%s/%s/** 2>&1 || true", bucket, obj))
+			r.NotContains(out, "gs://"+bucket+"/"+obj, "expected no blobs under gs://%s/%s, got: %s", bucket, obj, out)
 		},
-		finalEmptyType: "",
 	}
 }
 
 func cosCleanBrokenRetentionCase() cleanBrokenRetentionCase {
-	// COS supports the S3 API on its regional endpoint; we use aws-cli docker image
-	// with secret_id/secret_key as AWS credentials and the S3 endpoint pointing at COS.
+	// COS exposes an S3-compatible API on its regional endpoint.
 	const bucket = "clickhouse-backup-1336113806"
-	const region = "na-ashburn"
 	const endpoint = "https://cos.na-ashburn.myqcloud.com"
-	awsRun := func(env *TestEnvironment, r *require.Assertions, sh string) (string, error) {
-		return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker",
+	const image = "amazon/aws-cli:latest"
+	awsRun := func(env *TestEnvironment, r *require.Assertions, sh string) string {
+		// --entrypoint sh overrides aws-cli's default `aws` entrypoint.
+		out, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker",
 			"run", "--rm", "--network", env.tc.networkName,
 			"-e", "AWS_ACCESS_KEY_ID="+os.Getenv("QA_TENCENT_SECRET_ID"),
 			"-e", "AWS_SECRET_ACCESS_KEY="+os.Getenv("QA_TENCENT_SECRET_KEY"),
-			"-e", "AWS_DEFAULT_REGION="+region,
-			"--entrypoint", "sh",
-			"amazon/aws-cli:latest",
-			"-c", sh,
-		)
+			"-e", "AWS_DEFAULT_REGION=na-ashburn",
+			"--entrypoint", "sh", image, "-c", sh)
+		r.NoError(err, "aws-cli failed: %s", out)
+		return out
 	}
 	return cleanBrokenRetentionCase{
-		name:        "COS",
-		storageType: "COS",
-		configFile:  "config-cos.yml",
-		pathRoot:    "backup/cluster/0",
-		objRoot:     "object_disk/cluster/0",
+		name:       "COS",
+		configFile: "config-cos.yml",
+		pathRoot:   "backup/cluster/0",
+		objRoot:    "object_disk/cluster/0",
 		skip: func() bool {
 			return os.Getenv("QA_TENCENT_SECRET_KEY") == "" || os.Getenv("QA_TENCENT_SECRET_ID") == ""
 		},
 		skipReason: "Skipping COS integration tests (QA_TENCENT_SECRET_ID / QA_TENCENT_SECRET_KEY not set)",
 		setup: func(env *TestEnvironment, r *require.Assertions) {
-			env.tc.pullImageIfNeeded(context.Background(), "amazon/aws-cli:latest")
+			env.tc.pullImageIfNeeded(context.Background(), image)
 			env.InstallDebIfNotExists(r, "clickhouse-backup", "gettext-base")
-			// config.yml was copied raw and still has ${QA_TENCENT_SECRET_*} placeholders — render in place.
-			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "envsubst < /etc/clickhouse-backup/config.yml > /etc/clickhouse-backup/config.yml.rendered && mv /etc/clickhouse-backup/config.yml.rendered /etc/clickhouse-backup/config.yml")
+			// config.yml was copied raw and still has ${QA_TENCENT_SECRET_*} placeholders.
+			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec",
+				"envsubst < /etc/clickhouse-backup/config.yml > /tmp/c.yml && mv /tmp/c.yml /etc/clickhouse-backup/config.yml")
 		},
-		plantOrphan: func(env *TestEnvironment, r *require.Assertions, root, name string) {
-			objectPath := root + "/" + name
-			sh := fmt.Sprintf(
-				"echo garbage > /tmp/data.bin && "+
-					"aws --endpoint-url=%s s3 cp /tmp/data.bin s3://%s/%s/data.bin >/dev/null && "+
-					"aws --endpoint-url=%s s3 cp /tmp/data.bin s3://%s/%s/sub/nested.bin >/dev/null",
-				endpoint, bucket, objectPath, endpoint, bucket, objectPath,
-			)
-			out, err := awsRun(env, r, sh)
-			r.NoError(err, "cos plantOrphan failed: %s", out)
+		plant: func(env *TestEnvironment, r *require.Assertions, root, name string) {
+			obj := root + "/" + name
+			awsRun(env, r, fmt.Sprintf(
+				"echo garbage > /tmp/data.bin && aws --endpoint-url=%s s3 cp /tmp/data.bin s3://%s/%s/data.bin >/dev/null && aws --endpoint-url=%s s3 cp /tmp/data.bin s3://%s/%s/sub/nested.bin >/dev/null",
+				endpoint, bucket, obj, endpoint, bucket, obj))
 		},
 		assertExists: func(env *TestEnvironment, r *require.Assertions, root, name string) {
-			objectPath := root + "/" + name
-			sh := fmt.Sprintf("aws --endpoint-url=%s s3 ls s3://%s/%s/", endpoint, bucket, objectPath)
-			out, err := awsRun(env, r, sh)
-			r.NoError(err, "cos assertExists failed for %s: %s", objectPath, out)
-			r.Contains(out, "data.bin", "expected data.bin under %s, got: %s", objectPath, out)
+			obj := root + "/" + name
+			out := awsRun(env, r, fmt.Sprintf("aws --endpoint-url=%s s3 ls s3://%s/%s/", endpoint, bucket, obj))
+			r.Contains(out, "data.bin", "expected data.bin under %s, got: %s", obj, out)
 		},
 		assertGone: func(env *TestEnvironment, r *require.Assertions, root, name string) {
-			objectPath := root + "/" + name
-			sh := fmt.Sprintf("aws --endpoint-url=%s s3 ls s3://%s/%s/ 2>&1 || true", endpoint, bucket, objectPath)
-			out, _ := awsRun(env, r, sh)
-			r.NotContains(out, "data.bin", "expected no blobs under s3://%s/%s, got: %s", bucket, objectPath, out)
-			r.NotContains(out, "nested.bin", "expected no blobs under s3://%s/%s, got: %s", bucket, objectPath, out)
+			obj := root + "/" + name
+			out := awsRun(env, r, fmt.Sprintf("aws --endpoint-url=%s s3 ls s3://%s/%s/ 2>&1 || true", endpoint, bucket, obj))
+			r.NotContains(out, "data.bin", "expected no blobs under s3://%s/%s, got: %s", bucket, obj, out)
+			r.NotContains(out, "nested.bin", "expected no blobs under s3://%s/%s, got: %s", bucket, obj, out)
 		},
-		finalEmptyType: "",
 	}
 }
 
 func azblobCleanBrokenRetentionCase() cleanBrokenRetentionCase {
-	const account = "devstoreaccount1"
-	const accountKey = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
 	const container = "container1"
-	connectionString := fmt.Sprintf("DefaultEndpointsProtocol=http;AccountName=%s;AccountKey=%s;BlobEndpoint=http://devstoreaccount1.blob.azure:10000/devstoreaccount1;", account, accountKey)
+	const connectionString = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://devstoreaccount1.blob.azure:10000/devstoreaccount1;"
+	const image = "mcr.microsoft.com/azure-cli:latest"
+	azEnv := "AZURE_STORAGE_CONNECTION_STRING=" + connectionString
 
-	plant := func(env *TestEnvironment, r *require.Assertions, root, name string) {
-		blobPath := strings.TrimPrefix(root+"/"+name, "/")
-		cmd := []string{
-			"run", "--rm", "--network", env.tc.networkName,
-			"-e", "AZURE_STORAGE_CONNECTION_STRING=" + connectionString,
-			"mcr.microsoft.com/azure-cli:latest",
-			"sh", "-c",
-			fmt.Sprintf("echo garbage > /tmp/data.bin && az storage blob upload --container-name %s --name %s/data.bin --file /tmp/data.bin --overwrite >/dev/null && az storage blob upload --container-name %s --name %s/sub/nested.bin --file /tmp/data.bin --overwrite >/dev/null",
-				container, blobPath, container, blobPath),
-		}
-		out, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", cmd...)
-		r.NoError(err, "azblob plantOrphan failed: %s", out)
-	}
-	exists := func(env *TestEnvironment, r *require.Assertions, root, name string) {
-		blobPath := strings.TrimPrefix(root+"/"+name, "/")
-		out, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker",
-			"run", "--rm", "--network", env.tc.networkName,
-			"-e", "AZURE_STORAGE_CONNECTION_STRING="+connectionString,
-			"mcr.microsoft.com/azure-cli:latest",
-			"sh", "-c",
-			fmt.Sprintf("az storage blob list --container-name %s --prefix %s/ --num-results 1 --query '[].name' -o tsv", container, blobPath),
-		)
+	azList := func(env *TestEnvironment, r *require.Assertions, prefix string) string {
+		out, err := dockerRunSh(env, image,
+			fmt.Sprintf("az storage blob list --container-name %s --prefix %s/ --num-results 1 --query '[].name' -o tsv", container, prefix),
+			azEnv)
 		r.NoError(err, "azblob list failed: %s", out)
-		r.NotEmpty(strings.TrimSpace(out), "expected blobs under %s/, got empty list", blobPath)
+		return strings.TrimSpace(out)
 	}
-	gone := func(env *TestEnvironment, r *require.Assertions, root, name string) {
-		blobPath := strings.TrimPrefix(root+"/"+name, "/")
-		out, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker",
-			"run", "--rm", "--network", env.tc.networkName,
-			"-e", "AZURE_STORAGE_CONNECTION_STRING="+connectionString,
-			"mcr.microsoft.com/azure-cli:latest",
-			"sh", "-c",
-			fmt.Sprintf("az storage blob list --container-name %s --prefix %s/ --num-results 1 --query '[].name' -o tsv", container, blobPath),
-		)
-		r.NoError(err, "azblob list failed: %s", out)
-		r.Empty(strings.TrimSpace(out), "expected no blobs under %s/, got: %s", blobPath, out)
-	}
+	blobPath := func(root, name string) string { return strings.TrimPrefix(root+"/"+name, "/") }
+
 	return cleanBrokenRetentionCase{
-		name:        "AZBLOB",
-		storageType: "AZBLOB",
-		configFile:  "config-azblob.yml",
-		// per config-azblob.yml: path=backup, object_disk_path=object_disks (no macros)
-		pathRoot:    "backup",
-		objRoot:     "object_disks",
-		skip:        func() bool { return isTestShouldSkip("AZURE_TESTS") },
-		skipReason:  "Skipping AZBLOB integration tests (AZURE_TESTS not set)",
+		name:       "AZBLOB",
+		configFile: "config-azblob.yml",
+		// config-azblob.yml: path=backup, object_disk_path=object_disks (no macros).
+		pathRoot:   "backup",
+		objRoot:    "object_disks",
+		skip:       func() bool { return isTestShouldSkip("AZURE_TESTS") },
+		skipReason: "Skipping AZBLOB integration tests (AZURE_TESTS not set)",
 		setup: func(env *TestEnvironment, r *require.Assertions) {
-			env.tc.pullImageIfNeeded(context.Background(), "mcr.microsoft.com/azure-cli:latest")
+			env.tc.pullImageIfNeeded(context.Background(), image)
 		},
-		plantOrphan:    plant,
-		assertExists:   exists,
-		assertGone:     gone,
-		finalEmptyType: "",
+		plant: func(env *TestEnvironment, r *require.Assertions, root, name string) {
+			p := blobPath(root, name)
+			out, err := dockerRunSh(env, image,
+				fmt.Sprintf("echo garbage > /tmp/data.bin && az storage blob upload --container-name %s --name %s/data.bin --file /tmp/data.bin --overwrite >/dev/null && az storage blob upload --container-name %s --name %s/sub/nested.bin --file /tmp/data.bin --overwrite >/dev/null",
+					container, p, container, p),
+				azEnv)
+			r.NoError(err, "azblob plant failed: %s", out)
+		},
+		assertExists: func(env *TestEnvironment, r *require.Assertions, root, name string) {
+			r.NotEmpty(azList(env, r, blobPath(root, name)), "expected blobs under %s/", blobPath(root, name))
+		},
+		assertGone: func(env *TestEnvironment, r *require.Assertions, root, name string) {
+			r.Empty(azList(env, r, blobPath(root, name)), "expected no blobs under %s/", blobPath(root, name))
+		},
 	}
 }
+
