@@ -600,13 +600,21 @@ func (b *Backuper) CleanBrokenRetention(commandId int, keepGlobs []string, commi
 	}()
 	b.dst = bd
 
-	backupList, err := bd.BackupList(ctx, false, "")
+	// parseMetadata=true forces a metadata.json stat for every top-level entry, so that
+	// orphan dirs without metadata.json are returned with Broken!="" and excluded from the
+	// keep-set below. Otherwise the metadata cache from a prior run would mask them.
+	backupList, err := bd.BackupList(ctx, true, "")
 	if err != nil {
 		return errors.WithMessage(err, "bd.BackupList")
 	}
 	keepNames := make(map[string]struct{}, len(backupList))
+	liveCount := 0
 	for _, backup := range backupList {
+		if backup.Broken != "" {
+			continue
+		}
 		keepNames[backup.BackupName] = struct{}{}
+		liveCount++
 	}
 	isKept := func(name string) bool {
 		if _, ok := keepNames[name]; ok {
@@ -624,7 +632,7 @@ func (b *Backuper) CleanBrokenRetention(commandId int, keepGlobs []string, commi
 	if commit {
 		mode = "commit"
 	}
-	log.Info().Msgf("clean_broken_retention: mode=%s, %d live backups, %d keep-globs", mode, len(backupList), len(keepGlobs))
+	log.Info().Msgf("clean_broken_retention: mode=%s, %d live backups (of %d in remote list), %d keep-globs", mode, liveCount, len(backupList), len(keepGlobs))
 
 	orphansInPath, err := b.findOrphanTopLevelNames(ctx, bd, "/", isKept)
 	if err != nil {
@@ -673,7 +681,8 @@ func (b *Backuper) CleanBrokenRetention(commandId int, keepGlobs []string, commi
 func (b *Backuper) findOrphanTopLevelNames(ctx context.Context, bd *storage.BackupDestination, rootPath string, isKept func(string) bool) ([]string, error) {
 	seen := make(map[string]struct{})
 	walkFn := func(_ context.Context, f storage.RemoteFile) error {
-		name := strings.TrimSuffix(f.Name(), "/")
+		// Walk("/", false) emits names that may have a leading "/" (S3) and/or trailing "/" (CommonPrefix).
+		name := strings.Trim(f.Name(), "/")
 		if name == "" || strings.Contains(name, "/") {
 			return nil
 		}

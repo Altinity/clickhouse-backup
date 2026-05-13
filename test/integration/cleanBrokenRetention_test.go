@@ -18,33 +18,44 @@ import (
 
 const cleanBrokenRetentionKeepGlob = "cbr_orphan_keep_*"
 
-// TestCleanBrokenRetention verifies that `clean_broken_retention`:
+// Each TestCleanBrokenRetention* function verifies that `clean_broken_retention`:
 //   - lists orphans (dry-run) without deleting,
 //   - on --commit removes orphans from both `path` and `object_disks_path`,
 //   - preserves the live backup and entries matched by --keep globs.
 //
-// The body of the test is shared across all supported remote-storage backends.
+// Each backend is its own top-level test so they can be run independently
+// (e.g. `RUN_TESTS=TestCleanBrokenRetentionS3 ./test/integration/run.sh`).
 // Backends that need cloud credentials skip themselves when the corresponding env
-// var (GCS_TESTS, AZURE_TESTS, QA_TENCENT_SECRET_KEY) is unset.
-func TestCleanBrokenRetention(t *testing.T) {
-	for _, tc := range []cleanBrokenRetentionCase{
-		s3CleanBrokenRetentionCase(),
-		sftpCleanBrokenRetentionCase(),
-		ftpCleanBrokenRetentionCase(),
-		gcsEmulatorCleanBrokenRetentionCase(),
-		azblobCleanBrokenRetentionCase(),
-		gcsRealCleanBrokenRetentionCase(),
-		cosCleanBrokenRetentionCase(),
-	} {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.skip != nil && tc.skip() {
-				t.Skip(tc.skipReason)
-				return
-			}
-			runCleanBrokenRetentionScenario(t, tc)
-		})
+// var (GCS_TESTS, AZURE_TESTS, QA_TENCENT_SECRET_KEY/QA_TENCENT_SECRET_ID) is unset.
+
+func TestCleanBrokenRetentionS3(t *testing.T) {
+	runCleanBrokenRetentionCase(t, s3CleanBrokenRetentionCase())
+}
+func TestCleanBrokenRetentionSFTP(t *testing.T) {
+	runCleanBrokenRetentionCase(t, sftpCleanBrokenRetentionCase())
+}
+func TestCleanBrokenRetentionFTP(t *testing.T) {
+	runCleanBrokenRetentionCase(t, ftpCleanBrokenRetentionCase())
+}
+func TestCleanBrokenRetentionGCSEmulator(t *testing.T) {
+	runCleanBrokenRetentionCase(t, gcsEmulatorCleanBrokenRetentionCase())
+}
+func TestCleanBrokenRetentionAZBLOB(t *testing.T) {
+	runCleanBrokenRetentionCase(t, azblobCleanBrokenRetentionCase())
+}
+func TestCleanBrokenRetentionGCS(t *testing.T) {
+	runCleanBrokenRetentionCase(t, gcsRealCleanBrokenRetentionCase())
+}
+func TestCleanBrokenRetentionCOS(t *testing.T) {
+	runCleanBrokenRetentionCase(t, cosCleanBrokenRetentionCase())
+}
+
+func runCleanBrokenRetentionCase(t *testing.T, tc cleanBrokenRetentionCase) {
+	if tc.skip != nil && tc.skip() {
+		t.Skip(tc.skipReason)
+		return
 	}
+	runCleanBrokenRetentionScenario(t, tc)
 }
 
 // cleanBrokenRetentionCase wires one remote-storage backend to the shared scenario.
@@ -177,10 +188,37 @@ func dockerRunSh(env *TestEnvironment, image, sh string, envVars ...string) (str
 }
 
 func s3CleanBrokenRetentionCase() cleanBrokenRetentionCase {
-	return containerFSCase("S3", "config-s3.yml", "minio",
-		"/minio/data/clickhouse/backup/cluster/0",
-		"/minio/data/clickhouse/object_disk/cluster/0",
-		"S3")
+	// Plant via `mc cp` instead of direct FS writes — MinIO ignores raw files on disk and
+	// only sees objects that went through its S3 API.
+	const mcAliasCmd = "mc alias set local https://localhost:9000 access_key it_is_my_super_secret_key >/dev/null 2>&1"
+	const bucketPath = "local/clickhouse/backup/cluster/0"
+	const objBucketPath = "local/clickhouse/object_disk/cluster/0"
+	plant := func(env *TestEnvironment, r *require.Assertions, root, name string) {
+		env.DockerExecNoError(r, "minio", "bash", "-c", fmt.Sprintf(
+			"%s && echo garbage > /tmp/data.bin && mc cp /tmp/data.bin %s/%s/data.bin >/dev/null && mc cp /tmp/data.bin %s/%s/sub/nested.bin >/dev/null",
+			mcAliasCmd, root, name, root, name,
+		))
+	}
+	exists := func(env *TestEnvironment, r *require.Assertions, root, name string) {
+		out, err := env.DockerExecOut("minio", "bash", "-c", fmt.Sprintf("%s && mc ls %s/%s/", mcAliasCmd, root, name))
+		r.NoError(err, "mc ls failed: %s", out)
+		r.Contains(out, "data.bin", "expected data.bin under %s/%s, got: %s", root, name, out)
+	}
+	gone := func(env *TestEnvironment, r *require.Assertions, root, name string) {
+		out, _ := env.DockerExecOut("minio", "bash", "-c", fmt.Sprintf("%s && mc ls -r %s/%s/ 2>&1 || true", mcAliasCmd, root, name))
+		r.NotContains(out, "data.bin", "expected no objects under %s/%s, got: %s", root, name, out)
+		r.NotContains(out, "nested.bin", "expected no objects under %s/%s, got: %s", root, name, out)
+	}
+	return cleanBrokenRetentionCase{
+		name:           "S3",
+		configFile:     "config-s3.yml",
+		pathRoot:       bucketPath,
+		objRoot:        objBucketPath,
+		plant:          plant,
+		assertExists:   exists,
+		assertGone:     gone,
+		finalEmptyType: "S3",
+	}
 }
 
 func sftpCleanBrokenRetentionCase() cleanBrokenRetentionCase {
