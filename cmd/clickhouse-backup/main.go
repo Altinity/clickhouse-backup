@@ -709,6 +709,26 @@ func main() {
 			},
 			Flags: cliapp.Flags,
 		},
+		{
+			Name:        "clean_broken_retention",
+			Usage:       "Remove orphan entries under remote `path` and `object_disks_path` that are not in the live backup list",
+			UsageText:   "clickhouse-backup clean_broken_retention [--commit] [--keep=glob ...]",
+			Description: "Walks top-level of remote `path` and `object_disks_path`, batch-deletes (with retry) every entry that is not a live backup and does not match any --keep glob. Runs in dry-run mode unless --commit is set.",
+			Action: func(c *cli.Context) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				return b.CleanBrokenRetention(status.NotFromAPI, c.StringSlice("keep"), c.Bool("commit"))
+			},
+			Flags: append(cliapp.Flags,
+				cli.StringSliceFlag{
+					Name:  "keep",
+					Usage: "Glob (path.Match syntax) of backup names to preserve in addition to live backups; can be passed multiple times",
+				},
+				cli.BoolFlag{
+					Name:  "commit",
+					Usage: "Actually delete orphans; without this flag the command only logs what would be deleted",
+				},
+			),
+		},
 
 		{
 			Name:        "watch",
