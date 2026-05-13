@@ -626,9 +626,9 @@ func (tc *TestContainers) startZookeeper(ctx context.Context, configsDir string)
 			&container.HostConfig{
 				Binds: []string{
 					filepath.Join(configsDir, "clickhouse-keeper.xml") + ":/etc/clickhouse-keeper/conf.d/clickhouse-keeper.xml",
-					filepath.Join(configsDir, "server.crt") + ":/etc/clickhouse-keeper/server.crt",
-					filepath.Join(configsDir, "server.key") + ":/etc/clickhouse-keeper/server.key",
-					filepath.Join(configsDir, "server.crt") + ":/etc/clickhouse-keeper/rootCA.crt",
+					filepath.Join(configsDir, "keeper.crt") + ":/etc/clickhouse-keeper/keeper.crt",
+					filepath.Join(configsDir, "keeper.key") + ":/etc/clickhouse-keeper/keeper.key",
+					filepath.Join(configsDir, "keeper.crt") + ":/etc/clickhouse-keeper/rootCA.crt",
 				},
 				SecurityOpt: []string{"label:disable"},
 			},
@@ -792,6 +792,9 @@ func (tc *TestContainers) clickHouseBinds(curDir, configsDir string) []string {
 		"dhparam.pem":                  "/etc/clickhouse-server/dhparam.pem",
 		"ssl.xml":                      "/etc/clickhouse-server/config.d/ssl.xml",
 		"clickhouse-config.xml":        "/etc/clickhouse-server/config.d/clickhouse-config.xml",
+		"minio.crt":                    "/etc/clickhouse-server/minio.crt",
+		"keeper.crt":                   "/etc/clickhouse-server/keeper.crt",
+		"keeper.key":                   "/etc/clickhouse-server/keeper.key",
 	}
 	for src, dst := range serverConfigs {
 		binds = append(binds, filepath.Join(configsDir, src)+":"+dst)

@@ -477,26 +477,30 @@ EOT
 
 fi
 
-# Keeper TLS configuration - available from 21.9, when KEEPER_TLS_ENABLED is set
+# Keeper TLS configuration - available from 21.9, when KEEPER_TLS_ENABLED is set.
+# Configures the <zookeeper> node to use port 2281 with TLS and explicitly resets
+# <openSSL><client> to verificationMode=none / AcceptCertificateHandler so any
+# earlier strict override (e.g. left over from a previous test run) cannot leak
+# into TestFIPS or other tests. The strict-verification path is applied locally
+# inside TestKeeperTLS via a per-test zz_keeper_tls.xml file (see keeperTLS_test.go).
 if [[ "${KEEPER_TLS_ENABLED:-}" == "1" ]] && [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.9 || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 
 cat <<EOT > /etc/clickhouse-server/config.d/keeper_tls.xml
 <yandex>
   <openSSL>
-    <client>
-      <caConfig>/etc/clickhouse-server/rootCA.crt</caConfig>
+    <client replace="replace">
       <loadDefaultCAFile>true</loadDefaultCAFile>
       <cacheSessions>true</cacheSessions>
       <disableProtocols>sslv2,sslv3</disableProtocols>
       <preferServerCiphers>true</preferServerCiphers>
-      <verificationMode>strict</verificationMode>
-      <invalidCertificateHandler>
-        <name>RejectCertificateHandler</name>
+      <verificationMode replace="replace">none</verificationMode>
+      <invalidCertificateHandler replace="replace">
+        <name replace="replace">AcceptCertificateHandler</name>
       </invalidCertificateHandler>
     </client>
   </openSSL>
   <zookeeper>
-    <node>
+    <node index="1" replace="replace">
       <host>zookeeper</host>
       <port>2281</port>
       <secure>1</secure>
