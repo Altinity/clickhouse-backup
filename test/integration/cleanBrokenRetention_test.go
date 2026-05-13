@@ -237,33 +237,117 @@ func gcsEmulatorCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 }
 
 func gcsRealCleanBrokenRetentionCase() cleanBrokenRetentionCase {
+	// real GCS — uses gsutil from google/cloud-sdk:slim with credentials.json
+	// from the clickhouse-backup container (mounted via --volumes-from).
+	const bucket = "altinity-qa-test"
+	gsutilRun := func(env *TestEnvironment, r *require.Assertions, sh string) (string, error) {
+		return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker",
+			"run", "--rm", "--network", env.tc.networkName,
+			"--volumes-from", env.tc.GetContainerID("clickhouse-backup"),
+			"-e", "GOOGLE_APPLICATION_CREDENTIALS=/etc/clickhouse-backup/credentials.json",
+			"google/cloud-sdk:slim",
+			"bash", "-c", sh,
+		)
+	}
 	return cleanBrokenRetentionCase{
 		name:        "GCS",
 		storageType: "GCS",
 		configFile:  "config-gcs.yml",
+		pathRoot:    "backup/cluster/0",
+		objRoot:     "object_disks/cluster/0",
 		skip:        func() bool { return isTestShouldSkip("GCS_TESTS") },
 		skipReason:  "Skipping GCS integration tests (GCS_TESTS not set)",
-		plantOrphan: func(env *TestEnvironment, r *require.Assertions, root, name string) {
-			// real GCS — would require gsutil; out of scope without credentials infra.
-			r.FailNow("plantOrphan for real GCS is not implemented; gate this case behind credentials")
+		setup: func(env *TestEnvironment, r *require.Assertions) {
+			env.tc.pullImageIfNeeded(context.Background(), "google/cloud-sdk:slim")
 		},
-		assertExists: func(env *TestEnvironment, r *require.Assertions, root, name string) {},
-		assertGone:   func(env *TestEnvironment, r *require.Assertions, root, name string) {},
+		plantOrphan: func(env *TestEnvironment, r *require.Assertions, root, name string) {
+			objectPath := root + "/" + name
+			sh := fmt.Sprintf(
+				"gcloud auth activate-service-account --key-file=$GOOGLE_APPLICATION_CREDENTIALS >/dev/null 2>&1 && "+
+					"echo garbage > /tmp/data.bin && "+
+					"gsutil -q cp /tmp/data.bin gs://%s/%s/data.bin && "+
+					"gsutil -q cp /tmp/data.bin gs://%s/%s/sub/nested.bin",
+				bucket, objectPath, bucket, objectPath,
+			)
+			out, err := gsutilRun(env, r, sh)
+			r.NoError(err, "gcs plantOrphan failed: %s", out)
+		},
+		assertExists: func(env *TestEnvironment, r *require.Assertions, root, name string) {
+			objectPath := root + "/" + name
+			sh := fmt.Sprintf("gcloud auth activate-service-account --key-file=$GOOGLE_APPLICATION_CREDENTIALS >/dev/null 2>&1 && gsutil ls gs://%s/%s/", bucket, objectPath)
+			out, err := gsutilRun(env, r, sh)
+			r.NoError(err, "gcs assertExists failed for %s: %s", objectPath, out)
+			r.Contains(out, "gs://"+bucket+"/"+objectPath+"/", "expected listing to contain %s", objectPath)
+		},
+		assertGone: func(env *TestEnvironment, r *require.Assertions, root, name string) {
+			objectPath := root + "/" + name
+			sh := fmt.Sprintf("gcloud auth activate-service-account --key-file=$GOOGLE_APPLICATION_CREDENTIALS >/dev/null 2>&1 && gsutil ls gs://%s/%s/** 2>&1 || true", bucket, objectPath)
+			out, _ := gsutilRun(env, r, sh)
+			r.NotContains(out, "gs://"+bucket+"/"+objectPath, "expected no blobs under gs://%s/%s, got: %s", bucket, objectPath, out)
+		},
+		finalEmptyType: "",
 	}
 }
 
 func cosCleanBrokenRetentionCase() cleanBrokenRetentionCase {
+	// COS supports the S3 API on its regional endpoint; we use aws-cli docker image
+	// with secret_id/secret_key as AWS credentials and the S3 endpoint pointing at COS.
+	const bucket = "clickhouse-backup-1336113806"
+	const region = "na-ashburn"
+	const endpoint = "https://cos.na-ashburn.myqcloud.com"
+	awsRun := func(env *TestEnvironment, r *require.Assertions, sh string) (string, error) {
+		return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker",
+			"run", "--rm", "--network", env.tc.networkName,
+			"-e", "AWS_ACCESS_KEY_ID="+os.Getenv("QA_TENCENT_SECRET_ID"),
+			"-e", "AWS_SECRET_ACCESS_KEY="+os.Getenv("QA_TENCENT_SECRET_KEY"),
+			"-e", "AWS_DEFAULT_REGION="+region,
+			"--entrypoint", "sh",
+			"amazon/aws-cli:latest",
+			"-c", sh,
+		)
+	}
 	return cleanBrokenRetentionCase{
 		name:        "COS",
 		storageType: "COS",
 		configFile:  "config-cos.yml",
-		skip:        func() bool { return os.Getenv("QA_TENCENT_SECRET_KEY") == "" },
-		skipReason:  "Skipping COS integration tests (QA_TENCENT_SECRET_KEY not set)",
-		plantOrphan: func(env *TestEnvironment, r *require.Assertions, root, name string) {
-			r.FailNow("plantOrphan for COS is not implemented; gate this case behind credentials")
+		pathRoot:    "backup/cluster/0",
+		objRoot:     "object_disk/cluster/0",
+		skip: func() bool {
+			return os.Getenv("QA_TENCENT_SECRET_KEY") == "" || os.Getenv("QA_TENCENT_SECRET_ID") == ""
 		},
-		assertExists: func(env *TestEnvironment, r *require.Assertions, root, name string) {},
-		assertGone:   func(env *TestEnvironment, r *require.Assertions, root, name string) {},
+		skipReason: "Skipping COS integration tests (QA_TENCENT_SECRET_ID / QA_TENCENT_SECRET_KEY not set)",
+		setup: func(env *TestEnvironment, r *require.Assertions) {
+			env.tc.pullImageIfNeeded(context.Background(), "amazon/aws-cli:latest")
+			env.InstallDebIfNotExists(r, "clickhouse-backup", "gettext-base")
+			// config.yml was copied raw and still has ${QA_TENCENT_SECRET_*} placeholders — render in place.
+			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "envsubst < /etc/clickhouse-backup/config.yml > /etc/clickhouse-backup/config.yml.rendered && mv /etc/clickhouse-backup/config.yml.rendered /etc/clickhouse-backup/config.yml")
+		},
+		plantOrphan: func(env *TestEnvironment, r *require.Assertions, root, name string) {
+			objectPath := root + "/" + name
+			sh := fmt.Sprintf(
+				"echo garbage > /tmp/data.bin && "+
+					"aws --endpoint-url=%s s3 cp /tmp/data.bin s3://%s/%s/data.bin >/dev/null && "+
+					"aws --endpoint-url=%s s3 cp /tmp/data.bin s3://%s/%s/sub/nested.bin >/dev/null",
+				endpoint, bucket, objectPath, endpoint, bucket, objectPath,
+			)
+			out, err := awsRun(env, r, sh)
+			r.NoError(err, "cos plantOrphan failed: %s", out)
+		},
+		assertExists: func(env *TestEnvironment, r *require.Assertions, root, name string) {
+			objectPath := root + "/" + name
+			sh := fmt.Sprintf("aws --endpoint-url=%s s3 ls s3://%s/%s/", endpoint, bucket, objectPath)
+			out, err := awsRun(env, r, sh)
+			r.NoError(err, "cos assertExists failed for %s: %s", objectPath, out)
+			r.Contains(out, "data.bin", "expected data.bin under %s, got: %s", objectPath, out)
+		},
+		assertGone: func(env *TestEnvironment, r *require.Assertions, root, name string) {
+			objectPath := root + "/" + name
+			sh := fmt.Sprintf("aws --endpoint-url=%s s3 ls s3://%s/%s/ 2>&1 || true", endpoint, bucket, objectPath)
+			out, _ := awsRun(env, r, sh)
+			r.NotContains(out, "data.bin", "expected no blobs under s3://%s/%s, got: %s", bucket, objectPath, out)
+			r.NotContains(out, "nested.bin", "expected no blobs under s3://%s/%s, got: %s", bucket, objectPath, out)
+		},
+		finalEmptyType: "",
 	}
 }
 
