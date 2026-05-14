@@ -85,6 +85,7 @@ build/linux/amd64/pkg build/linux/arm64/pkg: build config
 	mkdir -pv pkg/etc/$(NAME) && \
 	mkdir -pv pkg/usr/bin && \
 	cp -lv $(NAME) pkg/usr/bin/ && \
+	ln -sfv $(NAME) pkg/usr/bin/$(NAME)-acvp && \
 	cp -lv ../../../$(NAME)/config.yml pkg/etc/$(NAME)/config.yml.example
 
 
