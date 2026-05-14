@@ -93,8 +93,8 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 		{
 			Name:        "cas-restore",
 			Usage:       "Download a CAS backup and restore tables into ClickHouse",
-			UsageText:   "clickhouse-backup cas-restore [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<src>:<dst>[,...]] [--tm, --restore-table-mapping=<src>:<dst>[,...]] [--partitions=<part_names>] [-s, --schema] [-d, --data] [--rm, --drop] [--restore-schema-as-attach] [--replicated-copy-to-detached] [--skip-empty-tables] [--resume] <backup_name>",
-			Description: "Pulls the named CAS backup into the local backup directory and runs the v1 restore flow against it. --ignore-dependencies is rejected: CAS backups have no dependency chain. RBAC/configs/named-collections are out of scope for CAS v1.",
+			UsageText:   "clickhouse-backup cas-restore [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<src>:<dst>[,...]] [--tm, --restore-table-mapping=<src>:<dst>[,...]] [--partitions=<part_names>] [-s, --schema] [-d, --data] [--rm, --drop] [--rbac] [--rbac-only] [--configs] [--configs-only] [--named-collections] [--named-collections-only] [--restore-schema-as-attach] [--replicated-copy-to-detached] [--skip-empty-tables] [--resume] <backup_name>",
+			Description: "Pulls the named CAS backup into the local backup directory and runs the v1 restore flow against it. --ignore-dependencies is rejected: CAS backups have no dependency chain. The --rbac / --configs / --named-collections flags (and their --*-only variants) mirror v1 'restore' — when an --*-only flag is set, table data download is skipped entirely.",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				return b.CASRestore(
@@ -112,6 +112,12 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 					c.Bool("replicated-copy-to-detached"),
 					c.Bool("skip-empty-tables"),
 					c.Bool("resume"),
+					c.Bool("rbac"),
+					c.Bool("rbac-only"),
+					c.Bool("configs"),
+					c.Bool("configs-only"),
+					c.Bool("named-collections"),
+					c.Bool("named-collections-only"),
 					version,
 					c.Int("command-id"),
 				)
@@ -169,6 +175,30 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 				cli.BoolFlag{
 					Name:  "resume, resumable",
 					Usage: "Save intermediate state and resume restore on retry",
+				},
+				cli.BoolFlag{
+					Name:  "rbac, restore-rbac",
+					Usage: "Restore RBAC objects (users, roles, profiles, quotas, row policies) from the backup's access/ subtree",
+				},
+				cli.BoolFlag{
+					Name:  "rbac-only",
+					Usage: "Restore ONLY RBAC objects; skip table restore and table-data download entirely",
+				},
+				cli.BoolFlag{
+					Name:  "configs, restore-configs",
+					Usage: "Restore configs/ subtree to ClickHouse's config-extra directory",
+				},
+				cli.BoolFlag{
+					Name:  "configs-only",
+					Usage: "Restore ONLY configs; skip table restore and table-data download entirely",
+				},
+				cli.BoolFlag{
+					Name:  "named-collections, restore-named-collections",
+					Usage: "Restore named_collections/ subtree",
+				},
+				cli.BoolFlag{
+					Name:  "named-collections-only",
+					Usage: "Restore ONLY named collections; skip table restore and table-data download entirely",
 				},
 			),
 		},

@@ -618,25 +618,33 @@ func (b *Backuper) CASDownload(backupName, tablePattern string, partitions []str
 }
 
 // CASRestore downloads a CAS backup and hands off to the v1 restore flow.
+// Mirrors v1 'restore' for the six artifact flags so users don't need to
+// know about the cas-download + restore workaround.
 func (b *Backuper) CASRestore(
 	backupName, tablePattern string,
 	dbMapping, tableMapping, partitions, skipProjections []string,
 	schemaOnly, dataOnly, dropExists, ignoreDependencies bool,
 	restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, resume bool,
+	restoreRBAC, rbacOnly bool,
+	restoreConfigs, configsOnly bool,
+	restoreNamedCollections, namedCollectionsOnly bool,
 	backupVersion string, commandId int,
 ) error {
 	if backupName == "" {
 		return errors.New("cas-restore: backup name is required")
 	}
+	// Reject options that cas.Restore used to reject before we removed it.
+	if ignoreDependencies {
+		return errors.New("cas-restore: --ignore-dependencies is not applicable to CAS backups (no dependency chain)")
+	}
+	if dataOnly {
+		return errors.New("cas-restore: --data-only is not supported for CAS backups (use the v1 flow if you need data-only restoration)")
+	}
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
+
 	// Outer pidlock around the cas-download phase only. The inner v1
-	// b.Restore (invoked via runV1 below) acquires its own pidlock at
-	// pkg/backup/restore.go for the actual mutation phase. Holding both
-	// would self-deadlock since pidlock has no same-PID exemption — so we
-	// release the cas-download lock before the v1 handoff. Two concurrent
-	// cas-restore runs of the same backup name now serialize on the
-	// cas-download phase (preventing staging-swap races) and then again
-	// on the inner v1 lock.
+	// b.Restore acquires its own pidlock at pkg/backup/restore.go; pidlock has
+	// no same-PID exemption, so we release this lock before the v1 handoff.
 	casDownloadLockName := "cas-download-" + backupName
 	if pidErr := pidlock.CheckAndCreatePidFile(casDownloadLockName, "cas-download"); pidErr != nil {
 		return pidErr
@@ -661,76 +669,68 @@ func (b *Backuper) CASRestore(
 	}
 	defer closer()
 
-	localBackupRoot := path.Join(b.DefaultDataPath, "backup")
-	if err := os.MkdirAll(localBackupRoot, 0o755); err != nil {
-		return fmt.Errorf("cas-restore: mkdir %s: %w", localBackupRoot, err)
+	// Build fetch options: when any *-only flag is set, skip all table data
+	// and fetch only the matching artifact(s). Otherwise full download.
+	isOnly := rbacOnly || configsOnly || namedCollectionsOnly
+	var wantArtifacts []string
+	if isOnly {
+		if rbacOnly {
+			wantArtifacts = append(wantArtifacts, "access")
+		}
+		if configsOnly {
+			wantArtifacts = append(wantArtifacts, "configs")
+		}
+		if namedCollectionsOnly {
+			wantArtifacts = append(wantArtifacts, "named_collections")
+		}
+	}
+	fetchOpts := casFetchOptions{
+		TableFilter:   splitTablePattern(tablePattern),
+		Partitions:    partitions,
+		SchemaOnly:    schemaOnly,
+		DataOnly:      dataOnly,
+		Parallelism:   int(b.cfg.General.DownloadConcurrency),
+		SkipTableData: isOnly,
+		WantArtifacts: wantArtifacts,
 	}
 
-	opts := cas.RestoreOptions{
-		DownloadOptions: cas.DownloadOptions{
-			LocalBackupDir: localBackupRoot,
-			TableFilter:    splitTablePattern(tablePattern),
-			Partitions:     partitions,
-			SchemaOnly:     schemaOnly,
-			DataOnly:       dataOnly,
-			Parallelism:    int(b.cfg.General.DownloadConcurrency),
-		},
-		DropExists:               dropExists,
-		DatabaseMapping:          dbMapping,
-		TableMapping:             tableMapping,
-		SkipProjections:          skipProjections,
-		RestoreSchemaAsAttach:    restoreSchemaAsAttach,
-		ReplicatedCopyToDetached: replicatedCopyToDetached,
-		SkipEmptyTables:          skipEmptyTables,
-		Resume:                   resume,
-		BackupVersion:            backupVersion,
-		CommandID:                commandId,
-		IgnoreDependencies:       ignoreDependencies,
+	if _, err := b.casFetchToLocal(ctx, backend, backupName, fetchOpts); err != nil {
+		return err
 	}
 
-	// V1 restore handoff: cas.Restore materializes the backup at
-	// <LocalBackupDir>/<name> and calls this closure with that absolute path.
-	// We then delegate to b.Restore using the v1 positional argument list.
-	// Release the cas-download pidlock first so the inner b.Restore can
-	// acquire its own pidlock (under the plain backupName key); pidlock
-	// has no same-PID exemption, so holding both would self-deadlock.
-	runV1 := func(ctx context.Context, _ string, ro cas.RestoreOptions) error {
-		// cas.Download has completed; the staging-swap race window is closed.
-		// Release the outer cas-download lock before b.Restore takes its own.
-		pidlock.RemovePidFile(casDownloadLockName)
-		casDownloadLockReleased = true
+	// Download phase complete; the staging-swap race window is closed.
+	// Release the outer cas-download lock before b.Restore takes its own
+	// (pidlock has no same-PID exemption).
+	pidlock.RemovePidFile(casDownloadLockName)
+	casDownloadLockReleased = true
 
-		// b.Restore looks the backup up by name under b.DefaultDataPath/backup/,
-		// which is exactly where cas.Download placed it.
-		return b.Restore(
-			backupName,
-			tablePattern,
-			ro.DatabaseMapping,
-			ro.TableMapping,
-			ro.Partitions,
-			ro.SkipProjections,
-			ro.SchemaOnly,
-			ro.DataOnly,
-			ro.DropExists,
-			false, // ignoreDependencies — rejected upstream by cas.Restore
-			false, // restoreRBAC: out of scope for CAS v1
-			false, // rbacOnly
-			false, // restoreConfigs
-			false, // configsOnly
-			false, // restoreNamedCollections
-			false, // namedCollectionsOnly
-			ro.Resume,
-			ro.RestoreSchemaAsAttach,
-			ro.ReplicatedCopyToDetached,
-			ro.SkipEmptyTables,
-			ro.BackupVersion,
-			ro.CommandID,
-		)
+	if err := b.Restore(
+		backupName,
+		tablePattern,
+		dbMapping,
+		tableMapping,
+		partitions,
+		skipProjections,
+		schemaOnly,
+		dataOnly,
+		dropExists,
+		false, // ignoreDependencies — already rejected above
+		restoreRBAC,
+		rbacOnly,
+		restoreConfigs,
+		configsOnly,
+		restoreNamedCollections,
+		namedCollectionsOnly,
+		resume,
+		restoreSchemaAsAttach,
+		replicatedCopyToDetached,
+		skipEmptyTables,
+		backupVersion,
+		commandId,
+	); err != nil {
+		return err
 	}
 
-	if rErr := cas.Restore(ctx, backend, b.cfg.CAS, backupName, opts, runV1); rErr != nil {
-		return rErr
-	}
 	log.Info().Str("backup", backupName).Dur("elapsed", time.Since(start)).Msg("cas-restore done")
 	fmt.Printf("cas-restore: %s elapsed=%s\n", backupName, time.Since(start).Round(time.Millisecond))
 	return nil

@@ -278,6 +278,40 @@ func (api *APIServer) httpCASRestoreHandler(w http.ResponseWriter, r *http.Reque
 		_, resume = query["resumable"]
 	}
 
+	_, restoreRBAC := api.getQueryParameter(query, "rbac")
+	if !restoreRBAC {
+		_, restoreRBAC = api.getQueryParameter(query, "restore-rbac")
+	}
+	if !restoreRBAC {
+		_, restoreRBAC = api.getQueryParameter(query, "restore_rbac")
+	}
+	_, rbacOnly := api.getQueryParameter(query, "rbac-only")
+	if !rbacOnly {
+		_, rbacOnly = api.getQueryParameter(query, "rbac_only")
+	}
+	_, restoreConfigs := api.getQueryParameter(query, "configs")
+	if !restoreConfigs {
+		_, restoreConfigs = api.getQueryParameter(query, "restore-configs")
+	}
+	if !restoreConfigs {
+		_, restoreConfigs = api.getQueryParameter(query, "restore_configs")
+	}
+	_, configsOnly := api.getQueryParameter(query, "configs-only")
+	if !configsOnly {
+		_, configsOnly = api.getQueryParameter(query, "configs_only")
+	}
+	_, restoreNamedCollections := api.getQueryParameter(query, "named-collections")
+	if !restoreNamedCollections {
+		_, restoreNamedCollections = api.getQueryParameter(query, "restore-named-collections")
+	}
+	if !restoreNamedCollections {
+		_, restoreNamedCollections = api.getQueryParameter(query, "named_collections")
+	}
+	_, namedCollectionsOnly := api.getQueryParameter(query, "named-collections-only")
+	if !namedCollectionsOnly {
+		_, namedCollectionsOnly = api.getQueryParameter(query, "named_collections_only")
+	}
+
 	fullCommand := fmt.Sprintf("cas-restore %s", name)
 	if tablePattern != "" {
 		fullCommand += fmt.Sprintf(" --table=%q", tablePattern)
@@ -312,6 +346,24 @@ func (api *APIServer) httpCASRestoreHandler(w http.ResponseWriter, r *http.Reque
 	if resume {
 		fullCommand += " --resume"
 	}
+	if restoreRBAC {
+		fullCommand += " --rbac"
+	}
+	if rbacOnly {
+		fullCommand += " --rbac-only"
+	}
+	if restoreConfigs {
+		fullCommand += " --configs"
+	}
+	if configsOnly {
+		fullCommand += " --configs-only"
+	}
+	if restoreNamedCollections {
+		fullCommand += " --named-collections"
+	}
+	if namedCollectionsOnly {
+		fullCommand += " --named-collections-only"
+	}
 
 	operationId, _ := uuid.NewUUID()
 	callback, err := parseCallback(query)
@@ -332,6 +384,9 @@ func (api *APIServer) httpCASRestoreHandler(w http.ResponseWriter, r *http.Reque
 				dropExists, false, // ignoreDependencies always false for CAS
 				restoreSchemaAsAttach, replicatedCopyToDetached,
 				skipEmptyTables, resume,
+				restoreRBAC, rbacOnly,
+				restoreConfigs, configsOnly,
+				restoreNamedCollections, namedCollectionsOnly,
 				api.clickhouseBackupVersion, commandId,
 			)
 		})

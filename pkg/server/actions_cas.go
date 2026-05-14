@@ -99,6 +99,9 @@ func (api *APIServer) actionsCASHandler(command string, args []string, row statu
 					opts.dropExists, false, // ignoreDependencies always false
 					opts.restoreSchemaAsAttach, opts.replicatedCopyToDetached,
 					opts.skipEmptyTables, opts.resume,
+					opts.restoreRBAC, opts.rbacOnly,
+					opts.restoreConfigs, opts.configsOnly,
+					opts.restoreNamedCollections, opts.namedCollectionsOnly,
 					api.clickhouseBackupVersion, commandId,
 				)
 			})
@@ -259,6 +262,12 @@ type casRestoreOpts struct {
 	replicatedCopyToDetached bool
 	skipEmptyTables          bool
 	resume                   bool
+	restoreRBAC              bool
+	rbacOnly                 bool
+	restoreConfigs           bool
+	configsOnly              bool
+	restoreNamedCollections  bool
+	namedCollectionsOnly     bool
 }
 
 func parseCASRestoreArgs(args []string) (name string, opts casRestoreOpts, err error) {
@@ -276,6 +285,18 @@ func parseCASRestoreArgs(args []string) (name string, opts casRestoreOpts, err e
 			opts.skipEmptyTables = true
 		case a == "--resume" || a == "--resumable":
 			opts.resume = true
+		case a == "--rbac" || a == "--restore-rbac":
+			opts.restoreRBAC = true
+		case a == "--rbac-only":
+			opts.rbacOnly = true
+		case a == "--configs" || a == "--restore-configs":
+			opts.restoreConfigs = true
+		case a == "--configs-only":
+			opts.configsOnly = true
+		case a == "--named-collections" || a == "--restore-named-collections":
+			opts.restoreNamedCollections = true
+		case a == "--named-collections-only":
+			opts.namedCollectionsOnly = true
 		case strings.HasPrefix(a, "--table="):
 			opts.tablePattern = strings.TrimPrefix(a, "--table=")
 		case strings.HasPrefix(a, "--partitions="):

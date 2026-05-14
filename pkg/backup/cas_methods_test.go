@@ -38,6 +38,7 @@ func TestCASRestore_PidlockPreventsConcurrentCASDownload(t *testing.T) {
 		backupName, "", nil, nil, nil, nil,
 		false, false, false, false,
 		false, false, false, false,
+		false, false, false, false, false, false,
 		"", -1,
 	)
 	if err == nil {
@@ -56,6 +57,7 @@ func TestCASRestore_PidlockPreventsConcurrentCASDownload(t *testing.T) {
 		backupName, "", nil, nil, nil, nil,
 		false, false, false, false,
 		false, false, false, false,
+		false, false, false, false, false, false,
 		"", -1,
 	)
 	if err2 != nil && strings.Contains(err2.Error(), "already running") {
