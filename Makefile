@@ -60,7 +60,7 @@ build/linux/amd64/$(NAME)-fips build/linux/arm64/$(NAME)-fips: GOOS = linux
 build/darwin/amd64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips: GOOS = darwin
 
 build/linux/amd64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips build/linux/arm64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips:
-	GOFIPS140=latest CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD) -o $@ ./cmd/$(NAME) && \
+	GOFIPS140=v1.0.0 CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD) -o $@ ./cmd/$(NAME) && \
 	go tool nm $@ > /tmp/$(NAME)-fips-tags.txt && \
 	grep 'fips140' /tmp/$(NAME)-fips-tags.txt 1> /dev/null && \
 	rm -fv /tmp/$(NAME)-fips-tags.txt
@@ -85,6 +85,7 @@ build/linux/amd64/pkg build/linux/arm64/pkg: build config
 	mkdir -pv pkg/etc/$(NAME) && \
 	mkdir -pv pkg/usr/bin && \
 	cp -lv $(NAME) pkg/usr/bin/ && \
+	ln -sfv $(NAME) pkg/usr/bin/$(NAME)-acvp && \
 	cp -lv ../../../$(NAME)/config.yml pkg/etc/$(NAME)/config.yml.example
 
 
@@ -123,7 +124,7 @@ $(NAME)/$(NAME)-race:
 build-race-fips: $(NAME)/$(NAME)-race-fips
 
 $(NAME)/$(NAME)-race-fips:
-	GOFIPS140=latest CGO_ENABLED=1 $(GO_BUILD_STATIC) -cover -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
+	GOFIPS140=v1.0.0 CGO_ENABLED=1 $(GO_BUILD_STATIC) -cover -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
 
 
 # run `docker buildx create --use` first time

@@ -55,7 +55,7 @@ COPY ./ /src/
 RUN mkdir -p ./clickhouse-backup/
 RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/ GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) CGO_ENABLED=1 go build -trimpath -cover -buildvcs=false -tags netgo,osusergo -ldflags "-X 'main.version=race' -linkmode=external -extldflags '-static'" -race -o ./clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
 RUN cp -l ./clickhouse-backup/clickhouse-backup-race /bin/clickhouse-backup && echo "$(ldd ./clickhouse-backup/clickhouse-backup-race 2>&1 || true)" | grep -i -c -E "not a dynamic executable|not a valid dynamic program"
-RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/ GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) GOFIPS140=latest CGO_ENABLED=1 go build -trimpath -cover -buildvcs=false -tags netgo,osusergo -ldflags "-X 'main.version=race-fips' -linkmode=external -extldflags '-static'" -race -o ./clickhouse-backup/clickhouse-backup-race-fips ./cmd/clickhouse-backup
+RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/ GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) GOFIPS140=v1.0.0 CGO_ENABLED=1 go build -trimpath -cover -buildvcs=false -tags netgo,osusergo -ldflags "-X 'main.version=race-fips' -linkmode=external -extldflags '-static'" -race -o ./clickhouse-backup/clickhouse-backup-race-fips ./cmd/clickhouse-backup
 RUN cp -l ./clickhouse-backup/clickhouse-backup-race-fips /bin/clickhouse-backup-fips && echo "$(ldd ./clickhouse-backup/clickhouse-backup-race-fips 2>&1 || true)" | grep -i -c -E "not a dynamic executable|not a valid dynamic program"
 COPY entrypoint.sh /entrypoint.sh
 
@@ -129,7 +129,7 @@ LABEL "org.opencontainers.image.title"="Altinity Backup for ClickHouse"
 LABEL "org.opencontainers.image.description"="A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types."
 LABEL "org.opencontainers.image.source"="https://github.com/Altinity/clickhouse-backup"
 LABEL "org.opencontainers.image.documentation"="https://github.com/Altinity/clickhouse-backup/blob/master/Manual.md"
-ENV GODEBUG="fips140=on"
+ENV GODEBUG="fips140=only"
 LABEL mantainer="Eugene Klimov <eklimov@altinity.com>"
 COPY build/${TARGETPLATFORM}/clickhouse-backup-fips /bin/clickhouse-backup
 RUN chmod +x /bin/clickhouse-backup
