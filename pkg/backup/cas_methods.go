@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -465,6 +466,44 @@ func (b *Backuper) CASUpload(backupName string, skipObjectDisks, dryRun, unlock 
 		}
 		uploadOpts.ExcludedTables = excluded
 	}
+
+	// Upload artifacts (RBAC, configs, named_collections) into the CAS metadata
+	// namespace BEFORE the cas.Upload orchestrator runs (which writes the in-
+	// progress marker at step 5). This way a failure here leaves no marker behind.
+	casMetaBase := b.cfg.CAS.ClusterPrefix() + "metadata/" + backupName
+
+	rbacSize, err := b.casUploadArtifactDir(ctx, fullLocal, "access", casMetaBase, dryRun)
+	if err != nil {
+		return err
+	}
+	configSize, err := b.casUploadArtifactDir(ctx, fullLocal, "configs", casMetaBase, dryRun)
+	if err != nil {
+		return err
+	}
+	ncSize, err := b.casUploadArtifactDir(ctx, fullLocal, "named_collections", casMetaBase, dryRun)
+	if err != nil {
+		return err
+	}
+
+	// Populate Databases and Functions from the local metadata.json written by
+	// `clickhouse-backup create`. These are stored in the CAS remote metadata.json
+	// so cas-download can reconstruct a v1-compatible directory.
+	localMeta, localMetaErr := b.ReadBackupMetadataLocal(ctx, backupName)
+	if localMetaErr != nil {
+		log.Warn().Err(localMetaErr).Msg("cas-upload: could not read local metadata.json; Databases/Functions will be empty in remote metadata")
+	} else {
+		uploadOpts.Databases = localMeta.Databases
+		uploadOpts.Functions = localMeta.Functions
+	}
+	uploadOpts.RBACSize = rbacSize
+	uploadOpts.ConfigSize = configSize
+	uploadOpts.NamedCollectionsSize = ncSize
+	if b.cfg.GetCompressionFormat() == "none" {
+		uploadOpts.DataFormat = DirectoryFormat
+	} else {
+		uploadOpts.DataFormat = b.cfg.GetCompressionFormat()
+	}
+
 	// Run the conditional-put probe only for real (non-dry-run) uploads that
 	// will actually write a marker. Dry-run and read-only commands skip it.
 	if !dryRun {
@@ -569,6 +608,38 @@ func (b *Backuper) CASDownload(backupName, tablePattern string, partitions []str
 	if dlErr != nil {
 		return dlErr
 	}
+
+	// Download artifacts (RBAC, configs, named_collections) into the local
+	// backup directory so v1 restore can consume them. The DataFormat field
+	// from the remote metadata.json tells us whether artifacts were uploaded
+	// as a directory tree or a compressed archive.
+	localBM, localBMErr := b.ReadBackupMetadataLocal(ctx, backupName)
+	if localBMErr != nil {
+		return fmt.Errorf("cas-download: read local metadata.json for artifacts: %w", localBMErr)
+	}
+	dataFormat := localBM.DataFormat
+	if dataFormat == "" {
+		dataFormat = DirectoryFormat
+	}
+
+	casMetaBase := b.cfg.CAS.ClusterPrefix() + "metadata/" + backupName
+	for _, prefix := range []string{"access", "configs", "named_collections"} {
+		var remoteSrc string
+		if dataFormat == DirectoryFormat {
+			remoteSrc = path.Join(casMetaBase, prefix)
+		} else {
+			remoteSrc = path.Join(casMetaBase, fmt.Sprintf("%s.%s", prefix, dataFormat))
+		}
+		localArtifactDir := filepath.Join(res.LocalBackupDir, prefix)
+		artSize, artErr := b.casDownloadArtifactDir(ctx, remoteSrc, localArtifactDir, dataFormat)
+		if artErr != nil {
+			return artErr
+		}
+		if artSize > 0 {
+			log.Info().Str("prefix", prefix).Uint64("bytes", artSize).Msg("cas-download: artifact downloaded")
+		}
+	}
+
 	log.Info().
 		Str("backup", res.BackupName).
 		Str("local_dir", res.LocalBackupDir).
@@ -872,6 +943,97 @@ func splitTablePattern(p string) []string {
 		return nil
 	}
 	return out
+}
+
+// casUploadArtifactDir uploads one artifact directory (access, configs, or
+// named_collections) from the local backup into the CAS metadata namespace at
+// cas/<cluster>/metadata/<name>/<prefix>[.<ext>]. Returns (0, nil) when the
+// directory is missing or empty (graceful skip). In dryRun mode it counts
+// local bytes without writing to remote.
+func (b *Backuper) casUploadArtifactDir(ctx context.Context, localBackupDir, prefix, casRemoteBase string, dryRun bool) (uint64, error) {
+	localDir := filepath.Join(localBackupDir, prefix)
+
+	// Walk to detect files. uploadBackupRelatedDir returns an error on empty dirs
+	// unless the v1 *BackupAlways flags are set, which are not meaningful here.
+	hasFiles := false
+	_ = filepath.WalkDir(localDir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		hasFiles = true
+		return filepath.SkipAll
+	})
+	if !hasFiles {
+		log.Debug().Str("prefix", prefix).Msg("cas-upload: artifact dir missing or empty, skipping")
+		return 0, nil
+	}
+
+	if dryRun {
+		var total uint64
+		_ = filepath.WalkDir(localDir, func(_ string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if info, infoErr := d.Info(); infoErr == nil {
+				total += uint64(info.Size())
+			}
+			return nil
+		})
+		log.Info().Str("prefix", prefix).Uint64("bytes", total).Msg("cas-upload (dry-run): would upload artifact dir")
+		return total, nil
+	}
+
+	// Glob pattern mirrors v1: configs uses recursive **/*.*, others use *.*.
+	glob := filepath.Join(localDir, "*.*")
+	if prefix == "configs" {
+		glob = filepath.Join(localDir, "**/*.*")
+	}
+
+	var remoteDest string
+	if b.cfg.GetCompressionFormat() == "none" {
+		remoteDest = path.Join(casRemoteBase, prefix)
+	} else {
+		remoteDest = path.Join(casRemoteBase, fmt.Sprintf("%s.%s", prefix, b.cfg.GetArchiveExtension()))
+	}
+
+	size, err := b.uploadBackupRelatedDir(ctx, localDir, glob, remoteDest)
+	if err != nil {
+		return 0, fmt.Errorf("cas-upload: artifact %s: %w", prefix, err)
+	}
+	log.Info().Str("prefix", prefix).Uint64("bytes", size).Str("remote", remoteDest).Msg("cas-upload: artifact uploaded")
+	return size, nil
+}
+
+// casDownloadArtifactDir downloads one artifact (access, configs, or
+// named_collections) from the CAS metadata namespace into the local backup
+// directory. Returns (0, nil) when the remote artifact does not exist —
+// graceful skip for older CAS backups or backups created without that artifact.
+func (b *Backuper) casDownloadArtifactDir(ctx context.Context, remoteSrc, localDir, dataFormat string) (uint64, error) {
+	if dataFormat == DirectoryFormat || dataFormat == "" {
+		downloadedBytes, dlErr := b.dst.DownloadPath(ctx, remoteSrc, localDir,
+			b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration,
+			b.cfg.General.RetriesJitter, b, b.cfg.General.DownloadMaxBytesPerSecond)
+		if dlErr != nil {
+			if strings.Contains(dlErr.Error(), "not exist") {
+				return 0, nil
+			}
+			return 0, fmt.Errorf("cas-download: artifact %s: %w", remoteSrc, dlErr)
+		}
+		if _, statErr := os.Stat(localDir); os.IsNotExist(statErr) {
+			return 0, nil // remote dir was empty or missing
+		}
+		return uint64(downloadedBytes), nil
+	}
+	// Compressed archive: stat first for a graceful skip when not present.
+	if _, err := b.dst.StatFile(ctx, remoteSrc); err != nil {
+		log.Debug().Str("remote", remoteSrc).Msg("cas-download: artifact not found, skipping")
+		return 0, nil
+	}
+	downloadedBytes, dlErr := b.dst.DownloadCompressedStream(ctx, remoteSrc, localDir, b.cfg.General.DownloadMaxBytesPerSecond)
+	if dlErr != nil {
+		return 0, fmt.Errorf("cas-download: artifact %s: %w", remoteSrc, dlErr)
+	}
+	return uint64(downloadedBytes), nil
 }
 
 // isCASBackupRemote returns true if a backup with the given name exists

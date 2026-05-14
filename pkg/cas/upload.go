@@ -62,6 +62,20 @@ type UploadOptions struct {
 	// WaitForPrune, when > 0, polls the prune marker for up to this duration
 	// before giving up at upload step 2. 0 = refuse immediately (default).
 	WaitForPrune time.Duration
+
+	// Artifact metadata collected by the caller before invoking Upload.
+	// These are per-backup snapshots (no blob-level dedup) written into the
+	// remote metadata.json so cas-download can reconstruct a v1-compatible
+	// local backup directory (access/, configs/, named_collections/).
+	// DataFormat mirrors the v1 compression setting used when the artifacts
+	// were uploaded; cas-download uses it to decide whether to fetch a
+	// directory tree or a compressed archive.
+	DataFormat           string // "directory" or archive ext, e.g. "tar.zstd"
+	RBACSize             uint64
+	ConfigSize           uint64
+	NamedCollectionsSize uint64
+	Databases            []metadata.DatabasesMeta
+	Functions            []metadata.FunctionsMeta
 }
 
 // UploadResult summarizes what an Upload run did. The stats break down into
@@ -322,7 +336,7 @@ func Upload(ctx context.Context, b Backend, cfg Config, name string, opts Upload
 	}
 
 	// 12. Commit: write root metadata.json.
-	bm := buildBackupMetadata(name, cfg, plan)
+	bm := buildBackupMetadata(name, cfg, plan, opts)
 	bmJSON, err := json.MarshalIndent(bm, "", "\t")
 	if err != nil {
 		return nil, fmt.Errorf("cas: marshal metadata.json: %w", err)
@@ -1129,7 +1143,7 @@ func readLocalTableMetadata(root, db, table string) (metadata.TableMetadata, err
 // + future cas-download. Fields that depend on live ClickHouse (UUID,
 // CreationDate-from-ClickHouse, etc.) are populated by the caller in
 // later tasks.
-func buildBackupMetadata(name string, cfg Config, plan *uploadPlan) *metadata.BackupMetadata {
+func buildBackupMetadata(name string, cfg Config, plan *uploadPlan, opts UploadOptions) *metadata.BackupMetadata {
 	// Build Tables list deterministically.
 	type dbTable struct{ DB, Table string }
 	seen := make(map[dbTable]struct{})
@@ -1150,11 +1164,20 @@ func buildBackupMetadata(name string, cfg Config, plan *uploadPlan) *metadata.Ba
 		return tables[i].Table < tables[j].Table
 	})
 
+	dataFormat := "directory"
+	if opts.DataFormat != "" {
+		dataFormat = opts.DataFormat
+	}
 	return &metadata.BackupMetadata{
-		BackupName:   name,
-		CreationDate: time.Now().UTC(),
-		DataFormat:   "directory",
-		Tables:       tables,
+		BackupName:              name,
+		CreationDate:            time.Now().UTC(),
+		DataFormat:              dataFormat,
+		RBACSize:                opts.RBACSize,
+		ConfigSize:              opts.ConfigSize,
+		NamedCollectionsSize:    opts.NamedCollectionsSize,
+		Databases:               opts.Databases,
+		Functions:               opts.Functions,
+		Tables:                  tables,
 		CAS: &metadata.CASBackupParams{
 			LayoutVersion:   LayoutVersion,
 			InlineThreshold: cfg.InlineThreshold,
