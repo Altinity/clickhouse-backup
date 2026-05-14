@@ -593,62 +593,19 @@ func (b *Backuper) CASDownload(backupName, tablePattern string, partitions []str
 	}
 	defer closer()
 
-	localBackupRoot := path.Join(b.DefaultDataPath, "backup")
-	if err := os.MkdirAll(localBackupRoot, 0o755); err != nil {
-		return fmt.Errorf("cas-download: mkdir %s: %w", localBackupRoot, err)
-	}
-
-	res, dlErr := cas.Download(ctx, backend, b.cfg.CAS, backupName, cas.DownloadOptions{
-		LocalBackupDir: localBackupRoot,
-		TableFilter:    splitTablePattern(tablePattern),
-		Partitions:     partitions,
-		SchemaOnly:     schemaOnly,
-		DataOnly:       dataOnly,
-		Parallelism:    int(b.cfg.General.DownloadConcurrency),
+	res, dlErr := b.casFetchToLocal(ctx, backend, backupName, casFetchOptions{
+		TableFilter: splitTablePattern(tablePattern),
+		Partitions:  partitions,
+		SchemaOnly:  schemaOnly,
+		DataOnly:    dataOnly,
+		Parallelism: int(b.cfg.General.DownloadConcurrency),
 	})
 	if dlErr != nil {
 		return dlErr
 	}
 
-	// Download artifacts (RBAC, configs, named_collections) into the local
-	// backup directory so v1 restore can consume them. The DataFormat field
-	// from the remote metadata.json tells us whether artifacts were uploaded
-	// as a directory tree or a compressed archive.
-	localBM, localBMErr := b.ReadBackupMetadataLocal(ctx, backupName)
-	if localBMErr != nil {
-		return fmt.Errorf("cas-download: read local metadata.json for artifacts: %w", localBMErr)
-	}
-	dataFormat := localBM.DataFormat
-	if dataFormat == "" {
-		dataFormat = DirectoryFormat
-	}
-
-	casMetaBase := b.cfg.CAS.ClusterPrefix() + "metadata/" + backupName
-	for _, prefix := range []string{"access", "configs", "named_collections"} {
-		var remoteSrc string
-		if dataFormat == DirectoryFormat {
-			remoteSrc = path.Join(casMetaBase, prefix)
-		} else {
-			// dataFormat is the compression format key (e.g. "zstd"); the actual
-			// archive extension is "tar.zstd" — same mapping downloadBackupRelatedDir uses.
-			archExt, ok := config.ArchiveExtensions[dataFormat]
-			if !ok {
-				archExt = dataFormat // fallback: use as-is for unknown formats
-			}
-			remoteSrc = path.Join(casMetaBase, fmt.Sprintf("%s.%s", prefix, archExt))
-		}
-		localArtifactDir := filepath.Join(res.LocalBackupDir, prefix)
-		artSize, artErr := b.casDownloadArtifactDir(ctx, remoteSrc, localArtifactDir, dataFormat)
-		if artErr != nil {
-			return artErr
-		}
-		if artSize > 0 {
-			log.Info().Str("prefix", prefix).Uint64("bytes", artSize).Msg("cas-download: artifact downloaded")
-		}
-	}
-
 	log.Info().
-		Str("backup", res.BackupName).
+		Str("backup", backupName).
 		Str("local_dir", res.LocalBackupDir).
 		Int("archives", res.PerTableArchives).
 		Int("blobs_fetched", res.BlobsFetched).
@@ -656,7 +613,7 @@ func (b *Backuper) CASDownload(backupName, tablePattern string, partitions []str
 		Dur("elapsed", time.Since(start)).
 		Msg("cas-download done")
 	fmt.Printf("cas-download: %s -> %s archives=%d blobs=%d bytes=%d elapsed=%s\n",
-		res.BackupName, res.LocalBackupDir, res.PerTableArchives, res.BlobsFetched, res.BytesFetched, time.Since(start).Round(time.Millisecond))
+		backupName, res.LocalBackupDir, res.PerTableArchives, res.BlobsFetched, res.BytesFetched, time.Since(start).Round(time.Millisecond))
 	return nil
 }
 
@@ -952,6 +909,40 @@ func splitTablePattern(p string) []string {
 	return out
 }
 
+// casFetchOptions configures b.casFetchToLocal — the single download
+// orchestrator shared by CASDownload and CASRestore.
+//
+// Two modes:
+//   - SkipTableData=false: full download via cas.Download (table archives,
+//     blobs, per-table JSONs) followed by artifact downloads.
+//   - SkipTableData=true: minimal download — write a local metadata.json
+//     from the remote BackupMetadata and fetch only the artifacts named in
+//     WantArtifacts. No blobs, no archives, no per-table JSONs. Used by
+//     cas-restore when an --*-only flag is set (RBAC/configs/named-collections
+//     restore doesn't need any table data on disk).
+type casFetchOptions struct {
+	TableFilter   []string
+	Partitions    []string
+	SchemaOnly    bool
+	DataOnly      bool
+	Parallelism   int
+	SkipTableData bool
+	// WantArtifacts is the subset of artifact prefixes to download: any of
+	// "access", "configs", "named_collections". nil/empty = all three.
+	WantArtifacts []string
+}
+
+// casFetchResult summarizes what casFetchToLocal did. Stats fields are
+// populated from the inner cas.DownloadResult in the full path and remain
+// zero in the minimal path.
+type casFetchResult struct {
+	LocalBackupDir   string
+	DataFormat       string
+	PerTableArchives int
+	BlobsFetched     int
+	BytesFetched     int64
+}
+
 // casUploadArtifactDir uploads one artifact directory (access, configs, or
 // named_collections) from the local backup into the CAS metadata namespace at
 // cas/<cluster>/metadata/<name>/<prefix>[.<ext>]. Returns (0, nil) when the
@@ -1041,6 +1032,145 @@ func (b *Backuper) casDownloadArtifactDir(ctx context.Context, remoteSrc, localD
 		return 0, fmt.Errorf("cas-download: artifact %s: %w", remoteSrc, dlErr)
 	}
 	return uint64(downloadedBytes), nil
+}
+
+// casFetchToLocal is the single download orchestrator used by CASDownload
+// and CASRestore. See casFetchOptions for the two modes.
+//
+// The function returns the absolute local backup directory and the
+// DataFormat read from the local metadata.json (needed by callers that
+// want to know whether artifacts were directory-format or compressed).
+func (b *Backuper) casFetchToLocal(
+	ctx context.Context,
+	backend cas.Backend,
+	name string,
+	opts casFetchOptions,
+) (*casFetchResult, error) {
+	localBackupRoot := path.Join(b.DefaultDataPath, "backup")
+	if err := os.MkdirAll(localBackupRoot, 0o755); err != nil {
+		return nil, fmt.Errorf("cas-fetch: mkdir %s: %w", localBackupRoot, err)
+	}
+
+	res := &casFetchResult{}
+
+	if opts.SkipTableData {
+		// Minimal path: read remote metadata, write it locally with Handoff=true,
+		// then download only the requested artifacts.
+		remoteBM, vErr := cas.ValidateBackup(ctx, backend, b.cfg.CAS, name)
+		if vErr != nil {
+			return nil, vErr
+		}
+		localBackupDir := filepath.Join(localBackupRoot, name)
+		if err := os.MkdirAll(localBackupDir, 0o755); err != nil {
+			return nil, fmt.Errorf("cas-fetch: mkdir %s: %w", localBackupDir, err)
+		}
+
+		// Copy the remote BackupMetadata into the local directory with
+		// Handoff=true so v1 restore knows this is a CAS-materialized backup.
+		bmLocal := *remoteBM
+		if bmLocal.CAS == nil {
+			bmLocal.CAS = &metadata.CASBackupParams{}
+		}
+		bmLocal.CAS.Handoff = true
+		body, mErr := json.MarshalIndent(&bmLocal, "", "\t")
+		if mErr != nil {
+			return nil, fmt.Errorf("cas-fetch: marshal local metadata.json: %w", mErr)
+		}
+		metaPath := filepath.Join(localBackupDir, "metadata.json")
+		if err := os.WriteFile(metaPath, body, 0o644); err != nil {
+			return nil, fmt.Errorf("cas-fetch: write %s: %w", metaPath, err)
+		}
+
+		res.LocalBackupDir = localBackupDir
+		res.DataFormat = remoteBM.DataFormat
+		if res.DataFormat == "" {
+			res.DataFormat = DirectoryFormat
+		}
+
+		if err := b.casDownloadArtifacts(ctx, name, res.LocalBackupDir, res.DataFormat, opts.WantArtifacts); err != nil {
+			return nil, err
+		}
+		return res, nil
+	}
+
+	// Full path: delegate to cas.Download for table data, then download artifacts.
+	dlRes, dlErr := cas.Download(ctx, backend, b.cfg.CAS, name, cas.DownloadOptions{
+		LocalBackupDir: localBackupRoot,
+		TableFilter:    opts.TableFilter,
+		Partitions:     opts.Partitions,
+		SchemaOnly:     opts.SchemaOnly,
+		DataOnly:       opts.DataOnly,
+		Parallelism:    opts.Parallelism,
+	})
+	if dlErr != nil {
+		return nil, dlErr
+	}
+	res.LocalBackupDir = dlRes.LocalBackupDir
+	res.PerTableArchives = dlRes.PerTableArchives
+	res.BlobsFetched = dlRes.BlobsFetched
+	res.BytesFetched = dlRes.BytesFetched
+
+	// Read local metadata.json to learn DataFormat (used to address artifact paths).
+	localBM, lmErr := b.ReadBackupMetadataLocal(ctx, name)
+	if lmErr != nil {
+		return nil, fmt.Errorf("cas-fetch: read local metadata.json: %w", lmErr)
+	}
+	res.DataFormat = localBM.DataFormat
+	if res.DataFormat == "" {
+		res.DataFormat = DirectoryFormat
+	}
+
+	if err := b.casDownloadArtifacts(ctx, name, res.LocalBackupDir, res.DataFormat, opts.WantArtifacts); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// casDownloadArtifacts downloads the requested artifact prefixes from
+// cas/<cluster>/metadata/<name>/ into localBackupDir. wantArtifacts==nil means
+// all three; otherwise only the listed prefixes are fetched.
+func (b *Backuper) casDownloadArtifacts(
+	ctx context.Context,
+	name, localBackupDir, dataFormat string,
+	wantArtifacts []string,
+) error {
+	want := func(prefix string) bool {
+		if len(wantArtifacts) == 0 {
+			return true
+		}
+		for _, p := range wantArtifacts {
+			if p == prefix {
+				return true
+			}
+		}
+		return false
+	}
+
+	casMetaBase := b.cfg.CAS.ClusterPrefix() + "metadata/" + name
+	for _, prefix := range []string{"access", "configs", "named_collections"} {
+		if !want(prefix) {
+			continue
+		}
+		var remoteSrc string
+		if dataFormat == DirectoryFormat {
+			remoteSrc = path.Join(casMetaBase, prefix)
+		} else {
+			archExt, ok := config.ArchiveExtensions[dataFormat]
+			if !ok {
+				archExt = dataFormat
+			}
+			remoteSrc = path.Join(casMetaBase, fmt.Sprintf("%s.%s", prefix, archExt))
+		}
+		localArtifactDir := filepath.Join(localBackupDir, prefix)
+		artSize, artErr := b.casDownloadArtifactDir(ctx, remoteSrc, localArtifactDir, dataFormat)
+		if artErr != nil {
+			return artErr
+		}
+		if artSize > 0 {
+			log.Info().Str("prefix", prefix).Uint64("bytes", artSize).Msg("cas-fetch: artifact downloaded")
+		}
+	}
+	return nil
 }
 
 // isCASBackupRemote returns true if a backup with the given name exists
