@@ -129,7 +129,7 @@ LABEL "org.opencontainers.image.title"="Altinity Backup for ClickHouse"
 LABEL "org.opencontainers.image.description"="A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types."
 LABEL "org.opencontainers.image.source"="https://github.com/Altinity/clickhouse-backup"
 LABEL "org.opencontainers.image.documentation"="https://github.com/Altinity/clickhouse-backup/blob/master/Manual.md"
-ENV GODEBUG="fips140=on"
+ENV GODEBUG="fips140=only"
 LABEL mantainer="Eugene Klimov <eklimov@altinity.com>"
 COPY build/${TARGETPLATFORM}/clickhouse-backup-fips /bin/clickhouse-backup
 RUN chmod +x /bin/clickhouse-backup

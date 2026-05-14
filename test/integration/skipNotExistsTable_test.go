@@ -30,6 +30,13 @@ func TestSkipNotExistsTable(t *testing.T) {
 	r.NoError(err)
 
 	freezeErrorHandled := false
+	iterations := int64(0)
+	lastOut := ""
+	lastExecErr := error(nil)
+	sawCode60 := 0
+	sawCantFreeze := 0
+	sawNoTables := 0
+	sawDeadlock := 0
 	pauseChannel := make(chan int64)
 	resumeChannel := make(chan int64)
 	if os.Getenv("TEST_LOG_LEVEL") == "debug" {
@@ -42,47 +49,46 @@ func TestSkipNotExistsTable(t *testing.T) {
 			close(pauseChannel)
 			wg.Done()
 		}()
+		// Bisection controller. Goal: drop the table BETWEEN backup's existence
+		// check and FREEZE, producing ClickHouse code 60. Drop is too early ->
+		// "no tables for backup" -> push pause UP. Drop is too late -> backup
+		// finishes cleanly -> push pause DOWN. Both signals converge on the
+		// race window.
 		pause := int64(0)
-		// pausePercent := int64(90)
+		stepUpNs := int64(5 * time.Millisecond)
+		stepDownNs := int64(2 * time.Millisecond)
 		for i := int64(0); i < 100; i++ {
 			testBackupName := fmt.Sprintf("not_exists_%d", i)
 			err = env.ch.Query(ifNotExistsCreateSQL)
 			r.NoError(err)
 			err = env.ch.Query(ifNotExistsInsertSQL)
 			r.NoError(err)
-			if i < 5 {
-				log.Debug().Msgf("pauseChannel <- %d", 0)
-				pauseChannel <- 0
-			} else {
-				log.Debug().Msgf("pauseChannel <- %d", pause/i)
-				pauseChannel <- pause / i
-			}
-			startTime := time.Now()
+			log.Debug().Msgf("pauseChannel <- %d", pause)
+			pauseChannel <- pause
 			out, execErr := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "LOG_LEVEL=debug CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create --table freeze_not_exists.freeze_not_exists "+testBackupName)
 			log.Debug().Msg(out)
-			if (execErr != nil && (strings.Contains(out, "can't freeze") || strings.Contains(out, "no tables for backup"))) ||
-				(execErr == nil && !strings.Contains(out, "can't freeze")) {
-				parseTime := func(line string) time.Time {
-					parsedTime, err := time.Parse("2006-01-02 15:04:05.999", line[:23])
-					if err != nil {
-						r.Failf("Error parsing time", "%s, : %v", line, err)
-					}
-					return parsedTime
+			iterations = i + 1
+			lastOut = out
+			lastExecErr = execErr
+			if strings.Contains(out, "code: 60") {
+				sawCode60++
+			}
+			if strings.Contains(out, "can't freeze") {
+				sawCantFreeze++
+			}
+			if strings.Contains(out, "no tables for backup") {
+				sawNoTables++
+			}
+			if strings.Contains(out, "code: 473, message: Possible deadlock avoided") {
+				sawDeadlock++
+			}
+			if strings.Contains(out, "no tables for backup") {
+				pause += stepUpNs
+			} else if execErr == nil && !strings.Contains(out, "can't freeze") && !strings.Contains(out, "code: 60") {
+				pause -= stepDownNs
+				if pause < 0 {
+					pause = 0
 				}
-				lines := strings.Split(out, "\n")
-				firstTime := parseTime(lines[0])
-				var freezeTime time.Time
-				for _, line := range lines {
-					if strings.Contains(line, "create_table_query") {
-						freezeTime = parseTime(line)
-						break
-					}
-					if strings.Contains(line, "SELECT DISTINCT partition_id") {
-						freezeTime = parseTime(line)
-						break
-					}
-				}
-				pause += (firstTime.Sub(startTime) + freezeTime.Sub(firstTime)).Nanoseconds()
 			}
 			if execErr != nil {
 				if !strings.Contains(out, "no tables for backup") && !strings.Contains(out, "code: 473, message: Possible deadlock avoided") {
@@ -111,20 +117,35 @@ func TestSkipNotExistsTable(t *testing.T) {
 		}()
 		for pause := range pauseChannel {
 			log.Debug().Msgf("%d <- pauseChannel", pause)
+			pauseStart := time.Now()
 			if pause > 0 {
-				pauseStart := time.Now()
 				time.Sleep(time.Duration(pause) * time.Nanosecond)
-				log.Debug().Msgf("pause=%s pauseStart=%s", time.Duration(pause).String(), pauseStart.String())
-				err = env.ch.DropOrDetachTable(clickhouse.Table{Database: "freeze_not_exists", Name: "freeze_not_exists"}, ifNotExistsCreateSQL, "", false, chVersion, "", false, "")
-				r.NoError(err)
 			}
+			log.Debug().Msgf("pause=%s pauseStart=%s", time.Duration(pause).String(), pauseStart.String())
+			err = env.ch.DropOrDetachTable(clickhouse.Table{Database: "freeze_not_exists", Name: "freeze_not_exists"}, ifNotExistsCreateSQL, "", false, chVersion, "", false, "")
+			r.NoError(err)
 			resumeChannel <- 1
 		}
 	}()
 	wg.Wait()
-	r.True(freezeErrorHandled, "freezeErrorHandled false")
+	lastErrStr := "<nil>"
+	if lastExecErr != nil {
+		lastErrStr = lastExecErr.Error()
+	}
+	r.True(freezeErrorHandled,
+		"freezeErrorHandled=false: backup never returned 'code: 60' with execErr==nil after %d iterations. "+
+			"Occurrences: code:60=%d, can't freeze=%d, no tables for backup=%d, deadlock(473)=%d. "+
+			"Last execErr=%s. Last output (tail 4000 chars):\n%s",
+		iterations, sawCode60, sawCantFreeze, sawNoTables, sawDeadlock, lastErrStr, tailString(lastOut, 4000))
 	r.NoError(env.dropDatabase("test_skip_tables", true))
 	r.NoError(env.dropDatabase("freeze_not_exists", true))
 	t.Log("TestSkipNotExistsTable DONE, ALL OK")
 	env.Cleanup(t, r)
+}
+
+func tailString(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return "...(truncated)...\n" + s[len(s)-n:]
 }

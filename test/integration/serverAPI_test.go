@@ -90,24 +90,6 @@ func testAPIRestart(r *require.Assertions, env *TestEnvironment) {
 	r.Equal(uint64(0), inProgressActions)
 }
 
-func runClickHouseClientInsertSystemBackupActions(r *require.Assertions, env *TestEnvironment, commands []string, needWait bool) {
-	sql := "INSERT INTO system.backup_actions(command) " + "VALUES ('" + strings.Join(commands, "'),('") + "')"
-	out, err := env.DockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("clickhouse client --echo -mn -q \"%s\"", sql))
-	r.NoError(err, "%s -> %s unexpected error: %v", sql, out, err)
-	if needWait {
-		for _, command := range commands {
-			for {
-				time.Sleep(500 * time.Millisecond)
-				var commandStatus string
-				r.NoError(env.ch.SelectSingleRowNoCtx(&commandStatus, "SELECT status FROM system.backup_actions WHERE command=?", command))
-				if commandStatus != status.InProgressStatus {
-					break
-				}
-			}
-		}
-	}
-}
-
 func testAPIBackupStatus(r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Check system.backup_actions with /backup/actions call")
 	env.queryWithNoError(r, "SELECT count() FROM system.backup_actions")

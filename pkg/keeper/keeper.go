@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/antchfx/xmlquery"
@@ -20,7 +22,6 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/go-zookeeper/zk"
 )
 
@@ -61,44 +62,286 @@ type Keeper struct {
 	xmlConfigFile string
 }
 
+type clientTLSConfig struct {
+	caPath             string
+	certPath           string
+	keyPath            string
+	skipChainVerify    bool
+	skipHostnameVerify bool
+	loadDefaultCAFile  bool
+}
+
+type keeperNode struct {
+	address string
+	secure  bool
+}
+
+type staticHostProvider struct {
+	mu      sync.Mutex
+	servers []string
+	curr    int
+	last    int
+}
+
+func (hp *staticHostProvider) Init(servers []string) error {
+	hp.mu.Lock()
+	defer hp.mu.Unlock()
+
+	if len(servers) == 0 {
+		return errors.New("no keeper hosts found")
+	}
+	hp.servers = append([]string{}, servers...)
+	hp.curr = -1
+	hp.last = -1
+	return nil
+}
+
+func (hp *staticHostProvider) Len() int {
+	hp.mu.Lock()
+	defer hp.mu.Unlock()
+	return len(hp.servers)
+}
+
+func (hp *staticHostProvider) Next() (server string, retryStart bool) {
+	hp.mu.Lock()
+	defer hp.mu.Unlock()
+
+	hp.curr = (hp.curr + 1) % len(hp.servers)
+	retryStart = hp.curr == hp.last
+	if hp.last == -1 {
+		hp.last = 0
+	}
+	return hp.servers[hp.curr], retryStart
+}
+
+func (hp *staticHostProvider) Connected() {
+	hp.mu.Lock()
+	defer hp.mu.Unlock()
+	hp.last = hp.curr
+}
+
 // https://clickhouse.com/docs/operations/ssl-zookeeper - parse TLS configuration from ClickHouse's config.xml */openSSL/client/* section
-func parseClientTLSConfig(doc *xmlquery.Node, configFile string) (caPath, certPath, keyPath string, skipVerify, loadDefaultCAFile bool) {
+func parseClientTLSConfig(doc *xmlquery.Node, configFile string) (clientTLSConfig, error) {
+	tlsConfig := clientTLSConfig{
+		loadDefaultCAFile:  true,
+		skipHostnameVerify: true,
+	}
 	clientNode := xmlquery.FindOne(doc, "//openSSL/client")
 	if clientNode == nil {
-		log.Warn().Msgf("no /openSSL/client in %s, using empty TLS config", configFile)
-		return "", "", "", true, true
+		log.Warn().Msgf("no /openSSL/client in %s, using default ClickHouse TLS client settings", configFile)
+		return tlsConfig, nil
 	}
 
 	getText := func(selector string) string {
 		if n := clientNode.SelectElement(selector); n != nil {
-			return n.InnerText()
+			return strings.TrimSpace(n.InnerText())
 		}
 		return ""
 	}
 
-	certPath = getText("certificateFile")
-	keyPath = getText("privateKeyFile")
-	caPath = getText("caConfig")
-	loadDefaultCAFile = true
-	if val := getText("loadDefaultCAFile"); val != "" {
-		if useDefault, err := strconv.ParseBool(val); err == nil {
-			loadDefaultCAFile = useDefault
-		}
+	tlsConfig.certPath = getText("certificateFile")
+	tlsConfig.keyPath = getText("privateKeyFile")
+	if tlsConfig.certPath == "" && tlsConfig.keyPath != "" {
+		tlsConfig.certPath = tlsConfig.keyPath
 	}
-	if !loadDefaultCAFile && caPath == "" {
+	tlsConfig.caPath = getText("caConfig")
+	if val := getText("loadDefaultCAFile"); val != "" {
+		useDefault, err := strconv.ParseBool(val)
+		if err != nil {
+			return tlsConfig, errors.Wrapf(err, "invalid //openSSL/client/loadDefaultCAFile=%s in %s", val, configFile)
+		}
+		tlsConfig.loadDefaultCAFile = useDefault
+	}
+	if !tlsConfig.loadDefaultCAFile && tlsConfig.caPath == "" {
 		log.Warn().Msgf("//openSSL/client/loadDefaultCAFile=false provided in %s but caConfig is empty; system CAs will NOT be loaded", configFile)
 	}
 
-	if mode := getText("verificationMode"); mode == "none" {
-		skipVerify = true
-	}
-	// invalidCertificateHandler is alternative way to disable verification
-	if handler := getText("invalidCertificateHandler/name"); handler == "AcceptCertificateHandler" {
-		skipVerify = true
+	extendedVerification := false
+	if val := getText("extendedVerification"); val != "" {
+		useExtendedVerification, err := strconv.ParseBool(val)
+		if err != nil {
+			return tlsConfig, errors.Wrapf(err, "invalid //openSSL/client/extendedVerification=%s in %s", val, configFile)
+		}
+		extendedVerification = useExtendedVerification
 	}
 
-	log.Debug().Msgf("parsed TLS config from %s: certPath=%s, keyPath=%s, caPath=%s, skipVerify=%v, loadDefaultCAFile=%v", configFile, certPath, keyPath, caPath, skipVerify, loadDefaultCAFile)
-	return caPath, certPath, keyPath, skipVerify, loadDefaultCAFile
+	verificationMode := strings.ToLower(getText("verificationMode"))
+	if verificationMode == "" {
+		verificationMode = "relaxed"
+	}
+	// Poco treats strict and once the same as relaxed for clients. Host/IP
+	// checks are controlled by extendedVerification, not verificationMode.
+	switch verificationMode {
+	case "none":
+		tlsConfig.skipChainVerify = true
+		tlsConfig.skipHostnameVerify = true
+	case "relaxed", "strict", "once":
+		tlsConfig.skipHostnameVerify = !extendedVerification
+	default:
+		return tlsConfig, errors.Errorf("unknown //openSSL/client/verificationMode=%s in %s", verificationMode, configFile)
+	}
+
+	switch handler := getText("invalidCertificateHandler/name"); handler {
+	case "", "RejectCertificateHandler":
+	case "AcceptCertificateHandler":
+		tlsConfig.skipChainVerify = true
+		tlsConfig.skipHostnameVerify = true
+	default:
+		return tlsConfig, errors.Errorf("unknown //openSSL/client/invalidCertificateHandler/name=%s in %s", handler, configFile)
+	}
+
+	log.Debug().Msgf("parsed TLS config from %s: certPath=%s, keyPath=%s, caPath=%s, skipChainVerify=%v, skipHostnameVerify=%v, loadDefaultCAFile=%v", configFile, tlsConfig.certPath, tlsConfig.keyPath, tlsConfig.caPath, tlsConfig.skipChainVerify, tlsConfig.skipHostnameVerify, tlsConfig.loadDefaultCAFile)
+	return tlsConfig, nil
+}
+
+func newKeeperTLSConfig(parsed clientTLSConfig) (*tls.Config, error) {
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: parsed.skipChainVerify || parsed.skipHostnameVerify,
+	}
+	if parsed.certPath != "" || parsed.keyPath != "" {
+		cert, err := tls.LoadX509KeyPair(parsed.certPath, parsed.keyPath)
+		if err != nil {
+			return nil, errors.Wrap(err, "tls.LoadX509KeyPair")
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	var caCertPool *x509.CertPool
+	if parsed.loadDefaultCAFile && parsed.caPath != "" {
+		systemCertPool, err := x509.SystemCertPool()
+		if err != nil {
+			return nil, errors.Wrap(err, "x509.SystemCertPool")
+		}
+		caCertPool = systemCertPool
+	}
+	if parsed.caPath != "" {
+		caCert, err := os.ReadFile(parsed.caPath)
+		if err != nil {
+			return nil, errors.Wrapf(err, "read ca file %s", parsed.caPath)
+		}
+		if caCertPool == nil {
+			caCertPool = x509.NewCertPool()
+		}
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, errors.Errorf("AppendCertsFromPEM %s return false", parsed.caPath)
+		}
+		tlsConfig.RootCAs = caCertPool
+	} else if !parsed.loadDefaultCAFile {
+		tlsConfig.RootCAs = x509.NewCertPool()
+	}
+
+	if parsed.skipHostnameVerify && !parsed.skipChainVerify {
+		tlsConfig.VerifyConnection = func(state tls.ConnectionState) error {
+			if len(state.PeerCertificates) == 0 {
+				return errors.New("no peer certificates")
+			}
+			if err := verifyKeeperCertificateChain(state.PeerCertificates, tlsConfig.RootCAs); err != nil {
+				return err
+			}
+			return nil
+		}
+	}
+	return tlsConfig, nil
+}
+
+func verifyKeeperCertificateChain(certificates []*x509.Certificate, roots *x509.CertPool) error {
+	verifyOptions := x509.VerifyOptions{
+		Roots:       roots,
+		CurrentTime: time.Now(),
+		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	if len(certificates) > 1 {
+		verifyOptions.Intermediates = x509.NewCertPool()
+		for _, cert := range certificates[1:] {
+			verifyOptions.Intermediates.AddCert(cert)
+		}
+	}
+	if _, err := certificates[0].Verify(verifyOptions); err != nil {
+		return errors.Wrap(err, "verify peer certificate")
+	}
+	return nil
+}
+
+func parseKeeperNodes(zookeeperNode *xmlquery.Node, configFile string) ([]keeperNode, error) {
+	nodeList := zookeeperNode.SelectElements("node")
+	if len(nodeList) == 0 {
+		return nil, errors.WithStack(fmt.Errorf("/zookeeper/node not exists in %s", configFile))
+	}
+
+	nodes := make([]keeperNode, 0, len(nodeList))
+	for i, node := range nodeList {
+		hostNode := node.SelectElement("host")
+		if hostNode == nil {
+			return nil, errors.WithStack(fmt.Errorf("/zookeeper/node[%d]/host not exists in %s", i, configFile))
+		}
+		host := strings.TrimSpace(hostNode.InnerText())
+		if host == "" {
+			return nil, errors.WithStack(fmt.Errorf("/zookeeper/node[%d]/host is empty in %s", i, configFile))
+		}
+
+		port := "2181"
+		if portNode := node.SelectElement("port"); portNode != nil {
+			port = strings.TrimSpace(portNode.InnerText())
+		}
+		if port == "" {
+			return nil, errors.WithStack(fmt.Errorf("/zookeeper/node[%d]/port is empty in %s", i, configFile))
+		}
+
+		secure := false
+		if secureNode := node.SelectElement("secure"); secureNode != nil {
+			secureText := strings.TrimSpace(secureNode.InnerText())
+			if secureText != "" {
+				secureValue, err := strconv.ParseBool(secureText)
+				if err != nil {
+					return nil, errors.Wrapf(err, "invalid /zookeeper/node[%d]/secure=%s in %s", i, secureText, configFile)
+				}
+				secure = secureValue
+			}
+		}
+
+		nodes = append(nodes, keeperNode{
+			address: net.JoinHostPort(trimIPv6Brackets(host), port),
+			secure:  secure,
+		})
+	}
+	return nodes, nil
+}
+
+func trimIPv6Brackets(host string) string {
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		return strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	}
+	return host
+}
+
+func keeperTLSConfigForNode(tlsConfig *tls.Config, node keeperNode) *tls.Config {
+	nodeTLSConfig := tlsConfig.Clone()
+	host, _, err := net.SplitHostPort(node.address)
+	if err == nil {
+		nodeTLSConfig.ServerName = trimIPv6Brackets(host)
+	}
+	return nodeTLSConfig
+}
+
+func newKeeperDialer(tlsConfig *tls.Config, nodesByAddress map[string]keeperNode) zk.Dialer {
+	return func(network, address string, timeout time.Duration) (net.Conn, error) {
+		node, ok := nodesByAddress[address]
+		if !ok {
+			return nil, errors.Errorf("keeper node %s not found in parsed config", address)
+		}
+
+		dialer := &net.Dialer{Timeout: timeout}
+		if !node.secure {
+			return dialer.Dial(network, address)
+		}
+
+		tlsConn, dialErr := tls.DialWithDialer(dialer, network, address, keeperTLSConfigForNode(tlsConfig, node))
+		if dialErr != nil {
+			log.Error().Msgf("TLS dial to %s failed: %v", address, dialErr)
+			return nil, dialErr
+		}
+		return tlsConn, nil
+	}
 }
 
 // Connect - connect to any zookeeper server from /var/lib/clickhouse/preprocessed_configs/config.xml
@@ -121,46 +364,38 @@ func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 			log.Warn().Msgf("can't parse /zookeeper/session_timeout_ms in %s, value: %v, error: %v ", configFile, sessionTimeoutMsNode.InnerText(), err)
 		}
 	}
-	nodeList := zookeeperNode.SelectElements("node")
-	if len(nodeList) == 0 {
-		return errors.WithStack(fmt.Errorf("/zookeeper/node not exists in %s", configFile))
+	nodes, err := parseKeeperNodes(zookeeperNode, configFile)
+	if err != nil {
+		return err
 	}
-	keeperHosts := make([]string, len(nodeList))
+	keeperHosts := make([]string, 0, len(nodes))
+	nodesByAddress := make(map[string]keeperNode, len(nodes))
 	isSecure := false
-	for i, node := range nodeList {
-		hostNode := node.SelectElement("host")
-		if hostNode == nil {
-			return errors.WithStack(fmt.Errorf("/zookeeper/node[%d]/host not exists in %s", i, configFile))
-		}
-		port := "2181"
-		portNode := node.SelectElement("port")
-		if portNode != nil {
-			port = portNode.InnerText()
-		}
-		secureNode := node.SelectElement("secure")
-		if secureNode != nil && (secureNode.InnerText() == "1" || secureNode.InnerText() == "true") {
-			isSecure = true
-		}
-		keeperHosts[i] = fmt.Sprintf("%s:%s", hostNode.InnerText(), port)
+	for _, node := range nodes {
+		keeperHosts = append(keeperHosts, node.address)
+		nodesByAddress[node.address] = node
+		isSecure = isSecure || node.secure
 	}
 	var conn *zk.Conn
 	if isSecure {
 		// Parse TLS config from ClickHouse's config.xml /openSSL/client/* section
 		// according to https://clickhouse.com/docs/operations/ssl-zookeeper
-		caPath, certPath, keyPath, skipVerify, loadDefaultCAFile := parseClientTLSConfig(doc, configFile)
-		log.Info().Msgf("isSecure=%v, keeperHosts=%v, caPath=%v, certPath=%v, keyPath=%v, skipVerify=%v, loadDefaultCAFile=%v, use TLS for keeper connection (from config.xml /openSSL/client/*)", isSecure, keeperHosts, caPath, certPath, keyPath, skipVerify, loadDefaultCAFile)
-		tlsConfig, err := utils.NewTLSConfig(caPath, certPath, keyPath, skipVerify, loadDefaultCAFile)
+		parsedTLSConfig, err := parseClientTLSConfig(doc, configFile)
+		if err != nil {
+			return errors.Wrap(err, "can't parse TLS config from config.xml /openSSL/client/* settings")
+		}
+		log.Info().Msgf("isSecure=%v, keeperHosts=%v, caPath=%v, certPath=%v, keyPath=%v, skipChainVerify=%v, skipHostnameVerify=%v, loadDefaultCAFile=%v, use TLS for keeper connection (from config.xml /openSSL/client/*)", isSecure, keeperHosts, parsedTLSConfig.caPath, parsedTLSConfig.certPath, parsedTLSConfig.keyPath, parsedTLSConfig.skipChainVerify, parsedTLSConfig.skipHostnameVerify, parsedTLSConfig.loadDefaultCAFile)
+		tlsConfig, err := newKeeperTLSConfig(parsedTLSConfig)
 		if err != nil {
 			return errors.Wrap(err, "can't create TLS config from config.xml /openSSL/client/* settings")
 		}
-		conn, _, err = zk.Connect(keeperHosts, sessionTimeout, zk.WithLogger(newKeeperLogger()), zk.WithDialer(func(network, address string, timeout time.Duration) (net.Conn, error) {
-			tlsConn, dialErr := tls.DialWithDialer(&net.Dialer{Timeout: timeout}, network, address, tlsConfig)
-			if dialErr != nil {
-				log.Error().Msgf("TLS dial to %s failed: %v", address, dialErr)
-				return nil, dialErr
-			}
-			return tlsConn, nil
-		}))
+		conn, _, err = zk.Connect(
+			keeperHosts,
+			sessionTimeout,
+			zk.WithLogger(newKeeperLogger()),
+			zk.WithHostProvider(&staticHostProvider{}),
+			zk.WithDialer(newKeeperDialer(tlsConfig, nodesByAddress)),
+		)
 		if err != nil {
 			log.Error().Msgf("zk.Connect with TLS failed: %v", err)
 			return errors.Wrap(err, "zk.Connect with TLS")

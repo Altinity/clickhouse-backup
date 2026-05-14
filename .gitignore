@@ -18,6 +18,7 @@ GEMINI.md
 .claude/
 .crush/
 .omc/
+.omx/
 .mcp.json
 # TestFlows tests artifacts that shall not be stored in Git
 _instances/
