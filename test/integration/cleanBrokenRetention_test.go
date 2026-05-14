@@ -151,7 +151,7 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 // path on the given docker container's filesystem.
 func containerFSCase(name, configFile, container, pathRoot, objRoot, finalEmptyType string) cleanBrokenRetentionCase {
 	plant := func(env *TestEnvironment, r *require.Assertions, root, name string) {
-		env.DockerExecNoError(r, container, "bash", "-c", fmt.Sprintf(
+		env.DockerExecNoError(r, container, "sh", "-c", fmt.Sprintf(
 			"mkdir -p %s/%s/sub && echo garbage > %s/%s/data.bin && echo garbage > %s/%s/sub/nested.bin",
 			root, name, root, name, root, name,
 		))
@@ -161,7 +161,7 @@ func containerFSCase(name, configFile, container, pathRoot, objRoot, finalEmptyT
 		r.NoError(err, "expected %s/%s to exist on %s, output: %s", root, name, container, out)
 	}
 	gone := func(env *TestEnvironment, r *require.Assertions, root, name string) {
-		out, _ := env.DockerExecOut(container, "bash", "-c", fmt.Sprintf("ls %s/%s 2>/dev/null || true", root, name))
+		out, _ := env.DockerExecOut(container, "sh", "-c", fmt.Sprintf("ls %s/%s 2>/dev/null || true", root, name))
 		r.Empty(strings.TrimSpace(out), "expected %s/%s on %s to be removed, ls returned: %s", root, name, container, out)
 	}
 	return cleanBrokenRetentionCase{
@@ -239,7 +239,8 @@ func ftpCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 	tc.skip = func() bool { return compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") <= 0 }
 	tc.skipReason = "FTP scenario only validated on ClickHouse > 21.8"
 	tc.setup = func(env *TestEnvironment, r *require.Assertions) {
-		env.DockerExecNoError(r, "ftp", "sh", "-c", fmt.Sprintf("mkdir -p %s/backup %s/object_disk && chown -R test_backup:test_backup %s", home, home, home))
+		// proftpd/vsftpd containers don't create `test_backup` as a system user; uid 1000 owns the home dir.
+		env.DockerExecNoError(r, "ftp", "sh", "-c", fmt.Sprintf("mkdir -p %s/backup %s/object_disk && chown -R 1000:1000 %s && chmod -R 0777 %s", home, home, home, home))
 	}
 	return tc
 }
@@ -302,6 +303,8 @@ func cosCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 	const bucket = "clickhouse-backup-1336113806"
 	const endpoint = "https://cos.na-ashburn.myqcloud.com"
 	const image = "amazon/aws-cli:latest"
+	// Tencent COS rejects path-style addressing (PathStyleDomainForbidden); force virtual-hosted style.
+	const awsPrefix = "aws configure set default.s3.addressing_style virtual >/dev/null && "
 	awsRun := func(env *TestEnvironment, r *require.Assertions, sh string) string {
 		// --entrypoint sh overrides aws-cli's default `aws` entrypoint.
 		out, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker",
@@ -309,7 +312,7 @@ func cosCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 			"-e", "AWS_ACCESS_KEY_ID="+os.Getenv("QA_TENCENT_SECRET_ID"),
 			"-e", "AWS_SECRET_ACCESS_KEY="+os.Getenv("QA_TENCENT_SECRET_KEY"),
 			"-e", "AWS_DEFAULT_REGION=na-ashburn",
-			"--entrypoint", "sh", image, "-c", sh)
+			"--entrypoint", "sh", image, "-c", awsPrefix+sh)
 		r.NoError(err, "aws-cli failed: %s", out)
 		return out
 	}
@@ -352,7 +355,9 @@ func cosCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 func azblobCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 	const container = "container1"
 	const connectionString = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://devstoreaccount1.blob.azure:10000/devstoreaccount1;"
-	const image = "mcr.microsoft.com/azure-cli:latest"
+	// Pinned: azure-cli :latest ships an SDK whose REST API version is newer than
+	// what current Azurite supports ("API version 2026-02-06 is not supported by Azurite").
+	const image = "mcr.microsoft.com/azure-cli:2.65.0"
 	azEnv := "AZURE_STORAGE_CONNECTION_STRING=" + connectionString
 
 	azList := func(env *TestEnvironment, r *require.Assertions, prefix string) string {

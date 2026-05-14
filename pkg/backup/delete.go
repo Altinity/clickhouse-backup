@@ -686,6 +686,11 @@ func (b *Backuper) findOrphanTopLevelNames(ctx context.Context, bd *storage.Back
 		if name == "" || strings.Contains(name, "/") {
 			return nil
 		}
+		// Skip hidden/dotfile entries — clickhouse-backup never produces names starting with ".".
+		// Protects system dirs like /root/.ssh on filesystem-backed remotes (SFTP/FTP).
+		if strings.HasPrefix(name, ".") {
+			return nil
+		}
 		if isKept(name) {
 			return nil
 		}
