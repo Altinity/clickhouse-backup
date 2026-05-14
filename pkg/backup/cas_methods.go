@@ -16,6 +16,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/cas/casstorage"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
@@ -628,7 +629,13 @@ func (b *Backuper) CASDownload(backupName, tablePattern string, partitions []str
 		if dataFormat == DirectoryFormat {
 			remoteSrc = path.Join(casMetaBase, prefix)
 		} else {
-			remoteSrc = path.Join(casMetaBase, fmt.Sprintf("%s.%s", prefix, dataFormat))
+			// dataFormat is the compression format key (e.g. "zstd"); the actual
+			// archive extension is "tar.zstd" — same mapping downloadBackupRelatedDir uses.
+			archExt, ok := config.ArchiveExtensions[dataFormat]
+			if !ok {
+				archExt = dataFormat // fallback: use as-is for unknown formats
+			}
+			remoteSrc = path.Join(casMetaBase, fmt.Sprintf("%s.%s", prefix, archExt))
 		}
 		localArtifactDir := filepath.Join(res.LocalBackupDir, prefix)
 		artSize, artErr := b.casDownloadArtifactDir(ctx, remoteSrc, localArtifactDir, dataFormat)
