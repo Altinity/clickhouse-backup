@@ -30,6 +30,13 @@ func TestSkipNotExistsTable(t *testing.T) {
 	r.NoError(err)
 
 	freezeErrorHandled := false
+	iterations := int64(0)
+	lastOut := ""
+	lastExecErr := error(nil)
+	sawCode60 := 0
+	sawCantFreeze := 0
+	sawNoTables := 0
+	sawDeadlock := 0
 	pauseChannel := make(chan int64)
 	resumeChannel := make(chan int64)
 	if os.Getenv("TEST_LOG_LEVEL") == "debug" {
@@ -60,6 +67,21 @@ func TestSkipNotExistsTable(t *testing.T) {
 			startTime := time.Now()
 			out, execErr := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "LOG_LEVEL=debug CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create --table freeze_not_exists.freeze_not_exists "+testBackupName)
 			log.Debug().Msg(out)
+			iterations = i + 1
+			lastOut = out
+			lastExecErr = execErr
+			if strings.Contains(out, "code: 60") {
+				sawCode60++
+			}
+			if strings.Contains(out, "can't freeze") {
+				sawCantFreeze++
+			}
+			if strings.Contains(out, "no tables for backup") {
+				sawNoTables++
+			}
+			if strings.Contains(out, "code: 473, message: Possible deadlock avoided") {
+				sawDeadlock++
+			}
 			if (execErr != nil && (strings.Contains(out, "can't freeze") || strings.Contains(out, "no tables for backup"))) ||
 				(execErr == nil && !strings.Contains(out, "can't freeze")) {
 				parseTime := func(line string) time.Time {
@@ -122,9 +144,24 @@ func TestSkipNotExistsTable(t *testing.T) {
 		}
 	}()
 	wg.Wait()
-	r.True(freezeErrorHandled, "freezeErrorHandled false")
+	lastErrStr := "<nil>"
+	if lastExecErr != nil {
+		lastErrStr = lastExecErr.Error()
+	}
+	r.True(freezeErrorHandled,
+		"freezeErrorHandled=false: backup never returned 'code: 60' with execErr==nil after %d iterations. "+
+			"Occurrences: code:60=%d, can't freeze=%d, no tables for backup=%d, deadlock(473)=%d. "+
+			"Last execErr=%s. Last output (tail 4000 chars):\n%s",
+		iterations, sawCode60, sawCantFreeze, sawNoTables, sawDeadlock, lastErrStr, tailString(lastOut, 4000))
 	r.NoError(env.dropDatabase("test_skip_tables", true))
 	r.NoError(env.dropDatabase("freeze_not_exists", true))
 	t.Log("TestSkipNotExistsTable DONE, ALL OK")
 	env.Cleanup(t, r)
+}
+
+func tailString(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return "...(truncated)...\n" + s[len(s)-n:]
 }
