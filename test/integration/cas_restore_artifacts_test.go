@@ -43,8 +43,12 @@ func TestCASRestoreArtifacts(t *testing.T) {
 		testCASRestoreNamedCollectionsOnly(t, env, r)
 	})
 
-	t.Run("RejectsIgnoreDependencies", func(t *testing.T) {
-		testCASRestoreRejectsIgnoreDependencies(t, env, r)
+	t.Run("IgnoreDependenciesIsNoOp", func(t *testing.T) {
+		testCASRestoreIgnoreDependenciesNoOp(t, env, r)
+	})
+
+	t.Run("DataOnlyRestoresPartsIntoExistingTable", func(t *testing.T) {
+		testCASRestoreDataOnly(t, env, r)
 	})
 }
 
@@ -287,9 +291,10 @@ func testCASRestoreNamedCollectionsOnly(t *testing.T, env *TestEnvironment, r *r
 	env.casBackupNoError(r, "cas-delete", backup)
 }
 
-// testCASRestoreRejectsIgnoreDependencies: regression guard — --ignore-dependencies
-// must continue to be rejected after we moved the validation out of cas.Restore.
-func testCASRestoreRejectsIgnoreDependencies(t *testing.T, env *TestEnvironment, r *require.Assertions) {
+// testCASRestoreIgnoreDependenciesNoOp: --ignore-dependencies is accepted for
+// CLI parity with v1 'restore' but is a no-op for CAS (no dependency chain).
+// Verify the restore succeeds and the table is back.
+func testCASRestoreIgnoreDependenciesNoOp(t *testing.T, env *TestEnvironment, r *require.Assertions) {
 	const (
 		db     = "cas_restore_idep_db"
 		backup = "cas_restore_idep"
@@ -297,16 +302,46 @@ func testCASRestoreRejectsIgnoreDependencies(t *testing.T, env *TestEnvironment,
 	r.NoError(env.dropDatabase(db, true))
 	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", db))
 	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(1)", db))
+	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(4)", db))
 
 	env.casBackupNoError(r, "create", "--tables", db+".*", backup)
 	env.casBackupNoError(r, "cas-upload", backup)
 	env.casBackupNoError(r, "delete", "local", backup)
 	r.NoError(env.dropDatabase(db, true))
 
-	out, err := env.casBackup("cas-restore", "--ignore-dependencies", backup)
-	r.Error(err, "cas-restore --ignore-dependencies must be rejected; out=%s", out)
-	r.Contains(out, "ignore-dependencies", "error must name the rejected flag; out=%s", out)
+	env.casBackupNoError(r, "cas-restore", "--rm", "--ignore-dependencies", backup)
+	env.checkCount(r, 1, 4, fmt.Sprintf("SELECT count() FROM `%s`.t", db))
 
+	r.NoError(env.dropDatabase(db, true))
+	env.casBackupNoError(r, "cas-delete", backup)
+}
+
+// testCASRestoreDataOnly: --data-only attaches parts to an existing table
+// without re-creating the table. The user must pre-create a compatible table
+// (or restore --schema first) before invoking --data-only.
+func testCASRestoreDataOnly(t *testing.T, env *TestEnvironment, r *require.Assertions) {
+	const (
+		db     = "cas_restore_data_only_db"
+		backup = "cas_restore_data_only"
+	)
+	r.NoError(env.dropDatabase(db, true))
+	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", db))
+	createTable := fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db)
+	env.queryWithNoError(r, createTable)
+	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(6)", db))
+
+	env.casBackupNoError(r, "create", "--tables", db+".*", backup)
+	env.casBackupNoError(r, "cas-upload", backup)
+	env.casBackupNoError(r, "delete", "local", backup)
+
+	// Truncate the rows but keep the table; --data-only must attach the
+	// backup's parts back into the existing table.
+	env.queryWithNoError(r, fmt.Sprintf("TRUNCATE TABLE `%s`.t", db))
+	env.checkCount(r, 1, 0, fmt.Sprintf("SELECT count() FROM `%s`.t", db))
+
+	env.casBackupNoError(r, "cas-restore", "--data", backup)
+	env.checkCount(r, 1, 6, fmt.Sprintf("SELECT count() FROM `%s`.t", db))
+
+	r.NoError(env.dropDatabase(db, true))
 	env.casBackupNoError(r, "cas-delete", backup)
 }

@@ -633,12 +633,13 @@ func (b *Backuper) CASRestore(
 	if backupName == "" {
 		return errors.New("cas-restore: backup name is required")
 	}
-	// Reject options that cas.Restore used to reject before we removed it.
+	// --ignore-dependencies is accepted for CLI parity with v1 'restore' but
+	// is a no-op for CAS: every CAS backup is a standalone snapshot referencing
+	// all blob hashes it needs (no required_backup chain to walk). We still
+	// pass the flag through so v1 b.Restore sees a consistent value; it has
+	// nothing to ignore because metadata.RequiredBackup is empty for CAS.
 	if ignoreDependencies {
-		return errors.New("cas-restore: --ignore-dependencies is not applicable to CAS backups (no dependency chain)")
-	}
-	if dataOnly {
-		return errors.New("cas-restore: --data-only is not supported for CAS backups (use the v1 flow if you need data-only restoration)")
+		log.Info().Str("backup", backupName).Msg("cas-restore: --ignore-dependencies is a no-op for CAS backups (no dependency chain)")
 	}
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 
@@ -714,7 +715,7 @@ func (b *Backuper) CASRestore(
 		schemaOnly,
 		dataOnly,
 		dropExists,
-		false, // ignoreDependencies — already rejected above
+		ignoreDependencies,
 		restoreRBAC,
 		rbacOnly,
 		restoreConfigs,

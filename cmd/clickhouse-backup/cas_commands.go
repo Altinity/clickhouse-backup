@@ -94,7 +94,7 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 			Name:        "cas-restore",
 			Usage:       "Download a CAS backup and restore tables into ClickHouse",
 			UsageText:   "clickhouse-backup cas-restore [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<src>:<dst>[,...]] [--tm, --restore-table-mapping=<src>:<dst>[,...]] [--partitions=<part_names>] [-s, --schema] [-d, --data] [--rm, --drop] [--rbac] [--rbac-only] [--configs] [--configs-only] [--named-collections] [--named-collections-only] [--restore-schema-as-attach] [--replicated-copy-to-detached] [--skip-empty-tables] [--resume] <backup_name>",
-			Description: "Pulls the named CAS backup into the local backup directory and runs the v1 restore flow against it. --ignore-dependencies is rejected: CAS backups have no dependency chain. The --rbac / --configs / --named-collections flags (and their --*-only variants) mirror v1 'restore' — when an --*-only flag is set, table data download is skipped entirely.",
+			Description: "Pulls the named CAS backup into the local backup directory and runs the v1 restore flow against it. --ignore-dependencies is accepted for CLI parity but is a no-op (CAS backups have no dependency chain). --data-only restores parts without recreating tables (tables must already exist). The --rbac / --configs / --named-collections flags (and their --*-only variants) mirror v1 'restore' — when an --*-only flag is set, table data download is skipped entirely.",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				return b.CASRestore(
@@ -156,9 +156,8 @@ func casCommands(rootFlags []cli.Flag) []cli.Command {
 					Usage: "Drop existing schema objects before restore",
 				},
 				cli.BoolFlag{
-					Name:   "i, ignore-dependencies",
-					Usage:  "(rejected for CAS backups; accepted for CLI parity with 'restore')",
-					Hidden: true,
+					Name:  "i, ignore-dependencies",
+					Usage: "No-op for CAS backups (no dependency chain); accepted for CLI parity with v1 'restore'",
 				},
 				cli.BoolFlag{
 					Name:  "restore-schema-as-attach",
