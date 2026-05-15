@@ -877,7 +877,6 @@ func (tc *TestContainers) startClickHouseBackup(ctx context.Context, curDir, con
 
 	// Also mount backup binary and configs (same as clickhouse)
 	binds = append(binds, tc.clickHouseBinds(curDir, configsDir)...)
-	binds = append(binds, filepath.Join(configsDir, "keeper.crt")+":/etc/clickhouse-server/keeper_tls_ca_bundle.crt")
 
 	cfg := &container.Config{
 		Image:      chImage,
