@@ -110,7 +110,7 @@ jobs:
           - '24.3'
           - '24.8'
           - '25.3'
-# todo wait when resolve https://github.com/ClickHouse/ClickHouse/issues/103232
+# wait https://github.com/ClickHouse/ClickHouse/commit/393f47f4e1ed708d7dd48be09cc90f94e091359c, 25.8.24
           - '25.8.21'
           - '26.3'
     steps:
@@ -214,7 +214,7 @@ jobs:
           - '24.3'
           - '24.8'
           - '25.3'
-# todo wait when resolve https://github.com/ClickHouse/ClickHouse/issues/103232
+# wait https://github.com/ClickHouse/ClickHouse/commit/393f47f4e1ed708d7dd48be09cc90f94e091359c, 25.8.24
           - '25.8.21'
           - '26.3'
     steps:

@@ -459,19 +459,19 @@ func (s *S3) deleteKey(ctx context.Context, key string) error {
 		params.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
 	}
 	if s.versioning {
-		objVersions, err := s.getObjectAllVersions(ctx, key)
+		identifiers, err := s.getObjectAllVersions(ctx, key)
 		if err != nil {
 			return errors.Wrapf(err, "deleteKey, obtaining object version bucket: %s key: %s", s.Config.Bucket, key)
 		}
-		for _, objVersion := range objVersions {
-			params.VersionId = &objVersion
+		for _, id := range identifiers {
+			params.VersionId = id.VersionId
 			if _, err := s.client.DeleteObject(ctx, params); err != nil {
 				return errors.Wrapf(err, "deleteKey, deleting object bucket: %s key: %s version: %v", s.Config.Bucket, key, params.VersionId)
 			}
 		}
-		if len(objVersions) > 0 {
-			return nil
-		}
+		// Either we drained all versions+markers, or there was nothing to delete.
+		// In both cases avoid a key-only DeleteObject which would create a fresh delete-marker.
+		return nil
 	}
 	if _, err := s.client.DeleteObject(ctx, params); err != nil {
 		return errors.Wrapf(err, "deleteKey, deleting object bucket: %s key: %s version: %v", s.Config.Bucket, key, params.VersionId)
@@ -535,7 +535,7 @@ func (s *S3) deleteKeys(ctx context.Context, keys []string) error {
 		for _, key := range keys {
 			key := key
 			g.Go(func() error {
-				versions, err := s.getObjectAllVersions(ctx, key)
+				identifiers, err := s.getObjectAllVersions(ctx, key)
 				if err != nil {
 					// If we can't list versions, try deleting without version ID
 					log.Warn().Msgf("S3 deleteKeys: can't get versions for %s: %v, will try without version", key, err)
@@ -546,21 +546,13 @@ func (s *S3) deleteKeys(ctx context.Context, keys []string) error {
 					mu.Unlock()
 					return nil
 				}
-				mu.Lock()
-				if len(versions) == 0 {
-					// No versions found, delete without version ID
-					objectsToDelete = append(objectsToDelete, s3types.ObjectIdentifier{
-						Key: aws.String(key),
-					})
-				} else {
-					// Add each version as a separate object to delete
-					for _, version := range versions {
-						objectsToDelete = append(objectsToDelete, s3types.ObjectIdentifier{
-							Key:       aws.String(key),
-							VersionId: aws.String(version),
-						})
-					}
+				if len(identifiers) == 0 {
+					// Already absent (e.g. retry of an earlier successful delete).
+					// Skip — issuing a key-only delete here would create a new delete-marker.
+					return nil
 				}
+				mu.Lock()
+				objectsToDelete = append(objectsToDelete, identifiers...)
 				mu.Unlock()
 				return nil
 			})
@@ -694,7 +686,11 @@ func (s *S3) isVersioningEnabled(ctx context.Context) bool {
 	return output.Status == s3types.BucketVersioningStatusEnabled
 }
 
-func (s *S3) getObjectAllVersions(ctx context.Context, key string) ([]string, error) {
+// getObjectAllVersions returns ObjectIdentifier entries for every object version
+// AND every delete-marker that belongs exactly to the given key.
+// Deleting delete-markers by VersionId removes them, preventing accumulation
+// of empty delete-markers across retries and prior partial deletions.
+func (s *S3) getObjectAllVersions(ctx context.Context, key string) ([]s3types.ObjectIdentifier, error) {
 	listParams := &s3.ListObjectVersionsInput{
 		Bucket: aws.String(s.Config.Bucket),
 		Prefix: aws.String(key),
@@ -702,7 +698,7 @@ func (s *S3) getObjectAllVersions(ctx context.Context, key string) ([]string, er
 	if s.Config.RequestPayer != "" {
 		listParams.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
 	}
-	var versions []string
+	var identifiers []s3types.ObjectIdentifier
 	pager := s3.NewListObjectVersionsPaginator(s.client, listParams)
 	for pager.HasMorePages() {
 		page, err := pager.NextPage(ctx)
@@ -710,12 +706,23 @@ func (s *S3) getObjectAllVersions(ctx context.Context, key string) ([]string, er
 			return nil, errors.Wrapf(err, "listing object versions bucket: %s key: %s", s.Config.Bucket, key)
 		}
 		for _, version := range page.Versions {
-			if *version.Key == key {
-				versions = append(versions, *version.VersionId)
+			if version.Key != nil && *version.Key == key {
+				identifiers = append(identifiers, s3types.ObjectIdentifier{
+					Key:       aws.String(key),
+					VersionId: version.VersionId,
+				})
+			}
+		}
+		for _, marker := range page.DeleteMarkers {
+			if marker.Key != nil && *marker.Key == key {
+				identifiers = append(identifiers, s3types.ObjectIdentifier{
+					Key:       aws.String(key),
+					VersionId: marker.VersionId,
+				})
 			}
 		}
 	}
-	return versions, nil
+	return identifiers, nil
 }
 
 func (s *S3) StatFile(ctx context.Context, key string) (RemoteFile, error) {

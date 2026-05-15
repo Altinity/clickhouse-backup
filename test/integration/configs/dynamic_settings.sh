@@ -477,28 +477,25 @@ EOT
 
 fi
 
-# Keeper TLS configuration - available from 21.9, when KEEPER_TLS_ENABLED is set
+# Keeper TLS configuration - available from 21.9, when KEEPER_TLS_ENABLED is set.
+# Configures the <zookeeper> node to use port 2281 with TLS and explicitly resets
+# <openSSL><client> to verificationMode=none / AcceptCertificateHandler so any
+# earlier strict override (e.g. left over from a previous test run) cannot leak
+# into TestFIPS or other tests. The strict-verification path is applied locally
+# inside TestKeeperTLS via a per-test zz_keeper_tls.xml file (see keeperTLS_test.go).
 if [[ "${KEEPER_TLS_ENABLED:-}" == "1" ]] && [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.9 || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 
-cat /etc/clickhouse-server/keeper.crt /etc/clickhouse-server/minio.crt > /etc/clickhouse-server/keeper_tls_ca_bundle.crt
-chown clickhouse:clickhouse /etc/clickhouse-server/keeper_tls_ca_bundle.crt
-
-# Keep this file after ssl.xml so the Keeper client settings override its insecure defaults.
-cat <<EOT > /etc/clickhouse-server/config.d/zz_keeper_tls.xml
+cat <<EOT > /etc/clickhouse-server/config.d/keeper_tls.xml
 <yandex>
   <openSSL>
     <client replace="replace">
-      <caConfig>/etc/clickhouse-server/keeper_tls_ca_bundle.crt</caConfig>
-      <certificateFile>/etc/clickhouse-server/keeper.crt</certificateFile>
-      <privateKeyFile>/etc/clickhouse-server/keeper.key</privateKeyFile>
       <loadDefaultCAFile>true</loadDefaultCAFile>
       <cacheSessions>true</cacheSessions>
       <disableProtocols>sslv2,sslv3</disableProtocols>
       <preferServerCiphers>true</preferServerCiphers>
-      <verificationMode replace="replace">relaxed</verificationMode>
-      <extendedVerification replace="replace">false</extendedVerification>
+      <verificationMode replace="replace">none</verificationMode>
       <invalidCertificateHandler replace="replace">
-        <name replace="replace">RejectCertificateHandler</name>
+        <name replace="replace">AcceptCertificateHandler</name>
       </invalidCertificateHandler>
     </client>
   </openSSL>
