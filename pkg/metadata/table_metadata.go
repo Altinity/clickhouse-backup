@@ -42,6 +42,7 @@ func (tm *TableMetadata) Save(location string, metadataOnly bool) (uint64, error
 		newTM.Checksums = tm.Checksums
 		newTM.Size = tm.Size
 		newTM.TotalBytes = tm.TotalBytes
+		newTM.RebalancedFiles = tm.RebalancedFiles
 		newTM.MetadataOnly = false
 	}
 	if err := os.MkdirAll(path.Dir(location), 0750); err != nil {

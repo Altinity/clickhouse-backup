@@ -173,6 +173,8 @@ func TestFIPS(t *testing.T) {
 	// WTF =( WHY THIS IS STOP WORKS, it was work in https://github.com/Altinity/clickhouse-backup/actions/runs/25434757510 and https://github.com/Altinity/clickhouse-backup/commit/92db680d1bdbc34855949634c140e3a11f8b96be =(
 	// r.NoError(err, "FIPS-compatible clickhouse-backup -> FIPS-incompatible clickhouse-server connection shall return error: %s", out)
 	// r.Contains(out, "is not allowed in FIPS 140-only mode")
+	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete local "+fipsOnlyBackupName)
+	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete remote "+fipsOnlyBackupName)
 
 	// https://www.perplexity.ai/search/0920f1e8-59ec-4e14-b779-ba7b2e037196
 	testTLSCerts("rsa", "4096", "", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "AES_128_GCM_SHA256", "AES_256_GCM_SHA384")

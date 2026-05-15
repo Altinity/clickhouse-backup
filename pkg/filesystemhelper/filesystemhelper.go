@@ -153,12 +153,15 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 					// ClickHouse creates store/{uuid}/detached/ on ALL disks of the
 					// storage policy at table load time (MergeTreeData constructor).
 					// Build the path directly so hardlinks stay on the same filesystem.
-					if rebalancedDiskPath, hasDisk := diskMap[part.RebalancedDisk]; hasDisk && backupTable.UUID != "" {
-						dstParentDir = filepath.Join(rebalancedDiskPath, "store", backupTable.UUID[:3], backupTable.UUID)
-						dstParentDirExists = true
-					} else {
-						return errors.Errorf("can't build store path for rebalanced disk %s (uuid=%s)", part.RebalancedDisk, backupTable.UUID)
+					rebalancedDiskPath, hasDisk := diskMap[part.RebalancedDisk]
+					if !hasDisk {
+						return errors.Errorf("rebalanced disk %s not found in diskMap", part.RebalancedDisk)
 					}
+					if backupTable.UUID == "" {
+						return errors.Errorf("table UUID is empty, can't build store path for rebalanced disk %s", part.RebalancedDisk)
+					}
+					dstParentDir = filepath.Join(rebalancedDiskPath, "store", backupTable.UUID[:3], backupTable.UUID)
+					dstParentDirExists = true
 				}
 			}
 			backupDiskPath := diskMap[activeDisk]
@@ -478,4 +481,3 @@ func IsDuplicatedParts(part1, part2 string) error {
 	}
 	return nil
 }
-
