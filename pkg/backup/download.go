@@ -110,11 +110,6 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		}
 	}()
 
-	// Prefetch metadata for incremental backup chain to populate cache
-	if err := b.prefetchBackupMetadataChain(ctx, backupName); err != nil {
-		log.Warn().Err(err).Msg("prefetchBackupMetadataChain failed, continuing with on-demand fetching")
-	}
-
 	remoteBackups, err := b.dst.BackupList(ctx, true, backupName)
 	if err != nil {
 		return errors.WithMessage(err, "BackupList")
@@ -325,9 +320,6 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		"object_disk_size": utils.FormatBytes(backupMetadata.ObjectDiskSize),
 		"version":          backupVersion,
 	}).Msg("done")
-
-	// Clear backup list cache after download completes
-	storage.ClearBackupListCache()
 
 	return nil
 }
@@ -1485,46 +1477,3 @@ func (b *Backuper) getDownloadDiskForNonExistsDisk(notExistsDiskType string, fil
 	return false, filteredDisks[leastUsedIdx].Name, filteredDisks[leastUsedIdx].FreeSpace - partSize, nil
 }
 
-// prefetchBackupMetadataChain - prefetch metadata for the entire incremental backup chain
-// to populate the in-memory cache and avoid repeated S3 API calls
-func (b *Backuper) prefetchBackupMetadataChain(ctx context.Context, backupName string) error {
-	start := time.Now()
-	visited := make(map[string]bool)
-	backupChain := []string{}
-
-	// Discover the backup chain by walking RequiredBackup links
-	currentBackup := backupName
-	for currentBackup != "" && !visited[currentBackup] {
-		backupChain = append(backupChain, currentBackup)
-		visited[currentBackup] = true
-
-		// Get metadata to find RequiredBackup
-		backupList, err := b.dst.BackupList(ctx, true, currentBackup)
-		if err != nil {
-			return errors.Wrapf(err, "BackupList for %s", currentBackup)
-		}
-
-		var found bool
-		for _, backup := range backupList {
-			if backup.BackupName == currentBackup {
-				currentBackup = backup.RequiredBackup
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			break
-		}
-	}
-
-	if len(backupChain) > 1 {
-		log.Info().Msgf("prefetchBackupMetadataChain: discovered chain of %d backups: %v (took %s)",
-			len(backupChain), backupChain, utils.HumanizeDuration(time.Since(start)))
-	} else {
-		log.Debug().Msgf("prefetchBackupMetadataChain: single backup, no chain (took %s)",
-			utils.HumanizeDuration(time.Since(start)))
-	}
-
-	return nil
-}
