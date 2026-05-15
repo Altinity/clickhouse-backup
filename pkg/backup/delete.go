@@ -14,6 +14,7 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/custom"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/object_disk"
@@ -555,6 +556,161 @@ func (b *Backuper) CleanRemoteBroken(commandId int) error {
 		}
 	}
 	return nil
+}
+
+// CleanBrokenRetention walks remote `path` and `object_disks_path` top-level entries
+// and removes everything that is NOT present in the live BackupList and NOT matched by keepGlobs.
+// Uses BatchDeleter with retry. When commit=false, only logs orphans without deleting.
+// keepGlobs follows path.Match syntax (e.g. "prod-*", "snapshot-2026-??-*").
+func (b *Backuper) CleanBrokenRetention(commandId int, keepGlobs []string, commit bool) error {
+	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
+	if err != nil {
+		return errors.WithMessage(err, "status.Current.GetContextWithCancel")
+	}
+	ctx, cancel = context.WithCancel(ctx)
+	defer cancel()
+
+	if b.cfg.General.RemoteStorage == "none" {
+		return errors.New("aborted: RemoteStorage set to \"none\"")
+	}
+	if b.cfg.General.RemoteStorage == "custom" {
+		return errors.New("aborted: clean_broken_retention does not support custom remote storage")
+	}
+	for _, g := range keepGlobs {
+		if _, err := path.Match(g, ""); err != nil {
+			return errors.Wrapf(err, "invalid keep-glob %q", g)
+		}
+	}
+	if err := b.ch.Connect(); err != nil {
+		return errors.Wrap(err, "can't connect to clickhouse")
+	}
+	defer b.ch.Close()
+
+	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
+	if err != nil {
+		return errors.WithMessage(err, "storage.NewBackupDestination")
+	}
+	if err = bd.Connect(ctx); err != nil {
+		return errors.Wrap(err, "can't connect to remote storage")
+	}
+	defer func() {
+		if closeErr := bd.Close(ctx); closeErr != nil {
+			log.Warn().Msgf("can't close BackupDestination error: %v", closeErr)
+		}
+	}()
+	b.dst = bd
+
+	// parseMetadata=true forces a metadata.json stat for every top-level entry, so that
+	// orphan dirs without metadata.json are returned with Broken!="" and excluded from the
+	// keep-set below. Otherwise the metadata cache from a prior run would mask them.
+	backupList, err := bd.BackupList(ctx, true, "")
+	if err != nil {
+		return errors.WithMessage(err, "bd.BackupList")
+	}
+	keepNames := make(map[string]struct{}, len(backupList))
+	liveCount := 0
+	for _, backup := range backupList {
+		if backup.Broken != "" {
+			continue
+		}
+		keepNames[backup.BackupName] = struct{}{}
+		liveCount++
+	}
+	isKept := func(name string) bool {
+		if _, ok := keepNames[name]; ok {
+			return true
+		}
+		for _, g := range keepGlobs {
+			if ok, _ := path.Match(g, name); ok {
+				return true
+			}
+		}
+		return false
+	}
+
+	mode := "dry-run"
+	if commit {
+		mode = "commit"
+	}
+	log.Info().Msgf("clean_broken_retention: mode=%s, %d live backups (of %d in remote list), %d keep-globs", mode, liveCount, len(backupList), len(keepGlobs))
+
+	orphansInPath, err := b.findOrphanTopLevelNames(ctx, bd, "/", isKept)
+	if err != nil {
+		return errors.WithMessage(err, "scan path orphans")
+	}
+	for _, name := range orphansInPath {
+		if !commit {
+			log.Info().Str("orphan", name).Str("location", "path").Msg("clean_broken_retention: would delete")
+			continue
+		}
+		log.Info().Str("orphan", name).Str("location", "path").Msg("clean_broken_retention: deleting")
+		if err := bd.RemoveBackupRemote(ctx, storage.Backup{BackupMetadata: metadata.BackupMetadata{BackupName: name}}, b.cfg, b); err != nil {
+			return errors.Wrapf(err, "bd.RemoveBackupRemote orphan %s", name)
+		}
+	}
+
+	objectDiskPath, err := b.getObjectDiskPath()
+	if err != nil {
+		return errors.WithMessage(err, "b.getObjectDiskPath")
+	}
+	var orphansInObj []string
+	if objectDiskPath != "" {
+		orphansInObj, err = b.findOrphanTopLevelNames(ctx, bd, objectDiskPath, isKept)
+		if err != nil {
+			return errors.WithMessage(err, "scan object_disks_path orphans")
+		}
+		for _, name := range orphansInObj {
+			if !commit {
+				log.Info().Str("orphan", name).Str("location", "object_disks_path").Msg("clean_broken_retention: would delete")
+				continue
+			}
+			log.Info().Str("orphan", name).Str("location", "object_disks_path").Msg("clean_broken_retention: deleting")
+			deletedKeys, deleteErr := b.cleanBackupObjectDisks(ctx, name)
+			if deleteErr != nil {
+				return errors.Wrapf(deleteErr, "cleanBackupObjectDisks orphan %s", name)
+			}
+			log.Info().Str("orphan", name).Uint("deleted", deletedKeys).Msg("clean_broken_retention: object disk orphan cleaned")
+		}
+	}
+	log.Info().Msgf("clean_broken_retention: done, mode=%s, path orphans=%d, object_disks_path orphans=%d", mode, len(orphansInPath), len(orphansInObj))
+	return nil
+}
+
+// findOrphanTopLevelNames lists top-level entries under rootPath (absolute when rootPath != "/")
+// and returns names that are not kept by isKept. Top-level only: any names containing "/" are skipped.
+func (b *Backuper) findOrphanTopLevelNames(ctx context.Context, bd *storage.BackupDestination, rootPath string, isKept func(string) bool) ([]string, error) {
+	seen := make(map[string]struct{})
+	walkFn := func(_ context.Context, f storage.RemoteFile) error {
+		// Walk("/", false) emits names that may have a leading "/" (S3) and/or trailing "/" (CommonPrefix).
+		name := strings.Trim(f.Name(), "/")
+		if name == "" || strings.Contains(name, "/") {
+			return nil
+		}
+		// Skip hidden/dotfile entries — clickhouse-backup never produces names starting with ".".
+		// Protects system dirs like /root/.ssh on filesystem-backed remotes (SFTP/FTP).
+		if strings.HasPrefix(name, ".") {
+			return nil
+		}
+		if isKept(name) {
+			return nil
+		}
+		seen[name] = struct{}{}
+		return nil
+	}
+	var err error
+	if rootPath == "/" || rootPath == "" {
+		err = bd.Walk(ctx, "/", false, walkFn)
+	} else {
+		err = bd.WalkAbsolute(ctx, rootPath, false, walkFn)
+	}
+	if err != nil {
+		return nil, errors.Wrapf(err, "walk %q", rootPath)
+	}
+	out := make([]string, 0, len(seen))
+	for n := range seen {
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 func (b *Backuper) cleanPartialRequiredBackup(ctx context.Context, disks []clickhouse.Disk, currentBackupName string) error {
