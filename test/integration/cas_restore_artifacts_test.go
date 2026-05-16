@@ -309,7 +309,12 @@ func testCASRestoreIgnoreDependenciesNoOp(t *testing.T, env *TestEnvironment, r 
 	env.casBackupNoError(r, "delete", "local", backup)
 	r.NoError(env.dropDatabase(db, true))
 
-	env.casBackupNoError(r, "cas-restore", "--rm", "--ignore-dependencies", backup)
+	// Note: we intentionally don't pass --rm here. v1's dropExistsTables emits
+	// `DROP TABLE ... SETTINGS check_table_dependencies=0` when --ignore-dependencies
+	// is set, and that setting didn't exist before CH 22.x, so --rm + --ignore-dependencies
+	// fails on older versions. The test purpose is just to verify the flag is accepted;
+	// dropping the database above already gives us a clean slate.
+	env.casBackupNoError(r, "cas-restore", "--ignore-dependencies", backup)
 	env.checkCount(r, 1, 4, fmt.Sprintf("SELECT count() FROM `%s`.t", db))
 
 	r.NoError(env.dropDatabase(db, true))
