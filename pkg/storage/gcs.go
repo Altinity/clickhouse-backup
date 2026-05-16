@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net"
@@ -20,6 +21,7 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/impersonate"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
@@ -378,6 +380,58 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 	return nil
 }
 
+// PutFileAbsoluteIfAbsent atomically creates the object at key only if it
+// doesn't already exist, using GCS's DoesNotExist precondition (translates
+// to x-goog-if-generation-match: 0). Returns (false, nil) on 412.
+func (gcs *GCS) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
+	if err != nil {
+		log.Error().Msgf("gcs.PutFileAbsoluteIfAbsent: gcs.clientPool.BorrowObject error: %+v", err)
+		return false, errors.WithMessage(err, "GCS PutFileAbsoluteIfAbsent BorrowObject")
+	}
+	defer func() {
+		if retErr := gcs.clientPool.ReturnObject(ctx, pClientObj); retErr != nil {
+			log.Warn().Msgf("gcs.PutFileAbsoluteIfAbsent: gcs.clientPool.ReturnObject error: %+v", retErr)
+		}
+	}()
+	pClient := pClientObj.(*clientObject).Client
+	obj := pClient.Bucket(gcs.Config.Bucket).Object(key).If(storage.Conditions{DoesNotExist: true})
+	w := obj.NewWriter(ctx)
+	w.ChunkSize = gcs.Config.ChunkSize
+	if gcs.Config.StorageClass != "" {
+		w.StorageClass = gcs.Config.StorageClass
+	}
+	if len(gcs.Config.ObjectLabels) > 0 {
+		w.Metadata = gcs.Config.ObjectLabels
+	}
+	buffer := make([]byte, 128*1024)
+	if _, err = io.CopyBuffer(w, r, buffer); err != nil {
+		_ = w.Close()
+		_ = r.Close()
+		return false, errors.WithMessage(err, "GCS PutFileAbsoluteIfAbsent CopyBuffer")
+	}
+	_ = r.Close()
+	if err = w.Close(); err != nil {
+		var ae *googleapi.Error
+		if stderrors.As(err, &ae) && ae.Code == http.StatusPreconditionFailed {
+			return false, nil
+		}
+		return false, errors.WithMessage(err, "GCS PutFileAbsoluteIfAbsent Close")
+	}
+	return true, nil
+}
+
+// PutFileIfAbsent is the path-prefixed variant of PutFileAbsoluteIfAbsent.
+// It prepends gcs.Config.Path to key, matching PutFile semantics.
+func (gcs *GCS) PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return gcs.PutFileAbsoluteIfAbsent(ctx, path.Join(gcs.Config.Path, key), r, localSize)
+}
+
+// gcsIsNotFound reports whether err means "object does not exist" in GCS.
+func gcsIsNotFound(err error) bool {
+	return errors.Is(err, storage.ErrObjectNotExist)
+}
+
 func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 	return gcs.StatFileAbsolute(ctx, path.Join(gcs.Config.Path, key))
 }
@@ -400,7 +454,7 @@ func (gcs *GCS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, e
 			objAttr, err = obj.Attrs(ctx)
 		}
 		if err != nil {
-			if errors.Is(err, storage.ErrObjectNotExist) {
+			if gcsIsNotFound(err) {
 				return nil, ErrNotFound
 			}
 			return nil, errors.WithMessage(err, "GCS StatFileAbsolute Attrs")
@@ -499,7 +553,7 @@ func (gcs *GCS) deleteKeysConcurrent(ctx context.Context, keys []string) error {
 			err = object.Delete(ctx)
 			if err != nil {
 				// Check if it's a "not found" error - that's OK
-				if errors.Is(err, storage.ErrObjectNotExist) {
+				if gcsIsNotFound(err) {
 					if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
 						log.Warn().Msgf("gcs.deleteKeysConcurrent: gcs.clientPool.ReturnObject error: %+v", pErr)
 					}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/acvpwrapper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server"
@@ -44,6 +45,9 @@ func main() {
 	cliapp.UsageText = "clickhouse-backup <command> [-t, --tables=<db>.<table>] <backup_name>"
 	cliapp.Description = "Run as 'root' or 'clickhouse' user"
 	cliapp.Version = version
+	// Wire the build version into CAS marker JSON (inprogress / prune
+	// markers carry this for forensic context — see pkg/cas/markers.go).
+	cas.SetMarkerTool(fmt.Sprintf("clickhouse-backup/%s", version))
 	// @todo add GCS and Azure support when resolve https://github.com/googleapis/google-cloud-go/issues/8169 and https://github.com/Azure/azure-sdk-for-go/issues/21047
 	if strings.HasSuffix(version, "fips") {
 		_ = os.Setenv("AWS_USE_FIPS_ENDPOINT", "true")
@@ -287,9 +291,10 @@ func main() {
 			),
 		},
 		{
-			Name:      "upload",
-			Usage:     "Upload backup to remote storage",
-			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
+			Name:        "upload",
+			Usage:       "Upload backup to remote storage",
+			UsageText:   "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
+			Description: "Upload a local backup to remote storage using the v1 layout (per-part archives + RequiredBackup chain for incrementals).\n\nIf you back up frequently or run mutations, consider `cas-upload` instead: it deduplicates content across backups, every backup is independent (no incremental chain), and only changed data is uploaded.",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				return b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("named-collections-only"), c.Bool("resume"), version, c.Int("command-id"))
@@ -838,6 +843,7 @@ func main() {
 				}),
 		},
 	}
+	cliapp.Commands = append(cliapp.Commands, casCommands(cliapp.Flags)...)
 	if err := cliapp.Run(os.Args); err != nil {
 		log.Fatal().Stack().Err(err).Send()
 	}

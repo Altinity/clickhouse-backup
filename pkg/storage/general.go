@@ -216,7 +216,11 @@ func (bd *BackupDestination) saveMetadataCache(ctx context.Context, listCache ma
 	}
 }
 
-func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool, parseMetadataOnly string) ([]Backup, error) {
+// BackupList enumerates backup folders under the bucket root. skipPrefixes
+// lists object-key prefixes the walker must ignore — used to exclude the
+// CAS subtree (cas/<cluster>/...) which v1 must not interpret as broken
+// v1 backups. Pass nil when CAS is disabled.
+func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool, parseMetadataOnly string, skipPrefixes []string) ([]Backup, error) {
 	backupListStart := time.Now()
 	defer func() {
 		log.Info().Dur("list_duration", time.Since(backupListStart)).Send()
@@ -234,6 +238,21 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 	cacheMiss := false
 	err = bd.Walk(ctx, "/", false, func(ctx context.Context, o RemoteFile) error {
 		backupName := strings.Trim(o.Name(), "/")
+		// Skip any top-level entry whose name matches a configured skip
+		// prefix (e.g. "cas/" when CAS is enabled). The Walk runs at depth
+		// 0 with recursive=false, so o.Name() is a single path segment;
+		// match by trimmed-equality against a trimmed prefix as well as
+		// the literal HasPrefix to be defensive across backends.
+		for _, p := range skipPrefixes {
+			if p == "" {
+				continue
+			}
+			trimmed := strings.TrimSuffix(p, "/")
+			if backupName == trimmed || strings.HasPrefix(o.Name(), p) {
+				log.Error().Str("name", o.Name()).Str("matched_prefix", p).Msg("BackupList: skipping entry that matches a CAS skip prefix; rename or move if it was an unrelated v1 backup")
+				return nil
+			}
+		}
 		if !parseMetadata || (parseMetadataOnly != "" && parseMetadataOnly != backupName) {
 			if cachedMetadata, isCached := listCache[backupName]; isCached {
 				result = append(result, cachedMetadata)
@@ -688,7 +707,8 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			return nil, errors.WithMessage(err, "NewBackupDestination ftp ApplyMacros ObjectDiskPath")
 		}
 		ftpStorage := &FTP{
-			Config: &cfg.FTP,
+			Config:             &cfg.FTP,
+			AllowUnsafeMarkers: cfg.CAS.AllowUnsafeMarkers,
 		}
 		return &BackupDestination{
 			ftpStorage,

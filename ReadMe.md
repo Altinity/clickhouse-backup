@@ -29,6 +29,45 @@ For that reason, it's required to run `clickhouse-backup` on the same host or sa
 - **Support for multi disks installations**
 - **Support for custom remote storage types via `rclone`, `kopia`, `restic`, `rsync` etc**
 - **Support for incremental backups on remote storage**
+- **Smart deduplicating backups** with the `cas-*` commands — every backup is independent, only changed data is uploaded, and mutations don't blow up your storage bill (see below)
+
+## Smart deduplicating backups (opt-in, ⚠️ EXPERIMENTAL)
+
+> **EXPERIMENTAL.** The `cas-*` commands and on-disk layout are still under active development; future releases may bump `LayoutVersion` in a way that requires re-uploading existing CAS backups. Do not rely on CAS as the sole copy of production data yet — keep a parallel v1 backup (or a copy outside the CAS namespace) until the feature is marked stable. Evaluate it on non-critical workloads first; report issues. See [`docs/cas-design.md`](docs/cas-design.md) for the full design.
+
+Most backup tools force a tradeoff: full backups eat storage and bandwidth, while incremental backups are smaller but chain together — losing or rotating the wrong base backup breaks every dependent restore. ClickHouse mutations make this worse: a single `ALTER TABLE ... UPDATE` can rewrite one column and rename the part, leaving 99% of the bytes identical to the previous version but invisible to chain-based dedup.
+
+The `cas-*` commands (`cas-upload`, `cas-download`, `cas-restore`, `cas-delete`, `cas-verify`, `cas-status`, `cas-prune`) use **content-addressed storage** to solve both problems. Files are keyed by their content hash, so identical bytes are stored once and shared across every backup that contains them — across mutations, across days, across tables. The result:
+
+- **Smaller uploads than incremental, no base-backup dependency.** Each `cas-upload` only transfers files whose content isn't already in the remote — typically a small fraction of a full backup. Unlike incremental backups, every CAS backup is independently restorable. Delete any backup at any time without affecting the others.
+- **Mutation-friendly.** An `ALTER UPDATE` on one column reuses every other column's bytes; the second backup uploads only the changed column.
+- **Storage grows with new data, not with the number of backups.** Keeping 30 daily snapshots of a slowly-changing dataset costs roughly the same as keeping one.
+
+### Quick start
+
+In `config.yml`:
+
+```yaml
+cas:
+  enabled: true
+  cluster_id: my-prod-cluster   # required; identifies this source cluster
+```
+
+Then:
+
+```sh
+clickhouse-backup create my_backup            # snapshot the data locally
+clickhouse-backup cas-upload my_backup        # push to remote (only new content)
+clickhouse-backup cas-status                  # see counts, sizes, in-flight uploads
+clickhouse-backup cas-restore my_backup       # restore (any backup, any time)
+clickhouse-backup cas-delete   my_backup      # remove the backup's metadata atomically
+clickhouse-backup cas-prune                   # reclaim blob bytes left behind by deletes
+clickhouse-backup cas-verify   my_backup      # cheap integrity check (HEAD + size)
+```
+
+`cas-delete` only removes the per-backup metadata; the blob bytes are reclaimed by the periodic `cas-prune` mark-and-sweep GC. See [`docs/cas-operator-runbook.md`](docs/cas-operator-runbook.md) for cadence, monitoring, and recovery from a stranded prune marker.
+
+CAS backups live under their own prefix in the remote bucket and don't interfere with the existing `upload` / `download` / `restore` commands — you can mix both in the same bucket if needed.
 
 ## Limitations
 
@@ -636,6 +675,11 @@ Display a list of all operations from start of API server: `curl -s localhost:71
 
 - Optional string query argument `filter` to filter actions on server side.
 - Optional string query argument `last` to show only the last `N` actions.
+
+### CAS endpoints
+
+For CAS commands (`cas-upload`, `cas-restore`, etc.), see the corresponding
+`/backup/cas-*` endpoints documented in [docs/cas-operator-runbook.md](docs/cas-operator-runbook.md).
 
 ## Examples
 

@@ -36,6 +36,23 @@ type versioner interface {
 
 type BackuperOpt func(*Backuper)
 
+// CASProbeState holds the per-process state for the CAS conditional-put
+// probe and the unsafe-marker WARN banner. It should be shared across all
+// Backuper instances served from the same APIServer so that the probe fires
+// exactly once per daemon lifetime, not once per REST request. CLI
+// invocations create a fresh CASProbeState per process (one-shot, correct
+// behaviour unchanged). Two separate CLI processes never share state because
+// they are separate OS processes.
+type CASProbeState struct {
+	probeOnce  sync.Once
+	probeErr   error
+	bannerOnce sync.Once
+}
+
+// NewCASProbeState returns a fresh CASProbeState. Call once at server
+// startup and share the result across all Backuper instances.
+func NewCASProbeState() *CASProbeState { return &CASProbeState{} }
+
 type Backuper struct {
 	cfg                    *config.Config
 	ch                     *clickhouse.ClickHouse
@@ -51,20 +68,41 @@ type Backuper struct {
 	resumableState         *resumable.State
 	shadowBackupUUIDs      []string
 	shadowBackupUUIDsMutex sync.Mutex
+
+	// casProbeState is the shared (or per-instance) state for the CAS
+	// conditional-put probe and the unsafe-marker WARN banner. In daemon mode
+	// this points to the APIServer-level singleton so both fire at most once
+	// per server lifetime. In CLI mode NewBackuper creates a fresh state so
+	// both fire at most once per process (one-shot invocation).
+	casProbeState *CASProbeState
 }
 
 func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {
 	ch := clickhouse.NewClickHouse(&cfg.ClickHouse)
 	b := &Backuper{
-		cfg:  cfg,
-		ch:   ch,
-		vers: ch,
-		bs:   nil,
+		cfg:           cfg,
+		ch:            ch,
+		vers:          ch,
+		bs:            nil,
+		casProbeState: NewCASProbeState(),
 	}
 	for _, opt := range opts {
 		opt(b)
 	}
 	return b
+}
+
+// WithCASProbeState returns a BackuperOpt that injects a pre-existing
+// CASProbeState into the Backuper. Used by the daemon APIServer to share a
+// singleton across all per-request Backuper instances, ensuring the
+// conditional-put probe and unsafe-marker WARN banner fire exactly once per
+// server lifetime rather than once per request. Passing nil is a no-op.
+func WithCASProbeState(s *CASProbeState) BackuperOpt {
+	return func(b *Backuper) {
+		if s != nil {
+			b.casProbeState = s
+		}
+	}
 }
 
 // Classify need to log retries
@@ -435,7 +473,7 @@ func (b *Backuper) getTablesDiffFromLocal(ctx context.Context, diffFrom string, 
 
 func (b *Backuper) getTablesDiffFromRemote(ctx context.Context, diffFromRemote string, tablePattern string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
 	tablesForUploadFromDiff = make(map[metadata.TableTitle]metadata.TableMetadata)
-	backupList, err := b.dst.BackupList(ctx, true, diffFromRemote)
+	backupList, err := b.dst.BackupList(ctx, true, diffFromRemote, b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return nil, errors.Wrap(err, "b.dst.BackupList return error")
 	}

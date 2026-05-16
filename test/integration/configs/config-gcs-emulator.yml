@@ -1,0 +1,23 @@
+general:
+  remote_storage: gcs
+  upload_concurrency: 4
+  download_concurrency: 4
+  restore_schema_on_cluster: "{cluster}"
+  allow_object_disk_streaming: true
+s3:
+  disable_ssl: false
+  disable_cert_verification: true
+clickhouse:
+  host: clickhouse
+  port: 9000
+  restart_command: bash -c 'echo "FAKE RESTART"'
+  timeout: 10m
+gcs:
+  bucket: altinity-qa-test
+  path: backup/{cluster}/{shard}
+  object_disk_path: object_disks/{cluster}/{shard}
+  compression_format: tar
+  endpoint: http://gcs:8080/storage/v1/
+  skip_credentials: true
+  object_labels:
+    label: label_value

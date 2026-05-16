@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -216,6 +217,44 @@ func (a *AzureBlob) PutFileAbsolute(ctx context.Context, key string, r io.ReadCl
 		return errors.WithMessage(err, "AzureBlob PutFileAbsolute UploadStreamToBlockBlob")
 	}
 	return nil
+}
+
+// PutFileAbsoluteIfAbsent atomically uploads the blob at key only if it
+// doesn't already exist, using the Azure If-None-Match: "*" access condition.
+// Azure returns HTTP 409 BlobAlreadyExists (not 412) when the blob is present.
+// Returns (true, nil) on successful creation, (false, nil) if the blob already
+// existed, or (false, err) on any other error.
+func (a *AzureBlob) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	a.logf("AZBLOB->PutFileAbsoluteIfAbsent %s", key)
+	body, err := io.ReadAll(r)
+	_ = r.Close()
+	if err != nil {
+		return false, errors.WithMessage(err, "AzureBlob PutFileAbsoluteIfAbsent ReadAll")
+	}
+	blob := a.Container.NewBlockBlobURL(key)
+	_, err = x.UploadStreamToBlockBlob(ctx, bytes.NewReader(body), blob, azblob.UploadStreamToBlockBlobOptions{
+		BufferSize: len(body) + 1,
+		MaxBuffers: 1,
+		AccessConditions: azblob.BlobAccessConditions{
+			ModifiedAccessConditions: azblob.ModifiedAccessConditions{
+				IfNoneMatch: azblob.ETagAny,
+			},
+		},
+	}, a.CPK)
+	if err != nil {
+		var se azblob.StorageError
+		if errors.As(err, &se) && se.ServiceCode() == azblob.ServiceCodeBlobAlreadyExists {
+			return false, nil
+		}
+		return false, errors.WithMessage(err, "AzureBlob PutFileAbsoluteIfAbsent UploadStreamToBlockBlob")
+	}
+	return true, nil
+}
+
+// PutFileIfAbsent is the path-prefixed variant of PutFileAbsoluteIfAbsent.
+// It prepends a.Config.Path to key, matching PutFile semantics.
+func (a *AzureBlob) PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return a.PutFileAbsoluteIfAbsent(ctx, path.Join(a.Config.Path, key), r, localSize)
 }
 
 func (a *AzureBlob) DeleteFile(ctx context.Context, key string) error {

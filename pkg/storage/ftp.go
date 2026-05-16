@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -19,11 +21,18 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// ftpIsNotFound reports whether err is a 550 response from the FTP server,
+// which all paths in this backend treat as "object/directory does not exist".
+func ftpIsNotFound(err error) bool {
+	return err != nil && strings.HasPrefix(err.Error(), "550")
+}
+
 type FTP struct {
-	clients       *pool.ObjectPool
-	Config        *config.FTPConfig
-	dirCache      map[string]bool
-	dirCacheMutex sync.RWMutex
+	clients            *pool.ObjectPool
+	Config             *config.FTPConfig
+	dirCache           map[string]bool
+	dirCacheMutex      sync.RWMutex
+	AllowUnsafeMarkers bool
 }
 
 func (f *FTP) Kind() string {
@@ -101,7 +110,7 @@ func (f *FTP) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, err
 	entries, err := client.List(dir)
 	if err != nil {
 		// proftpd return 550 error if `dir` not exists
-		if strings.HasPrefix(err.Error(), "550") {
+		if ftpIsNotFound(err) {
 			return nil, ErrNotFound
 		}
 		return nil, errors.WithMessage(err, "FTP StatFileAbsolute List")
@@ -128,7 +137,33 @@ func (f *FTP) DeleteFile(ctx context.Context, key string) error {
 	if err != nil {
 		return errors.WithMessage(err, "FTP DeleteFile getConnection")
 	}
-	if err := client.RemoveDirRecur(path.Join(f.Config.Path, key)); err != nil {
+	fullPath := path.Join(f.Config.Path, key)
+	// Determine whether the target is a file or directory so we can use
+	// the appropriate deletion primitive:
+	//  - Regular file  → client.Delete (DELE), which is correct for marker files.
+	//  - Directory     → RemoveDirRecur (recursive CWD+LIST+DELETE+RMD).
+	//  - 550 (missing) → no-op (idempotent delete, same as S3/GCS/AzBlob/SFTP).
+	//
+	// We cannot use RemoveDirRecur for files: it calls ChangeDir first, which
+	// fails with 550 when given a file path — proftpd cannot CWD into a file.
+	// Using FileSize is the cheapest "is it a file?" probe; it returns 550 on
+	// directories too, so we then fall through to RemoveDirRecur.
+	if _, statErr := client.FileSize(fullPath); statErr == nil {
+		// It's a regular file — delete directly.
+		if delErr := client.Delete(fullPath); delErr != nil {
+			if ftpIsNotFound(delErr) {
+				return nil // raced with concurrent delete; treat as no-op
+			}
+			return errors.WithMessage(delErr, "FTP DeleteFile Delete")
+		}
+		return nil
+	}
+	// Either a directory or it doesn't exist. Try RemoveDirRecur and treat
+	// 550 (not found / not a directory) as a successful no-op.
+	if err := client.RemoveDirRecur(fullPath); err != nil {
+		if ftpIsNotFound(err) {
+			return nil
+		}
 		return errors.WithMessage(err, "FTP DeleteFile RemoveDirRecur")
 	}
 	return nil
@@ -149,7 +184,7 @@ func (f *FTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, p
 		f.returnConnectionToPool(ctx, "Walk", client)
 		if err != nil {
 			// proftpd return 550 error if prefix not exits
-			if strings.HasPrefix(err.Error(), "550") {
+			if ftpIsNotFound(err) {
 				return nil
 			}
 			return errors.WithMessage(err, "FTP WalkAbsolute List")
@@ -172,6 +207,13 @@ func (f *FTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, p
 	walker := client.Walk(prefix)
 	for walker.Next() {
 		if err := walker.Err(); err != nil {
+			// proftpd returns 550 when the prefix doesn't exist (e.g.,
+			// CAS cold-list walking blob/<shard>/ before any upload).
+			// Return empty, not an error — same semantics as the
+			// non-recursive path above and as S3/GCS/AzBlob/SFTP.
+			if ftpIsNotFound(err) {
+				return nil
+			}
 			return errors.WithMessage(err, "FTP WalkAbsolute walker.Err")
 		}
 		entry := walker.Stat()
@@ -230,6 +272,61 @@ func (f *FTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 		return errors.WithMessage(err, "FTP PutFileAbsolute Stor")
 	}
 	return nil
+}
+
+// PutFileAbsoluteIfAbsent atomically creates the file at key only if it
+// doesn't already exist. FTP has no portable atomic-create primitive; by
+// default we refuse with ErrConditionalPutNotSupported. With
+// AllowUnsafeMarkers=true, fall back to STAT → STOR-to-tmp → RNFR/RNTO,
+// which has a small race window between STAT and RNTO. Log a per-call
+// WARN so operators see the documented race in their logs.
+func (f *FTP) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	if !f.AllowUnsafeMarkers {
+		return false, ErrConditionalPutNotSupported
+	}
+	where := fmt.Sprintf("PutFileAbsoluteIfAbsent->%s", key)
+	client, err := f.getConnectionFromPool(ctx, where)
+	if err != nil {
+		return false, errors.WithMessage(err, "FTP PutFileAbsoluteIfAbsent getConnection")
+	}
+	defer f.returnConnectionToPool(ctx, where, client)
+	// STAT: does the target already exist?
+	if _, statErr := client.FileSize(key); statErr == nil {
+		return false, nil
+	}
+	// Best-effort fallback: write to a temp filename, then rename.
+	log.Warn().Str("key", key).Msg("FTP PutFileAbsoluteIfAbsent: best-effort path (cas.allow_unsafe_markers=true); small race window between STAT and RNTO")
+	if err := f.MkdirAll(path.Dir(key), client); err != nil {
+		return false, errors.WithMessage(err, "FTP PutFileAbsoluteIfAbsent MkdirAll")
+	}
+	tmpKey := key + ".tmp." + randomFTPSuffix()
+	if err := client.Stor(tmpKey, r); err != nil {
+		_ = client.Delete(tmpKey)
+		return false, errors.WithMessage(err, "FTP PutFileAbsoluteIfAbsent Stor")
+	}
+	// Re-check: did someone else create the target while we were writing?
+	if _, statErr := client.FileSize(key); statErr == nil {
+		_ = client.Delete(tmpKey)
+		return false, nil
+	}
+	if err := client.Rename(tmpKey, key); err != nil {
+		_ = client.Delete(tmpKey)
+		return false, errors.WithMessage(err, "FTP PutFileAbsoluteIfAbsent Rename")
+	}
+	return true, nil
+}
+
+// PutFileIfAbsent is the path-prefixed variant of PutFileAbsoluteIfAbsent.
+// It prepends f.Config.Path to key, matching PutFile semantics.
+func (f *FTP) PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return f.PutFileAbsoluteIfAbsent(ctx, path.Join(f.Config.Path, key), r, localSize)
+}
+
+// randomFTPSuffix returns 8 random hex characters for unique temp filenames.
+func randomFTPSuffix() string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 func (f *FTP) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
@@ -308,7 +405,7 @@ func (f *FTP) deleteKeysConcurrent(ctx context.Context, keys []string) error {
 			err = client.RemoveDirRecur(key)
 			if err != nil {
 				// Check if it's a "not found" error - that's OK
-				if strings.HasPrefix(err.Error(), "550") {
+				if ftpIsNotFound(err) {
 					mu.Lock()
 					deletedCount++
 					mu.Unlock()

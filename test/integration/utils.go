@@ -498,6 +498,49 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	// Clean shared state between test runs so the next test gets a fresh environment
 	_ = env.DockerExec("minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3")
 
+	// CAS leaves state under <bucket>/backup/cluster/<shard>/cas/<cluster_id>/.
+	// v1 retention/clean-broken explicitly skips it (by design — see SkipPrefixes
+	// in pkg/cas/config.go), so it persists across env-pool reuse and surfaces
+	// as a bucket-not-empty failure in checkObjectStorageIsEmpty for the next
+	// non-CAS test on the same slot.
+	//
+	// For CAS tests we just blow away the entire backup/ tree on every backend
+	// (CAS tests don't share state with v1 paths in the same bucket). For
+	// non-CAS tests we only wipe the cas/ subtree to avoid touching v1 state
+	// the test is still using.
+	if strings.HasPrefix(t.Name(), "TestCAS") {
+		_ = env.DockerExec("minio", "bash", "-c", "rm -rf /minio/data/clickhouse/backup")
+		_ = env.DockerExec("gcs", "sh", "-c", "rm -rf /data/altinity-qa-test/backup 2>/dev/null || true")
+		_ = env.DockerExec("sshd", "sh", "-c", "rm -rf /root/cas/ 2>/dev/null || true")
+		_ = env.DockerExec("ftp", "sh", "-c", "rm -rf /home/test_backup/backup/cas/ /home/ftpusers/test_backup/backup/cas/ /backup/cas/ 2>/dev/null || true")
+
+		// Local clickhouse-backup state + leaked cas_* databases — backstop
+		// for CAS tests that fail mid-flight (e.g. system.projections probe
+		// on CH < 24.9) before their trailing cas-delete + dropDatabase runs.
+		// Otherwise TestServerAPI's local-backup count and TestTablePatterns'
+		// SHOW CREATE DATABASE both choke on the leaked state.
+		_ = env.DockerExec("clickhouse", "bash", "-c", "rm -rf /var/lib/clickhouse/backup/*")
+		_, _ = env.DockerExecOut("clickhouse", "bash", "-c",
+			"clickhouse-client --query \"SELECT name FROM system.databases WHERE name LIKE 'cas_%'\" | "+
+				"xargs -r -I{} clickhouse-client --query \"DROP DATABASE IF EXISTS \\`{}\\` SYNC\"")
+	} else {
+		_ = env.DockerExec("minio", "bash", "-c", "rm -rf /minio/data/clickhouse/backup/cluster/*/cas/ 2>/dev/null; find /minio/data/clickhouse/backup -mindepth 1 -type d -empty -delete 2>/dev/null; rmdir /minio/data/clickhouse/backup 2>/dev/null || true")
+		_ = env.DockerExec("gcs", "sh", "-c", "rm -rf /data/altinity-qa-test/backup/cluster/*/cas/ 2>/dev/null; find /data/altinity-qa-test/backup -mindepth 1 -type d -empty -delete 2>/dev/null; rmdir /data/altinity-qa-test/backup 2>/dev/null || true")
+		_ = env.DockerExec("sshd", "sh", "-c", "rm -rf /root/cas/ 2>/dev/null || true")
+		_ = env.DockerExec("ftp", "sh", "-c", "rm -rf /home/test_backup/backup/cas/ /home/ftpusers/test_backup/backup/cas/ /backup/cas/ 2>/dev/null || true")
+	}
+
+	// TestShadowCleanup{,OnFailure} explicitly run `clickhouse-backup clean`
+	// which wipes /var/lib/clickhouse/shadow/. ClickHouse subsequently creates
+	// an empty increment.txt on the next FREEZE attempt, which then fails with
+	// "File ... shadow/increment.txt is empty" in the next env-pool consumer
+	// (TestSkipDisk, TestCustomKopia, etc.). Remove the stale 0-byte file so
+	// ClickHouse re-creates it cleanly on the next FREEZE.
+	if strings.HasPrefix(t.Name(), "TestShadowCleanup") {
+		_ = env.DockerExec("clickhouse", "bash", "-c",
+			"if [ -f /var/lib/clickhouse/shadow/increment.txt ] && [ ! -s /var/lib/clickhouse/shadow/increment.txt ]; then rm -f /var/lib/clickhouse/shadow/increment.txt; fi")
+	}
+
 	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" || strings.HasPrefix(t.Name(), "TestEmbedded") {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/backups_s3")
 	}

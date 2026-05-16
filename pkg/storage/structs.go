@@ -12,6 +12,11 @@ import (
 var (
 	// ErrNotFound is returned when file/object cannot be found
 	ErrNotFound = errors.New("key not found")
+	// ErrConditionalPutNotSupported is returned by backends that cannot perform
+	// atomic create-only-if-absent. CAS marker writes (cas-upload, cas-prune)
+	// surface this as a clean refusal; v1 callers that don't need atomicity
+	// don't see this error because they never call PutFileAbsoluteIfAbsent.
+	ErrConditionalPutNotSupported = errors.New("conditional PutFile not supported by this backend")
 )
 
 // KeyError represents an error for a specific key during batch deletion
@@ -87,5 +92,15 @@ type RemoteStorage interface {
 	GetFileReaderWithLocalPath(ctx context.Context, key, localPath string, remoteSize int64) (io.ReadCloser, error)
 	PutFile(ctx context.Context, key string, r io.ReadCloser, localSize int64) error
 	PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error
+	// PutFileAbsoluteIfAbsent atomically writes data at key only if no
+	// object exists at that key. Returns (true, nil) on successful create;
+	// (false, nil) if an object already exists; (false, ErrConditionalPutNotSupported)
+	// if this backend cannot perform an atomic create.
+	PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (created bool, err error)
+	// PutFileIfAbsent is the path-prefixed variant of PutFileAbsoluteIfAbsent:
+	// it prepends the backend's configured path prefix (like PutFile does) before
+	// delegating to PutFileAbsoluteIfAbsent. This is what casstorage should call
+	// so that CAS marker keys are in the same namespace as ordinary objects.
+	PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (created bool, err error)
 	CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error)
 }

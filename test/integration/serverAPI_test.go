@@ -432,6 +432,9 @@ func testAPIBackupList(t *testing.T, r *require.Assertions, env *TestEnvironment
 	log.Debug().Msg("Check /backup/list")
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/list'")
 	r.NoError(err, "%s\nunexpected GET /backup/list error: %v", out, err)
+	// v1 backups omit the "kind" field (omitempty) so legacy ClickHouse
+	// integration tables (CH < 21.1, no input_format_skip_unknown_fields)
+	// keep parsing /backup/list. CAS-only rows would carry "kind":"cas".
 	localListFormat := "{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"data_size\":\\d+,\"metadata_size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"regular\"}"
 	remoteListFormat := "{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"data_size\":\\d+,\"metadata_size\":\\d+,\"compressed_size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar, regular\"}"
 	for i := 1; i <= apiBackupNumber; i++ {

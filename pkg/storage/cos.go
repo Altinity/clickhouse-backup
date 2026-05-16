@@ -68,6 +68,12 @@ func (c *COS) Close(ctx context.Context) error {
 	return nil
 }
 
+// cosIsNotFound reports whether err is a "NoSuchKey" response from Tencent COS.
+func cosIsNotFound(err error) bool {
+	var cosErr *cos.ErrorResponse
+	return errors.As(err, &cosErr) && cosErr.Code == "NoSuchKey"
+}
+
 func (c *COS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 	return c.StatFileAbsolute(ctx, path.Join(c.Config.Path, key))
 }
@@ -76,9 +82,7 @@ func (c *COS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, err
 	// @todo - COS Stat file max size is 5Gb
 	resp, err := c.client.Object.Get(ctx, key, nil)
 	if err != nil {
-		var cosErr *cos.ErrorResponse
-		ok := errors.As(err, &cosErr)
-		if ok && cosErr.Code == "NoSuchKey" {
+		if cosIsNotFound(err) {
 			return nil, ErrNotFound
 		}
 		return nil, errors.WithMessage(err, "COS StatFileAbsolute Get")
@@ -337,6 +341,46 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 	return nil
 }
 
+// PutFileAbsoluteIfAbsent atomically creates the object at key only if it
+// doesn't already exist, using Tencent COS's If-None-Match: "*" header.
+//
+// The Tencent Go SDK (github.com/tencentyun/cos-go-sdk-v5 v0.7.73) does not
+// expose a typed If-None-Match field on ObjectPutHeaderOptions, but it does
+// provide the cos.XOptionalKey / cos.XOptionalValue context mechanism which
+// injects arbitrary headers into any SDK call. We use that to send
+// "If-None-Match: *" on the PUT request. COS returns HTTP 412 when the object
+// already exists; this maps to (false, nil).
+func (c *COS) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	ifNoneMatch := make(http.Header)
+	ifNoneMatch.Set("If-None-Match", "*")
+	ctx = context.WithValue(ctx, cos.XOptionalKey, &cos.XOptionalValue{Header: &ifNoneMatch})
+
+	if _, err := c.client.Object.Put(ctx, key, r, nil); err != nil {
+		if isCOSPreconditionFailed(err) {
+			return false, nil
+		}
+		return false, errors.WithMessage(err, "COS PutFileAbsoluteIfAbsent Put")
+	}
+	return true, nil
+}
+
+// PutFileIfAbsent is the path-prefixed variant of PutFileAbsoluteIfAbsent.
+// It prepends c.Config.Path to key, matching PutFile semantics.
+func (c *COS) PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return c.PutFileAbsoluteIfAbsent(ctx, path.Join(c.Config.Path, key), r, localSize)
+}
+
+// isCOSPreconditionFailed returns true when the error is a Tencent COS HTTP 412
+// (PreconditionFailed), which is what COS returns for If-None-Match: "*" when
+// the object already exists.
+func isCOSPreconditionFailed(err error) bool {
+	var cosErr *cos.ErrorResponse
+	if errors.As(err, &cosErr) && cosErr.Response != nil && cosErr.Response.StatusCode == http.StatusPreconditionFailed {
+		return true
+	}
+	return false
+}
+
 func (c *COS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	return 0, errors.Errorf("CopyObject not implemented for %s", c.Kind())
 }
@@ -394,8 +438,7 @@ func (c *COS) deleteKeysConcurrent(ctx context.Context, keys []string) error {
 			_, err := c.client.Object.Delete(ctx, key)
 			if err != nil {
 				// Check if it's a "not found" error - that's OK
-				var cosErr *cos.ErrorResponse
-				if errors.As(err, &cosErr) && cosErr.Code == "NoSuchKey" {
+				if cosIsNotFound(err) {
 					mu.Lock()
 					deletedCount++
 					mu.Unlock()

@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -110,7 +111,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		}
 	}()
 
-	remoteBackups, err := b.dst.BackupList(ctx, true, backupName)
+	remoteBackups, err := b.dst.BackupList(ctx, true, backupName, b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return errors.WithMessage(err, "BackupList")
 	}
@@ -124,7 +125,22 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		}
 	}
 	if !found {
+		// Before reporting "not found", check whether the named backup
+		// exists in the CAS namespace. v1 BackupList walks the root level
+		// only and skips the CAS prefix; CAS backups live at
+		// cas/<cluster>/metadata/<name>/, so a name typo from CAS to v1
+		// would hit this branch with a misleading error. Surface the
+		// proper cross-mode refusal instead.
+		if isCASBackupRemote(ctx, b.dst, b.cfg.CAS, backupName) {
+			return cas.ErrCASBackup
+		}
 		return errors.Errorf("'%s' is not found on remote storage", backupName)
+	}
+	// CAS backups must be downloaded via the cas-download CLI
+	// (pkg/cas.Download); the v1 path expects per-part archives + per-disk
+	// metadata trees that the CAS layout does not produce.
+	if remoteBackup.CAS != nil {
+		return cas.ErrCASBackup
 	}
 	if len(remoteBackup.Tables) == 0 && remoteBackup.RBACSize == 0 && remoteBackup.ConfigSize == 0 && remoteBackup.NamedCollectionsSize == 0 && !b.cfg.General.AllowEmptyBackups {
 		return errors.Errorf("'%s' is empty backup", backupName)
@@ -1327,7 +1343,7 @@ func (b *Backuper) findDiffFileExist(ctx context.Context, requiredBackup *metada
 }
 
 func (b *Backuper) ReadBackupMetadataRemote(ctx context.Context, backupName string) (*metadata.BackupMetadata, error) {
-	backupList, err := b.dst.BackupList(ctx, true, backupName)
+	backupList, err := b.dst.BackupList(ctx, true, backupName, b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return nil, errors.WithMessage(err, "BackupList")
 	}

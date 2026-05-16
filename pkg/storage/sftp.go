@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"os"
@@ -127,6 +128,13 @@ func (sftp *SFTP) DeleteFile(ctx context.Context, key string) error {
 	fileStat, err := sftp.sftpClient.Stat(filePath)
 	if err != nil {
 		sftp.Debug("[SFTP_DEBUG] Delete::STAT %s return error %v", filePath, err)
+		// A non-existent file is not an error for a delete operation —
+		// treat it as an idempotent no-op, same as S3/GCS/AzBlob
+		// (e.g. cas-delete walks + deletes the metadata subtree after
+		// already deleting metadata.json in the first step).
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return errors.WithMessage(err, "SFTP DeleteFile Stat")
 	}
 	if fileStat.IsDir() {
@@ -177,6 +185,14 @@ func (sftp *SFTP) WalkAbsolute(ctx context.Context, prefix string, recursive boo
 		walker := sftp.sftpClient.Walk(prefix)
 		for walker.Step() {
 			if err := walker.Err(); err != nil {
+				// A non-existent directory is an expected condition during
+				// CAS cold-list (the blob/<shard>/ directories don't exist
+				// until the first upload). Return empty, not an error — the
+				// same semantics that S3/GCS/AzBlob provide for missing
+				// prefixes.
+				if os.IsNotExist(err) {
+					return nil
+				}
 				return errors.WithMessage(err, "SFTP WalkAbsolute walker.Err")
 			}
 			entry := walker.Stat()
@@ -197,6 +213,10 @@ func (sftp *SFTP) WalkAbsolute(ctx context.Context, prefix string, recursive boo
 		entries, err := sftp.sftpClient.ReadDir(prefix)
 		if err != nil {
 			sftp.Debug("[SFTP_DEBUG] Walk::NonRecursive::ReadDir %s return error %v", prefix, err)
+			// Non-existent directory → return empty, same as object-store semantics.
+			if os.IsNotExist(err) {
+				return nil
+			}
 			return errors.WithMessage(err, "SFTP WalkAbsolute ReadDir")
 		}
 		for _, entry := range entries {
@@ -246,6 +266,73 @@ func (sftp *SFTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadClos
 		return errors.WithMessage(err, "SFTP PutFileAbsolute ReadFrom")
 	}
 	return nil
+}
+
+// PutFileAbsoluteIfAbsent atomically creates the file at key only if it
+// doesn't already exist, using the SFTP O_EXCL flag (SSH_FXF_EXCL on the
+// wire). Mandatory in SFTPv3+; honored by OpenSSH and most third-party
+// servers. Returns (false, nil) if the file already exists.
+func (sftp *SFTP) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	if err := sftp.sftpClient.MkdirAll(path.Dir(key)); err != nil {
+		log.Warn().Msgf("sftp.sftpClient.MkdirAll(%s) err=%v", path.Dir(key), err)
+	}
+	f, err := sftp.sftpClient.OpenFile(key, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	if err != nil {
+		if isSFTPAlreadyExists(err) {
+			return false, nil
+		}
+		// Some servers (proftpd, OpenSSH SFTPv3) return generic SSH_FX_FAILURE
+		// when O_EXCL hits an existing file. Disambiguate via Stat.
+		if _, statErr := sftp.sftpClient.Stat(key); statErr == nil {
+			return false, nil
+		}
+		return false, errors.WithMessage(err, "SFTP PutFileAbsoluteIfAbsent OpenFile")
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			if cerr := f.Close(); cerr != nil {
+				log.Warn().Msgf("can't close %s err=%v", key, cerr)
+			}
+		}
+	}()
+	if _, err := f.ReadFrom(r); err != nil {
+		// Best-effort cleanup: if the write failed mid-stream, remove the
+		// partial file so the next attempt sees the slot as available.
+		// Close the file handle first — some SFTP servers refuse to delete
+		// an open file.
+		closed = true
+		_ = f.Close()
+		_ = sftp.sftpClient.Remove(key)
+		return false, errors.WithMessage(err, "SFTP PutFileAbsoluteIfAbsent ReadFrom")
+	}
+	// Explicitly close on success path so we propagate any flush/sync error.
+	// If close fails the file may be corrupt; remove it so the next caller
+	// sees the slot as available and can retry.
+	closed = true
+	if err := f.Close(); err != nil {
+		_ = sftp.sftpClient.Remove(key)
+		return false, errors.WithMessage(err, "SFTP PutFileAbsoluteIfAbsent Close")
+	}
+	return true, nil
+}
+
+// PutFileIfAbsent is the path-prefixed variant of PutFileAbsoluteIfAbsent.
+// It prepends sftp.Config.Path to key, matching PutFile semantics.
+func (sftp *SFTP) PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return sftp.PutFileAbsoluteIfAbsent(ctx, path.Join(sftp.Config.Path, key), r, localSize)
+}
+
+// isSFTPAlreadyExists returns true if err is the SFTP server's response
+// to opening with O_EXCL when the target exists. The pkg/sftp library
+// surfaces this with varying wrapping depending on the protocol version
+// and server; we cover both os.ErrExist and the textual fallback.
+func isSFTPAlreadyExists(err error) bool {
+	if stderrors.Is(err, os.ErrExist) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "file exists") || strings.Contains(msg, "file already exists")
 }
 
 func (sftp *SFTP) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {

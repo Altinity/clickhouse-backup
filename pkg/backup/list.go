@@ -14,6 +14,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas/casstorage"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/custom"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
@@ -222,11 +224,87 @@ func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []Bac
 				})
 
 			}
+			// When CAS is enabled, append CAS-mode backups so operators
+			// see them in `list remote` output. CAS lives in a disjoint
+			// key prefix (cas/<cluster>/...) and is invisible to the
+			// v1 BackupList walk above (which now skips that prefix).
+			backupInfos = append(backupInfos, b.CollectRemoteCASBackups(ctx)...)
 		default:
 			return backupInfos
 		}
 	}
 	return backupInfos
+}
+
+// CollectRemoteCASBackups enumerates CAS-mode remote backups and returns
+// BackupInfo rows tagged with "[CAS]" in the description column. It is a
+// no-op (returns nil) when CAS is disabled, when remote_storage is "none"
+// or "custom" (CAS only supports object-storage backends), or when the
+// destination cannot be opened.
+//
+// Errors from the underlying walk are logged and swallowed: list-remote
+// is informational and a CAS-side failure must not break the v1 listing
+// that just succeeded.
+func (b *Backuper) CollectRemoteCASBackups(ctx context.Context) []BackupInfo {
+	if !b.cfg.CAS.Enabled {
+		return nil
+	}
+	if b.cfg.General.RemoteStorage == "none" || b.cfg.General.RemoteStorage == "custom" {
+		return nil
+	}
+	// Macros in storage paths (e.g. {shard}, {cluster}) require an open
+	// ClickHouse connection before NewBackupDestination is called so that
+	// ApplyMacros can resolve them. Mirror the pattern used in
+	// GetRemoteBackups and CollectLocalBackups: connect if not already open,
+	// and defer Close so we don't leave a dangling connection.
+	if !b.ch.IsOpen {
+		if err := b.ch.Connect(); err != nil {
+			log.Warn().Msgf("CollectRemoteCASBackups: ch.Connect failed: %v", err)
+			return nil
+		}
+		defer b.ch.Close()
+	}
+	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
+	if err != nil {
+		log.Warn().Msgf("CollectRemoteCASBackups NewBackupDestination: %v", err)
+		return nil
+	}
+	if err := bd.Connect(ctx); err != nil {
+		log.Warn().Msgf("CollectRemoteCASBackups bd.Connect: %v", err)
+		return nil
+	}
+	defer func() {
+		if err := bd.Close(ctx); err != nil {
+			log.Warn().Msgf("CollectRemoteCASBackups bd.Close: %v", err)
+		}
+	}()
+	backend := casstorage.NewStorageBackend(bd)
+	entries, err := cas.ListRemoteCAS(ctx, backend, b.cfg.CAS)
+	if err != nil {
+		log.Warn().Msgf("cas.ListRemoteCAS: %v", err)
+		return nil
+	}
+	out := make([]BackupInfo, 0, len(entries))
+	for _, e := range entries {
+		// "(unknown)" rather than "???": the latter makes operators wonder
+		// whether they're seeing a display bug or a corrupted backup. CAS
+		// list entries skip the v1 8-category breakdown (data:/arch:/obj:/...)
+		// because that breakdown isn't meaningful for content-addressed
+		// storage; the description column carries the [CAS] tag so the
+		// format difference is operator-explained, not surprising.
+		size := "(unknown)"
+		if e.SizeBytes > 0 {
+			size = utils.FormatBytes(uint64(e.SizeBytes))
+		}
+		out = append(out, BackupInfo{
+			BackupName:   e.Name,
+			CreationDate: e.UploadedAt,
+			Size:         size,
+			Description:  e.Description,
+			Type:         "remote",
+		})
+	}
+	return out
 }
 
 func (b *Backuper) CollectLocalBackups(ctx context.Context, ptype string) []BackupInfo {
@@ -491,14 +569,14 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 			log.Warn().Msgf("can't close BackupDestination error: %v", err)
 		}
 	}()
-	backupList, err := bd.BackupList(ctx, parseMetadata, "")
+	backupList, err := bd.BackupList(ctx, parseMetadata, "", b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return []storage.Backup{}, errors.WithMessage(err, "GetRemoteBackups BackupList")
 	}
 	// ugly hack to fix https://github.com/Altinity/clickhouse-backup/issues/309
 	if parseMetadata == false && len(backupList) > 0 {
 		lastBackup := backupList[len(backupList)-1]
-		backupList, err = bd.BackupList(ctx, true, lastBackup.BackupName)
+		backupList, err = bd.BackupList(ctx, true, lastBackup.BackupName, b.cfg.CAS.SkipPrefixes())
 		if err != nil {
 			return []storage.Backup{}, errors.WithMessage(err, "GetRemoteBackups BackupList last")
 		}
@@ -609,7 +687,7 @@ func (b *Backuper) GetTablesRemote(ctx context.Context, backupName string, table
 
 		b.dst = bd
 	}
-	backupList, err := b.dst.BackupList(ctx, true, backupName)
+	backupList, err := b.dst.BackupList(ctx, true, backupName, b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return nil, errors.WithMessage(err, "GetTablesRemote BackupList")
 	}

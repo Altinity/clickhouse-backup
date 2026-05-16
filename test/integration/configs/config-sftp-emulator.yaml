@@ -1,0 +1,25 @@
+general:
+  remote_storage: sftp
+  upload_concurrency: 4
+  download_concurrency: 4
+  restore_schema_on_cluster: "{cluster}"
+  allow_object_disk_streaming: true
+s3:
+  disable_ssl: false
+  disable_cert_verification: true
+clickhouse:
+  host: clickhouse
+  port: 9000
+  restart_command: bash -c 'echo "FAKE RESTART"'
+  timeout: 10m
+sftp:
+  address: "sshd"
+  username: "root"
+  password: "JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ"
+  key: ""
+  path: "/root"
+  object_disk_path: "/object_disk"
+  compression_format: none
+  compression_level: 1
+api:
+  listen: :7171

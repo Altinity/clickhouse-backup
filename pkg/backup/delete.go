@@ -12,6 +12,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/custom"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
@@ -334,12 +335,19 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 
 	b.dst = bd
 
-	backupList, err := bd.BackupList(ctx, true, backupName)
+	backupList, err := bd.BackupList(ctx, true, backupName, b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return errors.WithMessage(err, "bd.BackupList")
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
+			// CAS backups are deleted via the cas-delete CLI
+			// (Task 15) which runs the §6.6 cold-list/blob-prune
+			// ordering. The v1 prefix-blast path here would orphan
+			// CAS blobs and leave the warm-list inconsistent.
+			if backup.CAS != nil {
+				return cas.ErrCASBackup
+			}
 			err = b.cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx, backup)
 			if err != nil {
 				return errors.WithMessage(err, "cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent")
@@ -357,6 +365,9 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 			}).Msg("done")
 			return nil
 		}
+	}
+	if isCASBackupRemote(ctx, bd, b.cfg.CAS, backupName) {
+		return cas.ErrCASBackup
 	}
 	return errors.Errorf("'%s' is not found on remote storage", backupName)
 }
