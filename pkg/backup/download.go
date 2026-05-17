@@ -40,6 +40,16 @@ var (
 	ErrBackupIsAlreadyExists = errors.New("backup is already exists")
 )
 
+func (b *Backuper) resumeExistingBackup(backupName string) bool {
+	_, checkDownloadErr := os.Stat(path.Join(b.DefaultDataPath, "backup", backupName, "download.state2"))
+	if errors.Is(checkDownloadErr, os.ErrNotExist) {
+		log.Warn().Msgf("%s already exists but no download.state2 found, will resume download from scratch", backupName)
+	} else {
+		log.Warn().Msgf("%s already exists will try to resume download", backupName)
+	}
+	return true
+}
+
 func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume bool, hardlinkExistsFiles bool, backupVersion string, commandId int) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "download"); pidCheckErr != nil {
 		return errors.WithMessage(pidCheckErr, "CheckAndCreatePidFile")
@@ -87,14 +97,8 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			}
 			if !b.resume {
 				return ErrBackupIsAlreadyExists
-			} else {
-				_, checkDownloadErr := os.Stat(path.Join(b.DefaultDataPath, "backup", backupName, "download.state2"))
-				if errors.Is(checkDownloadErr, os.ErrNotExist) {
-					return ErrBackupIsAlreadyExists
-				}
-				isResumeExists = true
-				log.Warn().Msgf("%s already exists will try to resume download", backupName)
 			}
+			isResumeExists = b.resumeExistingBackup(backupName)
 		}
 	}
 	startDownload := time.Now()

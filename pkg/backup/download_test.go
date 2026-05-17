@@ -1,6 +1,8 @@
 package backup
 
 import (
+	"os"
+	"path"
 	"regexp"
 	"testing"
 	"time"
@@ -89,6 +91,16 @@ var remoteBackup = storage.Backup{
 		RequiredBackup: "",
 	},
 	UploadDate: time.Now(),
+}
+
+func TestResumeExistingBackupAllowsMissingStateFile(t *testing.T) {
+	backupName := "test_resume_crash"
+	defaultDataPath := t.TempDir()
+	assert.NoError(t, os.MkdirAll(path.Join(defaultDataPath, "backup", backupName), 0o750))
+
+	backuper := &Backuper{DefaultDataPath: defaultDataPath}
+
+	assert.True(t, backuper.resumeExistingBackup(backupName))
 }
 
 func TestReBalanceTablesMetadataIfDiskNotExists_Files_NoErrors(t *testing.T) {
