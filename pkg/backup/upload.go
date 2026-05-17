@@ -586,8 +586,18 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 				dataGroup.Go(func() error {
 					if b.resume {
 						if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remotePathFull); isProcessed {
-							atomic.AddInt64(&uploadedBytes, processedSize)
-							return nil
+							remoteComplete, remoteSize, validationErr := b.isRemotePartComplete(ctx, remotePath, backupPath, partFiles)
+							if validationErr != nil {
+								return errors.WithMessage(validationErr, "isRemotePartComplete")
+							}
+							if remoteComplete {
+								if remoteSize > 0 {
+									processedSize = remoteSize
+								}
+								atomic.AddInt64(&uploadedBytes, processedSize)
+								return nil
+							}
+							log.Warn().Msgf("resume state marked %s as processed but remote part %s is incomplete, uploading again", remotePathFull, remotePath)
 						}
 					}
 					log.Debug().Msgf("start upload %d files to %s", len(partFiles), remotePath)
@@ -620,8 +630,14 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 				dataGroup.Go(func() error {
 					if b.resume {
 						if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteDataFile); isProcessed {
-							atomic.AddInt64(&uploadedBytes, processedSize)
-							return nil
+							if remoteFile, statErr := b.dst.StatFile(ctx, remoteDataFile); statErr == nil {
+								if remoteFile.Size() > 0 {
+									processedSize = remoteFile.Size()
+								}
+								atomic.AddInt64(&uploadedBytes, processedSize)
+								return nil
+							}
+							log.Warn().Msgf("resume state marked %s as processed but remote archive is missing, uploading again", remoteDataFile)
 						}
 					}
 					log.Debug().Msgf("start upload %d files to %s", len(localFiles), remoteDataFile)
@@ -666,6 +682,46 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 	}
 	log.Debug().Msgf("finish %s.%s with concurrency=%d len(table.Parts[...])=%d uploadedFiles=%v, uploadedBytes=%v", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity, uploadedFiles, uploadedBytes)
 	return uploadedFiles, uploadedParts, uploadedBytes, nil
+}
+
+func (b *Backuper) isRemotePartComplete(ctx context.Context, remoteBasePath, localBasePath string, expectedFiles []string) (bool, int64, error) {
+	if b.dst == nil || len(expectedFiles) == 0 {
+		return false, 0, nil
+	}
+	remoteFiles := make(map[string]int64)
+	walkErr := b.dst.Walk(ctx, remoteBasePath, true, func(ctx context.Context, f storage.RemoteFile) error {
+		if b.dst.Kind() == "SFTP" && (f.Name() == "." || f.Name() == "..") {
+			return nil
+		}
+		remoteFiles[strings.TrimPrefix(f.Name(), "/")] = f.Size()
+		return nil
+	})
+	if walkErr != nil {
+		log.Debug().Msgf("resume validation: can't walk remote part %s: %v", remoteBasePath, walkErr)
+		return false, 0, nil
+	}
+
+	var remoteSize int64
+	for _, expectedFile := range expectedFiles {
+		localFilePath := path.Join(localBasePath, expectedFile)
+		info, err := os.Stat(localFilePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return false, 0, nil
+			}
+			return false, 0, errors.Wrapf(err, "stat local upload part file %s", localFilePath)
+		}
+		if !info.Mode().IsRegular() {
+			return false, 0, nil
+		}
+		remoteFileName := strings.TrimPrefix(expectedFile, "/")
+		remoteFileSize, ok := remoteFiles[remoteFileName]
+		if !ok || remoteFileSize != info.Size() {
+			return false, 0, nil
+		}
+		remoteSize += remoteFileSize
+	}
+	return true, remoteSize, nil
 }
 
 func (b *Backuper) uploadTableMetadata(ctx context.Context, backupName string, requiredBackupName string, tableMetadata *metadata.TableMetadata) (int64, error) {

@@ -1,6 +1,9 @@
 package backup
 
 import (
+	"context"
+	"io"
+	"os"
 	"regexp"
 	"testing"
 	"time"
@@ -281,4 +284,124 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "250B free space, not found in system.disks with `local` type")
 
+}
+
+type fakeResumeRemoteFile struct {
+	name string
+	size int64
+}
+
+func (f fakeResumeRemoteFile) Size() int64             { return f.size }
+func (f fakeResumeRemoteFile) Name() string            { return f.name }
+func (f fakeResumeRemoteFile) LastModified() time.Time { return time.Time{} }
+
+type fakeResumeRemoteStorage struct {
+	kind  string
+	files []storage.RemoteFile
+}
+
+func (s fakeResumeRemoteStorage) Kind() string                  { return s.kind }
+func (s fakeResumeRemoteStorage) Connect(context.Context) error { return nil }
+func (s fakeResumeRemoteStorage) Close(context.Context) error   { return nil }
+func (s fakeResumeRemoteStorage) StatFile(context.Context, string) (storage.RemoteFile, error) {
+	return nil, os.ErrInvalid
+}
+func (s fakeResumeRemoteStorage) StatFileAbsolute(context.Context, string) (storage.RemoteFile, error) {
+	return nil, os.ErrInvalid
+}
+func (s fakeResumeRemoteStorage) DeleteFile(context.Context, string) error { return nil }
+func (s fakeResumeRemoteStorage) DeleteFileFromObjectDiskBackup(context.Context, string) error {
+	return nil
+}
+func (s fakeResumeRemoteStorage) Walk(ctx context.Context, _ string, _ bool, fn func(context.Context, storage.RemoteFile) error) error {
+	for _, f := range s.files {
+		if err := fn(ctx, f); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (s fakeResumeRemoteStorage) WalkAbsolute(context.Context, string, bool, func(context.Context, storage.RemoteFile) error) error {
+	return nil
+}
+func (s fakeResumeRemoteStorage) GetFileReader(context.Context, string) (io.ReadCloser, error) {
+	return nil, os.ErrInvalid
+}
+func (s fakeResumeRemoteStorage) GetFileReaderAbsolute(context.Context, string) (io.ReadCloser, error) {
+	return nil, os.ErrInvalid
+}
+func (s fakeResumeRemoteStorage) GetFileReaderWithLocalPath(context.Context, string, string, int64) (io.ReadCloser, error) {
+	return nil, os.ErrInvalid
+}
+func (s fakeResumeRemoteStorage) PutFile(context.Context, string, io.ReadCloser, int64) error {
+	return nil
+}
+func (s fakeResumeRemoteStorage) PutFileAbsolute(context.Context, string, io.ReadCloser, int64) error {
+	return nil
+}
+func (s fakeResumeRemoteStorage) CopyObject(context.Context, int64, string, string, string) (int64, error) {
+	return 0, nil
+}
+
+func TestIsLocalPartCompleteRequiresEveryRemoteFile(t *testing.T) {
+	ctx := context.Background()
+	partPath := t.TempDir()
+	assert.NoError(t, os.WriteFile(partPath+"/checksums.txt", []byte("sum"), 0640))
+	assert.NoError(t, os.WriteFile(partPath+"/data.bin", []byte("data"), 0640))
+
+	backuper := Backuper{dst: &storage.BackupDestination{RemoteStorage: fakeResumeRemoteStorage{
+		kind: "s3",
+		files: []storage.RemoteFile{
+			fakeResumeRemoteFile{name: "checksums.txt", size: 3},
+			fakeResumeRemoteFile{name: "data.bin", size: 4},
+			fakeResumeRemoteFile{name: "data.cmrk3", size: 5},
+		},
+	}}}
+
+	complete, size, err := backuper.isLocalPartComplete(ctx, "backup/shadow/db/table/default/all_1_1_0", partPath)
+	assert.NoError(t, err)
+	assert.False(t, complete)
+	assert.EqualValues(t, 0, size)
+
+	assert.NoError(t, os.WriteFile(partPath+"/data.cmrk3", []byte("marks"), 0640))
+	complete, size, err = backuper.isLocalPartComplete(ctx, "backup/shadow/db/table/default/all_1_1_0", partPath)
+	assert.NoError(t, err)
+	assert.True(t, complete)
+	assert.EqualValues(t, 12, size)
+}
+
+func TestIsRemotePartCompleteRequiresEveryExpectedLocalFile(t *testing.T) {
+	ctx := context.Background()
+	backupPath := t.TempDir()
+	assert.NoError(t, os.MkdirAll(backupPath+"/all_1_1_0", 0750))
+	assert.NoError(t, os.WriteFile(backupPath+"/all_1_1_0/checksums.txt", []byte("sum"), 0640))
+	assert.NoError(t, os.WriteFile(backupPath+"/all_1_1_0/data.bin", []byte("data"), 0640))
+	assert.NoError(t, os.WriteFile(backupPath+"/all_1_1_0/data.cmrk3", []byte("marks"), 0640))
+
+	backuper := Backuper{dst: &storage.BackupDestination{RemoteStorage: fakeResumeRemoteStorage{
+		kind: "s3",
+		files: []storage.RemoteFile{
+			fakeResumeRemoteFile{name: "/all_1_1_0/checksums.txt", size: 3},
+			fakeResumeRemoteFile{name: "/all_1_1_0/data.bin", size: 4},
+		},
+	}}}
+	partFiles := []string{"/all_1_1_0/checksums.txt", "/all_1_1_0/data.bin", "/all_1_1_0/data.cmrk3"}
+
+	complete, size, err := backuper.isRemotePartComplete(ctx, "backup/shadow/db/table/default", backupPath, partFiles)
+	assert.NoError(t, err)
+	assert.False(t, complete)
+	assert.EqualValues(t, 0, size)
+
+	backuper.dst.RemoteStorage = fakeResumeRemoteStorage{
+		kind: "s3",
+		files: []storage.RemoteFile{
+			fakeResumeRemoteFile{name: "/all_1_1_0/checksums.txt", size: 3},
+			fakeResumeRemoteFile{name: "/all_1_1_0/data.bin", size: 4},
+			fakeResumeRemoteFile{name: "/all_1_1_0/data.cmrk3", size: 5},
+		},
+	}
+	complete, size, err = backuper.isRemotePartComplete(ctx, "backup/shadow/db/table/default", backupPath, partFiles)
+	assert.NoError(t, err)
+	assert.True(t, complete)
+	assert.EqualValues(t, 12, size)
 }
