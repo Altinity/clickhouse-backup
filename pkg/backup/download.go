@@ -40,6 +40,18 @@ var (
 	ErrBackupIsAlreadyExists = errors.New("backup is already exists")
 )
 
+func isRemoteMetadataNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "doesn't exist") ||
+		strings.Contains(message, "key not found") ||
+		strings.Contains(message, "nosuchkey") ||
+		strings.Contains(message, "statuscode 404") ||
+		strings.Contains(message, "statuscode: 404")
+}
+
 func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume bool, hardlinkExistsFiles bool, backupVersion string, commandId int) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "download"); pidCheckErr != nil {
 		return errors.WithMessage(pidCheckErr, "CheckAndCreatePidFile")
@@ -487,10 +499,15 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			}
 		}
 		var tmBody []byte
+		metadataNotFound := false
 		retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 		err := retry.RunCtx(ctx, func(ctx context.Context) error {
 			tmReader, err := b.dst.GetFileReader(ctx, remoteMetadataFile)
 			if err != nil {
+				if isRemoteMetadataNotFound(err) {
+					metadataNotFound = true
+					return nil
+				}
 				return errors.Wrapf(err, "can't GetFileReader(%s) error", remoteMetadataFile)
 			}
 			tmBody, err = io.ReadAll(tmReader)
@@ -503,10 +520,21 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			}
 			return nil
 		})
+		// Missing metadata is permanent: do not burn retries, and skip the missing table.
+		if metadataNotFound {
+			logger.Warn().Str("remoteMetadataFile", remoteMetadataFile).Msg("metadata file not found on remote, skipping")
+			if strings.HasSuffix(localMetadataFile, ".json") {
+				return nil, size, nil
+			}
+			continue
+		}
 		// sql file could be not present in incremental backup
 		if err != nil && strings.HasSuffix(localMetadataFile, ".sql") {
 			log.Warn().Str("localMetadataFile", localMetadataFile).Err(err).Send()
 			continue
+		}
+		if err != nil {
+			return nil, 0, err
 		}
 
 		if err = os.MkdirAll(path.Dir(localMetadataFile), 0755); err != nil {
