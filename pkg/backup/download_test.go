@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -89,6 +90,22 @@ var remoteBackup = storage.Backup{
 		RequiredBackup: "",
 	},
 	UploadDate: time.Now(),
+}
+
+func TestIsRemoteMetadataNotFound(t *testing.T) {
+	notFoundMessages := []string{
+		"object doesn't exist",
+		"key not found: metadata/default/test.json",
+		"NoSuchKey: The specified key does not exist",
+		"operation error S3: GetObject, https response error StatusCode: 404",
+		"StatusCode 404",
+	}
+	for _, msg := range notFoundMessages {
+		assert.True(t, isRemoteMetadataNotFound(errors.New(msg)), msg)
+	}
+
+	assert.False(t, isRemoteMetadataNotFound(nil))
+	assert.False(t, isRemoteMetadataNotFound(errors.New("temporary network timeout")))
 }
 
 func TestReBalanceTablesMetadataIfDiskNotExists_Files_NoErrors(t *testing.T) {
