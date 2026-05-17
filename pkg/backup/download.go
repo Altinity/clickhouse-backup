@@ -38,6 +38,7 @@ import (
 
 var (
 	ErrBackupIsAlreadyExists = errors.New("backup is already exists")
+	errIncompleteLocalPart   = errors.New("incomplete local part")
 )
 
 func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume bool, hardlinkExistsFiles bool, backupVersion string, commandId int) error {
@@ -798,10 +799,20 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 				dataGroup.Go(func() error {
 					log.Debug().Msgf("start %s -> %s", partRemotePath, partLocalPath)
 					if b.resume {
-						isProcesses, pathSize := b.resumableState.IsAlreadyProcessed(partRemotePath)
-						atomic.AddUint64(&downloadedSize, uint64(pathSize))
-						if isProcesses {
-							return nil
+						isProcessed, pathSize := b.resumableState.IsAlreadyProcessed(partRemotePath)
+						if isProcessed {
+							localComplete, localSize, completeErr := b.isLocalPartComplete(dataCtx, partRemotePath, partLocalPath)
+							if completeErr != nil {
+								return errors.WithMessage(completeErr, "isLocalPartComplete")
+							}
+							if localComplete {
+								if localSize > 0 {
+									pathSize = localSize
+								}
+								atomic.AddUint64(&downloadedSize, uint64(pathSize))
+								return nil
+							}
+							log.Warn().Msgf("resume state marked %s as processed but local part %s is incomplete, downloading again", partRemotePath, partLocalPath)
 						}
 					}
 					if hardlinkExistsFiles {
@@ -853,6 +864,40 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 	}
 
 	return downloadedSize, nil
+}
+
+func (b *Backuper) isLocalPartComplete(ctx context.Context, remotePartPath, localPartPath string) (bool, int64, error) {
+	filesChecked := 0
+	var localSize int64
+	walkErr := b.dst.Walk(ctx, remotePartPath, true, func(ctx context.Context, f storage.RemoteFile) error {
+		if b.dst.Kind() == "SFTP" && (f.Name() == "." || f.Name() == "..") {
+			return nil
+		}
+		filesChecked++
+		localFilePath := path.Join(localPartPath, f.Name())
+		info, err := os.Stat(localFilePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return errIncompleteLocalPart
+			}
+			return errors.Wrapf(err, "stat local part file %s", localFilePath)
+		}
+		if !info.Mode().IsRegular() || info.Size() != f.Size() {
+			return errIncompleteLocalPart
+		}
+		localSize += info.Size()
+		return nil
+	})
+	if walkErr != nil {
+		if errors.Cause(walkErr) == errIncompleteLocalPart {
+			return false, 0, nil
+		}
+		return false, 0, walkErr
+	}
+	if filesChecked == 0 {
+		return false, 0, nil
+	}
+	return true, localSize, nil
 }
 
 func (b *Backuper) hardlinkIfLocalPartExistsAndChecksumEqual(backupName string, table metadata.TableMetadata, part *metadata.Part, disks []clickhouse.Disk, diskName, dbAndTableDir string) (bool, int64, error) {
