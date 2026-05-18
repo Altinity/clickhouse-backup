@@ -102,7 +102,7 @@ func (f *FTP) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, err
 	if err != nil {
 		// proftpd return 550 error if `dir` not exists
 		if strings.HasPrefix(err.Error(), "550") {
-			return nil, ErrNotFound
+			return nil, NewErrNotFound(key)
 		}
 		return nil, errors.WithMessage(err, "FTP StatFileAbsolute List")
 	}
@@ -118,7 +118,7 @@ func (f *FTP) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, err
 		}
 	}
 
-	return nil, ErrNotFound
+	return nil, NewErrNotFound(key)
 }
 
 func (f *FTP) DeleteFile(ctx context.Context, key string) error {

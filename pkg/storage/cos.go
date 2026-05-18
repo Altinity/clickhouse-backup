@@ -79,7 +79,7 @@ func (c *COS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, err
 		var cosErr *cos.ErrorResponse
 		ok := errors.As(err, &cosErr)
 		if ok && cosErr.Code == "NoSuchKey" {
-			return nil, ErrNotFound
+			return nil, NewErrNotFound(key)
 		}
 		return nil, errors.WithMessage(err, "COS StatFileAbsolute Get")
 	}
