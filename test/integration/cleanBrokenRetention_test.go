@@ -19,8 +19,10 @@ import (
 const cleanBrokenRetentionKeepGlob = "cbr_orphan_keep_*"
 
 // Each TestCleanBrokenRetention* function verifies that `clean_broken_retention`:
-//   - lists orphans (dry-run) without deleting,
-//   - by default removes orphans from both `path` and `object_disks_path`,
+//   - lists orphans in object_disks_path (dry-run) without deleting,
+//   - preserves entries under backup `path` that BackupList discovers as broken
+//     (in-progress uploads with no metadata.json),
+//   - by default removes orphans from `object_disks_path` only,
 //   - preserves the live backup and entries matched by --keep globs.
 //
 // Each backend is its own top-level test so they can be run independently
@@ -91,50 +93,51 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 
 	suffix := time.Now().UnixNano()
 	keepBackup := fmt.Sprintf("cbr_keep_%d", suffix)
-	orphanPath := fmt.Sprintf("cbr_orphan_path_%d", suffix)
+	brokenPath := fmt.Sprintf("cbr_broken_%d", suffix)
 	orphanObj := fmt.Sprintf("cbr_orphan_obj_%d", suffix)
 	orphanKept := fmt.Sprintf("cbr_orphan_keep_%d", suffix)
 
 	log.Debug().Str("backend", tc.name).Msg("Create a live backup that must survive the cleanup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create_remote", "--tables", tableName, keepBackup)
 
-	log.Debug().Str("backend", tc.name).Msg("Plant orphans")
-	for _, p := range []struct{ root, name string }{
-		{tc.pathRoot, orphanPath}, {tc.objRoot, orphanObj},
-		{tc.pathRoot, orphanKept}, {tc.objRoot, orphanKept},
-	} {
-		tc.plant(env, r, p.root, p.name)
-		tc.assertExists(env, r, p.root, p.name)
+	log.Debug().Str("backend", tc.name).Msg("Plant broken entry under backup path and orphans under object_disks_path")
+	// brokenPath: no metadata.json → BackupList treats it as a broken (in-progress) backup → must be KEPT.
+	tc.plant(env, r, tc.pathRoot, brokenPath)
+	tc.assertExists(env, r, tc.pathRoot, brokenPath)
+	// Genuine orphans live only under object_disks_path, which BackupList does not scan.
+	for _, name := range []string{orphanObj, orphanKept} {
+		tc.plant(env, r, tc.objRoot, name)
+		tc.assertExists(env, r, tc.objRoot, name)
 	}
 
-	log.Debug().Str("backend", tc.name).Msg("Dry-run lists orphans but deletes nothing")
+	log.Debug().Str("backend", tc.name).Msg("Dry-run lists object disk orphans but preserves broken backup path entries")
 	dryRunOut, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "clean_broken_retention")
 	r.NoError(err, "dry-run failed: %s", dryRunOut)
-	r.Contains(dryRunOut, orphanPath, "dry-run must mention path orphan")
+	r.NotContains(dryRunOut, brokenPath, "broken backup path entry must not appear as orphan")
 	r.Contains(dryRunOut, orphanObj, "dry-run must mention object disk orphan")
 	r.Contains(dryRunOut, "would delete", "dry-run must announce planned deletions")
 	r.NotContains(dryRunOut, "clean_broken_retention: deleting", "dry-run must not delete")
 	r.NotContains(dryRunOut, fmt.Sprintf("\"orphan\":\"%s\"", keepBackup), "live backup must not appear as orphan")
-	tc.assertExists(env, r, tc.pathRoot, orphanPath)
+	tc.assertExists(env, r, tc.pathRoot, brokenPath)
 	tc.assertExists(env, r, tc.objRoot, orphanObj)
 
-	log.Debug().Str("backend", tc.name).Msg("--keep glob preserves matched orphans")
+	log.Debug().Str("backend", tc.name).Msg("--keep glob preserves matched object disk orphans")
 	commitOut, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "clean_broken_retention", "--commit", "--keep="+cleanBrokenRetentionKeepGlob)
 	r.NoError(err, "commit failed: %s", commitOut)
 	r.Contains(commitOut, "clean_broken_retention: deleting")
-	tc.assertGone(env, r, tc.pathRoot, orphanPath)
+	tc.assertExists(env, r, tc.pathRoot, brokenPath)
 	tc.assertGone(env, r, tc.objRoot, orphanObj)
-	tc.assertExists(env, r, tc.pathRoot, orphanKept)
 	tc.assertExists(env, r, tc.objRoot, orphanKept)
 
-	log.Debug().Str("backend", tc.name).Msg("Second run without --keep clears the remaining orphan")
+	log.Debug().Str("backend", tc.name).Msg("Second run without --keep clears the remaining object disk orphan")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean_broken_retention", "--commit")
-	tc.assertGone(env, r, tc.pathRoot, orphanKept)
+	tc.assertExists(env, r, tc.pathRoot, brokenPath)
 	tc.assertGone(env, r, tc.objRoot, orphanKept)
 
-	log.Debug().Str("backend", tc.name).Msg("Cleanup live backup and table")
+	log.Debug().Str("backend", tc.name).Msg("Cleanup live backup, broken entry, and table")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "remote", keepBackup)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", keepBackup)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean_remote_broken")
 	dropQuery := "DROP TABLE IF EXISTS " + tableName
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") > 0 {
 		dropQuery += " NO DELAY"
