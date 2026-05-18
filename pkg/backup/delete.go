@@ -575,11 +575,12 @@ func (b *Backuper) CleanRemoteBroken(commandId int) error {
 }
 
 // CleanBrokenRetention walks remote `path` and `object_disks_path` top-level entries
-// and removes everything that is NOT present in the live BackupList and NOT matched by keepGlobs.
+// and removes everything that is NOT present in the live BackupList and NOT matched by excludeGlobs.
 // Uses BatchDeleter with retry and parallel batch deletion for object_disks_path orphans.
 // When commit=false, only logs orphans without deleting (dry-run mode).
-// keepGlobs follows path.Match syntax (e.g. "prod-*", "snapshot-2026-??-*").
-func (b *Backuper) CleanBrokenRetention(commandId int, keepGlobs []string, commit bool) error {
+// When includeGlobs is non-empty, only orphans matching at least one includeGlob are considered.
+// excludeGlobs and includeGlobs follow path.Match syntax (e.g. "prod-*", "snapshot-2026-??-*").
+func (b *Backuper) CleanBrokenRetention(commandId int, includeGlobs, excludeGlobs []string, commit bool) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return errors.WithMessage(err, "status.Current.GetContextWithCancel")
@@ -593,9 +594,14 @@ func (b *Backuper) CleanBrokenRetention(commandId int, keepGlobs []string, commi
 	if b.cfg.General.RemoteStorage == "custom" {
 		return errors.New("aborted: clean_broken_retention does not support custom remote storage")
 	}
-	for _, g := range keepGlobs {
+	for _, g := range excludeGlobs {
 		if _, err := path.Match(g, ""); err != nil {
-			return errors.Wrapf(err, "invalid keep-glob %q", g)
+			return errors.Wrapf(err, "invalid exclude-glob %q", g)
+		}
+	}
+	for _, g := range includeGlobs {
+		if _, err := path.Match(g, ""); err != nil {
+			return errors.Wrapf(err, "invalid include-glob %q", g)
 		}
 	}
 	if err := b.ch.Connect(); err != nil {
@@ -633,10 +639,25 @@ func (b *Backuper) CleanBrokenRetention(commandId int, keepGlobs []string, commi
 		}
 	}
 	isKept := func(name string) bool {
+		// Live backups are always preserved.
 		if _, ok := keepNames[name]; ok {
 			return true
 		}
-		for _, g := range keepGlobs {
+		// If --include is specified, only consider names matching at least one includeGlob.
+		if len(includeGlobs) > 0 {
+			matched := false
+			for _, g := range includeGlobs {
+				if ok, _ := path.Match(g, name); ok {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return true
+			}
+		}
+		// --exclude globs preserve matched entries from deletion.
+		for _, g := range excludeGlobs {
 			if ok, _ := path.Match(g, name); ok {
 				return true
 			}
@@ -648,7 +669,7 @@ func (b *Backuper) CleanBrokenRetention(commandId int, keepGlobs []string, commi
 	if commit {
 		mode = "commit"
 	}
-	log.Info().Msgf("clean_broken_retention: mode=%s, %d live backups (of %d in remote list), %d keep-globs", mode, liveCount, len(backupList), len(keepGlobs))
+	log.Info().Msgf("clean_broken_retention: mode=%s, %d live backups (of %d in remote list), %d include-globs, %d exclude-globs", mode, liveCount, len(backupList), len(includeGlobs), len(excludeGlobs))
 
 	objectDiskPath, err := b.getObjectDiskPath()
 	if err != nil {
@@ -660,7 +681,12 @@ func (b *Backuper) CleanBrokenRetention(commandId int, keepGlobs []string, commi
 		topObjName = path.Base(objectDiskPath)
 	}
 
-	orphansInPath, err := b.findOrphanTopLevelNames(ctx, bd, "/", isKept)
+	backupPath, err := b.getBackupPath()
+	if err != nil {
+		return errors.WithMessage(err, "b.getBackupPath")
+	}
+
+	orphansInPath, err := b.findOrphanTopLevelNames(ctx, bd, backupPath, isKept)
 	if err != nil {
 		return errors.WithMessage(err, "scan path orphans")
 	}

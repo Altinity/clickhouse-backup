@@ -16,14 +16,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const cleanBrokenRetentionKeepGlob = "cbr_orphan_keep_*"
+const cleanBrokenRetentionExcludeGlob = "cbr_orphan_keep_*"
+const cleanBrokenRetentionIncludeGlob = "cbr_*"
 
 // Each TestCleanBrokenRetention* function verifies that `clean_broken_retention`:
 //   - lists orphans in object_disks_path (dry-run) without deleting,
 //   - preserves entries under backup `path` that BackupList discovers as broken
 //     (in-progress uploads with no metadata.json),
 //   - by default removes orphans from `object_disks_path` only,
-//   - preserves the live backup and entries matched by --keep globs.
+//   - preserves the live backup and entries matched by --exclude globs,
+//   - uses --include=cbr_* to isolate the test from other tests sharing the same bucket.
 //
 // Each backend is its own top-level test so they can be run independently
 // (e.g. `RUN_TESTS=TestCleanBrokenRetentionS3 ./test/integration/run.sh`).
@@ -111,7 +113,7 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 	}
 
 	log.Debug().Str("backend", tc.name).Msg("Dry-run lists object disk orphans but preserves broken backup path entries")
-	dryRunOut, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "clean_broken_retention")
+	dryRunOut, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "clean_broken_retention", "--include="+cleanBrokenRetentionIncludeGlob)
 	r.NoError(err, "dry-run failed: %s", dryRunOut)
 	r.NotContains(dryRunOut, brokenPath, "broken backup path entry must not appear as orphan")
 	r.Contains(dryRunOut, orphanObj, "dry-run must mention object disk orphan")
@@ -121,16 +123,16 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 	tc.assertExists(env, r, tc.pathRoot, brokenPath)
 	tc.assertExists(env, r, tc.objRoot, orphanObj)
 
-	log.Debug().Str("backend", tc.name).Msg("--keep glob preserves matched object disk orphans")
-	commitOut, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "clean_broken_retention", "--commit", "--keep="+cleanBrokenRetentionKeepGlob)
+	log.Debug().Str("backend", tc.name).Msg("--exclude glob preserves matched object disk orphans")
+	commitOut, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "clean_broken_retention", "--commit", "--include="+cleanBrokenRetentionIncludeGlob, "--exclude="+cleanBrokenRetentionExcludeGlob)
 	r.NoError(err, "commit failed: %s", commitOut)
 	r.Contains(commitOut, "clean_broken_retention: deleting")
 	tc.assertExists(env, r, tc.pathRoot, brokenPath)
 	tc.assertGone(env, r, tc.objRoot, orphanObj)
 	tc.assertExists(env, r, tc.objRoot, orphanKept)
 
-	log.Debug().Str("backend", tc.name).Msg("Second run without --keep clears the remaining object disk orphan")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean_broken_retention", "--commit")
+	log.Debug().Str("backend", tc.name).Msg("Second run without --exclude clears the remaining object disk orphan")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean_broken_retention", "--commit", "--include="+cleanBrokenRetentionIncludeGlob)
 	tc.assertExists(env, r, tc.pathRoot, brokenPath)
 	tc.assertGone(env, r, tc.objRoot, orphanKept)
 

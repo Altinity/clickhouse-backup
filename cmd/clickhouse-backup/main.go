@@ -720,23 +720,27 @@ func main() {
 		{
 			Name:        "clean_broken_retention",
 			Usage:       "Remove orphan entries under remote `path` and `object_disks_path` that are not in the live backup list",
-			UsageText:   "clickhouse-backup clean_broken_retention [--commit] [--keep=glob ...]",
-			Description: "Walks top-level of remote `path` and `object_disks_path`, batch-deletes (with retry) every entry that is not a live backup and does not match any --keep glob. Object disk orphans are deleted in parallel with progress tracking. Pass --commit to actually delete; without it the command only logs what would be deleted.",
+			UsageText:   "clickhouse-backup clean_broken_retention [--commit] [--include=glob ...] [--exclude=glob ...]",
+			Description: "Walks top-level of remote `path` and `object_disks_path`, batch-deletes (with retry) every entry that is not a live backup and is not excluded by --exclude globs and is matched by --include globs (if provided). Object disk orphans are deleted in parallel with progress tracking. Pass --commit to actually delete; without it the command only logs what would be deleted.",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CleanBrokenRetention(status.NotFromAPI, c.StringSlice("keep"), c.Bool("commit"))
+				return b.CleanBrokenRetention(status.NotFromAPI, c.StringSlice("include"), c.StringSlice("exclude"), c.Bool("commit"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringSliceFlag{
-					Name:  "keep",
-					Usage: "Glob (path.Match syntax) of backup names to preserve in addition to live backups; can be passed multiple times",
+					Name:  "include",
+					Usage: "Glob (path.Match syntax) to scope cleanup only to backup names matching these patterns; can be passed multiple times; if omitted, all orphans are candidates",
+				},
+				cli.StringSliceFlag{
+					Name:  "exclude",
+					Usage: "Glob (path.Match syntax) of backup names to preserve even if they appear as orphans; can be passed multiple times",
 				},
 				cli.BoolFlag{
 					Name:  "commit",
 					Usage: "Actually delete orphans; without this flag the command only logs what would be deleted",
 				},
-			),
-		},
+		),
+	},
 
 		{
 			Name:        "watch",
