@@ -128,7 +128,13 @@ func (f *FTP) DeleteFile(ctx context.Context, key string) error {
 	if err != nil {
 		return errors.WithMessage(err, "FTP DeleteFile getConnection")
 	}
-	if err := client.RemoveDirRecur(path.Join(f.Config.Path, key)); err != nil {
+	filePath := path.Join(f.Config.Path, key)
+	// goftp RemoveDirRecur calls ChangeDir which fails on files.
+	// Try DELE first for files, fall back to RemoveDirRecur for directories.
+	if err := client.Delete(filePath); err == nil {
+		return nil
+	}
+	if err := client.RemoveDirRecur(filePath); err != nil {
 		return errors.WithMessage(err, "FTP DeleteFile RemoveDirRecur")
 	}
 	return nil
@@ -243,7 +249,13 @@ func (f *FTP) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) er
 	if err != nil {
 		return errors.WithMessage(err, "FTP DeleteFileFromObjectDiskBackup getConnection")
 	}
-	if err := client.RemoveDirRecur(path.Join(f.Config.ObjectDiskPath, key)); err != nil {
+	filePath := path.Join(f.Config.ObjectDiskPath, key)
+	// goftp RemoveDirRecur calls ChangeDir which fails on files (not directories).
+	// Try DELE first for files, fall back to RemoveDirRecur for directories.
+	if err := client.Delete(filePath); err == nil {
+		return nil
+	}
+	if err := client.RemoveDirRecur(filePath); err != nil {
 		return errors.WithMessage(err, "FTP DeleteFileFromObjectDiskBackup RemoveDirRecur")
 	}
 	return nil

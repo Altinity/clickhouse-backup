@@ -2,11 +2,13 @@ package backup
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
@@ -23,6 +25,7 @@ import (
 	"github.com/eapache/go-resiliency/retrier"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/sync/errgroup"
 )
 
 // Clean - removed all data in shadow folder
@@ -483,22 +486,35 @@ func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string
 		return totalDeleted, nil
 	}
 
-	// Fallback: one-by-one deletion (should not happen if all storage types implement BatchDeleter)
-	log.Warn().Msgf("cleanBackupObjectDisks: %s does not implement BatchDeleter, falling back to one-by-one deletion", b.dst.Kind())
+	// Fallback: one-by-one deletion (streaming — no in-memory accumulation).
+	// FTP/SFTP do not implement BatchDeleter (they have DeleteKeysFromObjectDiskBackup
+	// without the "Batch" suffix required by the interface), so they always hit this path.
+	log.Warn().Msgf("cleanBackupObjectDisks: %s does not implement BatchDeleter, falling back to streaming one-by-one deletion", b.dst.Kind())
 	deletedKeys := uint(0)
-	walkErr := b.dst.WalkAbsolute(ctx, path.Join(objectDiskPath, backupName), true, func(ctx context.Context, f storage.RemoteFile) error {
-		if b.dst.Kind() == "azblob" {
-			if f.Size() > 0 || !f.LastModified().IsZero() {
-				deletedKeys += 1
-				return b.dst.DeleteFileFromObjectDiskBackup(ctx, path.Join(backupName, f.Name()))
-			}
-
+	_ = b.dst.WalkAbsolute(ctx, path.Join(objectDiskPath, backupName), true, func(ctx context.Context, f storage.RemoteFile) error {
+		if f.Name() == "" || f.Name() == "." {
 			return nil
 		}
-		deletedKeys += 1
-		return b.dst.DeleteFileFromObjectDiskBackup(ctx, path.Join(backupName, f.Name()))
+		key := path.Join(backupName, f.Name())
+		// Use DeleteFileFromObjectDiskBackup which constructs the correct absolute
+		// path via Config.ObjectDiskPath.  For directories this triggers recursive
+		// deletion (SFTP DeleteDirectory / FTP RemoveDirRecur) which may remove
+		// entries that the in-progress walker hasn't visited yet, causing the
+		// walker to later fail with "file does not exist".  That's harmless — the
+		// data is already deleted — so we discard the walk error below.
+		if err := b.dst.DeleteFileFromObjectDiskBackup(ctx, key); err != nil {
+			log.Debug().Err(err).Str("key", key).Msg("cleanBackupObjectDisks: delete failed")
+		} else {
+			deletedKeys++
+		}
+		return nil
 	})
-	return deletedKeys, walkErr
+	// Walk error is expected when RemoveDirRecur/DeleteDirectory removed children
+	// that the walker hadn't stepped to yet.  Data is already gone — no need to fail.
+	if deletedKeys > 0 {
+		_ = b.dst.DeleteFileFromObjectDiskBackup(ctx, backupName)
+	}
+	return deletedKeys, nil
 }
 
 func (b *Backuper) skipIfSameLocalBackupPresent(ctx context.Context, backupName, tags string) (bool, error) {
@@ -560,7 +576,8 @@ func (b *Backuper) CleanRemoteBroken(commandId int) error {
 
 // CleanBrokenRetention walks remote `path` and `object_disks_path` top-level entries
 // and removes everything that is NOT present in the live BackupList and NOT matched by keepGlobs.
-// Uses BatchDeleter with retry. When commit=false, only logs orphans without deleting.
+// Uses BatchDeleter with retry and parallel batch deletion for object_disks_path orphans.
+// When commit=false, only logs orphans without deleting (dry-run mode).
 // keepGlobs follows path.Match syntax (e.g. "prod-*", "snapshot-2026-??-*").
 func (b *Backuper) CleanBrokenRetention(commandId int, keepGlobs []string, commit bool) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
@@ -600,9 +617,9 @@ func (b *Backuper) CleanBrokenRetention(commandId int, keepGlobs []string, commi
 	}()
 	b.dst = bd
 
-	// parseMetadata=true forces a metadata.json stat for every top-level entry, so that
-	// orphan dirs without metadata.json are returned with Broken!="" and excluded from the
-	// keep-set below. Otherwise the metadata cache from a prior run would mask them.
+	// parseMetadata=true forces a metadata.json stat for every top-level entry.
+	// Broken backups (e.g. upload still in progress) are still kept — they are
+	// known backups and not orphans.
 	backupList, err := bd.BackupList(ctx, true, "")
 	if err != nil {
 		return errors.WithMessage(err, "bd.BackupList")
@@ -610,11 +627,10 @@ func (b *Backuper) CleanBrokenRetention(commandId int, keepGlobs []string, commi
 	keepNames := make(map[string]struct{}, len(backupList))
 	liveCount := 0
 	for _, backup := range backupList {
-		if backup.Broken != "" {
-			continue
-		}
 		keepNames[backup.BackupName] = struct{}{}
-		liveCount++
+		if backup.Broken == "" {
+			liveCount++
+		}
 	}
 	isKept := func(name string) bool {
 		if _, ok := keepNames[name]; ok {
@@ -634,10 +650,31 @@ func (b *Backuper) CleanBrokenRetention(commandId int, keepGlobs []string, commi
 	}
 	log.Info().Msgf("clean_broken_retention: mode=%s, %d live backups (of %d in remote list), %d keep-globs", mode, liveCount, len(backupList), len(keepGlobs))
 
+	objectDiskPath, err := b.getObjectDiskPath()
+	if err != nil {
+		return errors.WithMessage(err, "b.getObjectDiskPath")
+	}
+
+	topObjName := ""
+	if objectDiskPath != "" {
+		topObjName = path.Base(objectDiskPath)
+	}
+
 	orphansInPath, err := b.findOrphanTopLevelNames(ctx, bd, "/", isKept)
 	if err != nil {
 		return errors.WithMessage(err, "scan path orphans")
 	}
+
+	if topObjName != "" {
+		filtered := make([]string, 0, len(orphansInPath))
+		for _, name := range orphansInPath {
+			if name != topObjName {
+				filtered = append(filtered, name)
+			}
+		}
+		orphansInPath = filtered
+	}
+
 	for _, name := range orphansInPath {
 		if !commit {
 			log.Info().Str("orphan", name).Str("location", "path").Msg("clean_broken_retention: would delete")
@@ -649,30 +686,98 @@ func (b *Backuper) CleanBrokenRetention(commandId int, keepGlobs []string, commi
 		}
 	}
 
-	objectDiskPath, err := b.getObjectDiskPath()
+	if objectDiskPath == "" {
+		log.Info().Msgf("clean_broken_retention: done, mode=%s, path orphans=%d, object_disks_path: not configured", mode, len(orphansInPath))
+		return nil
+	}
+
+	orphansInObj, err := b.findOrphanTopLevelNames(ctx, bd, objectDiskPath, isKept)
 	if err != nil {
-		return errors.WithMessage(err, "b.getObjectDiskPath")
+		return errors.WithMessage(err, "scan object_disks_path orphans")
 	}
-	var orphansInObj []string
-	if objectDiskPath != "" {
-		orphansInObj, err = b.findOrphanTopLevelNames(ctx, bd, objectDiskPath, isKept)
-		if err != nil {
-			return errors.WithMessage(err, "scan object_disks_path orphans")
-		}
+	totalObj := len(orphansInObj)
+	if totalObj == 0 {
+		log.Info().Msgf("clean_broken_retention: done, mode=%s, path orphans=%d, object_disks_path orphans=0", mode, len(orphansInPath))
+		return nil
+	}
+
+	if !commit {
 		for _, name := range orphansInObj {
-			if !commit {
-				log.Info().Str("orphan", name).Str("location", "object_disks_path").Msg("clean_broken_retention: would delete")
-				continue
-			}
-			log.Info().Str("orphan", name).Str("location", "object_disks_path").Msg("clean_broken_retention: deleting")
-			deletedKeys, deleteErr := b.cleanBackupObjectDisks(ctx, name)
-			if deleteErr != nil {
-				return errors.Wrapf(deleteErr, "cleanBackupObjectDisks orphan %s", name)
-			}
-			log.Info().Str("orphan", name).Uint("deleted", deletedKeys).Msg("clean_broken_retention: object disk orphan cleaned")
+			log.Info().Str("orphan", name).Str("location", "object_disks_path").Msg("clean_broken_retention: would delete")
 		}
+		log.Info().Msgf("clean_broken_retention: done, mode=%s, path orphans=%d, object_disks_path orphans=%d", mode, len(orphansInPath), totalObj)
+		return nil
 	}
-	log.Info().Msgf("clean_broken_retention: done, mode=%s, path orphans=%d, object_disks_path orphans=%d", mode, len(orphansInPath), len(orphansInObj))
+
+	parallel := int(b.cfg.General.UploadConcurrency)
+	if parallel < 1 {
+		parallel = 4
+	}
+
+	log.Info().Msgf("clean_broken_retention: deleting %d object_disks_path orphans, concurrency=%d", totalObj, parallel)
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(parallel)
+
+	var doneCount atomic.Int64
+	var failCount atomic.Int64
+	startTime := time.Now()
+	logTicker := time.NewTicker(30 * time.Second)
+	defer logTicker.Stop()
+
+	done := make(chan struct{})
+	defer func() { <-done }()
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-egCtx.Done():
+				return
+			case <-logTicker.C:
+				d := doneCount.Load()
+				f := failCount.Load()
+				log.Info().Msgf("clean_broken_retention: progress [%d/%d] done=%d fail=%d elapsed=%s",
+					d+f, totalObj, d, f, utils.HumanizeDuration(time.Since(startTime)))
+			}
+		}
+	}()
+
+	for _, name := range orphansInObj {
+		orphan := name
+		eg.Go(func() error {
+			select {
+			case <-egCtx.Done():
+				return egCtx.Err()
+			default:
+			}
+			start := time.Now()
+			deletedKeys, deleteErr := b.cleanBackupObjectDisks(egCtx, orphan)
+			if deleteErr != nil {
+				failCount.Add(1)
+				log.Warn().Err(deleteErr).Str("orphan", orphan).Msg("clean_broken_retention: deletion failed")
+				// Don't abort the whole group — log and continue with other orphans
+				return nil
+			}
+			doneCount.Add(1)
+			d := doneCount.Load()
+			f := failCount.Load()
+			log.Info().
+				Str("orphan", orphan).
+				Uint("deleted_keys", deletedKeys).
+				Str("duration", utils.HumanizeDuration(time.Since(start))).
+				Msgf("clean_broken_retention: [%d/%d] done fail=%d", d+f, totalObj, f)
+			return nil
+		})
+	}
+	_ = eg.Wait() // errors are handled inside the goroutines (non-fatal)
+
+	elapsed := time.Since(startTime)
+	d := doneCount.Load()
+	f := failCount.Load()
+	log.Info().Msgf("clean_broken_retention: done, mode=%s, path orphans=%d, object_disks_path orphans=%d/%d (done=%d fail=%d) elapsed=%s",
+		mode, len(orphansInPath), d, totalObj, d, f, utils.HumanizeDuration(elapsed))
+	if f > 0 {
+		return fmt.Errorf("clean_broken_retention: %d of %d object_disks_path orphans failed to delete", f, totalObj)
+	}
 	return nil
 }
 

@@ -20,13 +20,30 @@ const cleanBrokenRetentionKeepGlob = "cbr_orphan_keep_*"
 
 // Each TestCleanBrokenRetention* function verifies that `clean_broken_retention`:
 //   - lists orphans (dry-run) without deleting,
-//   - on --commit removes orphans from both `path` and `object_disks_path`,
+//   - by default removes orphans from both `path` and `object_disks_path`,
 //   - preserves the live backup and entries matched by --keep globs.
 //
 // Each backend is its own top-level test so they can be run independently
 // (e.g. `RUN_TESTS=TestCleanBrokenRetentionS3 ./test/integration/run.sh`).
 // Backends that need cloud credentials skip themselves when the corresponding env
 // var (GCS_TESTS, AZURE_TESTS, QA_TENCENT_SECRET_KEY/QA_TENCENT_SECRET_ID) is unset.
+
+// cleanBrokenRetentionCase wires one remote-storage backend to the shared scenario.
+type cleanBrokenRetentionCase struct {
+	name           string
+	configFile     string
+	pathRoot       string
+	objRoot        string
+	skip           func() bool
+	skipReason     string
+	setup          func(env *TestEnvironment, r *require.Assertions)
+	plant          orphanAction
+	assertExists   orphanAction
+	assertGone     orphanAction
+	finalEmptyType string
+}
+
+type orphanAction func(env *TestEnvironment, r *require.Assertions, root, name string)
 
 func TestCleanBrokenRetentionS3(t *testing.T) {
 	runCleanBrokenRetentionCase(t, s3CleanBrokenRetentionCase())
@@ -57,25 +74,6 @@ func runCleanBrokenRetentionCase(t *testing.T, tc cleanBrokenRetentionCase) {
 	}
 	runCleanBrokenRetentionScenario(t, tc)
 }
-
-// cleanBrokenRetentionCase wires one remote-storage backend to the shared scenario.
-// plant/assertExists/assertGone are responsible for *physically* putting or observing
-// a top-level entry under the given root path on that backend.
-type cleanBrokenRetentionCase struct {
-	name           string
-	configFile     string
-	pathRoot       string
-	objRoot        string
-	skip           func() bool
-	skipReason     string
-	setup          func(env *TestEnvironment, r *require.Assertions)
-	plant          orphanAction
-	assertExists   orphanAction
-	assertGone     orphanAction
-	finalEmptyType string // when non-empty, passed to env.checkObjectStorageIsEmpty at end
-}
-
-type orphanAction func(env *TestEnvironment, r *require.Assertions, root, name string)
 
 func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) {
 	env, r := NewTestEnvironment(t)
@@ -120,7 +118,7 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 	tc.assertExists(env, r, tc.pathRoot, orphanPath)
 	tc.assertExists(env, r, tc.objRoot, orphanObj)
 
-	log.Debug().Str("backend", tc.name).Msg("--commit with --keep glob deletes only unmatched orphans")
+	log.Debug().Str("backend", tc.name).Msg("--keep glob preserves matched orphans")
 	commitOut, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "clean_broken_retention", "--commit", "--keep="+cleanBrokenRetentionKeepGlob)
 	r.NoError(err, "commit failed: %s", commitOut)
 	r.Contains(commitOut, "clean_broken_retention: deleting")
@@ -129,7 +127,7 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 	tc.assertExists(env, r, tc.pathRoot, orphanKept)
 	tc.assertExists(env, r, tc.objRoot, orphanKept)
 
-	log.Debug().Str("backend", tc.name).Msg("Second --commit without --keep clears the remaining orphan")
+	log.Debug().Str("backend", tc.name).Msg("Second run without --keep clears the remaining orphan")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean_broken_retention", "--commit")
 	tc.assertGone(env, r, tc.pathRoot, orphanKept)
 	tc.assertGone(env, r, tc.objRoot, orphanKept)
@@ -152,9 +150,8 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 func containerFSCase(name, configFile, container, pathRoot, objRoot, finalEmptyType string) cleanBrokenRetentionCase {
 	plant := func(env *TestEnvironment, r *require.Assertions, root, name string) {
 		env.DockerExecNoError(r, container, "sh", "-c", fmt.Sprintf(
-			"mkdir -p %s/%s/sub && echo garbage > %s/%s/data.bin && echo garbage > %s/%s/sub/nested.bin",
-			root, name, root, name, root, name,
-		))
+			"mkdir -p %s/%s/sub && echo garbage > %s/%s/data.bin && echo garbage > %s/%s/sub/nested.bin && chmod -R 777 %s/%s",
+			root, name, root, name, root, name, root, name))
 	}
 	exists := func(env *TestEnvironment, r *require.Assertions, root, name string) {
 		out, err := env.DockerExecOut(container, "ls", root+"/"+name)
@@ -174,17 +171,6 @@ func containerFSCase(name, configFile, container, pathRoot, objRoot, finalEmptyT
 		assertGone:     gone,
 		finalEmptyType: finalEmptyType,
 	}
-}
-
-// dockerRunSh runs an ephemeral container on the integration test network with the
-// given image, environment, and shell command. Returns combined stdout/stderr.
-func dockerRunSh(env *TestEnvironment, image, sh string, envVars ...string) (string, error) {
-	args := []string{"run", "--rm", "--network", env.tc.networkName}
-	for _, e := range envVars {
-		args = append(args, "-e", e)
-	}
-	args = append(args, image, "sh", "-c", sh)
-	return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", args...)
 }
 
 func s3CleanBrokenRetentionCase() cleanBrokenRetentionCase {
@@ -246,10 +232,41 @@ func ftpCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 }
 
 func gcsEmulatorCleanBrokenRetentionCase() cleanBrokenRetentionCase {
-	return containerFSCase("GCS_EMULATOR", "config-gcs-custom-endpoint.yml", "gcs",
-		"/data/altinity-qa-test/backup/cluster/0",
-		"/data/altinity-qa-test/object_disks/cluster/0",
-		"GCS_EMULATOR")
+	const bucket = "altinity-qa-test"
+	const baseURL = "http://localhost:8080"
+	setup := func(env *TestEnvironment, r *require.Assertions) {
+		env.DockerExecNoError(r, "gcs", "apk", "add", "-q", "curl")
+	}
+	plant := func(env *TestEnvironment, r *require.Assertions, root, name string) {
+		obj := root + "/" + name
+		env.DockerExecNoError(r, "gcs", "sh", "-c", fmt.Sprintf(
+			`echo garbage > /tmp/data.bin && `+
+				`curl -s -o /dev/null -X POST "%s/upload/storage/v1/b/%s/o?name=%s/data.bin&uploadType=media" -H "Content-Type: application/octet-stream" --data-binary @/tmp/data.bin && `+
+				`curl -s -o /dev/null -X POST "%s/upload/storage/v1/b/%s/o?name=%s/sub/nested.bin&uploadType=media" -H "Content-Type: application/octet-stream" --data-binary @/tmp/data.bin`,
+			baseURL, bucket, obj, baseURL, bucket, obj))
+	}
+	assertExists := func(env *TestEnvironment, r *require.Assertions, root, name string) {
+		out, err := env.DockerExecOut("gcs", "sh", "-c", fmt.Sprintf(
+			`curl -s "%s/storage/v1/b/%s/o?prefix=%s/"`, baseURL, bucket, root+"/"+name))
+		r.NoError(err, "assertExists list failed: %s", out)
+		r.Contains(out, "data.bin", "expected data.bin under %s/%s", root, name)
+	}
+	assertGone := func(env *TestEnvironment, r *require.Assertions, root, name string) {
+		out, _ := env.DockerExecOut("gcs", "sh", "-c", fmt.Sprintf(
+			`curl -s "%s/storage/v1/b/%s/o?prefix=%s/"`, baseURL, bucket, root+"/"+name))
+		r.NotContains(out, "data.bin", "expected no blobs under %s/%s", root, name)
+	}
+	return cleanBrokenRetentionCase{
+		name:           "GCS_EMULATOR",
+		configFile:     "config-gcs-custom-endpoint.yml",
+		pathRoot:       "backup/cluster/0",
+		objRoot:        "object_disks/cluster/0",
+		setup:          setup,
+		plant:          plant,
+		assertExists:   assertExists,
+		assertGone:     assertGone,
+		finalEmptyType: "GCS_EMULATOR",
+	}
 }
 
 func gcsRealCleanBrokenRetentionCase() cleanBrokenRetentionCase {
@@ -354,46 +371,92 @@ func cosCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 
 func azblobCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 	const container = "container1"
-	const connectionString = "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://devstoreaccount1.blob.azure:10000/devstoreaccount1;"
-	// Pinned: azure-cli :latest ships an SDK whose REST API version is newer than
-	// what current Azurite supports ("API version 2026-02-06 is not supported by Azurite").
-	const image = "mcr.microsoft.com/azure-cli:2.65.0"
-	azEnv := "AZURE_STORAGE_CONNECTION_STRING=" + connectionString
-
-	azList := func(env *TestEnvironment, r *require.Assertions, prefix string) string {
-		out, err := dockerRunSh(env, image,
-			fmt.Sprintf("az storage blob list --container-name %s --prefix %s/ --num-results 1 --query '[].name' -o tsv", container, prefix),
-			azEnv)
-		r.NoError(err, "azblob list failed: %s", out)
-		return strings.TrimSpace(out)
-	}
+	const accountName = "devstoreaccount1"
+	const accountKey = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+	const azureCliImage = "mcr.microsoft.com/azure-cli:latest"
 	blobPath := func(root, name string) string { return strings.TrimPrefix(root+"/"+name, "/") }
+	uploadTimeout := 2 * time.Minute
+
+	azConnString := fmt.Sprintf(
+		"DefaultEndpointsProtocol=http;AccountName=%s;AccountKey=%s;BlobEndpoint=http://azure:10000/%s;",
+		accountName, accountKey, accountName,
+	)
+
+	azRun := func(env *TestEnvironment, args ...string) (string, error) {
+		dockerArgs := append([]string{
+			"run", "--rm", "--network", env.tc.networkName,
+			"-e", "AZURE_STORAGE_CONNECTION_STRING=" + azConnString,
+			azureCliImage, "az",
+		}, args...)
+		return utils.ExecCmdOut(context.Background(), uploadTimeout, "docker", dockerArgs...)
+	}
+
+	setup := func(env *TestEnvironment, r *require.Assertions) {
+		env.tc.pullImageIfNeeded(context.Background(), azureCliImage)
+	}
+
+	plant := func(env *TestEnvironment, r *require.Assertions, root, name string) {
+		p := blobPath(root, name)
+		tmpDir, err := os.MkdirTemp("", "azblob-plant-*")
+		r.NoError(err)
+		defer func() {
+			if deleteErr := os.RemoveAll(tmpDir); deleteErr != nil {
+				log.Error().Err(deleteErr).Stack().Msgf("can't remove tmpDir=%s", tmpDir)
+			}
+		}()
+
+		r.NoError(os.WriteFile(tmpDir+"/data.bin", []byte("garbage"), 0644))
+		out, err := utils.ExecCmdOut(context.Background(), uploadTimeout, "docker",
+			"run", "--rm", "--network", env.tc.networkName,
+			"-e", "AZURE_STORAGE_CONNECTION_STRING="+azConnString,
+			"-v", tmpDir+"/data.bin:/data.bin:ro",
+			azureCliImage, "az",
+			"storage", "blob", "upload",
+			"--container-name", container,
+			"--name", p+"/data.bin",
+			"--file", "/data.bin",
+		)
+		r.NoError(err, "azblob plant data.bin: %s", out)
+
+		r.NoError(os.MkdirAll(tmpDir+"/sub", 0755))
+		r.NoError(os.WriteFile(tmpDir+"/sub/nested.bin", []byte("garbage"), 0644))
+		out, err = utils.ExecCmdOut(context.Background(), uploadTimeout, "docker",
+			"run", "--rm", "--network", env.tc.networkName,
+			"-e", "AZURE_STORAGE_CONNECTION_STRING="+azConnString,
+			"-v", tmpDir+"/sub/nested.bin:/nested.bin:ro",
+			azureCliImage, "az",
+			"storage", "blob", "upload",
+			"--container-name", container,
+			"--name", p+"/sub/nested.bin",
+			"--file", "/nested.bin",
+		)
+		r.NoError(err, "azblob plant nested.bin: %s", out)
+	}
+
+	blobShow := func(env *TestEnvironment, r *require.Assertions, root, name string) (string, error) {
+		return azRun(env,
+			"storage", "blob", "show",
+			"--container-name", container,
+			"--name", blobPath(root, name)+"/data.bin",
+		)
+	}
 
 	return cleanBrokenRetentionCase{
 		name:       "AZBLOB",
 		configFile: "config-azblob.yml",
-		// config-azblob.yml: path=backup, object_disk_path=object_disks (no macros).
 		pathRoot:   "backup",
 		objRoot:    "object_disks",
 		skip:       func() bool { return isTestShouldSkip("AZURE_TESTS") },
 		skipReason: "Skipping AZBLOB integration tests (AZURE_TESTS not set)",
-		setup: func(env *TestEnvironment, r *require.Assertions) {
-			env.tc.pullImageIfNeeded(context.Background(), image)
-		},
-		plant: func(env *TestEnvironment, r *require.Assertions, root, name string) {
-			p := blobPath(root, name)
-			out, err := dockerRunSh(env, image,
-				fmt.Sprintf("echo garbage > /tmp/data.bin && az storage blob upload --container-name %s --name %s/data.bin --file /tmp/data.bin --overwrite >/dev/null && az storage blob upload --container-name %s --name %s/sub/nested.bin --file /tmp/data.bin --overwrite >/dev/null",
-					container, p, container, p),
-				azEnv)
-			r.NoError(err, "azblob plant failed: %s", out)
-		},
+		setup:      setup,
+		plant:      plant,
 		assertExists: func(env *TestEnvironment, r *require.Assertions, root, name string) {
-			r.NotEmpty(azList(env, r, blobPath(root, name)), "expected blobs under %s/", blobPath(root, name))
+			out, err := blobShow(env, r, root, name)
+			r.NoError(err, "azblob assertExists failed: %s", out)
 		},
 		assertGone: func(env *TestEnvironment, r *require.Assertions, root, name string) {
-			r.Empty(azList(env, r, blobPath(root, name)), "expected no blobs under %s/", blobPath(root, name))
+			out, err := blobShow(env, r, root, name)
+			r.Error(err, "expected %s to be gone, got: %s", blobPath(root, name), out)
 		},
 	}
 }
-

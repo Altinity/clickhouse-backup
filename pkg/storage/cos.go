@@ -105,6 +105,10 @@ func (c *COS) Walk(ctx context.Context, cosPath string, recursive bool, process 
 }
 
 func (c *COS) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(context.Context, RemoteFile) error) error {
+	// COS API needs prefix to end with "/" for proper directory listing.
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
 
 	delimiter := ""
 	if !recursive {
