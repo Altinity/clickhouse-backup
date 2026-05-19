@@ -376,6 +376,34 @@ func main() {
 			),
 		},
 		{
+			Name:      "info",
+			Usage:     "Show per-table size breakdown for a backup",
+			UsageText: "clickhouse-backup info [-t, --tables=<db>.<table>] [-f, --format=<text|json|yaml|csv|tsv>] [all|local|remote] <backup_name>",
+			Action: func(c *cli.Context) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				what := c.Args().Get(0)
+				backupName := c.Args().Get(1)
+				// If only one arg given, treat it as the backup name (default to "all")
+				if backupName == "" {
+					backupName = what
+					what = "all"
+				}
+				return b.Info(what, backupName, c.String("t"), c.String("format"))
+			},
+			Flags: append(cliapp.Flags,
+				cli.StringFlag{
+					Name:   "table, tables, t",
+					Usage:  "Show info only for matched table name patterns, separated by comma, allow ? and * as wildcard",
+					Hidden: false,
+				},
+				cli.StringFlag{
+					Name:   "format, f",
+					Usage:  "Output format (text|json|yaml|csv|tsv)",
+					Hidden: false,
+				},
+			),
+		},
+		{
 			Name:      "download",
 			Usage:     "Download backup from remote storage",
 			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--resumable] <backup_name>",
