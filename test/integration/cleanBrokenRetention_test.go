@@ -139,7 +139,7 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 	log.Debug().Str("backend", tc.name).Msg("Cleanup live backup, broken entry, and table")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "remote", keepBackup)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", keepBackup)
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean_remote_broken")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean_remote_broken", "--include="+cleanBrokenRetentionIncludeGlob)
 	dropQuery := "DROP TABLE IF EXISTS " + tableName
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") > 0 {
 		dropQuery += " NO DELAY"

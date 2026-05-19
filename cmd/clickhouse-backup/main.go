@@ -700,13 +700,19 @@ func main() {
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:  "clean_remote_broken",
-			Usage: "Remove all broken remote backups",
+			Name:      "clean_remote_broken",
+			Usage:     "Remove all broken remote backups",
+			UsageText: "clickhouse-backup clean_remote_broken [--include=glob ...]",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CleanRemoteBroken(status.NotFromAPI)
+				return b.CleanRemoteBroken(status.NotFromAPI, c.StringSlice("include"))
 			},
-			Flags: cliapp.Flags,
+			Flags: append(cliapp.Flags,
+				cli.StringSliceFlag{
+					Name:  "include",
+					Usage: "Glob (path.Match syntax) to scope cleanup only to broken backup names matching these patterns; can be passed multiple times; if omitted, all broken backups are deleted",
+				},
+			),
 		},
 		{
 			Name:  "clean_local_broken",

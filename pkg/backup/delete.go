@@ -552,7 +552,7 @@ func (b *Backuper) CleanLocalBroken(commandId int) error {
 	return nil
 }
 
-func (b *Backuper) CleanRemoteBroken(commandId int) error {
+func (b *Backuper) CleanRemoteBroken(commandId int, includeGlobs []string) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return errors.WithMessage(err, "status.Current.GetContextWithCancel")
@@ -560,15 +560,34 @@ func (b *Backuper) CleanRemoteBroken(commandId int) error {
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
 
+	for _, g := range includeGlobs {
+		if _, err := path.Match(g, ""); err != nil {
+			return errors.Wrapf(err, "invalid include-glob %q", g)
+		}
+	}
+
 	remoteBackups, err := b.GetRemoteBackups(ctx, true)
 	if err != nil {
 		return errors.WithMessage(err, "b.GetRemoteBackups")
 	}
 	for _, backup := range remoteBackups {
-		if backup.Broken != "" {
-			if err = b.RemoveBackupRemote(ctx, backup.BackupName); err != nil {
-				return errors.WithMessage(err, "b.RemoveBackupRemote")
+		if backup.Broken == "" {
+			continue
+		}
+		if len(includeGlobs) > 0 {
+			matched := false
+			for _, g := range includeGlobs {
+				if ok, _ := path.Match(g, backup.BackupName); ok {
+					matched = true
+					break
+				}
 			}
+			if !matched {
+				continue
+			}
+		}
+		if err = b.RemoveBackupRemote(ctx, backup.BackupName); err != nil {
+			return errors.WithMessage(err, "b.RemoveBackupRemote")
 		}
 	}
 	return nil
