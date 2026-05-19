@@ -16,9 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const cleanBrokenRetentionExcludeGlob = "cbr_orphan_keep_*"
-const cleanBrokenRetentionIncludeGlob = "cbr_*"
-
 // Each TestCleanBrokenRetention* function verifies that `clean_broken_retention`:
 //   - lists orphans in object_disks_path (dry-run) without deleting,
 //   - preserves entries under backup `path` that BackupList discovers as broken
@@ -80,6 +77,10 @@ func runCleanBrokenRetentionCase(t *testing.T, tc cleanBrokenRetentionCase) {
 }
 
 func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) {
+	chVer := strings.ReplaceAll(os.Getenv("CLICKHOUSE_VERSION"), ".", "_")
+	cleanBrokenRetentionExcludeGlob := "cbr_orphan_keep_" + chVer + "_*"
+	cleanBrokenRetentionIncludeGlob := "cbr_*_" + chVer + "_*"
+
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	defer env.Cleanup(t, r)
@@ -91,13 +92,22 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 
 	tableName := fmt.Sprintf("default.clean_broken_retention_%s", strings.ToLower(tc.name))
 	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s(id UInt64) ENGINE=MergeTree() ORDER BY id", tableName))
+	t.Cleanup(func() {
+		dropQ := "DROP TABLE IF EXISTS " + tableName
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") > 0 {
+			dropQ += " NO DELAY"
+		}
+		if _, err := env.DockerExecOut("clickhouse", "clickhouse", "client", "-q", dropQ); err != nil {
+			log.Warn().Err(err).Str("table", tableName).Msg("t.Cleanup: failed to drop table")
+		}
+	})
 	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO %s SELECT number FROM numbers(50)", tableName))
 
 	suffix := time.Now().UnixNano()
-	keepBackup := fmt.Sprintf("cbr_keep_%d", suffix)
-	brokenPath := fmt.Sprintf("cbr_broken_%d", suffix)
-	orphanObj := fmt.Sprintf("cbr_orphan_obj_%d", suffix)
-	orphanKept := fmt.Sprintf("cbr_orphan_keep_%d", suffix)
+	keepBackup := fmt.Sprintf("cbr_keep_%s_%d", chVer, suffix)
+	brokenPath := fmt.Sprintf("cbr_broken_%s_%d", chVer, suffix)
+	orphanObj := fmt.Sprintf("cbr_orphan_obj_%s_%d", chVer, suffix)
+	orphanKept := fmt.Sprintf("cbr_orphan_keep_%s_%d", chVer, suffix)
 
 	log.Debug().Str("backend", tc.name).Msg("Create a live backup that must survive the cleanup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create_remote", "--tables", tableName, keepBackup)
@@ -136,15 +146,10 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 	tc.assertExists(env, r, tc.pathRoot, brokenPath)
 	tc.assertGone(env, r, tc.objRoot, orphanKept)
 
-	log.Debug().Str("backend", tc.name).Msg("Cleanup live backup, broken entry, and table")
+	log.Debug().Str("backend", tc.name).Msg("Cleanup live backup and broken entry")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "remote", keepBackup)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", keepBackup)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean_remote_broken", "--include="+cleanBrokenRetentionIncludeGlob)
-	dropQuery := "DROP TABLE IF EXISTS " + tableName
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") > 0 {
-		dropQuery += " NO DELAY"
-	}
-	env.queryWithNoError(r, dropQuery)
 	if tc.finalEmptyType != "" {
 		env.checkObjectStorageIsEmpty(t, r, tc.finalEmptyType)
 	}
@@ -288,7 +293,7 @@ func gcsRealCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 			image, "bash", "-c", authPrefix + sh,
 		}
 		out, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", args...)
-		r.NoError(err, "gsutil failed: %s", out)
+		r.NoError(err, "gsutil command `%s` failed: %s", sh, out)
 		return out
 	}
 	return cleanBrokenRetentionCase{
