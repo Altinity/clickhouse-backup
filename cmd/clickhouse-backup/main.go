@@ -2,20 +2,21 @@ package main
 
 import (
 	"context"
+	"crypto/fips140"
 	"fmt"
 	stdlog "log"
 	"os"
+	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 
-	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/rs/zerolog/pkgerrors"
 	"github.com/urfave/cli"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/acvpwrapper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 )
@@ -24,23 +25,19 @@ var (
 	version   = "unknown"
 	gitCommit = "unknown"
 	buildDate = "unknown"
+	buildArch = "unknown"
 )
 
 func main() {
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
-	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
-	// Customize the caller format to remove the prefix
-	zerolog.CallerMarshalFunc = func(pc uintptr, file string, line int) string {
-		return strings.TrimPrefix(file, "github.com/Altinity/clickhouse-backup/v2/") + ":" + strconv.Itoa(line)
-	}
-	consoleWriter := zerolog.ConsoleWriter{Out: os.Stderr, NoColor: true, TimeFormat: "2006-01-02 15:04:05.000"}
-	//diodeWriter := diode.NewWriter(consoleWriter, 4096, 10*time.Millisecond, func(missed int) {
-	//	fmt.Printf("Logger Dropped %d messages", missed)
-	//})
-	log.Logger = zerolog.New(zerolog.SyncWriter(consoleWriter)).With().Timestamp().Caller().Logger()
-	//zerolog.SetGlobalLevel(zerolog.Disabled)
+	log.Logger = log_helper.SetupLogger(os.Stderr)
 	//log.Logger = zerolog.New(os.Stdout).With().Timestamp().Caller().Logger()
 	stdlog.SetOutput(log.Logger)
+	if filepath.Base(os.Args[0]) == "clickhouse-backup-acvp" {
+		if err := acvpwrapper.Run(os.Stdin, os.Stdout); err != nil {
+			log.Fatal().Stack().Err(err).Send()
+		}
+		return
+	}
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
 	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud support"
@@ -81,6 +78,9 @@ func main() {
 		fmt.Println("Version:\t", c.App.Version)
 		fmt.Println("Git Commit:\t", gitCommit)
 		fmt.Println("Build Date:\t", buildDate)
+		fmt.Println("Runtime Architecture:\t", runtime.GOOS, "/", runtime.GOARCH)
+		fmt.Println("Build Architecture:\t", buildArch)
+		fmt.Println("FIPS 140-3:\t", fips140.Enabled())
 	}
 
 	cliapp.Commands = []cli.Command{
@@ -375,7 +375,35 @@ func main() {
 				},
 			),
 		},
-		{
+				{
+			Name:      "info",
+			Usage:     "Show per-table size breakdown for a backup",
+			UsageText: "clickhouse-backup info [-t, --tables=<db>.<table>] [-f, --format=<text|json|yaml|csv|tsv>] [all|local|remote] <backup_name>",
+			Action: func(c *cli.Context) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				what := c.Args().Get(0)
+				backupName := c.Args().Get(1)
+				// If only one arg given, treat it as the backup name (default to "all")
+				if backupName == "" {
+					backupName = what
+					what = "all"
+				}
+				return b.Info(what, backupName, c.String("t"), c.String("format"))
+			},
+			Flags: append(cliapp.Flags,
+				cli.StringFlag{
+					Name:   "table, tables, t",
+					Usage:  "Show info only for matched table name patterns, separated by comma, allow ? and * as wildcard",
+					Hidden: false,
+				},
+				cli.StringFlag{
+					Name:   "format, f",
+					Usage:  "Output format (text|json|yaml|csv|tsv)",
+					Hidden: false,
+				},
+			),
+		},
+{
 			Name:      "download",
 			Usage:     "Download backup from remote storage",
 			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--resumable] <backup_name>",
@@ -435,14 +463,10 @@ func main() {
 		{
 			Name:      "restore",
 			Usage:     "Create schema and restore data from backup",
-			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] <backup_name>",
+			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] [--skip-empty-tables] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				// Override config with CLI flag if provided
-				if c.Bool("restore-in-place") {
-					b.SetRestoreInPlace(true)
-				}
-				return b.Restore(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), version, c.Int("command-id"))
+				return b.Restore(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -542,33 +566,19 @@ func main() {
 					Usage:  "Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step",
 				},
 				cli.BoolFlag{
-					Name:   "restore-in-place",
+					Name:   "skip-empty-tables",
 					Hidden: false,
-					Usage:  "Perform in-place restore by comparing backup parts with current database parts. Only downloads differential parts instead of full restore. Requires --data flag.",
+					Usage:  "Skip restoring tables that have no data (empty tables with only schema)",
 				},
 			),
 		},
 		{
 			Name:      "restore_remote",
 			Usage:     "Download and restore",
-			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] <backup_name>",
+			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				// Override config with CLI flag if provided
-				if c.Bool("restore-in-place") {
-					b.SetRestoreInPlace(true)
-				}
-				// CI/CD Diagnostic: Log function signature validation for Go 1.25 + ClickHouse 23.8 compatibility
-				log.Debug().Fields(map[string]interface{}{
-					"operation":               "restore_remote_cli_validation",
-					"go_version":             runtime.Version(),
-					"hardlink_exists_files":  c.Bool("hardlink-exists-files"),
-					"drop_if_schema_changed": c.Bool("drop-if-schema-changed"),
-					"function_signature":     "RestoreFromRemote",
-					"parameter_count":        "expected_22_parameters",
-					"issue_diagnosis":        "hardcoded_false_should_be_cli_flag",
-				}).Msg("diagnosing CI Build/Test (1.25, 23.8) function signature mismatch")
-				return b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("hardlink-exists-files"), c.Bool("drop-if-schema-changed"), version, c.Int("command-id"))
+				return b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), c.Bool("hardlink-exists-files"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -668,14 +678,9 @@ func main() {
 					Usage:  "Create hardlinks for existing files instead of downloading",
 				},
 				cli.BoolFlag{
-					Name:   "restore-in-place",
+					Name:   "skip-empty-tables",
 					Hidden: false,
-					Usage:  "Perform in-place restore by comparing backup parts with current database parts. Only downloads differential parts instead of full restore. Requires --data flag.",
-				},
-				cli.BoolFlag{
-					Name:   "drop-if-schema-changed",
-					Hidden: false,
-					Usage:  "Drop and recreate tables when schema changes are detected during in-place restore. Only available with --restore-in-place flag.",
+					Usage:  "Skip restoring tables that have no data (empty tables with only schema)",
 				},
 			),
 		},
@@ -820,6 +825,14 @@ func main() {
 			),
 		},
 		{
+			Name:      "acvp",
+			Usage:     "Run ACVP wrapper protocol over stdin/stdout",
+			UsageText: "clickhouse-backup acvp",
+			Action: func(*cli.Context) error {
+				return acvpwrapper.Run(os.Stdin, os.Stdout)
+			},
+		},
+		{
 			Name:  "server",
 			Usage: "Run API server",
 			Action: func(c *cli.Context) error {
@@ -854,6 +867,6 @@ func main() {
 		},
 	}
 	if err := cliapp.Run(os.Args); err != nil {
-		log.Fatal().Err(err).Send()
+		log.Fatal().Stack().Err(err).Send()
 	}
 }
