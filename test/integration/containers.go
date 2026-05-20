@@ -589,7 +589,10 @@ func (tc *TestContainers) startAzure(ctx context.Context) error {
 	return tc.startContainer(ctx, "azure",
 		&container.Config{
 			Image: "mcr.microsoft.com/azure-storage/azurite:latest",
-			Cmd:   []string{"azurite", "--debug", "/dev/stderr", "-l", "/data", "--blobHost", "0.0.0.0", "--blobKeepAliveTimeout", "600", "--disableTelemetry"},
+			// --skipApiVersionCheck: azure-cli 2.84+ (w/ Azure SDK v12.27+) sends x-ms-version 2026-02-06
+			// which Azurite 3.35.0 does not recognise.  Tracked upstream:
+			// https://github.com/Azure/Azurite/issues/2623
+			Cmd: []string{"azurite", "--debug", "/dev/stderr", "-l", "/data", "--blobHost", "0.0.0.0", "--blobKeepAliveTimeout", "600", "--disableTelemetry", "--skipApiVersionCheck"},
 			Healthcheck: &container.HealthConfig{
 				Test:     []string{"CMD-SHELL", "nc 127.0.0.1 10000 -z"},
 				Interval: 1 * time.Second,

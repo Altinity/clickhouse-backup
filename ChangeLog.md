@@ -1,3 +1,8 @@
+# unreleased
+
+NEW FEATURES
+- add `clean_broken_retention` CLI command — walks top-level of remote `path` and `object_disks_path` and batch-deletes (with retry) every entry that is not present in the live backup list and not matched by any `--keep=<glob>`. Dry-run by default; pass `--commit` to actually delete. Useful for cleaning up orphans left by failed retention runs
+
 # v2.6.43
 
 NEW FEATURES
