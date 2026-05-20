@@ -123,9 +123,9 @@ func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Back
 				return retry.RunCtx(ctx, func(ctx context.Context) error {
 					return bd.DeleteFile(ctx, path.Join(backup.BackupName, f.Name()))
 				})
-			} else {
-				return nil
 			}
+
+			return nil
 		}
 		return retry.RunCtx(ctx, func(ctx context.Context) error {
 			return bd.DeleteFile(ctx, path.Join(backup.BackupName, f.Name()))
