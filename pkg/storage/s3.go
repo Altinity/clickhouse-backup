@@ -742,7 +742,7 @@ func (s *S3) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, erro
 			var httpErr *smithyhttp.ResponseError
 			if errors.As(opError.Err, &httpErr) {
 				if httpErr.Response.StatusCode == http.StatusNotFound {
-					return nil, ErrNotFound
+					return nil, NewErrNotFound(key)
 				}
 			}
 		}
