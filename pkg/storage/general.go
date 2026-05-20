@@ -302,7 +302,27 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 			return nil, errors.WithMessage(err, "BackupList readBackupMetadataDirect")
 		}
 		if backup == nil {
-			return []Backup{}, nil
+			// metadata.json not found — check if the backup prefix has any
+			// content at all. Walk with recursive=false returns top-level
+			// entries only; if we get at least one the folder exists and the
+			// backup is broken (missing metadata.json), otherwise the backup
+			// name doesn't exist on remote storage at all.
+			found := false
+			var lastModified time.Time
+			walkErr := bd.Walk(ctx, parseMetadataOnly+"/", false, func(_ context.Context, f RemoteFile) error {
+				found = true
+				lastModified = f.LastModified()
+				return io.EOF // stop after first entry
+			})
+			_ = walkErr // Walk returns io.EOF, that's fine
+			if !found {
+				return []Backup{}, nil
+			}
+			return []Backup{{
+				BackupMetadata: metadata.BackupMetadata{BackupName: parseMetadataOnly},
+				Broken:         "broken (can't stat metadata.json)",
+				UploadDate:     lastModified,
+			}}, nil
 		}
 		if backup.Broken == "" {
 			if listCache == nil {
