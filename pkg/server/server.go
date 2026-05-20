@@ -551,7 +551,7 @@ func (api *APIServer) actionsCleanRemoteBrokenHandler(w http.ResponseWriter, row
 		return actionsResults, err
 	}
 	b := backup.NewBackuper(cfg)
-	err = b.CleanRemoteBroken(commandId)
+	err = b.CleanRemoteBroken(commandId, nil)
 	if err != nil {
 		log.Error().Msgf("Clean remote broken error: %v", err)
 		status.Current.Stop(commandId, err)
@@ -1378,7 +1378,7 @@ func (api *APIServer) httpCleanRemoteBrokenHandler(w http.ResponseWriter, _ *htt
 	defer status.Current.Stop(commandId, err)
 
 	b := backup.NewBackuper(cfg)
-	err = b.CleanRemoteBroken(commandId)
+	err = b.CleanRemoteBroken(commandId, nil)
 	if err != nil {
 		log.Error().Msgf("Clean remote broken error: %v", err)
 		api.writeError(w, http.StatusInternalServerError, "clean_remote_broken", err)
