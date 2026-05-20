@@ -276,7 +276,7 @@ type ClickHouseConfig struct {
 	Debug                            bool              `yaml:"debug" envconfig:"CLICKHOUSE_DEBUG"`
 	// ForceRebalance triggers disk rebalancing during download even when the backup's disk
 	// name exists on the target, allowing distribution across JBOD disks under the same storage policy
-	ForceRebalance                   bool              `yaml:"force_rebalance" envconfig:"CLICKHOUSE_FORCE_REBALANCE"`
+	ForceRebalance bool `yaml:"force_rebalance" envconfig:"CLICKHOUSE_FORCE_REBALANCE"`
 }
 
 type APIConfig struct {

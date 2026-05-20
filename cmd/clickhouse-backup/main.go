@@ -745,8 +745,8 @@ func main() {
 					Name:  "commit",
 					Usage: "Actually delete orphans; without this flag the command only logs what would be deleted",
 				},
-		),
-	},
+			),
+		},
 
 		{
 			Name:        "watch",
