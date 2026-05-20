@@ -18,7 +18,7 @@ clickhouse:
   secure: true
   skip_verify: true
   restart_command: bash -c 'echo "FAKE RESTART"'
-  timeout: 60s
+  timeout: 10m
 ftp:
   address: "ftp:21"
   username: "test_backup"

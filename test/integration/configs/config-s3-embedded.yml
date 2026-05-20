@@ -20,6 +20,7 @@ clickhouse:
   timeout: 4h
   restart_command: bash -c 'echo "FAKE RESTART"'
   use_embedded_backup_restore: true
+  use_embedded_backup_restore_cluster: "{cluster}"
   embedded_backup_disk: backups_s3
 s3:
   access_key: access_key

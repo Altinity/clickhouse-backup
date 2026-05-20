@@ -5,6 +5,7 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
+	"github.com/pkg/errors"
 )
 
 func (b *Backuper) CreateToRemote(backupName string, deleteSource bool, diffFrom, diffFromRemote, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, namedCollections, namedCollectionsOnly, skipCheckPartsColumns, resume bool, version string, commandId int) error {
@@ -12,7 +13,7 @@ func (b *Backuper) CreateToRemote(backupName string, deleteSource bool, diffFrom
 	defer pidlock.RemovePidFile(backupName)
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "CreateToRemote GetContextWithCancel")
 	}
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()

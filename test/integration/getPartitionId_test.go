@@ -119,14 +119,8 @@ func TestGetPartitionId(t *testing.T) {
 
 		partitionId, partitionName, err := partition.GetPartitionIdAndName(t.Context(), env.ch, tc.Database, tc.Table, tc.CreateTableSQL, tc.Partition)
 		assert.NoError(t, err)
-		if tc.ExpectedId != "" {
-			assert.Equal(t, tc.ExpectedId, partitionId)
-		} else {
-			t.Logf("Test %s.%s with partition %s: partitionId=%s, partitionName=%s", tc.Database, tc.Table, tc.Partition, partitionId, partitionName)
-		}
-		if tc.ExpectedName != "" {
-			assert.Equal(t, tc.ExpectedName, partitionName)
-		}
+		assert.Equal(t, tc.ExpectedId, partitionId, "Failed test %s.%s with partition %s: partitionId=%s, expectedId=%s, partitionName=%s, expectedName=%s", tc.Database, tc.Table, tc.Partition, partitionId, tc.ExpectedId, partitionName, tc.ExpectedName)
+		assert.Equal(t, tc.ExpectedName, partitionName)
 	}
 	env.Cleanup(t, r)
 }

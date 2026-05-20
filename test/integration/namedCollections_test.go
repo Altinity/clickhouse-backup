@@ -114,9 +114,10 @@ func TestNamedCollections(t *testing.T) {
 			}
 			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupArg)
 
-			// cleanup before restore
-			env.queryWithNoError(r, "DROP NAMED COLLECTION IF EXISTS test_named_collection")
+			// cleanup before restore — drop database first because CH 26.3+ forbids
+			// DROP NAMED COLLECTION while tables referencing it exist
 			r.NoError(env.dropDatabase("test_named_collection", false))
+			env.queryWithNoError(r, "DROP NAMED COLLECTION IF EXISTS test_named_collection")
 
 			// restore backup
 			restoreArgs := []string{"-c", "/etc/clickhouse-backup/config-s3.yml"}
@@ -153,14 +154,14 @@ func TestNamedCollections(t *testing.T) {
 						r.NoError(env.ch.SelectSingleRowNoCtx(&expected, "SELECT count() FROM test_named_collection.test_named_collection"))
 						r.Equal(uint64(10), expected, "expect count=10")
 					}
-					env.queryWithNoError(r, "DROP NAMED COLLECTION test_named_collection")
 				}
 			}
 
-			// cleanup
+			// cleanup — drop database before named collection (CH 26.3+ forbids drop while tables reference it)
 			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupArg)
 			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", backupArg)
 			r.NoError(env.dropDatabase("test_named_collection", true))
+			env.queryWithNoError(r, "DROP NAMED COLLECTION IF EXISTS test_named_collection")
 		})
 	}
 	env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/test_named_collection.csv")

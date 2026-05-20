@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"crypto/fips140"
 	"fmt"
 	stdlog "log"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/acvpwrapper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
@@ -21,12 +25,19 @@ var (
 	version   = "unknown"
 	gitCommit = "unknown"
 	buildDate = "unknown"
+	buildArch = "unknown"
 )
 
 func main() {
 	log.Logger = log_helper.SetupLogger(os.Stderr)
 	//log.Logger = zerolog.New(os.Stdout).With().Timestamp().Caller().Logger()
 	stdlog.SetOutput(log.Logger)
+	if filepath.Base(os.Args[0]) == "clickhouse-backup-acvp" {
+		if err := acvpwrapper.Run(os.Stdin, os.Stdout); err != nil {
+			log.Fatal().Stack().Err(err).Send()
+		}
+		return
+	}
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
 	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud support"
@@ -67,6 +78,9 @@ func main() {
 		fmt.Println("Version:\t", c.App.Version)
 		fmt.Println("Git Commit:\t", gitCommit)
 		fmt.Println("Build Date:\t", buildDate)
+		fmt.Println("Runtime Architecture:\t", runtime.GOOS, "/", runtime.GOARCH)
+		fmt.Println("Build Architecture:\t", buildArch)
+		fmt.Println("FIPS 140-3:\t", fips140.Enabled())
 	}
 
 	cliapp.Commands = []cli.Command{
@@ -686,13 +700,19 @@ func main() {
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:  "clean_remote_broken",
-			Usage: "Remove all broken remote backups",
+			Name:      "clean_remote_broken",
+			Usage:     "Remove all broken remote backups",
+			UsageText: "clickhouse-backup clean_remote_broken [--include=glob ...]",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CleanRemoteBroken(status.NotFromAPI)
+				return b.CleanRemoteBroken(status.NotFromAPI, c.StringSlice("include"))
 			},
-			Flags: cliapp.Flags,
+			Flags: append(cliapp.Flags,
+				cli.StringSliceFlag{
+					Name:  "include",
+					Usage: "Glob (path.Match syntax) to scope cleanup only to broken backup names matching these patterns; can be passed multiple times; if omitted, all broken backups are deleted",
+				},
+			),
 		},
 		{
 			Name:  "clean_local_broken",
@@ -702,6 +722,30 @@ func main() {
 				return b.CleanLocalBroken(status.NotFromAPI)
 			},
 			Flags: cliapp.Flags,
+		},
+		{
+			Name:        "clean_broken_retention",
+			Usage:       "Remove orphan entries under remote `path` and `object_disks_path` that are not in the live backup list",
+			UsageText:   "clickhouse-backup clean_broken_retention [--commit] [--include=glob ...] [--exclude=glob ...]",
+			Description: "Walks top-level of remote `path` and `object_disks_path`, batch-deletes (with retry) every entry that is not a live backup and is not excluded by --exclude globs and is matched by --include globs (if provided). Object disk orphans are deleted in parallel with progress tracking. Pass --commit to actually delete; without it the command only logs what would be deleted.",
+			Action: func(c *cli.Context) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				return b.CleanBrokenRetention(status.NotFromAPI, c.StringSlice("include"), c.StringSlice("exclude"), c.Bool("commit"))
+			},
+			Flags: append(cliapp.Flags,
+				cli.StringSliceFlag{
+					Name:  "include",
+					Usage: "Glob (path.Match syntax) to scope cleanup only to backup names matching these patterns; can be passed multiple times; if omitted, all orphans are candidates",
+				},
+				cli.StringSliceFlag{
+					Name:  "exclude",
+					Usage: "Glob (path.Match syntax) of backup names to preserve even if they appear as orphans; can be passed multiple times",
+				},
+				cli.BoolFlag{
+					Name:  "commit",
+					Usage: "Actually delete orphans; without this flag the command only logs what would be deleted",
+				},
+			),
 		},
 
 		{
@@ -781,6 +825,14 @@ func main() {
 					Usage:  "explicitly delete local backup during upload",
 				},
 			),
+		},
+		{
+			Name:      "acvp",
+			Usage:     "Run ACVP wrapper protocol over stdin/stdout",
+			UsageText: "clickhouse-backup acvp",
+			Action: func(*cli.Context) error {
+				return acvpwrapper.Run(os.Stdin, os.Stdout)
+			},
 		},
 		{
 			Name:  "server",

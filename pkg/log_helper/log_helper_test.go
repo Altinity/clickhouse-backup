@@ -476,8 +476,10 @@ func TestCustomWriterVeryLongMessage(t *testing.T) {
 // TestCustomStackMarshalerWithNilError tests stack marshaler with nil error
 func TestCustomStackMarshalerWithNilError(t *testing.T) {
 	result := CustomStackMarshaler(nil)
-	if result != nil {
-		t.Errorf("Expected nil for nil error, got: %v", result)
+	// Returns "" (not nil) to avoid zerolog's case nil early return in Err()
+	// which would skip adding the error field entirely
+	if result != "" {
+		t.Errorf("Expected empty string for nil error, got: %v", result)
 	}
 }
 
@@ -487,9 +489,10 @@ func TestCustomStackMarshalerWithoutStackTrace(t *testing.T) {
 	regularErr := stderrors.New("regular error")
 	result := CustomStackMarshaler(regularErr)
 
-	// Standard library errors don't implement StackTrace, so should return nil
-	if result != nil {
-		t.Errorf("Expected nil for error without stack trace, got: %v", result)
+	// Returns "" (not nil) to avoid zerolog's case nil early return in Err()
+	// which would skip adding the error field entirely
+	if result != "" {
+		t.Errorf("Expected empty string for error without stack trace, got: %v", result)
 	}
 }
 

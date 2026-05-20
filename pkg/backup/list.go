@@ -86,33 +86,33 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 		bytes, err := json.Marshal(backupInfos)
 		if err != nil {
 			log.Error().Msgf("json.Marshal return error: %v", err)
-			return err
+			return errors.WithMessage(err, "PrintBackup json.Marshal")
 		}
 		if _, err := fmt.Fprintln(w, string(bytes)); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
-			return err
+			return errors.WithMessage(err, "PrintBackup json Fprintln")
 		}
 		return nil
 	case "yaml":
 		bytes, err := yaml.Marshal(backupInfos)
 		if err != nil {
 			log.Error().Msgf("yaml.Marshal return error: %v", err)
-			return err
+			return errors.WithMessage(err, "PrintBackup yaml.Marshal")
 		}
 		if _, err := fmt.Fprintln(w, string(bytes)); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
-			return err
+			return errors.WithMessage(err, "PrintBackup yaml Fprintln")
 		}
 		return nil
 	case "csv":
 		csvString, err := gocsv.MarshalString(backupInfos)
 		if err != nil {
 			log.Error().Msgf("gocsv.MarshalString return error: %v", err)
-			return err
+			return errors.WithMessage(err, "PrintBackup csv MarshalString")
 		}
 		if _, err := fmt.Fprintln(w, csvString); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", len(csvString), err)
-			return err
+			return errors.WithMessage(err, "PrintBackup csv Fprintln")
 		}
 		return nil
 	case "tsv":
@@ -124,11 +124,11 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 		csvString, err := gocsv.MarshalString(backupInfos)
 		if err != nil {
 			log.Error().Msgf("gocsv.MarshalString return error: %v", err)
-			return err
+			return errors.WithMessage(err, "PrintBackup tsv MarshalString")
 		}
 		if _, err := fmt.Fprintln(w, csvString); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", len(csvString), err)
-			return err
+			return errors.WithMessage(err, "PrintBackup tsv Fprintln")
 		}
 		return nil
 	case "text", "":
@@ -450,18 +450,18 @@ func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk)
 
 func (b *Backuper) getLocalBackup(ctx context.Context, backupName string, disks []clickhouse.Disk) (*LocalBackup, []clickhouse.Disk, error) {
 	if backupName == "" {
-		return nil, disks, fmt.Errorf("backup name is required")
+		return nil, disks, errors.New("backup name is required")
 	}
 	backupList, disks, err := b.GetLocalBackups(ctx, disks)
 	if err != nil {
-		return nil, disks, err
+		return nil, disks, errors.WithMessage(err, "getLocalBackup GetLocalBackups")
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
 			return &backup, disks, nil
 		}
 	}
-	return nil, disks, fmt.Errorf("backup '%s' is not found", backupName)
+	return nil, disks, errors.Errorf("backup '%s' is not found", backupName)
 }
 
 // GetRemoteBackups - get all backups stored on remote storage
@@ -474,17 +474,17 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 	}
 
 	if b.cfg.General.RemoteStorage == "none" {
-		return nil, fmt.Errorf("remote_storage is 'none'")
+		return nil, errors.New("remote_storage is 'none'")
 	}
 	if b.cfg.General.RemoteStorage == "custom" {
 		return custom.List(ctx, b.cfg)
 	}
 	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
 	if err != nil {
-		return []storage.Backup{}, err
+		return []storage.Backup{}, errors.WithMessage(err, "GetRemoteBackups NewBackupDestination")
 	}
 	if err := bd.Connect(ctx); err != nil {
-		return []storage.Backup{}, err
+		return []storage.Backup{}, errors.WithMessage(err, "GetRemoteBackups bd.Connect")
 	}
 	defer func() {
 		if err := bd.Close(ctx); err != nil {
@@ -493,17 +493,17 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 	}()
 	backupList, err := bd.BackupList(ctx, parseMetadata, "")
 	if err != nil {
-		return []storage.Backup{}, err
+		return []storage.Backup{}, errors.WithMessage(err, "GetRemoteBackups BackupList")
 	}
 	// ugly hack to fix https://github.com/Altinity/clickhouse-backup/issues/309
 	if parseMetadata == false && len(backupList) > 0 {
 		lastBackup := backupList[len(backupList)-1]
 		backupList, err = bd.BackupList(ctx, true, lastBackup.BackupName)
 		if err != nil {
-			return []storage.Backup{}, err
+			return []storage.Backup{}, errors.WithMessage(err, "GetRemoteBackups BackupList last")
 		}
 	}
-	return backupList, err
+	return backupList, nil
 }
 
 // GetTables - get all tables for use by CreateBackup, PrintTables, and API
@@ -520,7 +520,7 @@ func (b *Backuper) GetTables(ctx context.Context, tablePattern string) ([]clickh
 		return []clickhouse.Table{}, errors.Wrap(err, "can't get tables")
 	}
 	if err := b.populateBackupShardField(ctx, allTables); err != nil {
-		return nil, err
+		return nil, errors.WithMessage(err, "GetTables populateBackupShardField")
 	}
 	return allTables, nil
 }
@@ -537,11 +537,11 @@ func (b *Backuper) PrintTables(printAll bool, tablePattern, remoteBackup string)
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.DiscardEmptyColumns)
 	if remoteBackup == "" {
 		if err = b.printTablesLocal(ctx, tablePattern, printAll, w); err != nil {
-			return err
+			return errors.WithMessage(err, "PrintTables printTablesLocal")
 		}
 	} else {
 		if err = b.printTablesRemote(ctx, remoteBackup, tablePattern, printAll, w); err != nil {
-			return err
+			return errors.WithMessage(err, "PrintTables printTablesRemote")
 		}
 
 	}
@@ -555,11 +555,11 @@ func (b *Backuper) printTablesLocal(ctx context.Context, tablePattern string, pr
 	logger := log.With().Str("logger", "PrintTablesLocal").Logger()
 	allTables, err := b.GetTables(ctx, tablePattern)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "printTablesLocal GetTables")
 	}
 	disks, err := b.ch.GetDisks(ctx, false)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "printTablesLocal GetDisks")
 	}
 	for _, table := range allTables {
 		if table.Skip && !printAll {
@@ -590,12 +590,12 @@ func (b *Backuper) GetTablesRemote(ctx context.Context, backupName string, table
 		defer b.ch.Close()
 	}
 	if b.cfg.General.RemoteStorage == "none" || b.cfg.General.RemoteStorage == "custom" {
-		return nil, fmt.Errorf("GetTablesRemote does not support `none` and `custom` remote storage")
+		return nil, errors.New("GetTablesRemote does not support `none` and `custom` remote storage")
 	}
 	if b.dst == nil {
 		bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
 		if err != nil {
-			return nil, err
+			return nil, errors.WithMessage(err, "GetTablesRemote NewBackupDestination")
 		}
 		err = bd.Connect(ctx)
 		if err != nil {
@@ -611,7 +611,7 @@ func (b *Backuper) GetTablesRemote(ctx context.Context, backupName string, table
 	}
 	backupList, err := b.dst.BackupList(ctx, true, backupName)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithMessage(err, "GetTablesRemote BackupList")
 	}
 
 	var tables []clickhouse.Table
@@ -658,7 +658,7 @@ func (b *Backuper) GetTablesRemote(ctx context.Context, backupName string, table
 func (b *Backuper) printTablesRemote(ctx context.Context, backupName string, tablePattern string, printAll bool, w *tabwriter.Writer) error {
 	tables, err := b.GetTablesRemote(ctx, backupName, tablePattern)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "printTablesRemote GetTablesRemote")
 	}
 
 	for _, t := range tables {

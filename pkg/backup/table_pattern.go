@@ -111,7 +111,7 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 			}
 			var t metadata.TableMetadata
 			if err := json.Unmarshal(data, &t); err != nil {
-				return err
+				return errors.WithMessage(err, "getTableListByPatternLocal json.Unmarshal")
 			}
 			partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&t}, partitions)
 			filterPartsAndFilesByPartitionsFilter(t, partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}])
@@ -283,11 +283,11 @@ func (b *Backuper) enrichTablePatternsByInnerDependencies(metadataPath string, t
 			}
 			data, err := os.ReadFile(filePath)
 			if err != nil {
-				return err
+				return errors.WithMessage(err, "enrichTablePatternsByInnerDependencies ReadFile")
 			}
 			var t metadata.TableMetadata
 			if err := json.Unmarshal(data, &t); err != nil {
-				return err
+				return errors.WithMessage(err, "enrichTablePatternsByInnerDependencies json.Unmarshal")
 			}
 			if strings.HasPrefix(t.Query, "ATTACH MATERIALIZED") || strings.HasPrefix(t.Query, "CREATE MATERIALIZED") {
 				if strings.Contains(t.Query, " TO ") && !strings.Contains(t.Query, " TO INNER UUID") {
@@ -304,7 +304,7 @@ func (b *Backuper) enrichTablePatternsByInnerDependencies(metadataPath string, t
 				}
 				// https://github.com/Altinity/clickhouse-backup/issues/765, .inner. table could be dropped manually, .inner. table is required for ATTACH
 				if _, err := os.Stat(path.Join(metadataPath, innerTableFile+".json")); err != nil {
-					return err
+					return errors.WithMessage(err, "enrichTablePatternsByInnerDependencies stat inner table")
 				}
 				innerPatternExists := false
 				for _, existsP := range tablePatterns {
@@ -346,7 +346,7 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 			if createOrAttachRE.MatchString(originTable.Query) {
 				matches := queryRE.FindAllStringSubmatch(originTable.Query, -1)
 				if matches[0][4] != originTable.Database {
-					return fmt.Errorf("invalid SQL: %s for restore-database-mapping[%s]=%s", originTable.Query, originTable.Database, targetDB)
+					return errors.Errorf("invalid SQL: %s for restore-database-mapping[%s]=%s", originTable.Query, originTable.Database, targetDB)
 				}
 				setMatchedDb := func(clauseTargetDb, beforeQuote string) string {
 					if clauseMappedDb, isClauseMapped := dbMapRule[clauseTargetDb]; isClauseMapped {
@@ -371,7 +371,7 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 				if originTable.Query == "" {
 					continue
 				}
-				return fmt.Errorf("error when try to replace database `%s` to `%s` in query: %s", originTable.Database, targetDB, originTable.Query)
+				return errors.Errorf("error when try to replace database `%s` to `%s` in query: %s", originTable.Database, targetDB, originTable.Query)
 			}
 			originTable.Query = queryRE.ReplaceAllString(originTable.Query, substitution)
 			if uuidRE.MatchString(originTable.Query) {
@@ -442,7 +442,7 @@ func changeTableQueryToAdjustTableMapping(originTables *ListOfTables, tableMapRu
 			if createOrAttachRE.MatchString(originTable.Query) {
 				matches := queryRE.FindAllStringSubmatch(originTable.Query, -1)
 				if len(matches) == 0 || len(matches[0]) < 8 || matches[0][7] != originTable.Table {
-					return fmt.Errorf("invalid SQL: %s\nRE: `%s`\nmatches=%#v for restore-table-mapping[%s]=%s", originTable.Query, queryRE.String(), matches, originTable.Table, targetTable)
+					return errors.Errorf("invalid SQL: %s\nRE: `%s`\nmatches=%#v for restore-table-mapping[%s]=%s", originTable.Query, queryRE.String(), matches, originTable.Table, targetTable)
 				}
 				setMatchedTable := func(clauseTargetTable, beforeQuote string) string {
 					if clauseMappedTable, isClauseMapped := tableMapRule[clauseTargetTable]; isClauseMapped {
@@ -475,7 +475,7 @@ func changeTableQueryToAdjustTableMapping(originTables *ListOfTables, tableMapRu
 				if originTable.Query == "" {
 					continue
 				}
-				return fmt.Errorf("error when try to replace table `%s` to `%s` in query: %s", originTable.Table, targetTable, originTable.Query)
+				return errors.Errorf("error when try to replace table `%s` to `%s` in query: %s", originTable.Table, targetTable, originTable.Query)
 			}
 			originTable.Query = queryRE.ReplaceAllString(originTable.Query, substitution)
 			if uuidRE.MatchString(originTable.Query) {

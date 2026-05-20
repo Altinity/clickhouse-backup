@@ -17,7 +17,7 @@ clickhouse:
   host: clickhouse
   port: 9000
   restart_command: bash -c 'echo "FAKE RESTART"'
-  timeout: 60s
+  timeout: 10m
 azblob:
   account_name: devstoreaccount1
   # docker compose --profile azure-cli --progress none run --rm azure-cli az storage account generate-sas --account-name devcontainer1 --resource-types sco --services=b --permissions cdlruwap --expiry "2099-01-01T00:00:00Z" --output=tsv

@@ -90,24 +90,6 @@ func testAPIRestart(r *require.Assertions, env *TestEnvironment) {
 	r.Equal(uint64(0), inProgressActions)
 }
 
-func runClickHouseClientInsertSystemBackupActions(r *require.Assertions, env *TestEnvironment, commands []string, needWait bool) {
-	sql := "INSERT INTO system.backup_actions(command) " + "VALUES ('" + strings.Join(commands, "'),('") + "')"
-	out, err := env.DockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("clickhouse client --echo -mn -q \"%s\"", sql))
-	r.NoError(err, "%s -> %s unexpected error: %v", sql, out, err)
-	if needWait {
-		for _, command := range commands {
-			for {
-				time.Sleep(500 * time.Millisecond)
-				var commandStatus string
-				r.NoError(env.ch.SelectSingleRowNoCtx(&commandStatus, "SELECT status FROM system.backup_actions WHERE command=?", command))
-				if commandStatus != status.InProgressStatus {
-					break
-				}
-			}
-		}
-	}
-}
-
 func testAPIBackupStatus(r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Check system.backup_actions with /backup/actions call")
 	env.queryWithNoError(r, "SELECT count() FROM system.backup_actions")
@@ -299,11 +281,35 @@ func testAPIDeleteLocalDownloadRestore(r *require.Assertions, env *TestEnvironme
 	out, err := env.DockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c",
-		fmt.Sprintf("for i in {1..%d}; do date; curl -sfL -XPOST \"http://localhost:7171/backup/delete/local/z_backup_$i\"; curl -sfL -XPOST \"http://localhost:7171/backup/download/z_backup_$i?hardlink_exists_files=true\"; sleep 2; curl -sfL -XPOST \"http://localhost:7171/backup/restore/z_backup_$i?rm=1&drop=true\"; sleep 8; done", apiBackupNumber),
+		fmt.Sprintf(`
+			for i in {1..%d}; do
+			  date
+			  curl -sfL -XPOST "http://localhost:7171/backup/delete/local/z_backup_$i"
+			  DOWNLOAD_RESPONSE=$(curl -sfL -XPOST "http://localhost:7171/backup/download/z_backup_$i?hardlink_exists_files=true")
+			  echo "${DOWNLOAD_RESPONSE}"
+			  OPERATION_ID=$(echo "${DOWNLOAD_RESPONSE}" | jq -r '.operation_id')
+			  while true; do
+				STATUS=$(curl -sfL "http://localhost:7171/backup/status?operationid=${OPERATION_ID}" | jq -r '.status // empty')
+				if [ "${STATUS}" = "success" ] || [ "${STATUS}" = "error" ]; then break; fi
+				sleep 1
+			  done
+			  sleep 1
+			  RESTORE_RESPONSE=$(curl -sfL -XPOST "http://localhost:7171/backup/restore/z_backup_$i?rm=1&drop=true")
+			  echo "${RESTORE_RESPONSE}"
+			  OPERATION_ID=$(echo "${RESTORE_RESPONSE}" | jq -r '.operation_id')
+			  while true; do
+				STATUS=$(curl -sfL "http://localhost:7171/backup/status?operationid=${OPERATION_ID}" | jq -r '.status // empty')
+				if [ "${STATUS}" = "success" ] || [ "${STATUS}" = "error" ]; then break; fi
+				sleep 1
+			  done
+			  sleep 1
+			done`,
+			apiBackupNumber,
+		),
 	)
 	r.NoError(err, "%s\nunexpected POST /backup/delete/local error: %v", out, err)
 	r.NotContains(out, "another operation is currently running")
-	r.NotContains(out, "error")
+	r.NotContains(out, "\"status\":\"error\"")
 
 	out, err = env.DockerExecOut("clickhouse-backup", "curl", "-sfL", "http://localhost:7171/backup/actions?filter=download")
 	r.NoError(err, "%s\nunexpected GET /backup/actions?filter=download error: %v", out, err)

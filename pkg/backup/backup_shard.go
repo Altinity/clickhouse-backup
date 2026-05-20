@@ -79,7 +79,7 @@ func shardFuncByName(name string) (shardFunc, error) {
 			}
 			validOptions = append(validOptions, k)
 		}
-		return nil, fmt.Errorf("unknown backup sharding option %q, valid options: %v", name,
+		return nil, errors.Errorf("unknown backup sharding option %q, valid options: %v", name,
 			validOptions)
 	}
 	return chosen, nil
@@ -109,7 +109,7 @@ func fnvShardReplicaFromString(str string, activeReplicas []string) (string, err
 func fnvHashModTableShardFunc(md *tableReplicaMetadata) (bool, error) {
 	assignedReplica, err := fnvShardReplicaFromString(md.fullName(), md.ActiveReplicas)
 	if err != nil {
-		return false, err
+		return false, errors.WithMessage(err, "fnvHashModTableShardFunc")
 	}
 	return assignedReplica == md.ReplicaName, nil
 }
@@ -119,7 +119,7 @@ func fnvHashModTableShardFunc(md *tableReplicaMetadata) (bool, error) {
 func fnvHashModDatabaseShardFunc(md *tableReplicaMetadata) (bool, error) {
 	assignedReplica, err := fnvShardReplicaFromString(md.Database, md.ActiveReplicas)
 	if err != nil {
-		return false, err
+		return false, errors.WithMessage(err, "fnvHashModDatabaseShardFunc")
 	}
 	return assignedReplica == md.ReplicaName, nil
 }
@@ -187,13 +187,13 @@ func (rd *replicaDeterminer) getReplicaState(ctx context.Context) ([]tableReplic
 func (rd *replicaDeterminer) determineShards(ctx context.Context) (shardDetermination, error) {
 	md, err := rd.getReplicaState(ctx)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithMessage(err, "determineShards getReplicaState")
 	}
 	sd := shardDetermination{}
 	for _, entry := range md {
 		assigned, err := rd.sf(&entry)
 		if err != nil {
-			return nil, err
+			return nil, errors.WithMessage(err, "determineShards shardFunc")
 		}
 		sd[entry.fullName()] = assigned
 	}

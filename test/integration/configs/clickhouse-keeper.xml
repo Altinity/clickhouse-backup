@@ -5,8 +5,9 @@
     </logger>
     <openSSL>
         <server>
-            <certificateFile>/etc/clickhouse-keeper/server.crt</certificateFile>
-            <privateKeyFile>/etc/clickhouse-keeper/server.key</privateKeyFile>
+            <certificateFile>/etc/clickhouse-keeper/keeper.crt</certificateFile>
+            <privateKeyFile>/etc/clickhouse-keeper/keeper.key</privateKeyFile>
+            <!-- Keeper server: enable TLS without requiring client certificates. -->
             <verificationMode>none</verificationMode>
             <loadDefaultCAFile>true</loadDefaultCAFile>
             <cacheSessions>true</cacheSessions>
@@ -15,11 +16,13 @@
         </server>
         <client>
             <caConfig>/etc/clickhouse-keeper/rootCA.crt</caConfig>
+            <certificateFile>/etc/clickhouse-keeper/keeper.crt</certificateFile>
+            <privateKeyFile>/etc/clickhouse-keeper/keeper.key</privateKeyFile>
             <loadDefaultCAFile>true</loadDefaultCAFile>
             <cacheSessions>true</cacheSessions>
             <disableProtocols>sslv2,sslv3</disableProtocols>
             <preferServerCiphers>true</preferServerCiphers>
-            <verificationMode>strict</verificationMode>
+            <extendedVerification>false</extendedVerification>
             <invalidCertificateHandler>
                 <name>RejectCertificateHandler</name>
             </invalidCertificateHandler>
@@ -28,5 +31,6 @@
     <keeper_server>
         <tcp_port>2181</tcp_port>
         <tcp_port_secure>2281</tcp_port_secure>
+        <use_xid_64>1</use_xid_64>
     </keeper_server>
 </clickhouse>

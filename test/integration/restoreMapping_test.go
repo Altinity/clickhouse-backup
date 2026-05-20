@@ -268,7 +268,7 @@ func TestRestoreMapping(t *testing.T) {
 
 	// Corner case 6: Object disk tables with mapping - verify key rewriting
 	// https://github.com/Altinity/clickhouse-backup/issues/1265
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 && (os.Getenv("COMPOSE_FILE") != "docker-compose.yml") {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 && isAdvancedMode() {
 		log.Debug().Msg("Corner case 6: Object disk tables with restore mapping - verify object keys are rewritten")
 		testBackupName7 := "test_object_disk_mapping"
 		databaseList7 := []string{"db_object_src", "db_object_dst"}

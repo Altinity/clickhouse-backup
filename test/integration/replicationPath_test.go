@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -50,7 +49,7 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 		r.NoError(env.DockerExec("clickhouse", "rm", "-rfv", fmt.Sprintf("/var/lib/clickhouse/store/%s/%s", createUUID.String()[:3], createUUID.String())))
 	}
 	env.ch.Close()
-	r.NoError(utils.ExecCmd(t.Context(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "clickhouse")...))
+	r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
 	env.connectWithWait(t, r, 10*time.Second, 1*time.Second, 1*time.Minute)
 
 	var restoreOut string

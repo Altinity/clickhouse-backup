@@ -1,9 +1,12 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"net/http"
 	"os"
@@ -109,7 +112,7 @@ func (s *S3) ResolveEndpoint(ctx context.Context, params s3.EndpointParameters) 
 
 	resolvedEndpoint, err := baseResolver.ResolveEndpoint(ctx, params)
 	if err != nil {
-		return resolvedEndpoint, err
+		return resolvedEndpoint, errors.WithMessage(err, "S3 ResolveEndpoint")
 	}
 	return resolvedEndpoint, nil
 }
@@ -123,7 +126,7 @@ func (s *S3) Connect(ctx context.Context) error {
 		awsV2Config.WithRetryMode(aws.RetryModeStandard),
 	)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "S3 Connect LoadDefaultConfig")
 	}
 	if s.Config.Region != "" {
 		awsConfig.Region = s.Config.Region
@@ -138,6 +141,7 @@ func (s *S3) Connect(ctx context.Context) error {
 		)
 		// inherit IRSA and try assume role https://github.com/Altinity/clickhouse-backup/issues/1191
 		if s.Config.AssumeRoleARN != "" && s.Config.AssumeRoleARN != awsRoleARN {
+			awsConfig.Credentials = aws.NewCredentialsCache(awsConfig.Credentials)
 			stsClient = sts.NewFromConfig(awsConfig)
 			awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, s.Config.AssumeRoleARN)
 		}
@@ -157,9 +161,16 @@ func (s *S3) Connect(ctx context.Context) error {
 		}
 	}
 
+	if awsConfig.Credentials != nil {
+		awsConfig.Credentials = aws.NewCredentialsCache(awsConfig.Credentials)
+	}
+
 	if s.Config.Debug {
 		awsConfig.Logger = newS3Logger(log.Logger)
 		awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequest | aws.LogResponse
+		if os.Getenv("S3_DEBUG_BODY") != "" {
+			awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequest | aws.LogResponse | aws.LogRequestWithBody | aws.LogResponseWithBody
+		}
 	}
 
 	httpTransport := http.DefaultTransport
@@ -214,19 +225,19 @@ func (s *S3) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadClos
 						log.Warn().Msgf("GetFileReader %s, storageClass %s receive error: %s", key, stateErr.StorageClass, stateErr.Error())
 						if restoreErr := s.restoreObject(ctx, key); restoreErr != nil {
 							log.Warn().Msgf("restoreObject %s, return error: %v", key, restoreErr)
-							return nil, err
+							return nil, errors.WithMessage(err, "S3 GetFileReaderAbsolute GLACIER restore")
 						}
 						if resp, err = s.client.GetObject(ctx, params); err != nil {
 							log.Warn().Msgf("second GetObject %s, return error: %v", key, err)
-							return nil, err
+							return nil, errors.WithMessage(err, "S3 GetFileReaderAbsolute second GetObject")
 						}
 						return resp.Body, nil
 					}
 				}
 			}
-			return nil, err
+			return nil, errors.WithMessage(err, "S3 GetFileReaderAbsolute")
 		}
-		return nil, err
+		return nil, errors.WithMessage(err, "S3 GetFileReaderAbsolute")
 	}
 	return resp.Body, nil
 }
@@ -252,7 +263,7 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 	if s.Config.AllowMultipartDownload {
 		writer, err := os.CreateTemp(localPath, strings.ReplaceAll(key, "/", "_"))
 		if err != nil {
-			return nil, err
+			return nil, errors.WithMessage(err, "S3 GetFileReaderWithLocalPath CreateTemp")
 		}
 
 		downloader := s3manager.NewDownloader(s.client)
@@ -275,7 +286,7 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 			Key:    aws.String(path.Join(s.Config.Path, key)),
 		})
 		if err != nil {
-			return nil, err
+			return nil, errors.WithMessage(err, "S3 GetFileReaderWithLocalPath Download")
 		}
 		return writer, nil
 	}
@@ -331,9 +342,6 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 	if s.Config.SSEKMSEncryptionContext != "" {
 		params.SSEKMSEncryptionContext = aws.String(s.Config.SSEKMSEncryptionContext)
 	}
-	uploader := s3manager.NewUploader(s.client)
-	uploader.Concurrency = s.Concurrency
-	uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(s.BufferSize)
 	var partSize int64
 	if s.Config.ChunkSize > 0 && (localSize+s.Config.ChunkSize-1)/s.Config.ChunkSize < s.Config.MaxPartsCount {
 		partSize = s.Config.ChunkSize
@@ -343,10 +351,103 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 			partSize += max(1, (localSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
 		}
 	}
-	uploader.PartSize = AdjustValueByRange(partSize, 5*1024*1024, 5*1024*1024*1024)
+	partSize = AdjustValueByRange(partSize, 5*1024*1024, 5*1024*1024*1024)
 
-	_, err := uploader.Upload(ctx, &params)
-	return err
+	// s3manager.Uploader sends the part checksum as a trailer, which S3 Object Lock rejects on UploadPart. Fall back to manual multipart with per-part x-amz-checksum-crc32 header, fix https://github.com/Altinity/clickhouse-backup/issues/829
+	if s.Config.CheckSumAlgorithm == string(s3types.ChecksumAlgorithmCrc32) && localSize > partSize {
+		return s.putFileMultipartCRC32(ctx, &params, r, localSize, partSize)
+	}
+
+	uploader := s3manager.NewUploader(s.client)
+	uploader.Concurrency = s.Concurrency
+	uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(s.BufferSize)
+	uploader.PartSize = partSize
+
+	if _, err := uploader.Upload(ctx, &params); err != nil {
+		return errors.WithMessage(err, "S3 PutFileAbsolute Upload")
+	}
+	return nil
+}
+
+func (s *S3) putFileMultipartCRC32(ctx context.Context, putParams *s3.PutObjectInput, r io.Reader, localSize, partSize int64) error {
+	createParams := &s3.CreateMultipartUploadInput{
+		Bucket:       putParams.Bucket,
+		Key:          putParams.Key,
+		StorageClass: putParams.StorageClass,
+		ACL:          putParams.ACL,
+		Tagging:      putParams.Tagging,
+	}
+	s.enrichCreateMultipartUploadParams(createParams)
+
+	initResp, err := s.client.CreateMultipartUpload(ctx, createParams)
+	if err != nil {
+		return errors.WithMessage(err, "S3 putFileMultipartCRC32 CreateMultipartUpload")
+	}
+	uploadID := initResp.UploadId
+
+	abort := func(cause error) error {
+		abortParams := &s3.AbortMultipartUploadInput{
+			Bucket:   putParams.Bucket,
+			Key:      putParams.Key,
+			UploadId: uploadID,
+		}
+		if s.Config.RequestPayer != "" {
+			abortParams.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
+		}
+		if _, abortErr := s.client.AbortMultipartUpload(context.Background(), abortParams); abortErr != nil {
+			return errors.Wrapf(cause, "aborting putFileMultipartCRC32 multipart upload: %v, original error was", abortErr)
+		}
+		return cause
+	}
+
+	buf := make([]byte, partSize)
+	parts := make([]s3types.CompletedPart, 0, (localSize+partSize-1)/partSize)
+	var partNumber int32 = 1
+	remaining := localSize
+	for remaining > 0 {
+		toRead := partSize
+		if remaining < toRead {
+			toRead = remaining
+		}
+		if _, readErr := io.ReadFull(r, buf[:toRead]); readErr != nil {
+			return abort(errors.Wrapf(readErr, "S3 putFileMultipartCRC32 read part=%d", partNumber))
+		}
+		h := crc32.NewIEEE()
+		h.Write(buf[:toRead])
+		uploadParams := &s3.UploadPartInput{
+			Bucket:            putParams.Bucket,
+			Key:               putParams.Key,
+			UploadId:          uploadID,
+			PartNumber:        aws.Int32(partNumber),
+			Body:              bytes.NewReader(buf[:toRead]),
+			ChecksumAlgorithm: s3types.ChecksumAlgorithmCrc32,
+			ChecksumCRC32:     aws.String(base64.StdEncoding.EncodeToString(h.Sum(nil))),
+		}
+		if s.Config.RequestPayer != "" {
+			uploadParams.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
+		}
+		partResp, uploadErr := s.client.UploadPart(ctx, uploadParams)
+		if uploadErr != nil {
+			return abort(errors.Wrapf(uploadErr, "S3 putFileMultipartCRC32 UploadPart part=%d", partNumber))
+		}
+		parts = append(parts, s3types.CompletedPart{
+			ETag:          partResp.ETag,
+			PartNumber:    aws.Int32(partNumber),
+			ChecksumCRC32: partResp.ChecksumCRC32,
+		})
+		partNumber++
+		remaining -= toRead
+	}
+
+	if _, completeErr := s.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:          putParams.Bucket,
+		Key:             putParams.Key,
+		UploadId:        uploadID,
+		MultipartUpload: &s3types.CompletedMultipartUpload{Parts: parts},
+	}); completeErr != nil {
+		return abort(errors.WithMessage(completeErr, "S3 putFileMultipartCRC32 CompleteMultipartUpload"))
+	}
+	return nil
 }
 
 func (s *S3) deleteKey(ctx context.Context, key string) error {
@@ -457,7 +558,7 @@ func (s *S3) deleteKeys(ctx context.Context, keys []string) error {
 			})
 		}
 		if err := g.Wait(); err != nil {
-			return err
+			return errors.WithMessage(err, "S3 deleteKeys version listing")
 		}
 	} else {
 		// Non-versioned: simple key list
@@ -568,7 +669,7 @@ func (s *S3) executeBatchDelete(ctx context.Context, objects []s3types.ObjectIde
 		log.Warn().Msgf("S3 batch delete: failed to delete %s: %s - %s", key, code, message)
 		failures = append(failures, KeyError{
 			Key: key,
-			Err: fmt.Errorf("%s: %s", code, message),
+			Err: errors.Errorf("%s: %s", code, message),
 		})
 	}
 
@@ -641,11 +742,11 @@ func (s *S3) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, erro
 			var httpErr *smithyhttp.ResponseError
 			if errors.As(opError.Err, &httpErr) {
 				if httpErr.Response.StatusCode == http.StatusNotFound {
-					return nil, ErrNotFound
+					return nil, NewErrNotFound(key)
 				}
 			}
 		}
-		return nil, err
+		return nil, errors.WithMessage(err, "S3 StatFileAbsolute HeadObject")
 	}
 	return &s3File{*head.ContentLength, *head.LastModified, string(head.StorageClass), key}, nil
 }
@@ -683,7 +784,10 @@ func (s *S3) WalkAbsolute(ctx context.Context, prefix string, recursive bool, pr
 				err = process(ctx, s3FileItem)
 			}
 		}
-		return err
+		if err != nil {
+			return errors.WithMessage(err, "S3 WalkAbsolute process")
+		}
+		return nil
 	})
 	return g.Wait()
 }
@@ -707,7 +811,7 @@ func (s *S3) remotePager(ctx context.Context, s3Path string, recursive bool, pro
 	for pager.HasMorePages() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "S3 remotePager NextPage")
 		}
 		process(page)
 	}
@@ -936,7 +1040,7 @@ func (s *S3) restoreObject(ctx context.Context, key string) error {
 	}
 	_, err := s.client.RestoreObject(ctx, restoreRequest)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "S3 restoreObject RestoreObject")
 	}
 	i := 0
 	for {
@@ -947,7 +1051,7 @@ func (s *S3) restoreObject(ctx context.Context, key string) error {
 		s.enrichHeadParams(restoreHeadParams)
 		res, err := s.client.HeadObject(ctx, restoreHeadParams)
 		if err != nil {
-			return fmt.Errorf("restoreObject: failed to head %s object metadata, %v", path.Join(s.Config.Path, key), err)
+			return errors.Wrapf(err, "restoreObject: failed to head %s object metadata", path.Join(s.Config.Path, key))
 		}
 
 		if res.Restore != nil && *res.Restore == "ongoing-request=\"true\"" {

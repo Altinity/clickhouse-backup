@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/custom"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/object_disk"
@@ -23,6 +25,7 @@ import (
 	"github.com/eapache/go-resiliency/retrier"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/sync/errgroup"
 )
 
 // Clean - removed all data in shadow folder
@@ -34,7 +37,7 @@ func (b *Backuper) Clean(ctx context.Context) error {
 
 	disks, err := b.ch.GetDisks(ctx, true)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "b.ch.GetDisks")
 	}
 	for _, disk := range disks {
 		if disk.IsBackup {
@@ -49,17 +52,46 @@ func (b *Backuper) Clean(ctx context.Context) error {
 	return nil
 }
 
+// CleanShadowUUIDs - remove only specific shadow backup UUID directories, don't touch other shadows
+// https://github.com/Altinity/clickhouse-backup/issues/1345
+func (b *Backuper) CleanShadowUUIDs(disks []clickhouse.Disk) error {
+	b.shadowBackupUUIDsMutex.Lock()
+	uuids := make([]string, len(b.shadowBackupUUIDs))
+	copy(uuids, b.shadowBackupUUIDs)
+	b.shadowBackupUUIDsMutex.Unlock()
+
+	if len(uuids) == 0 {
+		return nil
+	}
+	for _, disk := range disks {
+		if disk.IsBackup {
+			continue
+		}
+		for _, shadowUUID := range uuids {
+			shadowDir := path.Join(disk.Path, "shadow", shadowUUID)
+			if _, statErr := os.Stat(shadowDir); statErr != nil && os.IsNotExist(statErr) {
+				continue
+			}
+			if err := os.RemoveAll(shadowDir); err != nil {
+				return errors.Wrapf(err, "can't clean shadow '%s'", shadowDir)
+			}
+			log.Info().Msgf("cleaned shadow %s", shadowDir)
+		}
+	}
+	return nil
+}
+
 func (b *Backuper) cleanDir(dirName string) error {
 	items, err := os.ReadDir(dirName)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return err
+		return errors.WithMessage(err, "os.ReadDir")
 	}
 	for _, item := range items {
 		if err = os.RemoveAll(path.Join(dirName, item.Name())); err != nil {
-			return err
+			return errors.WithMessage(err, "os.RemoveAll")
 		}
 	}
 	return nil
@@ -74,7 +106,7 @@ func (b *Backuper) Delete(backupType, backupName string, commandId int) error {
 
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "status.Current.GetContextWithCancel")
 	}
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
@@ -85,7 +117,7 @@ func (b *Backuper) Delete(backupType, backupName string, commandId int) error {
 	case "remote":
 		return b.RemoveBackupRemote(ctx, backupName)
 	default:
-		return fmt.Errorf("unknown backup type")
+		return errors.New("unknown backup type")
 	}
 }
 
@@ -104,12 +136,12 @@ func (b *Backuper) RemoveOldBackupsLocal(ctx context.Context, keepLastBackup boo
 
 	backupList, disks, err := b.GetLocalBackups(ctx, disks)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "b.GetLocalBackups")
 	}
 	backupsToDelete := GetBackupsToDeleteLocal(backupList, keep)
 	for _, backup := range backupsToDelete {
 		if deleteErr := b.RemoveBackupLocal(ctx, backup.BackupName, disks); deleteErr != nil {
-			return deleteErr
+			return errors.WithMessage(deleteErr, "b.RemoveBackupLocal")
 		}
 	}
 	return nil
@@ -126,12 +158,12 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 	if disks == nil {
 		disks, err = b.ch.GetDisks(ctx, true)
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "b.ch.GetDisks")
 		}
 	}
 	backupList, disks, err := b.GetLocalBackups(ctx, disks)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "b.GetLocalBackups")
 	}
 	hasObjectDisks := b.hasObjectDisksLocal(backupList, backupName, disks)
 	var backup *LocalBackup
@@ -142,13 +174,13 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 		}
 	}
 	if backup == nil {
-		return fmt.Errorf("'%s' is not found on local storage", backupName)
+		return errors.Errorf("'%s' is not found on local storage", backupName)
 	}
 	b.isEmbedded = strings.Contains(backup.Tags, "embedded")
 	if hasObjectDisks || (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "") {
 		bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName)
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "storage.NewBackupDestination")
 		}
 		err = bd.Connect(ctx)
 		if err != nil {
@@ -163,7 +195,7 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 	}
 	err = b.cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx, backupName, disks, *backup, hasObjectDisks)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent")
 	}
 	for _, disk := range disks {
 		backupPath := path.Join(disk.Path, "backup", backupName)
@@ -172,7 +204,7 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 		}
 		log.Info().Msgf("remove '%s'", backupPath)
 		if err = os.RemoveAll(backupPath); err != nil {
-			return err
+			return errors.WithMessage(err, "os.RemoveAll backupPath")
 		}
 	}
 	log.Info().Str("operation", "delete").
@@ -187,7 +219,7 @@ func (b *Backuper) cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx con
 	skip, err := b.skipIfTheSameRemoteBackupPresent(ctx, backup.BackupName, backup.Tags)
 	log.Debug().Str("backupName", backup.BackupName).Str("tags", backup.Tags).Msgf("b.skipIfTheSameRemoteBackupPresent return skip=%v", skip)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "b.skipIfTheSameRemoteBackupPresent")
 	}
 	if !skip && (hasObjectDisks || (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "")) {
 		startTime := time.Now()
@@ -228,7 +260,7 @@ func (b *Backuper) cleanLocalEmbedded(ctx context.Context, backup LocalBackup, d
 	for _, disk := range disks {
 		if disk.Name == b.cfg.ClickHouse.EmbeddedBackupDisk && disk.Type != "local" {
 			if err := object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, disk.Name); err != nil {
-				return err
+				return errors.WithMessage(err, "object_disk.InitCredentialsAndConnections")
 			}
 			backupPath := path.Join(disk.Path, backup.BackupName)
 			if err := filepath.Walk(backupPath, func(filePath string, info fs.FileInfo, err error) error {
@@ -239,18 +271,18 @@ func (b *Backuper) cleanLocalEmbedded(ctx context.Context, backup LocalBackup, d
 					log.Debug().Msgf("object_disk.ReadMetadataFromFile(%s)", filePath)
 					meta, err := object_disk.ReadMetadataFromFile(filePath)
 					if err != nil {
-						return err
+						return errors.WithMessage(err, "object_disk.ReadMetadataFromFile")
 					}
 					for _, o := range meta.StorageObjects {
 						err = object_disk.DeleteFile(ctx, b.cfg.ClickHouse.EmbeddedBackupDisk, o.ObjectPath)
 						if err != nil {
-							return err
+							return errors.WithMessage(err, "object_disk.DeleteFile")
 						}
 					}
 				}
 				return nil
 			}); err != nil {
-				return err
+				return errors.WithMessage(err, "filepath.Walk backupPath")
 			}
 		}
 	}
@@ -260,7 +292,7 @@ func (b *Backuper) cleanLocalEmbedded(ctx context.Context, backup LocalBackup, d
 func (b *Backuper) skipIfTheSameRemoteBackupPresent(ctx context.Context, backupName, tags string) (bool, error) {
 	if b.cfg.General.RemoteStorage != "custom" && b.cfg.General.RemoteStorage != "none" {
 		if remoteList, err := b.GetRemoteBackups(ctx, true); err != nil {
-			return true, err
+			return true, errors.WithMessage(err, "b.GetRemoteBackups")
 		} else {
 			for _, remoteBackup := range remoteList {
 				if remoteBackup.BackupName == backupName {
@@ -292,7 +324,7 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 
 	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "storage.NewBackupDestination")
 	}
 	err = bd.Connect(ctx)
 	if err != nil {
@@ -308,18 +340,18 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 
 	backupList, err := bd.BackupList(ctx, true, backupName)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "bd.BackupList")
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
 			err = b.cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx, backup)
 			if err != nil {
-				return err
+				return errors.WithMessage(err, "cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent")
 			}
 
 			if err = bd.RemoveBackupRemote(ctx, backup, b.cfg, b); err != nil {
 				log.Warn().Msgf("bd.RemoveBackup return error: %v", err)
-				return err
+				return errors.WithMessage(err, "bd.RemoveBackupRemote")
 			}
 			log.Info().Fields(map[string]interface{}{
 				"backup":    backupName,
@@ -330,14 +362,14 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 			return nil
 		}
 	}
-	return fmt.Errorf("'%s' is not found on remote storage", backupName)
+	return errors.Errorf("'%s' is not found on remote storage", backupName)
 }
 
 func (b *Backuper) cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx context.Context, backup storage.Backup) error {
 	var skip bool
 	var err error
 	if skip, err = b.skipIfSameLocalBackupPresent(ctx, backup.BackupName, backup.Tags); err != nil {
-		return err
+		return errors.WithMessage(err, "b.skipIfSameLocalBackupPresent")
 	}
 	log.Debug().Str("backupName", backup.BackupName).Str("tags", backup.Tags).Msgf("b.skipIfSameLocalBackupPresent return skip=%v", skip)
 	if !skip {
@@ -372,22 +404,22 @@ func (b *Backuper) hasObjectDisksRemote(backup storage.Backup) bool {
 
 func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backup) error {
 	if err := object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, b.cfg.ClickHouse.EmbeddedBackupDisk); err != nil {
-		return err
+		return errors.WithMessage(err, "object_disk.InitCredentialsAndConnections")
 	}
 	return b.dst.Walk(ctx, backup.BackupName+"/", true, func(ctx context.Context, f storage.RemoteFile) error {
 		if !strings.HasSuffix(f.Name(), ".json") {
 			r, err := b.dst.GetFileReader(ctx, path.Join(backup.BackupName, f.Name()))
 			if err != nil {
-				return err
+				return errors.WithMessage(err, "b.dst.GetFileReader")
 			}
 			log.Debug().Msgf("object_disk.ReadMetadataFromReader(%s)", f.Name())
 			meta, err := object_disk.ReadMetadataFromReader(r, f.Name())
 			if err != nil {
-				return err
+				return errors.WithMessage(err, "object_disk.ReadMetadataFromReader")
 			}
 			for _, o := range meta.StorageObjects {
 				if err = object_disk.DeleteFile(ctx, b.cfg.ClickHouse.EmbeddedBackupDisk, o.ObjectPath); err != nil {
-					return err
+					return errors.WithMessage(err, "object_disk.DeleteFile")
 				}
 			}
 		}
@@ -399,7 +431,7 @@ func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backu
 func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string) (uint, error) {
 	objectDiskPath, err := b.getObjectDiskPath()
 	if err != nil {
-		return 0, err
+		return 0, errors.WithMessage(err, "b.getObjectDiskPath")
 	}
 
 	// Check if storage supports batch deletion
@@ -454,27 +486,40 @@ func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string
 		return totalDeleted, nil
 	}
 
-	// Fallback: one-by-one deletion (should not happen if all storage types implement BatchDeleter)
-	log.Warn().Msgf("cleanBackupObjectDisks: %s does not implement BatchDeleter, falling back to one-by-one deletion", b.dst.Kind())
+	// Fallback: one-by-one deletion (streaming — no in-memory accumulation).
+	// FTP/SFTP do not implement BatchDeleter (they have DeleteKeysFromObjectDiskBackup
+	// without the "Batch" suffix required by the interface), so they always hit this path.
+	log.Warn().Msgf("cleanBackupObjectDisks: %s does not implement BatchDeleter, falling back to streaming one-by-one deletion", b.dst.Kind())
 	deletedKeys := uint(0)
-	walkErr := b.dst.WalkAbsolute(ctx, path.Join(objectDiskPath, backupName), true, func(ctx context.Context, f storage.RemoteFile) error {
-		if b.dst.Kind() == "azblob" {
-			if f.Size() > 0 || !f.LastModified().IsZero() {
-				deletedKeys += 1
-				return b.dst.DeleteFileFromObjectDiskBackup(ctx, path.Join(backupName, f.Name()))
-			}
-
+	_ = b.dst.WalkAbsolute(ctx, path.Join(objectDiskPath, backupName), true, func(ctx context.Context, f storage.RemoteFile) error {
+		if f.Name() == "" || f.Name() == "." {
 			return nil
 		}
-		deletedKeys += 1
-		return b.dst.DeleteFileFromObjectDiskBackup(ctx, path.Join(backupName, f.Name()))
+		key := path.Join(backupName, f.Name())
+		// Use DeleteFileFromObjectDiskBackup which constructs the correct absolute
+		// path via Config.ObjectDiskPath.  For directories this triggers recursive
+		// deletion (SFTP DeleteDirectory / FTP RemoveDirRecur) which may remove
+		// entries that the in-progress walker hasn't visited yet, causing the
+		// walker to later fail with "file does not exist".  That's harmless — the
+		// data is already deleted — so we discard the walk error below.
+		if err := b.dst.DeleteFileFromObjectDiskBackup(ctx, key); err != nil {
+			log.Debug().Err(err).Str("key", key).Msg("cleanBackupObjectDisks: delete failed")
+		} else {
+			deletedKeys++
+		}
+		return nil
 	})
-	return deletedKeys, walkErr
+	// Walk error is expected when RemoveDirRecur/DeleteDirectory removed children
+	// that the walker hadn't stepped to yet.  Data is already gone — no need to fail.
+	if deletedKeys > 0 {
+		_ = b.dst.DeleteFileFromObjectDiskBackup(ctx, backupName)
+	}
+	return deletedKeys, nil
 }
 
 func (b *Backuper) skipIfSameLocalBackupPresent(ctx context.Context, backupName, tags string) (bool, error) {
 	if localList, _, err := b.GetLocalBackups(ctx, nil); err != nil {
-		return true, err
+		return true, errors.WithMessage(err, "b.GetLocalBackups")
 	} else {
 		for _, localBackup := range localList {
 			if localBackup.BackupName == backupName && strings.Contains(localBackup.Tags, tags) {
@@ -488,45 +533,334 @@ func (b *Backuper) skipIfSameLocalBackupPresent(ctx context.Context, backupName,
 func (b *Backuper) CleanLocalBroken(commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "status.Current.GetContextWithCancel")
 	}
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
 
 	localBackups, _, err := b.GetLocalBackups(ctx, nil)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "b.GetLocalBackups")
 	}
 	for _, backup := range localBackups {
 		if backup.Broken != "" {
 			if err = b.RemoveBackupLocal(ctx, backup.BackupName, nil); err != nil {
-				return err
+				return errors.WithMessage(err, "b.RemoveBackupLocal")
 			}
 		}
 	}
 	return nil
 }
 
-func (b *Backuper) CleanRemoteBroken(commandId int) error {
+func (b *Backuper) CleanRemoteBroken(commandId int, includeGlobs []string) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "status.Current.GetContextWithCancel")
 	}
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
 
+	for _, g := range includeGlobs {
+		if _, err := path.Match(g, ""); err != nil {
+			return errors.Wrapf(err, "invalid include-glob %q", g)
+		}
+	}
+
 	remoteBackups, err := b.GetRemoteBackups(ctx, true)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "b.GetRemoteBackups")
 	}
 	for _, backup := range remoteBackups {
-		if backup.Broken != "" {
-			if err = b.RemoveBackupRemote(ctx, backup.BackupName); err != nil {
-				return err
+		if backup.Broken == "" {
+			continue
+		}
+		if len(includeGlobs) > 0 {
+			matched := false
+			for _, g := range includeGlobs {
+				if ok, _ := path.Match(g, backup.BackupName); ok {
+					matched = true
+					break
+				}
 			}
+			if !matched {
+				continue
+			}
+		}
+		if err = b.RemoveBackupRemote(ctx, backup.BackupName); err != nil {
+			return errors.WithMessage(err, "b.RemoveBackupRemote")
 		}
 	}
 	return nil
+}
+
+// CleanBrokenRetention walks remote `path` and `object_disks_path` top-level entries
+// and removes everything that is NOT present in the live BackupList and NOT matched by excludeGlobs.
+// Uses BatchDeleter with retry and parallel batch deletion for object_disks_path orphans.
+// When commit=false, only logs orphans without deleting (dry-run mode).
+// When includeGlobs is non-empty, only orphans matching at least one includeGlob are considered.
+// excludeGlobs and includeGlobs follow path.Match syntax (e.g. "prod-*", "snapshot-2026-??-*").
+func (b *Backuper) CleanBrokenRetention(commandId int, includeGlobs, excludeGlobs []string, commit bool) error {
+	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
+	if err != nil {
+		return errors.WithMessage(err, "status.Current.GetContextWithCancel")
+	}
+	ctx, cancel = context.WithCancel(ctx)
+	defer cancel()
+
+	if b.cfg.General.RemoteStorage == "none" {
+		return errors.New("aborted: RemoteStorage set to \"none\"")
+	}
+	if b.cfg.General.RemoteStorage == "custom" {
+		return errors.New("aborted: clean_broken_retention does not support custom remote storage")
+	}
+	for _, g := range excludeGlobs {
+		if _, err := path.Match(g, ""); err != nil {
+			return errors.Wrapf(err, "invalid exclude-glob %q", g)
+		}
+	}
+	for _, g := range includeGlobs {
+		if _, err := path.Match(g, ""); err != nil {
+			return errors.Wrapf(err, "invalid include-glob %q", g)
+		}
+	}
+	if err := b.ch.Connect(); err != nil {
+		return errors.Wrap(err, "can't connect to clickhouse")
+	}
+	defer b.ch.Close()
+
+	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
+	if err != nil {
+		return errors.WithMessage(err, "storage.NewBackupDestination")
+	}
+	if err = bd.Connect(ctx); err != nil {
+		return errors.Wrap(err, "can't connect to remote storage")
+	}
+	defer func() {
+		if closeErr := bd.Close(ctx); closeErr != nil {
+			log.Warn().Msgf("can't close BackupDestination error: %v", closeErr)
+		}
+	}()
+	b.dst = bd
+
+	// parseMetadata=true forces a metadata.json stat for every top-level entry.
+	// Broken backups (e.g. upload still in progress) are still kept — they are
+	// known backups and not orphans.
+	backupList, err := bd.BackupList(ctx, true, "")
+	if err != nil {
+		return errors.WithMessage(err, "bd.BackupList")
+	}
+	keepNames := make(map[string]struct{}, len(backupList))
+	liveCount := 0
+	for _, backup := range backupList {
+		keepNames[backup.BackupName] = struct{}{}
+		if backup.Broken == "" {
+			liveCount++
+		}
+	}
+	isKept := func(name string) bool {
+		// Live backups are always preserved.
+		if _, ok := keepNames[name]; ok {
+			return true
+		}
+		// If --include is specified, only consider names matching at least one includeGlob.
+		if len(includeGlobs) > 0 {
+			matched := false
+			for _, g := range includeGlobs {
+				if ok, _ := path.Match(g, name); ok {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return true
+			}
+		}
+		// --exclude globs preserve matched entries from deletion.
+		for _, g := range excludeGlobs {
+			if ok, _ := path.Match(g, name); ok {
+				return true
+			}
+		}
+		return false
+	}
+
+	mode := "dry-run"
+	if commit {
+		mode = "commit"
+	}
+	log.Info().Msgf("clean_broken_retention: mode=%s, %d live backups (of %d in remote list), %d include-globs, %d exclude-globs", mode, liveCount, len(backupList), len(includeGlobs), len(excludeGlobs))
+
+	objectDiskPath, err := b.getObjectDiskPath()
+	if err != nil {
+		return errors.WithMessage(err, "b.getObjectDiskPath")
+	}
+
+	topObjName := ""
+	if objectDiskPath != "" {
+		topObjName = path.Base(objectDiskPath)
+	}
+
+	backupPath, err := b.getBackupPath()
+	if err != nil {
+		return errors.WithMessage(err, "b.getBackupPath")
+	}
+
+	orphansInPath, err := b.findOrphanTopLevelNames(ctx, bd, backupPath, isKept)
+	if err != nil {
+		return errors.WithMessage(err, "scan path orphans")
+	}
+
+	if topObjName != "" {
+		filtered := make([]string, 0, len(orphansInPath))
+		for _, name := range orphansInPath {
+			if name != topObjName {
+				filtered = append(filtered, name)
+			}
+		}
+		orphansInPath = filtered
+	}
+
+	for _, name := range orphansInPath {
+		if !commit {
+			log.Info().Str("orphan", name).Str("location", "path").Msg("clean_broken_retention: would delete")
+			continue
+		}
+		log.Info().Str("orphan", name).Str("location", "path").Msg("clean_broken_retention: deleting")
+		if err := bd.RemoveBackupRemote(ctx, storage.Backup{BackupMetadata: metadata.BackupMetadata{BackupName: name}}, b.cfg, b); err != nil {
+			return errors.Wrapf(err, "bd.RemoveBackupRemote orphan %s", name)
+		}
+	}
+
+	if objectDiskPath == "" {
+		log.Info().Msgf("clean_broken_retention: done, mode=%s, path orphans=%d, object_disks_path: not configured", mode, len(orphansInPath))
+		return nil
+	}
+
+	orphansInObj, err := b.findOrphanTopLevelNames(ctx, bd, objectDiskPath, isKept)
+	if err != nil {
+		return errors.WithMessage(err, "scan object_disks_path orphans")
+	}
+	totalObj := len(orphansInObj)
+	if totalObj == 0 {
+		log.Info().Msgf("clean_broken_retention: done, mode=%s, path orphans=%d, object_disks_path orphans=0", mode, len(orphansInPath))
+		return nil
+	}
+
+	if !commit {
+		for _, name := range orphansInObj {
+			log.Info().Str("orphan", name).Str("location", "object_disks_path").Msg("clean_broken_retention: would delete")
+		}
+		log.Info().Msgf("clean_broken_retention: done, mode=%s, path orphans=%d, object_disks_path orphans=%d", mode, len(orphansInPath), totalObj)
+		return nil
+	}
+
+	parallel := int(b.cfg.General.UploadConcurrency)
+	if parallel < 1 {
+		parallel = 4
+	}
+
+	log.Info().Msgf("clean_broken_retention: deleting %d object_disks_path orphans, concurrency=%d", totalObj, parallel)
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(parallel)
+
+	var doneCount atomic.Int64
+	var failCount atomic.Int64
+	startTime := time.Now()
+	logTicker := time.NewTicker(30 * time.Second)
+	defer logTicker.Stop()
+
+	done := make(chan struct{})
+	defer func() { <-done }()
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-egCtx.Done():
+				return
+			case <-logTicker.C:
+				d := doneCount.Load()
+				f := failCount.Load()
+				log.Info().Msgf("clean_broken_retention: progress [%d/%d] done=%d fail=%d elapsed=%s",
+					d+f, totalObj, d, f, utils.HumanizeDuration(time.Since(startTime)))
+			}
+		}
+	}()
+
+	for _, name := range orphansInObj {
+		orphan := name
+		eg.Go(func() error {
+			select {
+			case <-egCtx.Done():
+				return egCtx.Err()
+			default:
+			}
+			start := time.Now()
+			deletedKeys, deleteErr := b.cleanBackupObjectDisks(egCtx, orphan)
+			if deleteErr != nil {
+				failCount.Add(1)
+				log.Warn().Err(deleteErr).Str("orphan", orphan).Msg("clean_broken_retention: deletion failed")
+				// Don't abort the whole group — log and continue with other orphans
+				return nil
+			}
+			doneCount.Add(1)
+			d := doneCount.Load()
+			f := failCount.Load()
+			log.Info().
+				Str("orphan", orphan).
+				Uint("deleted_keys", deletedKeys).
+				Str("duration", utils.HumanizeDuration(time.Since(start))).
+				Msgf("clean_broken_retention: [%d/%d] done fail=%d", d+f, totalObj, f)
+			return nil
+		})
+	}
+	_ = eg.Wait() // errors are handled inside the goroutines (non-fatal)
+
+	elapsed := time.Since(startTime)
+	d := doneCount.Load()
+	f := failCount.Load()
+	log.Info().Msgf("clean_broken_retention: done, mode=%s, path orphans=%d, object_disks_path orphans=%d/%d (done=%d fail=%d) elapsed=%s",
+		mode, len(orphansInPath), d, totalObj, d, f, utils.HumanizeDuration(elapsed))
+	if f > 0 {
+		return fmt.Errorf("clean_broken_retention: %d of %d object_disks_path orphans failed to delete", f, totalObj)
+	}
+	return nil
+}
+
+// findOrphanTopLevelNames lists top-level entries under rootPath (absolute when rootPath != "/")
+// and returns names that are not kept by isKept. Top-level only: any names containing "/" are skipped.
+func (b *Backuper) findOrphanTopLevelNames(ctx context.Context, bd *storage.BackupDestination, rootPath string, isKept func(string) bool) ([]string, error) {
+	seen := make(map[string]struct{})
+	walkFn := func(_ context.Context, f storage.RemoteFile) error {
+		// Walk("/", false) emits names that may have a leading "/" (S3) and/or trailing "/" (CommonPrefix).
+		name := strings.Trim(f.Name(), "/")
+		if name == "" || strings.Contains(name, "/") {
+			return nil
+		}
+		// Skip hidden/dotfile entries — clickhouse-backup never produces names starting with ".".
+		// Protects system dirs like /root/.ssh on filesystem-backed remotes (SFTP/FTP).
+		if strings.HasPrefix(name, ".") {
+			return nil
+		}
+		if isKept(name) {
+			return nil
+		}
+		seen[name] = struct{}{}
+		return nil
+	}
+	var err error
+	if rootPath == "/" || rootPath == "" {
+		err = bd.Walk(ctx, "/", false, walkFn)
+	} else {
+		err = bd.WalkAbsolute(ctx, rootPath, false, walkFn)
+	}
+	if err != nil {
+		return nil, errors.Wrapf(err, "walk %q", rootPath)
+	}
+	out := make([]string, 0, len(seen))
+	for n := range seen {
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 func (b *Backuper) cleanPartialRequiredBackup(ctx context.Context, disks []clickhouse.Disk, currentBackupName string) error {

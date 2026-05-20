@@ -2,14 +2,14 @@ package status
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"github.com/rs/zerolog/log"
+	stderrors "errors"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -100,13 +100,13 @@ func (status *AsyncStatus) GetContextWithCancel(commandId int) (context.Context,
 		return ctx, cancel, nil
 	}
 	if commandId >= len(status.commands) {
-		return nil, nil, fmt.Errorf("commandId=%d not exists in current running commands", commandId)
+		return nil, nil, errors.Errorf("commandId=%d not exists in current running commands", commandId)
 	}
 	if status.commands[commandId].Ctx == nil {
-		return nil, nil, fmt.Errorf("commands[%d]=%s have nil context ", commandId, status.commands[commandId].Command)
+		return nil, nil, errors.Errorf("commands[%d]=%s have nil context ", commandId, status.commands[commandId].Command)
 	}
 	// for create_remote and restore_remote API call
-	if errors.Is(status.commands[commandId].Ctx.Err(), context.Canceled) && strings.Contains(status.commands[commandId].Command, "_remote") {
+	if stderrors.Is(status.commands[commandId].Ctx.Err(), context.Canceled) && strings.Contains(status.commands[commandId].Command, "_remote") {
 		status.commands[commandId].Ctx, status.commands[commandId].Cancel = context.WithCancel(context.Background())
 	}
 	return status.commands[commandId].Ctx, status.commands[commandId].Cancel, nil
@@ -135,7 +135,7 @@ func (status *AsyncStatus) Cancel(command string, err error) error {
 	status.Lock()
 	defer status.Unlock()
 	if len(status.commands) == 0 {
-		err = fmt.Errorf("empty command list")
+		err = errors.New("empty command list")
 		log.Warn().Err(err).Send()
 		return err
 	}
@@ -156,7 +156,7 @@ func (status *AsyncStatus) Cancel(command string, err error) error {
 		}
 	}
 	if commandId == -1 {
-		err = fmt.Errorf("command `%s` not found", command)
+		err = errors.Errorf("command `%s` not found", command)
 		log.Warn().Err(err).Send()
 		return err
 	}

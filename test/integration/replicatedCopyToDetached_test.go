@@ -46,6 +46,19 @@ func TestReplicatedCopyToDetached(t *testing.T) {
 	// Drop database
 	r.NoError(env.dropDatabase(dbName, false))
 
+	// Wait for ZK path cleanup - DROP DATABASE removes replica entry
+	// synchronously but table-level ZK path cleanup is async
+	resolvedZkPath := fmt.Sprintf("/clickhouse/tables/0/%s/%s", dbName, tableName)
+	var zkCount uint64
+	for i := 0; i < 100; i++ {
+		zkCount = 0
+		if selectErr := env.ch.SelectSingleRowNoCtx(&zkCount,
+			"SELECT count() FROM system.zookeeper WHERE path=?", resolvedZkPath); selectErr != nil || zkCount == 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	// Restore with --replicated-copy-to-detached flag, shall restore schema without data
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--replicated-copy-to-detached", backupName)
 

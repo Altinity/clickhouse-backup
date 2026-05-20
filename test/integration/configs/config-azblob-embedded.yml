@@ -22,6 +22,7 @@ clickhouse:
   timeout: 4h
   restart_command: bash -c 'echo "FAKE RESTART"'
   use_embedded_backup_restore: true
+  use_embedded_backup_restore_cluster: "{cluster}"
   embedded_backup_disk: backups_azure
 azblob:
   account_name: devstoreaccount1

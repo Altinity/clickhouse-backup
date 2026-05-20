@@ -8,6 +8,7 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	bolt "go.etcd.io/bbolt"
 )
@@ -76,7 +77,7 @@ func (s *State) loadState() {
 		if bucket == nil {
 			bucket, err = tx.CreateBucket(bucketName)
 			if err != nil {
-				return fmt.Errorf("resumable state: can't create bucket: %s", err)
+				return errors.Wrapf(err, "resumable state: can't create bucket")
 			}
 		}
 		return nil
@@ -173,9 +174,9 @@ func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
 			n := 0
 			size, n = binary.Varint(buf)
 			if n == 0 {
-				return fmt.Errorf("buffer too small")
+				return errors.New("buffer too small")
 			} else if n < 0 {
-				return fmt.Errorf("value larger than 64 bits (overflow)")
+				return errors.New("value larger than 64 bits (overflow)")
 			}
 			log.Info().Msgf("%s already processed, size %s", path, utils.FormatBytes(uint64(size)))
 		}

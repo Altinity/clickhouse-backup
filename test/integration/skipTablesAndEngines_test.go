@@ -19,17 +19,13 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	env.queryWithNoError(r, "CREATE MATERIALIZED VIEW IF NOT EXISTS test_skip_tables.test_mv (id UInt64) ENGINE=MergeTree() ORDER BY id AS SELECT id FROM test_skip_tables.test_merge_tree")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") < 0 {
 		query := "CREATE LIVE VIEW IF NOT EXISTS test_skip_tables.test_live_view AS SELECT count() FROM test_skip_tables.test_merge_tree"
-		allowExperimentalAnalyzer, err := env.ch.TurnAnalyzerOffIfNecessary(version, query, "")
-		r.NoError(err)
-		env.queryWithNoError(r, query)
-		r.NoError(env.ch.TurnAnalyzerOnIfNecessary(version, query, allowExperimentalAnalyzer))
+		ctx := env.ch.AnalyzerOffContextIfNecessary(version, query)
+		r.NoError(env.ch.QueryContext(ctx, query))
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
 		query := "CREATE WINDOW VIEW IF NOT EXISTS test_skip_tables.test_window_view ENGINE=MergeTree() ORDER BY s AS SELECT count(), s, tumbleStart(w_id) as w_start FROM test_skip_tables.test_merge_tree GROUP BY s, tumble(now(), INTERVAL '5' SECOND) AS w_id"
-		allowExperimentalAnalyzer, err := env.ch.TurnAnalyzerOffIfNecessary(version, query, "")
-		r.NoError(err)
-		env.queryWithNoError(r, query)
-		r.NoError(env.ch.TurnAnalyzerOnIfNecessary(version, query, allowExperimentalAnalyzer))
+		ctx := env.ch.AnalyzerOffContextIfNecessary(version, query)
+		r.NoError(env.ch.QueryContext(ctx, query))
 	}
 	// create
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLES=*.test_merge_tree clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create skip_table_pattern")

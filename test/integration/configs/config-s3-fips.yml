@@ -20,7 +20,7 @@ clickhouse:
   sync_replicated_tables: true
   restart_command: bash -c 'echo "FAKE RESTART"'
   backup_mutations: true
-  timeout: 60s
+  timeout: 10m
 # secrets for `FISP` will provide from `.env` or from GitHub actions secrets
 s3:
   access_key: ${QA_AWS_ACCESS_KEY}

@@ -1,4 +1,9 @@
-# v2.6.44
+# v2.7.0 unreleased
+
+NEW FEATURES
+- add `clean_broken_retention` CLI command — walks top-level of remote `path` and `object_disks_path` and batch-deletes (with retry) every entry that is not present in the live backup list and not matched by any `--keep=<glob>`. Dry-run by default; pass `--commit` to actually delete. Useful for cleaning up orphans left by failed retention runs
+
+# v2.6.44 (hotfix released only docker image)
 
 BUG FIXES
 - fix [1356](https://github.com/Altinity/clickhouse-backup/issues/1356), retry batch deletion in `cleanBackupObjectDisks` so transient errors (e.g. GCS 503) during retention no longer leave orphaned objects in `object_disks_path`

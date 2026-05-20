@@ -10,6 +10,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
@@ -44,9 +45,12 @@ type Backuper struct {
 	DiskToPathMap          map[string]string
 	DefaultDataPath        string
 	EmbeddedBackupDataPath string
+	embeddedClusterPrefix  string // "shards/{shard_num}/replicas/{replica_num}" when UseEmbeddedBackupRestoreCluster is set, otherwise ""
 	isEmbedded             bool
 	resume                 bool
 	resumableState         *resumable.State
+	shadowBackupUUIDs      []string
+	shadowBackupUUIDsMutex sync.Mutex
 }
 
 func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {
@@ -89,7 +93,7 @@ func (b *Backuper) initDisksPathsAndBackupDestination(ctx context.Context, disks
 	if disks == nil {
 		disks, err = b.ch.GetDisks(ctx, true)
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "b.ch.GetDisks")
 		}
 	}
 	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
@@ -109,11 +113,11 @@ func (b *Backuper) initDisksPathsAndBackupDestination(ctx context.Context, disks
 	b.DiskToPathMap = diskMap
 	if b.cfg.General.RemoteStorage != "none" && b.cfg.General.RemoteStorage != "custom" {
 		if err = b.CalculateMaxSize(ctx); err != nil {
-			return err
+			return errors.WithMessage(err, "b.CalculateMaxSize")
 		}
 		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName)
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "storage.NewBackupDestination")
 		}
 		if err := b.dst.Connect(ctx); err != nil {
 			return errors.Wrapf(err, "can't connect to %s", b.dst.Kind())
@@ -126,7 +130,7 @@ func (b *Backuper) initDisksPathsAndBackupDestination(ctx context.Context, disks
 func (b *Backuper) CalculateMaxSize(ctx context.Context) error {
 	maxFileSize, err := b.ch.CalculateMaxFileSize(ctx, b.cfg)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "b.ch.CalculateMaxFileSize")
 	}
 	if b.cfg.General.MaxFileSize > 0 && b.cfg.General.MaxFileSize < maxFileSize {
 		log.Warn().Msgf("MAX_FILE_SIZE=%d is less than actual %d, please remove general->max_file_size section from your config", b.cfg.General.MaxFileSize, maxFileSize)
@@ -140,9 +144,38 @@ func (b *Backuper) CalculateMaxSize(ctx context.Context) error {
 func (b *Backuper) getLocalBackupDataPathForTable(backupName string, disk string, dbAndTablePath string) string {
 	backupPath := path.Join(b.DiskToPathMap[disk], "backup", backupName, "shadow", dbAndTablePath, disk)
 	if b.isEmbedded {
-		backupPath = path.Join(b.DiskToPathMap[disk], backupName, "data", dbAndTablePath)
+		backupPath = path.Join(b.DiskToPathMap[disk], backupName, b.embeddedClusterPrefix, "data", dbAndTablePath)
 	}
 	return backupPath
+}
+
+// resolveEmbeddedClusterShardReplica resolves the shard/replica prefix for embedded backups with ON CLUSTER mode.
+// When UseEmbeddedBackupRestoreCluster is set, ClickHouse stores backup content under
+// backup_name/shards/{shard_num}/replicas/{replica_num}/ instead of directly under backup_name/.
+func (b *Backuper) resolveEmbeddedClusterShardReplica(ctx context.Context) error {
+	if b.cfg.ClickHouse.UseEmbeddedBackupRestoreCluster == "" {
+		b.embeddedClusterPrefix = ""
+		return nil
+	}
+	clusterName, err := b.ch.ApplyMacros(ctx, b.cfg.ClickHouse.UseEmbeddedBackupRestoreCluster)
+	if err != nil {
+		return errors.WithMessage(err, "ApplyMacros for UseEmbeddedBackupRestoreCluster")
+	}
+	type clusterReplica struct {
+		ShardNum   uint32 `ch:"shard_num"`
+		ReplicaNum uint32 `ch:"replica_num"`
+	}
+	var result []clusterReplica
+	query := fmt.Sprintf("SELECT shard_num, replica_num FROM system.clusters WHERE is_local AND cluster='%s' LIMIT 1", clusterName)
+	if err := b.ch.SelectContext(ctx, &result, query); err != nil {
+		return errors.WithMessage(err, "resolve shard_num and replica_num from system.clusters")
+	}
+	if len(result) == 0 {
+		return errors.Errorf("no local replica found in system.clusters for cluster '%s'", clusterName)
+	}
+	b.embeddedClusterPrefix = path.Join("shards", fmt.Sprintf("%d", result[0].ShardNum), "replicas", fmt.Sprintf("%d", result[0].ReplicaNum))
+	log.Debug().Msgf("resolved embedded cluster prefix: %s", b.embeddedClusterPrefix)
+	return nil
 }
 
 // populateBackupShardField populates the BackupShard field for a slice of Table structs
@@ -158,7 +191,7 @@ func (b *Backuper) populateBackupShardField(ctx context.Context, tables []clickh
 		return nil
 	}
 	if err := b.vers.CanShardOperation(ctx); err != nil {
-		return err
+		return errors.WithMessage(err, "b.vers.CanShardOperation")
 	}
 
 	if b.bs == nil {
@@ -171,7 +204,7 @@ func (b *Backuper) populateBackupShardField(ctx context.Context, tables []clickh
 	}
 	assignment, err := b.bs.determineShards(ctx)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "b.bs.determineShards")
 	}
 	for i, t := range tables {
 		if t.Skip {
@@ -179,7 +212,7 @@ func (b *Backuper) populateBackupShardField(ctx context.Context, tables []clickh
 		}
 		fullBackup, err := assignment.inShard(t.Database, t.Name)
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "assignment.inShard")
 		}
 		if !fullBackup {
 			tables[i].BackupType = clickhouse.ShardBackupSchema
@@ -269,20 +302,20 @@ func (b *Backuper) getEmbeddedBackupLocation(ctx context.Context, backupName str
 		if os.Getenv("AWS_ACCESS_KEY_ID") != "" {
 			return fmt.Sprintf("S3('%s/%s/','%s','%s')", gcsEndpoint, backupName, os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")), nil
 		}
-		return "", fmt.Errorf("provide gcs->embedded_access_key and gcs->embedded_secret_key in config to allow embedded backup without `clickhouse->embedded_backup_disk`")
+		return "", errors.New("provide gcs->embedded_access_key and gcs->embedded_secret_key in config to allow embedded backup without `clickhouse->embedded_backup_disk`")
 	}
 	if b.cfg.General.RemoteStorage == "azblob" {
 		azblobEndpoint := b.buildEmbeddedLocationAZBLOB()
 		azblobPath, err := b.ch.ApplyMacros(ctx, b.cfg.AzureBlob.ObjectDiskPath)
 		if err != nil {
-			return "", err
+			return "", errors.WithMessage(err, "b.ch.ApplyMacros")
 		}
 		if b.cfg.AzureBlob.Container != "" {
 			return fmt.Sprintf("AzureBlobStorage('%s','%s','%s/%s/')", azblobEndpoint, b.cfg.AzureBlob.Container, azblobPath, backupName), nil
 		}
-		return "", fmt.Errorf("provide azblob->container and azblob->account_name, azblob->account_key in config to allow embedded backup without `clickhouse->embedded_backup_disk`")
+		return "", errors.New("provide azblob->container and azblob->account_name, azblob->account_key in config to allow embedded backup without `clickhouse->embedded_backup_disk`")
 	}
-	return "", fmt.Errorf("empty clickhouse->embedded_backup_disk and invalid general->remote_storage: %s", b.cfg.General.RemoteStorage)
+	return "", errors.Errorf("empty clickhouse->embedded_backup_disk and invalid general->remote_storage: %s", b.cfg.General.RemoteStorage)
 }
 
 func (b *Backuper) buildEmbeddedLocationS3(ctx context.Context) string {
@@ -359,6 +392,24 @@ func (b *Backuper) buildEmbeddedLocationAZBLOB() string {
 	return fmt.Sprintf("DefaultEndpointsProtocol=%s;AccountName=%s;AccountKey=%s;BlobEndpoint=%s;", b.cfg.AzureBlob.EndpointSchema, b.cfg.AzureBlob.AccountName, b.cfg.AzureBlob.AccountKey, azblobBackupURL.String())
 }
 
+func (b *Backuper) getBackupPath() (string, error) {
+	switch b.cfg.General.RemoteStorage {
+	case "s3":
+		return b.cfg.S3.Path, nil
+	case "azblob":
+		return b.cfg.AzureBlob.Path, nil
+	case "gcs":
+		return b.cfg.GCS.Path, nil
+	case "cos":
+		return b.cfg.COS.Path, nil
+	case "ftp":
+		return b.cfg.FTP.Path, nil
+	case "sftp":
+		return b.cfg.SFTP.Path, nil
+	}
+	return "", errors.Errorf("getBackupPath: unsupported remote_storage: %s", b.cfg.General.RemoteStorage)
+}
+
 func (b *Backuper) getObjectDiskPath() (string, error) {
 	if b.cfg.General.RemoteStorage == "s3" {
 		return b.cfg.S3.ObjectDiskPath, nil
@@ -374,21 +425,21 @@ func (b *Backuper) getObjectDiskPath() (string, error) {
 		return b.cfg.SFTP.ObjectDiskPath, nil
 	}
 
-	return "", errors.WithStack(fmt.Errorf("cleanBackupObjectDisks: requesst object disks path but have unsupported remote_storage: %s", b.cfg.General.RemoteStorage))
+	return "", errors.Errorf("cleanBackupObjectDisks: request object disks path but have unsupported remote_storage: %s", b.cfg.General.RemoteStorage)
 }
 
 func (b *Backuper) getTablesDiffFromLocal(ctx context.Context, diffFrom string, tablePattern string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
 	tablesForUploadFromDiff = make(map[metadata.TableTitle]metadata.TableMetadata)
 	diffFromBackup, err := b.ReadBackupMetadataLocal(ctx, diffFrom)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithMessage(err, "b.ReadBackupMetadataLocal")
 	}
 	if len(diffFromBackup.Tables) != 0 {
 		metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
 		// empty partitions, because we don't want filter
 		diffTablesList, _, err := b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, []string{})
 		if err != nil {
-			return nil, err
+			return nil, errors.WithMessage(err, "b.getTableListByPatternLocal")
 		}
 		for _, t := range diffTablesList {
 			tablesForUploadFromDiff[metadata.TableTitle{
@@ -414,7 +465,7 @@ func (b *Backuper) getTablesDiffFromRemote(ctx context.Context, diffFromRemote s
 		}
 	}
 	if diffRemoteMetadata == nil {
-		return nil, fmt.Errorf("%s not found on remote storage", diffFromRemote)
+		return nil, errors.Errorf("%s not found on remote storage", diffFromRemote)
 	}
 
 	if len(diffRemoteMetadata.Tables) != 0 {
@@ -456,6 +507,12 @@ func (b *Backuper) adjustResumeFlag(resume bool) {
 		resume = true
 	}
 	b.resume = resume
+}
+
+func (b *Backuper) addShadowBackupUUID(uuid string) {
+	b.shadowBackupUUIDsMutex.Lock()
+	b.shadowBackupUUIDs = append(b.shadowBackupUUIDs, uuid)
+	b.shadowBackupUUIDsMutex.Unlock()
 }
 
 // CheckDisksUsage - https://github.com/Altinity/clickhouse-backup/issues/878
