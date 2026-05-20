@@ -392,6 +392,24 @@ func (b *Backuper) buildEmbeddedLocationAZBLOB() string {
 	return fmt.Sprintf("DefaultEndpointsProtocol=%s;AccountName=%s;AccountKey=%s;BlobEndpoint=%s;", b.cfg.AzureBlob.EndpointSchema, b.cfg.AzureBlob.AccountName, b.cfg.AzureBlob.AccountKey, azblobBackupURL.String())
 }
 
+func (b *Backuper) getBackupPath() (string, error) {
+	switch b.cfg.General.RemoteStorage {
+	case "s3":
+		return b.cfg.S3.Path, nil
+	case "azblob":
+		return b.cfg.AzureBlob.Path, nil
+	case "gcs":
+		return b.cfg.GCS.Path, nil
+	case "cos":
+		return b.cfg.COS.Path, nil
+	case "ftp":
+		return b.cfg.FTP.Path, nil
+	case "sftp":
+		return b.cfg.SFTP.Path, nil
+	}
+	return "", errors.Errorf("getBackupPath: unsupported remote_storage: %s", b.cfg.General.RemoteStorage)
+}
+
 func (b *Backuper) getObjectDiskPath() (string, error) {
 	if b.cfg.General.RemoteStorage == "s3" {
 		return b.cfg.S3.ObjectDiskPath, nil
