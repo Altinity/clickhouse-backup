@@ -49,6 +49,8 @@ func TestServerAPI(t *testing.T) {
 
 	testAPIBackupTablesRemote(r, env)
 
+	testAPIBackupTablesLocal(r, env)
+
 	testAPIBackupRestoreRemote(r, env)
 
 	testAPIBackupStatus(r, env)
@@ -525,6 +527,43 @@ func testAPIBackupTablesRemote(r *require.Assertions, env *TestEnvironment) {
 	r.NotContains(out, "INFORMATION_SCHEMA")
 	r.NotContains(out, "information_schema")
 	r.NotContains(out, "command is already running")
+	// /backup/tables?remote_backup=... must include per-table size and parts (https://github.com/Altinity/clickhouse-backup/issues/1388).
+	r.Contains(out, `"size":`)
+	r.Contains(out, `"parts":`)
+	r.Contains(out, `"total_bytes":`)
+	r.Contains(out, `"disks":[`)
+}
+
+// testAPIBackupTablesLocal exercises /backup/tables?local_backup=<name>
+// (https://github.com/Altinity/clickhouse-backup/issues/1388) — listing tables
+// from a local backup without a live ClickHouse query, with size and parts.
+func testAPIBackupTablesLocal(r *require.Assertions, env *TestEnvironment) {
+	log.Debug().Msg("Check /backup/tables?local_backup=z_backup_1")
+	out, err := env.DockerExecOut(
+		"clickhouse-backup",
+		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables?local_backup=z_backup_1\"",
+	)
+	r.NoError(err, "%s\nunexpected GET /backup/tables?local_backup=z_backup_1 error: %v", out, err)
+	r.Contains(out, "long_schema")
+	r.NotContains(out, "Connection refused")
+	r.NotContains(out, "another operation is currently running")
+	r.NotContains(out, "\"status\":\"error\"")
+	r.NotContains(out, "system")
+	r.NotContains(out, "INFORMATION_SCHEMA")
+	r.NotContains(out, "information_schema")
+	r.Contains(out, `"size":`)
+	r.Contains(out, `"parts":`)
+	r.Contains(out, `"total_bytes":`)
+	r.Contains(out, `"disks":[`)
+
+	// Filtered by table pattern.
+	out, err = env.DockerExecOut(
+		"clickhouse-backup",
+		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables?local_backup=z_backup_1&table=long_schema.t0\"",
+	)
+	r.NoError(err, "%s\nunexpected GET /backup/tables?local_backup=z_backup_1&table=long_schema.t0 error: %v", out, err)
+	r.Contains(out, `"table":"t0"`)
+	r.NotContains(out, `"table":"t1"`)
 }
 
 func testAPIBackupVersion(r *require.Assertions, env *TestEnvironment) {

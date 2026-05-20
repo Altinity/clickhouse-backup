@@ -775,7 +775,13 @@ func (api *APIServer) httpKillHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// httpTablesHandler - display list of tables
+// httpTablesHandler - display list of tables.
+// Query parameters:
+//   - table            - filter by db.table glob pattern (comma-separated)
+//   - remote_backup    - list tables from a remote backup (per-table size and parts)
+//   - local_backup     - list tables from a local backup (per-table size and parts), no live ClickHouse query needed
+//
+// /backup/tables/all also returns tables that match skip_tables.
 func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) {
 	cfg, err := api.ReloadConfig(w, "tables")
 	if err != nil {
@@ -783,18 +789,34 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	b := backup.NewBackuper(cfg)
 	q := r.URL.Query()
-	var tables []clickhouse.Table
-	// https://github.com/Altinity/clickhouse-backup/issues/778
-	if remoteBackup, exists := api.getQueryParameter(q, "remote_backup"); exists {
-		tables, err = b.GetTablesRemote(context.Background(), remoteBackup, q.Get("table"))
-	} else {
-		tables, err = b.GetTables(context.Background(), q.Get("table"))
+	tablePattern := q.Get("table")
+	printAll := r.URL.Path == "/backup/tables/all"
+
+	// https://github.com/Altinity/clickhouse-backup/issues/1388
+	if localBackup, exists := api.getQueryParameter(q, "local_backup"); exists {
+		rows, err := b.GetTableRowsForLocalBackup(context.Background(), localBackup, tablePattern, printAll)
+		if err != nil {
+			api.writeError(w, http.StatusInternalServerError, "tables", err)
+			return
+		}
+		api.sendJSONEachRow(w, http.StatusOK, rows)
+		return
 	}
+	if remoteBackup, exists := api.getQueryParameter(q, "remote_backup"); exists {
+		rows, err := b.GetTableRowsForRemoteBackup(context.Background(), remoteBackup, tablePattern, printAll)
+		if err != nil {
+			api.writeError(w, http.StatusInternalServerError, "tables", err)
+			return
+		}
+		api.sendJSONEachRow(w, http.StatusOK, rows)
+		return
+	}
+	tables, err := b.GetTables(context.Background(), tablePattern)
 	if err != nil {
 		api.writeError(w, http.StatusInternalServerError, "tables", err)
 		return
 	}
-	if r.URL.Path == "/backup/tables/all" {
+	if printAll {
 		api.sendJSONEachRow(w, http.StatusOK, tables)
 		return
 	}
