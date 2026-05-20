@@ -67,8 +67,8 @@ The testing of `clickhouse-backup` FIPS builds SHALL be started on May 7, 2026 a
 
 The following team members SHALL be dedicated to this release:
 
-* Vitalii Sviderskyi (manager, regression tests)
-* Vitaliy Zakaznikov (regression tests)
+* Vitalii Sviderskyi (regression tests)
+* Vitaliy Zakaznikov (manager, regression tests)
 * Eugene Klimov (clickhouse-backup, FIPS build and Docker image)
 
 ## End User Recommendations
@@ -154,17 +154,19 @@ Results:
 
 * TBD
 
-Check that the FIPS-built binary reports the FIPS 140-3 module as active in its version output.
+Check that the FIPS-built binary reports the FIPS 140-3 module as active in its version output, and that the binary itself is built with `GOFIPS140=v1.0.0`.
 
 Run:
 
 ```
 clickhouse-backup-fips --version
+go version -m $(which clickhouse-backup-fips)
 ```
 
 Expected result:
 
-* The output contains the line `FIPS 140-3: true` (this corresponds to Go's `crypto/fips140.Enabled()` returning true at runtime).
+* `--version` output contains the line `FIPS 140-3: true` (this corresponds to Go's `crypto/fips140.Enabled()` returning true at runtime).
+* `go version -m` output contains `build	GOFIPS140=v1.0.0`.
 
 #### GODEBUG `fips140` Modes
 
@@ -194,6 +196,7 @@ For every mode run both `--version` and a basic `tables` command against the FIP
     * `--version` reports `FIPS 140-3: true`.
     * `tables` against an approved TLS configuration returns the list of tables.
     * Non-approved cryptographic operations cause the binary to fail.
+    * The full `clickhouse-backup` TestFlows regression suite runs in this mode without panics or strict-FIPS-only regressions.
 
 #### FIPS Integrity Self-test Failure on Tampered Binary
 
@@ -289,6 +292,10 @@ Non-FIPS profiles (handshake MUST be rejected):
 
 * `openssl s_client -tls1_3 -ciphersuites TLS_CHACHA20_POLY1305_SHA256` — expected result: handshake is rejected (`alert handshake failure` or equivalent).
 * `openssl s_client -tls1_2 -cipher ECDHE-RSA-CHACHA20-POLY1305` — expected result: handshake is rejected.
+* `openssl s_client -tls1_2 -cipher RC4-SHA` — expected result: handshake is rejected (legacy/weak cipher).
+* `openssl s_client -tls1_2 -cipher DES-CBC3-SHA` — expected result: handshake is rejected (legacy/weak cipher).
+* `openssl s_client -tls1` — expected result: handshake is rejected (TLSv1.0 is below the FIPS minimum protocol version).
+* `openssl s_client -tls1_1` — expected result: handshake is rejected (TLSv1.1 is below the FIPS minimum protocol version).
 
 #### Outbound TLS to ClickHouse Server With `openssl s_server`
 
