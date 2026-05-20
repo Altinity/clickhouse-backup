@@ -51,7 +51,6 @@ type BackupDestination struct {
 	compressionLevel  int
 }
 
-
 func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Backup, cfg *config.Config, retrierClassifier retrier.Classifier) error {
 	retry := retrier.New(retrier.ExponentialBackoff(cfg.General.RetriesOnFailure, common.AddRandomJitter(cfg.General.RetriesDuration, cfg.General.RetriesJitter)), retrierClassifier)
 
@@ -314,7 +313,10 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 				lastModified = f.LastModified()
 				return io.EOF // stop after first entry
 			})
-			_ = walkErr // Walk returns io.EOF, that's fine
+			// Walk returns io.EOF, that's fine
+			if !errors.Is(walkErr, io.EOF) {
+				return []Backup{}, walkErr
+			}
 			if !found {
 				return []Backup{}, nil
 			}
