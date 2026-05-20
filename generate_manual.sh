@@ -16,7 +16,9 @@ cmds=(
   clean
   clean_remote_broken
   clean_local_broken
+  clean_broken_retention
   watch
+  acvp
   server
 )
 for cmd in  ${cmds[@]}; do

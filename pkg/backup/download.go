@@ -320,6 +320,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		"object_disk_size": utils.FormatBytes(backupMetadata.ObjectDiskSize),
 		"version":          backupVersion,
 	}).Msg("done")
+
 	return nil
 }
 
@@ -1475,3 +1476,4 @@ func (b *Backuper) getDownloadDiskForNonExistsDisk(notExistsDiskType string, fil
 	}
 	return false, filteredDisks[leastUsedIdx].Name, filteredDisks[leastUsedIdx].FreeSpace - partSize, nil
 }
+

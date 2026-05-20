@@ -313,6 +313,24 @@ OPTIONS:
    --environment-override value, --env value  override any environment variable via CLI parameter
    
 ```
+### CLI command - clean_broken_retention
+```
+NAME:
+   clickhouse-backup clean_broken_retention - Remove orphan entries under remote `path` and `object_disks_path` that are not in the live backup list
+
+USAGE:
+   clickhouse-backup clean_broken_retention [--commit] [--keep=glob ...]
+
+DESCRIPTION:
+   Walks top-level of remote `path` and `object_disks_path`, batch-deletes (with retry) every entry that is not a live backup and does not match any --keep glob. Runs in dry-run mode unless --commit is set.
+
+OPTIONS:
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   --keep value                               Glob (path.Match syntax) of backup names to preserve in addition to live backups; can be passed multiple times
+   --commit                                   Actually delete orphans; without this flag the command only logs what would be deleted
+   
+```
 ### CLI command - watch
 ```
 NAME:
@@ -346,6 +364,14 @@ Look at the system.parts partition and partition_id fields for details https://c
    --skip-projections db_pattern.table_pattern:projections_pattern                 Skip make and upload hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --delete, --delete-source, --delete-local                                       explicitly delete local backup during upload
    
+```
+### CLI command - acvp
+```
+NAME:
+   clickhouse-backup acvp - Run ACVP wrapper protocol over stdin/stdout
+
+USAGE:
+   clickhouse-backup acvp
 ```
 ### CLI command - server
 ```

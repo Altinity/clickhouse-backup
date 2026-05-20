@@ -71,7 +71,7 @@ jobs:
         with:
           VAULT_PASSWORD: ${{ secrets.VAULT_PASSWORD }}
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: build-artifacts
           path: |
@@ -82,7 +82,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: build-test-artifacts
           path: |
@@ -110,8 +110,7 @@ jobs:
           - '24.3'
           - '24.8'
           - '25.3'
-# wait https://github.com/ClickHouse/ClickHouse/commit/393f47f4e1ed708d7dd48be09cc90f94e091359c, 25.8.24
-          - '25.8.21'
+          - '25.8'
           - '26.3'
     steps:
       - name: Checkout project
@@ -180,7 +179,7 @@ jobs:
           flag-name: testflows-${{ matrix.clickhouse }}
       # todo possible failures  https://github.com/actions/upload-artifact/issues/270
       - name: Upload testflows logs
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: testflows-logs-and-reports-${{ matrix.clickhouse }}-${{ github.run_id }}
           path: |
@@ -214,8 +213,7 @@ jobs:
           - '24.3'
           - '24.8'
           - '25.3'
-# wait https://github.com/ClickHouse/ClickHouse/commit/393f47f4e1ed708d7dd48be09cc90f94e091359c, 25.8.24
-          - '25.8.21'
+          - '25.8'
           - '26.3'
     steps:
       - name: Checkout project
@@ -354,9 +352,9 @@ jobs:
           echo "docker_tag=${DOCKER_TAG:-dev}" >> $GITHUB_OUTPUT
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Building docker image
         env:
