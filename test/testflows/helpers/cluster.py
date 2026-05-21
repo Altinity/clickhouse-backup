@@ -243,19 +243,6 @@ class BackupNode(Node):
         )
         return "running" in (r.output or "")
 
-    def copy_binary_for_tamper(self, source="/bin/clickhouse-backup-fips",
-                               target="/tmp/clickhouse-backup-fips-tampered"):
-        """Make a writable copy of the binary so tests can corrupt it.
-
-        Used by FIPS integrity (TC5) checks. The original binary stays intact
-        because it's a read-only bind mount from the host.
-        """
-        self.cmd(
-            f"cp -f {shlex.quote(source)} {shlex.quote(target)} && chmod +x {shlex.quote(target)}",
-            exitcode=0,
-        )
-        return target
-
 
 class ClickHouseNode(Node):
     """Node with ClickHouse server.
@@ -1507,9 +1494,14 @@ class Cluster(object):
                 # via ``volumes_from_name="clickhouse1"`` below (the same static
                 # certs the cluster bind-mounts on every CH node), so FIPS scenarios
                 # never need to generate or relocate certificates.
+                # Helper scripts (e.g. ``tamper_go_fips_checksum.sh``) are
+                # bind-mounted read-only so FIPS scenarios can invoke the
+                # exact same script paths the test plan documents.
+                backup_fips_scripts_dir = os.path.join(tests_dir, "scripts")
                 backup_fips_volumes = [
                     (backup_fips_binary, "/bin/clickhouse-backup-fips"),
                     (backup_config_mount, "/etc/clickhouse-backup"),
+                    (backup_fips_scripts_dir, "/scripts"),
                     (coverage_dir, "/tmp/_coverage_"),
                 ]
                 self._start_container(
@@ -1535,7 +1527,9 @@ class Cluster(object):
                         "set -x && "
                         "apt-get update && "
                         "apt-get install -y --no-install-recommends "
-                        "ca-certificates tzdata bash curl openssl procps binutils && "
+                        # binutils -> readelf (.go.fipsinfo offset lookup),
+                        # python3 -> tamper_go_fips_checksum.sh byte editor.
+                        "ca-certificates tzdata bash curl openssl procps binutils python3 && "
                         "update-ca-certificates && "
                         # Do not start the binary; tests start/stop it explicitly.
                         "exec sleep infinity"
