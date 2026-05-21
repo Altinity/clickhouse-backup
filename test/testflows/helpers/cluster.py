@@ -133,6 +133,27 @@ class Node(object):
 
         return r
 
+    def write_file(self, path, contents, mode=None, steps=False):
+        """Write text ``contents`` to ``path`` inside this node's container.
+
+        Uses base64 encoding so the data round-trips through the docker-exec
+        bash channel safely (no quote/newline escaping issues). Useful for
+        dropping ad-hoc YAML/PEM/XML test fixtures into a container without
+        committing them to ``configs/`` or generating them in test code.
+        """
+        import base64
+        data = contents if isinstance(contents, (bytes, bytearray)) else contents.encode("utf-8")
+        b64 = base64.b64encode(data).decode("ascii")
+        path_q = shlex.quote(path)
+        # Use here-string to avoid shell expansion of the encoded payload.
+        self.cmd(
+            f"bash -lc 'set -e; echo {b64} | base64 -d > {path_q}"
+            + (f"; chmod {mode} {path_q}" if mode else "")
+            + "'",
+            exitcode=0,
+            steps=steps,
+        )
+
 
 class BackupNode(Node):
     """Node helpers for clickhouse-backup process control inside the container.
@@ -165,7 +186,8 @@ class BackupNode(Node):
         :param extra_env: optional dict of env vars (e.g. ``{"GODEBUG": "fips140=only"}``)
             that will be exported in front of the binary invocation.
         :param listen_port: REST API port to wait on (defaults to 7171).
-        :param wait_ready: poll ``/backup/status`` until it returns 200 or timeout.
+        :param wait_ready: poll the listen port over TCP until it accepts a
+            connection or ``timeout`` seconds elapse.
         :param timeout: how long to wait for readiness, in seconds.
         """
         env_prefix = self._format_env(extra_env)
@@ -180,11 +202,14 @@ class BackupNode(Node):
             exitcode=0,
         )
         if wait_ready:
+            # TCP-only connection check: works whether the listener is plain HTTP or
+            # TLS (api.secure: true). Avoids tying the readiness check to an
+            # HTTP method that may be wrapped in TLS.
             self.cmd(
                 f"bash -lc 'for i in $(seq 1 {int(timeout)}); do "
-                f"curl -fsS http://localhost:{int(listen_port)}/backup/status >/dev/null && exit 0; "
+                f"timeout 1 bash -c \"</dev/tcp/localhost/{int(listen_port)}\" >/dev/null 2>&1 && exit 0; "
                 f"sleep 1; done; "
-                f"echo \"server did not become ready in {int(timeout)}s\"; "
+                f"echo \"server did not become ready on :{int(listen_port)} in {int(timeout)}s\"; "
                 f"tail -n 50 {log_q} || true; exit 1'",
                 exitcode=0,
                 timeout=int(timeout) + 30,
@@ -1478,12 +1503,14 @@ class Cluster(object):
         )
         if os.path.isfile(backup_fips_binary):
             with And("starting clickhouse_backup_fips"):
+                # The container picks up ``/etc/clickhouse-server/ssl/``
+                # via ``volumes_from_name="clickhouse1"`` below (the same static
+                # certs the cluster bind-mounts on every CH node), so FIPS scenarios
+                # never need to generate or relocate certificates.
                 backup_fips_volumes = [
                     (backup_fips_binary, "/bin/clickhouse-backup-fips"),
                     (backup_config_mount, "/etc/clickhouse-backup"),
                     (coverage_dir, "/tmp/_coverage_"),
-                    # Reuse static SSL material from cluster — never generate certs in tests.
-                    (os.path.join(tests_dir, "configs/clickhouse/ssl"), "/etc/clickhouse-backup/ssl"),
                 ]
                 self._start_container(
                     name="clickhouse_backup_fips",
