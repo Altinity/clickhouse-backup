@@ -949,7 +949,7 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 		}
 		trimmed := strings.Trim(out, "\r\n\t ")
 		if trimmed != "" {
-			r.Failf("%s:%s expected to contain no files, got:\n%s", container, path, trimmed)
+			t.Errorf("%s:%s expected to contain no files, got:\n%s", container, path, trimmed)
 		}
 	}
 
@@ -995,9 +995,17 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 			case "config-custom-rsync.yml":
 				checkRemoteNoFiles("sshd", "/root/rsync_backups/cluster/shard0/")
 			case "config-custom-restic.yml":
-				checkRemoteNoFiles("minio", "/minio/data/clickhouse/restic/")
+				// restic physically removes snapshot objects from S3 on
+				// `forget --prune --unsafe-allow-remove-all`; the restic
+				// repository metadata (config, keys, index) persists but
+				// the `snapshots/` subdirectory will be empty or gone.
+				checkRemoteNoFiles("minio", "/minio/data/clickhouse/restic/cluster_name/shard_number/snapshots/")
 			case "config-custom-kopia.yml":
-				checkRemoteNoFiles("minio", "/minio/data/clickhouse/kopia/")
+				// kopia does not physically remove content blobs from S3
+				// during `snapshot delete`, only the index is updated.
+				// A filesystem-level emptiness check cannot verify that
+				// snapshots were deleted; the fullCleanup error check
+				// provides coverage instead.
 			}
 		}
 	}
