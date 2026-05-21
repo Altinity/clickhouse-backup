@@ -42,6 +42,7 @@ def regression(self, local):
     nodes = {
         "clickhouse": ("clickhouse1", "clickhouse2"),
         "clickhouse_backup": ("clickhouse_backup",),
+        "clickhouse_backup_fips": ("clickhouse_backup_fips",),
         "kafka": ("kafka",),
         "mysql": ("mysql",),
         "postgres": ("postgres",),
@@ -79,6 +80,16 @@ def regression(self, local):
 
             self.context.backup_api_port = cluster.get_mapped_port("clickhouse_backup", 7171)
 
+            # FIPS backup container is optional: only present when the FIPS-compatible
+            # binary was built (``make build-race-fips-docker``). FIPS scenarios skip
+            # gracefully when this is None (see tests/fips_140_3.py).
+            if cluster.has_node("clickhouse_backup_fips"):
+                self.context.backup_fips = self.context.cluster.node("clickhouse_backup_fips")
+                self.context.backup_fips_api_port = cluster.get_mapped_port("clickhouse_backup_fips", 7172)
+            else:
+                self.context.backup_fips = None
+                self.context.backup_fips_api_port = None
+
             self.context.database_engines_names = {"Atomic": "atmc", "Ordinary": "ordn"}
             self.context.table_engines = ["MergeTree", "ReplacingMergeTree", "SummingMergeTree", "CollapsingMergeTree",
                                           "VersionedCollapsingMergeTree"]
@@ -87,6 +98,7 @@ def regression(self, local):
 
             self.context.all_columns = simple_data_types_columns
 
+            Scenario(run=load("clickhouse_backup.tests.fips_140_3", "fips_140_3"), flags=TE)
             Scenario(run=load("clickhouse_backup.tests.smoke", "smoke"), flags=TE)
 
             Scenario(run=load("clickhouse_backup.tests.cloud_storage", "cloud_storage"))
