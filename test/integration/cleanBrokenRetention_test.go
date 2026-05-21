@@ -272,19 +272,19 @@ func gcsEmulatorCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 		obj := root + "/" + name
 		env.DockerExecNoError(r, "gcs", "sh", "-c", fmt.Sprintf(
 			`echo garbage > /tmp/data.bin && `+
-				`curl -s -o /dev/null -X POST "%s/upload/storage/v1/b/%s/o?name=%s/data.bin&uploadType=media" -H "Content-Type: application/octet-stream" --data-binary @/tmp/data.bin && `+
-				`curl -s -o /dev/null -X POST "%s/upload/storage/v1/b/%s/o?name=%s/sub/nested.bin&uploadType=media" -H "Content-Type: application/octet-stream" --data-binary @/tmp/data.bin`,
+				`curl -g -s -o /dev/null -X POST "%s/upload/storage/v1/b/%s/o?name=%s/data.bin&uploadType=media" -H "Content-Type: application/octet-stream" --data-binary @/tmp/data.bin && `+
+				`curl -g -s -o /dev/null -X POST "%s/upload/storage/v1/b/%s/o?name=%s/sub/nested.bin&uploadType=media" -H "Content-Type: application/octet-stream" --data-binary @/tmp/data.bin`,
 			baseURL, bucket, obj, baseURL, bucket, obj))
 	}
 	assertExists := func(env *TestEnvironment, r *require.Assertions, root, name string) {
 		out, err := env.DockerExecOut("gcs", "sh", "-c", fmt.Sprintf(
-			`curl -s "%s/storage/v1/b/%s/o?prefix=%s/"`, baseURL, bucket, root+"/"+name))
+			`curl -g -s "%s/storage/v1/b/%s/o?prefix=%s/"`, baseURL, bucket, root+"/"+name))
 		r.NoError(err, "assertExists list failed: %s", out)
 		r.Contains(out, "data.bin", "expected data.bin under %s/%s", root, name)
 	}
 	assertGone := func(env *TestEnvironment, r *require.Assertions, root, name string) {
 		out, _ := env.DockerExecOut("gcs", "sh", "-c", fmt.Sprintf(
-			`curl -s "%s/storage/v1/b/%s/o?prefix=%s/"`, baseURL, bucket, root+"/"+name))
+			`curl -g -s "%s/storage/v1/b/%s/o?prefix=%s/"`, baseURL, bucket, root+"/"+name))
 		r.NotContains(out, "data.bin", "expected no blobs under %s/%s", root, name)
 	}
 	return cleanBrokenRetentionCase{

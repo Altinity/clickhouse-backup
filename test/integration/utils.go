@@ -490,7 +490,7 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 
 func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	// Dump container logs when test fails to aid debugging
-	if t.Failed() {
+	if t.Failed() && os.Getenv("DUMP_FAILED_TEST_CONTAINER_LOGS") != "" {
 		t.Logf("=== %s FAILED, dumping container logs ===", t.Name())
 		env.tc.DumpAllContainerLogs(t.Context())
 	}

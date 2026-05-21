@@ -694,6 +694,12 @@ func (b *Backuper) CleanBrokenRetention(commandId int, includeGlobs, excludeGlob
 	if err != nil {
 		return errors.WithMessage(err, "b.getObjectDiskPath")
 	}
+	if objectDiskPath != "" {
+		objectDiskPath, err = b.ch.ApplyMacros(ctx, objectDiskPath)
+		if err != nil {
+			return errors.WithMessage(err, "ApplyMacros object_disk_path")
+		}
+	}
 
 	topObjName := ""
 	if objectDiskPath != "" {
@@ -703,6 +709,10 @@ func (b *Backuper) CleanBrokenRetention(commandId int, includeGlobs, excludeGlob
 	backupPath, err := b.getBackupPath()
 	if err != nil {
 		return errors.WithMessage(err, "b.getBackupPath")
+	}
+	backupPath, err = b.ch.ApplyMacros(ctx, backupPath)
+	if err != nil {
+		return errors.WithMessage(err, "ApplyMacros path")
 	}
 
 	orphansInPath, err := b.findOrphanTopLevelNames(ctx, bd, backupPath, isKept)
