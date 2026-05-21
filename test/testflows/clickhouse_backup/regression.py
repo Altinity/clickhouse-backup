@@ -9,6 +9,7 @@ import os
 import shutil
 import sys
 import yaml
+import testflows.settings as testflows_settings
 from testflows.core import *
 
 append_path(sys.path, "..")
@@ -17,6 +18,8 @@ from helpers.argparser import argparser
 
 from clickhouse_backup.requirements.requirements import *
 from clickhouse_backup.tests.common import simple_data_types_columns
+
+testflows_settings.show_skipped = True # used for debug if a check is unintentionally skipped
 
 
 xfails = {
@@ -98,7 +101,7 @@ def regression(self, local):
 
             self.context.all_columns = simple_data_types_columns
 
-            Scenario(run=load("clickhouse_backup.tests.fips_140_3", "fips_140_3"), flags=TE)
+            Feature(run=load("clickhouse_backup.tests.fips_140_3", "fips_140_3"), flags=TE)
             Scenario(run=load("clickhouse_backup.tests.smoke", "smoke"), flags=TE)
 
             Scenario(run=load("clickhouse_backup.tests.cloud_storage", "cloud_storage"))

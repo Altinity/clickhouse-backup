@@ -17,8 +17,8 @@ clickhouse:
   config_dir: /etc/clickhouse-server
   host: clickhouse1
   port: 9000
-  username: backup
-  password: backup
+  username: ''
+  password: ''
   timeout: 5s
   secure: false
 api:
