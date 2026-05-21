@@ -30,8 +30,8 @@ azblob:
   endpoint_suffix: azure:10000
   endpoint_schema: http
   container: container1
-  object_disk_path: object_disk/{cluster}/{shard}
-  path: backup/{cluster}/{shard}
+  object_disk_path: object_disk/{cluster}/{shard}/{version}
+  path: backup/{cluster}/{shard}/{version}
   compression_format: none
 api:
   listen: :7171

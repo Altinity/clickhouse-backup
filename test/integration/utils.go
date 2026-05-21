@@ -26,6 +26,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/rs/zerolog/pkgerrors"
 	"golang.org/x/mod/semver"
+	"gopkg.in/yaml.v3"
 
 	_ "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/google/uuid"
@@ -933,26 +934,31 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 			env.ch.Close()
 		}
 	}
-	checkRemoteDir := func(expected string, container string, cmd ...string) {
-		out, err := env.DockerExecOut(container, cmd...)
-		r.NoError(err, "%s\nunexpected checkRemoteDir error: %v", out, err)
-		r.Equal(expected, strings.Trim(out, "\r\n\t "))
+	// checkRemoteNoFiles verifies that no regular files exist under `path` on
+	// `container`. We intentionally use `find -type f` instead of `ls`: with the
+	// {version} macro now appended to every backup path, SFTP/FTP servers leave
+	// empty per-version directories behind on cleanup (mkdir-created, never
+	// auto-removed). What matters is that no actual files remain.
+	checkRemoteNoFiles := func(container, path string) {
+		out, err := env.DockerExecOut(container, "sh", "-c", "find "+path+" -type f")
+		r.NoError(err, "%s\nunexpected checkRemoteNoFiles error: %v", out, err)
+		r.Empty(strings.Trim(out, "\r\n\t "), "%s:%s expected to contain no files, got:\n%s", container, path, out)
 	}
 	if remoteStorageType == "S3" || remoteStorageType == "S3_EMBEDDED_URL" {
-		checkRemoteDir("total 0", "minio", "bash", "-c", "ls -lh /minio/data/clickhouse/")
+		checkRemoteNoFiles("minio", "/minio/data/clickhouse/")
 	}
 	if remoteStorageType == "SFTP" {
-		checkRemoteDir("total 0", "sshd", "bash", "-c", "ls -lh /root/")
+		checkRemoteNoFiles("sshd", "/root/")
 	}
 	if remoteStorageType == "FTP" {
 		if isAdvancedMode() {
-			checkRemoteDir("total 0", "ftp", "bash", "-c", "ls -lh /home/ftpusers/test_backup/backup/")
+			checkRemoteNoFiles("ftp", "/home/ftpusers/test_backup/backup/")
 		} else {
-			checkRemoteDir("total 0", "ftp", "sh", "-c", "ls -lh /home/test_backup/backup/")
+			checkRemoteNoFiles("ftp", "/home/test_backup/backup/")
 		}
 	}
 	if remoteStorageType == "GCS_EMULATOR" {
-		checkRemoteDir("total 0", "gcs", "sh", "-c", "ls -lh /data/altinity-qa-test/")
+		checkRemoteNoFiles("gcs", "/data/altinity-qa-test/")
 	}
 }
 
@@ -1526,3 +1532,58 @@ func runClickHouseClientInsertSystemBackupActions(r *require.Assertions, env *Te
 // Unused import placeholders to ensure compilation
 var _ = bufio.Scanner{}
 var _ = rand.Int
+
+// resolveConfigPaths reads test/integration/configs/<configFile>, picks
+// path/object_disk_path for the configured remote_storage section, and asks
+// the live ClickHouse server (via ApplyMacros) to expand {cluster}/{shard}/
+// {version} the same way it would for the running clickhouse-backup binary.
+//
+// Pass configFile as the basename (e.g. "config-gcs.yml") — integration tests
+// run from test/integration/, so configs/<name> resolves. env.ch is connected
+// on demand.
+func (env *TestEnvironment) resolveConfigPaths(r *require.Assertions, configFile string) (string, string) {
+	raw, err := os.ReadFile("configs/" + configFile)
+	r.NoError(err, "resolveConfigPaths read %s", configFile)
+	cfg := config.DefaultConfig()
+	r.NoError(yaml.Unmarshal(raw, cfg), "resolveConfigPaths unmarshal %s", configFile)
+	var rawPath, rawObjPath string
+	switch cfg.General.RemoteStorage {
+	case "s3":
+		rawPath, rawObjPath = cfg.S3.Path, cfg.S3.ObjectDiskPath
+	case "gcs":
+		rawPath, rawObjPath = cfg.GCS.Path, cfg.GCS.ObjectDiskPath
+	case "azblob":
+		rawPath, rawObjPath = cfg.AzureBlob.Path, cfg.AzureBlob.ObjectDiskPath
+	case "cos":
+		rawPath, rawObjPath = cfg.COS.Path, cfg.COS.ObjectDiskPath
+	case "ftp":
+		rawPath, rawObjPath = cfg.FTP.Path, cfg.FTP.ObjectDiskPath
+	case "sftp":
+		rawPath, rawObjPath = cfg.SFTP.Path, cfg.SFTP.ObjectDiskPath
+	default:
+		r.FailNow(fmt.Sprintf("resolveConfigPaths %s: unsupported remote_storage=%q", configFile, cfg.General.RemoteStorage))
+	}
+	r.NoError(env.ch.Connect(), "resolveConfigPaths %s: ch.Connect", configFile)
+	ctx := context.Background()
+	resolvedPath, err := env.ch.ApplyMacros(ctx, rawPath)
+	r.NoError(err, "resolveConfigPaths %s ApplyMacros(path=%q)", configFile, rawPath)
+	resolvedObjPath, err := env.ch.ApplyMacros(ctx, rawObjPath)
+	r.NoError(err, "resolveConfigPaths %s ApplyMacros(object_disk_path=%q)", configFile, rawObjPath)
+	return resolvedPath, resolvedObjPath
+}
+
+// minioBackupFSPath returns the absolute filesystem path on the `minio`
+// container for the configured backup `path` plus the given suffix. Used by
+// tests that previously hardcoded "/minio/data/clickhouse/backup/cluster/0/..."
+// and now have to follow the {version} macro added to all configs.
+//
+// Example: minioBackupFSPath(r, "config-s3.yml", "skip_disk_upload_test/shadow/test_skip_disks/table_default")
+// returns "/minio/data/clickhouse/backup/cluster/0/25_8_24/skip_disk_upload_test/shadow/test_skip_disks/table_default".
+func (env *TestEnvironment) minioBackupFSPath(r *require.Assertions, configFile, suffix string) string {
+	cfgPath, _ := env.resolveConfigPaths(r, configFile)
+	p := "/minio/data/clickhouse/" + cfgPath
+	if suffix != "" {
+		p += "/" + suffix
+	}
+	return p
+}

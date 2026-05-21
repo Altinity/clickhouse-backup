@@ -14,8 +14,8 @@ clickhouse:
   timeout: 10m
 gcs:
   bucket: altinity-qa-test
-  path: backup/{cluster}/{shard}
-  object_disk_path: object_disks/{cluster}/{shard}
+  path: backup/{cluster}/{shard}/{version}
+  object_disk_path: object_disks/{cluster}/{shard}/{version}
   credentials_file: /etc/clickhouse-backup/credentials.json
   compression_format: tar
   object_labels:

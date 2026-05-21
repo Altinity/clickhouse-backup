@@ -29,8 +29,8 @@ s3:
   region: ${QA_AWS_REGION}
   acl: private
   force_path_style: false
-  path: backup/{cluster}/{shard}
-  object_disk_path: object_disks/{cluster}/{shard}
+  path: backup/{cluster}/{shard}/{version}
+  object_disk_path: object_disks/{cluster}/{shard}/{version}
   disable_ssl: false
   compression_format: tar
   allow_multipart_download: false

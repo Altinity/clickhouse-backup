@@ -826,3 +826,15 @@ cat <<EOT > /etc/clickhouse-server/users.d/database_atomic_wait_for_drop_and_det
 </yandex>
 EOT
 fi
+
+# {version} macro for clickhouse-backup config path/object_disk_path isolation
+# across parallel CI matrix jobs sharing the same remote bucket (e.g. real GCS,
+# real S3, COS). Dots are replaced with underscores to keep the value safe as
+# a path component.
+cat <<EOT > /etc/clickhouse-server/config.d/macros_version.xml
+<yandex>
+  <macros>
+    <version>${CLICKHOUSE_VERSION//./_}</version>
+  </macros>
+</yandex>
+EOT
