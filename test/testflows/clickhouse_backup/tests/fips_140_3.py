@@ -212,7 +212,10 @@ def gofips140_build_flags_present(self):
 
 @TestScenario
 def godebug_fips140_modes(self):
-    """Validate `GODEBUG` runtime modes (`unset`/`fips140=on`/`fips140=only`)."""
+    """Validate `GODEBUG` runtime modes (`unset`/`fips140=on`/`fips140=only`).
+    Set GODEBUG=fips140=on and check if FIPS tests pass.
+    Set GODEBUG=fips140=only and check if FIPS tests pass.
+    Leave GODEBUG unset and check if FIPS tests pass."""
     xfail("not implemented yet")
 
 
@@ -229,9 +232,49 @@ def connectivity_against_fips_clickhouse_server(self):
 
 
 @TestScenario
+@Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_Integrity("1.0"),
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_TamperedBinary("1.0"),
+)
 def fips_integrity_self_test_failure_on_tampered_binary(self):
-    """Validate startup abort for a tampered `.go.fipsinfo` checksum."""
-    xfail("not implemented yet")
+    """Validate the FIPS startup integrity self-test rejects a tampered binary.
+
+    Run ``scripts/tamper_go_fips_checksum.sh`` (bind-mounted into the FIPS
+    container at ``/scripts/``) against ``clickhouse-backup-fips``. The
+    script makes a temporary copy of the ELF, flips one byte inside the
+    Go FIPS module checksum (``.go.fipsinfo`` section, HMAC offset), runs
+    the tampered copy with ``GODEBUG=fips140=on``, and exits ``0`` only
+    when the binary aborts with ``panic: fips140: verification mismatch``.
+
+    The host-side FIPS binary is bind-mounted read-only, so the original
+    is never modified and other FIPS scenarios are unaffected.
+    """
+    backup_fips = _require_fips_container(self)
+
+    with When("I run the FIPS checksum tamper script against the FIPS binary"):
+        r = backup_fips.cmd(
+            f"/scripts/tamper_go_fips_checksum.sh {FIPS_BINARY_IN_CONTAINER}",
+            no_checks=True,
+        )
+
+    with Then("the tampered binary panics with `fips140: verification mismatch`"):
+        # The script captures the tampered binary's stdout+stderr and echoes
+        # both back to its own stdout, so the SRS-mandated panic text appears
+        # verbatim in `r.output`.
+        assert "fips140: verification mismatch" in (r.output or ""), error(
+            f"tamper script did not see `fips140: verification mismatch` in the "
+            f"tampered binary's output (script exit={r.exitcode}).\n{r.output}"
+        )
+
+    with Then("the tamper script exits 0 (tampered binary exited non-zero as required)"):
+        # The script only exits 0 when the tampered binary panicked and exited
+        # non-zero, so this also covers the SRS clause "exit with a non-zero
+        # exit code" without us having to re-parse the binary's exit code out
+        # of the script's stdout.
+        assert r.exitcode == 0, error(
+            f"tamper script exit={r.exitcode} (expected 0). See script docstring "
+            f"for the meaning of non-zero exit codes.\n{r.output}"
+        )
 
 
 @TestScenario
@@ -355,14 +398,14 @@ def acvp_tests(self):
 def fips_140_3(self):
     """FIPS 140-3 automation entrypoint for clickhouse-backup.
     """
-    Scenario(run=clickhouse_backup_fips_version_output, flags=TE)
-    Scenario(run=clickhouse_backup_fips_version_output_negative_check, flags=TE)
+    Scenario(run=clickhouse_backup_fips_version_output, flags=TE) # done
+    Scenario(run=clickhouse_backup_fips_version_output_negative_check, flags=TE) # done
     Scenario(run=gofips140_build_flags_present, flags=TE)
     Scenario(run=godebug_fips140_modes, flags=TE)
     Scenario(run=connectivity_against_non_fips_clickhouse_server, flags=TE)
     Scenario(run=connectivity_against_fips_clickhouse_server, flags=TE)
-    Scenario(run=fips_integrity_self_test_failure_on_tampered_binary, flags=TE)
-    Scenario(run=inbound_tls_cipher_negotiation, flags=TE)
+    Scenario(run=fips_integrity_self_test_failure_on_tampered_binary, flags=TE) # done
+    Scenario(run=inbound_tls_cipher_negotiation, flags=TE) # done
     Scenario(run=outbound_tls_cipher_negotiation, flags=TE)
     Scenario(run=outbound_tls_to_s3_endpoint_with_openssl_s_server, flags=TE)
     Scenario(run=forced_cast_failures, flags=TE)
