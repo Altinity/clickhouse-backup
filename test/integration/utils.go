@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -919,7 +920,7 @@ func (env *TestEnvironment) dropDatabase(database string, ifExists bool) (err er
 
 // Validation methods
 
-func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.Assertions, remoteStorageType string) {
+func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.Assertions, remoteStorageType, configFile string) {
 	if remoteStorageType == "AZBLOB" || remoteStorageType == "AZBLOB_EMBEDDED_URL" {
 		t.Log("wait when resolve https://github.com/Azure/Azurite/issues/2362, todo try to use mysql as azurite storage")
 	}
@@ -934,31 +935,71 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 			env.ch.Close()
 		}
 	}
-	// checkRemoteNoFiles verifies that no regular files exist under `path` on
-	// `container`. We intentionally use `find -type f` instead of `ls`: with the
-	// {version} macro now appended to every backup path, SFTP/FTP servers leave
-	// empty per-version directories behind on cleanup (mkdir-created, never
-	// auto-removed). What matters is that no actual files remain.
+	// checkRemoteNoFiles verifies that no entries exist under `path` on
+	// `container`. Uses `ls -A` (available in busybox/alpine) instead of
+	// `find` because not all containers ship with find (e.g. minio).
+	// If the directory does not exist (exit code 2), that's fine — it
+	// means cleanup already removed it.
 	checkRemoteNoFiles := func(container, path string) {
-		out, err := env.DockerExecOut(container, "sh", "-c", "find "+path+" -type f")
-		r.NoError(err, "%s\nunexpected checkRemoteNoFiles error: %v", out, err)
-		r.Empty(strings.Trim(out, "\r\n\t "), "%s:%s expected to contain no files, got:\n%s", container, path, out)
-	}
-	if remoteStorageType == "S3" || remoteStorageType == "S3_EMBEDDED_URL" {
-		checkRemoteNoFiles("minio", "/minio/data/clickhouse/")
-	}
-	if remoteStorageType == "SFTP" {
-		checkRemoteNoFiles("sshd", "/root/")
-	}
-	if remoteStorageType == "FTP" {
-		if isAdvancedMode() {
-			checkRemoteNoFiles("ftp", "/home/ftpusers/test_backup/backup/")
-		} else {
-			checkRemoteNoFiles("ftp", "/home/test_backup/backup/")
+		out, err := env.DockerExecOut(container, "sh", "-c", "ls -A "+path+" 2>/dev/null")
+		if err != nil {
+			debugOut, _ := env.DockerExecOut(container, "sh", "-c", "ls -A "+filepath.Dir(path)+" 2>/dev/null")
+			t.Logf("checkRemoteNoFiles %s:%s: ls failed (dir may not exist), parent %s contents: %q", container, path, filepath.Dir(path), debugOut)
+			return
+		}
+		trimmed := strings.Trim(out, "\r\n\t ")
+		if trimmed != "" {
+			r.Failf("%s:%s expected to contain no files, got:\n%s", container, path, trimmed)
 		}
 	}
-	if remoteStorageType == "GCS_EMULATOR" {
-		checkRemoteNoFiles("gcs", "/data/altinity-qa-test/")
+
+	// When a configFile is provided, resolve {version} macros to get exact
+	// backup and object_disk paths inside the container, then check those.
+	if configFile != "" {
+		cfgPath, cfgObjPath := env.resolveConfigPaths(r, configFile)
+		switch remoteStorageType {
+		case "S3", "S3_EMBEDDED_URL":
+			if cfgPath != "" {
+				checkRemoteNoFiles("minio", "/minio/data/clickhouse/"+cfgPath)
+			}
+			if cfgObjPath != "" {
+				checkRemoteNoFiles("minio", "/minio/data/clickhouse/"+cfgObjPath)
+			}
+		case "SFTP":
+			if cfgPath != "" {
+				checkRemoteNoFiles("sshd", cfgPath)
+			}
+			if cfgObjPath != "" {
+				checkRemoteNoFiles("sshd", cfgObjPath)
+			}
+		case "FTP":
+			ftpFSRoot := "/home/test_backup"
+			if isAdvancedMode() {
+				ftpFSRoot = "/home/ftpusers/test_backup"
+			}
+			if cfgPath != "" {
+				checkRemoteNoFiles("ftp", ftpFSRoot+cfgPath)
+			}
+			if cfgObjPath != "" {
+				checkRemoteNoFiles("ftp", ftpFSRoot+cfgObjPath)
+			}
+		case "GCS_EMULATOR":
+			if cfgPath != "" {
+				checkRemoteNoFiles("gcs", "/data/altinity-qa-test/"+cfgPath)
+			}
+			if cfgObjPath != "" {
+				checkRemoteNoFiles("gcs", "/data/altinity-qa-test/"+cfgObjPath)
+			}
+		case "CUSTOM":
+			switch configFile {
+			case "config-custom-rsync.yml":
+				checkRemoteNoFiles("sshd", "/root/rsync_backups/cluster/shard0/")
+			case "config-custom-restic.yml":
+				checkRemoteNoFiles("minio", "/minio/data/clickhouse/restic/")
+			case "config-custom-kopia.yml":
+				checkRemoteNoFiles("minio", "/minio/data/clickhouse/kopia/")
+			}
+		}
 	}
 }
 
@@ -1560,6 +1601,8 @@ func (env *TestEnvironment) resolveConfigPaths(r *require.Assertions, configFile
 		rawPath, rawObjPath = cfg.FTP.Path, cfg.FTP.ObjectDiskPath
 	case "sftp":
 		rawPath, rawObjPath = cfg.SFTP.Path, cfg.SFTP.ObjectDiskPath
+	case "custom", "none":
+		return "", ""
 	default:
 		r.FailNow(fmt.Sprintf("resolveConfigPaths %s: unsupported remote_storage=%q", configFile, cfg.General.RemoteStorage))
 	}

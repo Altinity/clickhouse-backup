@@ -466,7 +466,7 @@ func (tc *TestContainers) startSSHD(ctx context.Context) error {
 				"SSH_ENABLE_ROOT":          "true",
 				"SSH_ENABLE_PASSWORD_AUTH": "true",
 			}),
-			Cmd: []string{"sh", "-c", `rm -rf /root/.augeas && echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && echo "LogLevel DEBUG3" >> /etc/ssh/sshd_config && echo "root:JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ" | chpasswd && /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config`},
+			Cmd: []string{"sh", "-c", `echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && echo "LogLevel DEBUG3" >> /etc/ssh/sshd_config && echo "root:JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ" | chpasswd && /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config`},
 			Healthcheck: &container.HealthConfig{
 				Test:     []string{"CMD-SHELL", "echo 1"},
 				Interval: 1 * time.Second,

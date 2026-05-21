@@ -75,6 +75,6 @@ func TestTablePatterns(t *testing.T) {
 
 		}
 	}
-	env.checkObjectStorageIsEmpty(t, r, "S3")
+	env.checkObjectStorageIsEmpty(t, r, "S3", "config-s3.yml")
 	env.Cleanup(t, r)
 }

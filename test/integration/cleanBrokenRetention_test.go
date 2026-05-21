@@ -172,7 +172,7 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", keepBackup)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean_remote_broken", "--include="+cleanBrokenRetentionIncludeGlob)
 	if tc.finalEmptyType != "" {
-		env.checkObjectStorageIsEmpty(t, r, tc.finalEmptyType)
+		env.checkObjectStorageIsEmpty(t, r, tc.finalEmptyType, tc.configFile)
 	}
 }
 
@@ -300,7 +300,7 @@ func gcsEmulatorCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 
 func gcsRealCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 	const bucket = "altinity-qa-test"
-	const image = "google/cloud-sdk:slim"
+	const image = "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim"
 	// All gsutil invocations need the service account activated first.
 	const authPrefix = "gcloud auth activate-service-account --key-file=$GOOGLE_APPLICATION_CREDENTIALS >/dev/null 2>&1 && "
 	gsutil := func(env *TestEnvironment, r *require.Assertions, sh string) string {
