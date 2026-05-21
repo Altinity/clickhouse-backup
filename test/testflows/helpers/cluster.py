@@ -1,7 +1,11 @@
 import glob
 import inspect
+import io
 import os
 import shlex
+import shutil
+import stat
+import tarfile
 import tempfile
 import testflows.settings as settings
 import threading
@@ -13,6 +17,68 @@ from testflows.uexpect import ExpectTimeoutError
 
 import docker
 from testcontainers.core.container import DockerContainer
+
+
+def _materialize_binary_from_docker_image(docker_client, image_tag, path_in_image, host_path):
+    """Materialize a single file from a local Docker image to ``host_path``.
+
+    Used so that when an upstream Makefile target has already produced a binary
+    *inside* a Docker image (e.g. ``make build-race-fips-docker`` -> image
+    ``clickhouse-backup:build-race-fips`` with the FIPS race binary at
+    ``/src/clickhouse-backup/clickhouse-backup-race-fips``), but the host-side
+    copy has since been removed (``make clean``, a partial rebuild, etc.), the
+    test cluster can recover the binary directly from the local Docker
+    registry instead of forcing a fresh ``docker buildx build``. No
+    ``subprocess``, no ``make`` - this only talks to the Docker daemon via the
+    ``docker`` Python SDK that is already used everywhere else in this file.
+
+    Returns True if ``host_path`` exists and is executable on return,
+    False otherwise (e.g. the image isn't in the local registry, or the file
+    is missing inside it). Failures are intentionally non-fatal: the caller
+    is expected to fall back to its existing skip-FIPS-scenarios path.
+    """
+    if os.path.isfile(host_path):
+        return True
+    try:
+        docker_client.images.get(image_tag)
+    except docker.errors.ImageNotFound:
+        return False
+    except Exception:
+        return False
+
+    container = None
+    try:
+        container = docker_client.containers.create(image_tag)
+        bits, _ = container.get_archive(path_in_image)
+        buf = io.BytesIO(b"".join(bits))
+        with tarfile.open(fileobj=buf, mode="r") as tar:
+            member_name = os.path.basename(path_in_image)
+            try:
+                member = tar.getmember(member_name)
+            except KeyError:
+                return False
+            src = tar.extractfile(member)
+            if src is None:
+                return False
+            os.makedirs(os.path.dirname(host_path) or ".", exist_ok=True)
+            tmp_path = host_path + ".tmp"
+            with open(tmp_path, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            os.chmod(
+                tmp_path,
+                os.stat(tmp_path).st_mode
+                | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH,
+            )
+            os.replace(tmp_path, host_path)
+        return os.path.isfile(host_path)
+    except Exception:
+        return False
+    finally:
+        if container is not None:
+            try:
+                container.remove(force=True)
+            except Exception:
+                pass
 
 MESSAGES_TO_RETRY = [
     "DB::Exception: ZooKeeper session has been expired",
@@ -189,15 +255,39 @@ class BackupNode(Node):
         :param wait_ready: poll the listen port over TCP until it accepts a
             connection or ``timeout`` seconds elapse.
         :param timeout: how long to wait for readiness, in seconds.
+
+        Process lifecycle is tracked exclusively through the PID file written
+        below. ``pkill -f <pattern>`` is deliberately not used to clean up
+        stragglers here: the wrapper ``bash -lc '…'`` that runs this command
+        has the binary invocation and the kill pattern in its own argv, so
+        ``pkill -f`` would match the wrapper itself, SIGTERM its own parent,
+        and exit 143 ("Terminated") before ever launching the server. Cleanup
+        of a prior server (if any) is handled by ``stop_server`` -> PID file.
         """
         env_prefix = self._format_env(extra_env)
         binary_q = shlex.quote(binary)
         config_q = shlex.quote(config)
         log_q = shlex.quote(self.server_log_file)
         pid_q = shlex.quote(self.server_pid_file)
+        # ``VAR=value cmd`` is *shell* env-prefix syntax; ``nohup VAR=value cmd``
+        # is NOT - nohup would try to ``execve`` "VAR=value" as a program and
+        # exit with "No such file or directory". Route the env vars through
+        # ``env`` so nohup's argv[1] is the literal ``env`` binary and the
+        # KEY=VALUE pairs become arguments to it. ``env`` is omitted entirely
+        # when ``extra_env`` is empty so we don't add a no-op fork.
+        env_via_env = f"env {env_prefix}" if env_prefix else ""
+        # Best-effort PID-file-based cleanup of a previous run, then launch.
+        # Split into two `cmd()` calls so the launching bash's argv contains
+        # *only* the launch command (no kill pattern that could re-trigger the
+        # pkill self-match bug if anyone reintroduces pkill -f here later).
         self.cmd(
-            f"bash -lc 'pkill -f \"clickhouse-backup.*server\" >/dev/null 2>&1 || true; "
-            f"nohup {env_prefix}{binary_q} -c {config_q} server >{log_q} 2>&1 & "
+            f"bash -lc 'if [ -f {pid_q} ]; then "
+            f"kill $(cat {pid_q}) >/dev/null 2>&1 || true; "
+            f"rm -f {pid_q}; fi'",
+            exitcode=0,
+        )
+        self.cmd(
+            f"bash -lc 'nohup {env_via_env}{binary_q} -c {config_q} server >{log_q} 2>&1 & "
             f"echo $! > {pid_q}'",
             exitcode=0,
         )
@@ -216,29 +306,51 @@ class BackupNode(Node):
             )
 
     def stop_server(self):
-        """Stop the server gracefully (TERM by PID, then ``pkill`` as fallback)."""
+        """Stop the server gracefully via SIGTERM addressed to the PID file.
+
+        ``pkill -f <pattern>`` is intentionally avoided here: the wrapping
+        ``bash -lc '…'`` command's own argv contains the kill pattern as a
+        literal substring, so ``pkill -f`` would also match (and SIGTERM)
+        its own parent bash, surfacing as exit 143 / "Terminated" through
+        ``Node.cmd``'s ``exitcode == 0`` assertion. The PID file written by
+        ``start_server`` is unambiguous; if it's missing we simply have
+        nothing to stop.
+        """
         pid_q = shlex.quote(self.server_pid_file)
         self.cmd(
-            f"bash -lc 'if [ -f {pid_q} ]; then kill $(cat {pid_q}) >/dev/null 2>&1 || true; "
-            f"rm -f {pid_q}; fi; "
-            f"pkill -f \"clickhouse-backup.*server\" >/dev/null 2>&1 || true'",
+            f"bash -lc 'if [ -f {pid_q} ]; then "
+            f"kill $(cat {pid_q}) >/dev/null 2>&1 || true; "
+            f"rm -f {pid_q}; fi'",
             exitcode=0,
         )
 
     def kill_server(self):
-        """Kill the server immediately (SIGKILL)."""
+        """Kill the server immediately (SIGKILL) via the PID file.
+
+        Same rationale as ``stop_server``: no ``pkill -f`` to avoid the
+        self-match SIGTERM that fires when the kill pattern is a substring
+        of the wrapping shell's argv (see ``start_server`` docstring).
+        """
         pid_q = shlex.quote(self.server_pid_file)
         self.cmd(
-            f"bash -lc 'if [ -f {pid_q} ]; then kill -9 $(cat {pid_q}) >/dev/null 2>&1 || true; "
-            f"rm -f {pid_q}; fi; "
-            f"pkill -9 -f \"clickhouse-backup.*server\" >/dev/null 2>&1 || true'",
+            f"bash -lc 'if [ -f {pid_q} ]; then "
+            f"kill -9 $(cat {pid_q}) >/dev/null 2>&1 || true; "
+            f"rm -f {pid_q}; fi'",
             exitcode=0,
         )
 
     def is_server_running(self):
-        """Return ``True`` if a clickhouse-backup server process is running."""
+        """Return ``True`` if the PID recorded by ``start_server`` is alive.
+
+        Uses ``kill -0 $PID`` (no-op signal) rather than ``pgrep -f <pattern>``
+        for the same reason ``stop_server`` skips ``pkill -f``: the wrapping
+        bash's argv contains the pattern as a literal, so ``pgrep -f`` would
+        self-match its own parent and yield a misleading "running" answer.
+        """
+        pid_q = shlex.quote(self.server_pid_file)
         r = self.cmd(
-            "bash -lc 'pgrep -f \"clickhouse-backup.*server\" >/dev/null && echo running || echo stopped'",
+            f"bash -lc 'if [ -f {pid_q} ] && kill -0 $(cat {pid_q}) >/dev/null 2>&1; "
+            f"then echo running; else echo stopped; fi'",
             no_checks=True,
         )
         return "running" in (r.output or "")
@@ -1488,6 +1600,18 @@ class Cluster(object):
         backup_fips_binary = os.path.normpath(
             os.path.join(tests_dir, "../../../clickhouse-backup/clickhouse-backup-race-fips")
         )
+        # If the host-side binary is missing but the upstream Makefile target
+        # `build-race-fips-docker` has already left its image in the local
+        # Docker registry, recover the binary out of that image rather than
+        # silently skipping the whole FIPS suite. Pure Docker SDK - no
+        # subprocess, no make - so it works the same in dev shells and in CI.
+        if not os.path.isfile(backup_fips_binary):
+            _materialize_binary_from_docker_image(
+                self._docker_client,
+                image_tag="clickhouse-backup:build-race-fips",
+                path_in_image="/src/clickhouse-backup/clickhouse-backup-race-fips",
+                host_path=backup_fips_binary,
+            )
         if os.path.isfile(backup_fips_binary):
             with And("starting clickhouse_backup_fips"):
                 # The container picks up ``/etc/clickhouse-server/ssl/``
