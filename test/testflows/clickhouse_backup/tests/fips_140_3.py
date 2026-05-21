@@ -50,6 +50,22 @@ def _require_fips_container(test):
     return backup_fips
 
 
+def _read_fips_status(node, binary):
+    """Run ``<binary> --version`` on ``node`` and return ``(status, output)``.
+
+    ``status`` is the lower-cased value after ``FIPS 140-3:`` in the
+    ``--version`` output, or ``None`` if the line is absent. ``output`` is
+    the full command output for use in error messages.
+    """
+    r = node.cmd(f"{binary} --version")
+    for line in r.output.splitlines():
+        normalized = line.strip()
+        if normalized.lower().startswith(FIPS_VERSION_LABEL.lower()):
+            value = normalized.split(":", 1)[1].strip().lower() if ":" in normalized else ""
+            return value, r.output
+    return None, r.output
+
+
 def _check_tls_handshake(node, target, tls_flag, cipher=None, ciphersuites=None,
                          expected_success=True):
     """Try to open a TLS connection with ``openssl s_client`` and check the result.
@@ -131,39 +147,60 @@ def _check_tls_handshake(node, target, tls_flag, cipher=None, ciphersuites=None,
     RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Version_Status("1.0")
 )
 def clickhouse_backup_fips_version_output(self):
-    """Validate that the `clickhouse-backup-fips --version` output reports `FIPS 140-3: true`.
+    """Validate that `clickhouse-backup-fips --version` reports `FIPS 140-3: true`.
 
-    Check that the binary is built with ``GOFIPS140=v1.0.0`` so FIPS 140-3 mode is the build-time default
-    and ``crypto/fips140.Enabled()`` returns ``true``.
+    The binary is built with ``GOFIPS140=v1.0.0`` so FIPS 140-3 mode is the
+    build-time default and ``crypto/fips140.Enabled()`` returns ``true``.
     """
     backup_fips = _require_fips_container(self)
 
     with When("I run `clickhouse-backup-fips --version`"):
-        r = backup_fips.cmd(f"{FIPS_BINARY_IN_CONTAINER} --version")
+        status, output = _read_fips_status(backup_fips, FIPS_BINARY_IN_CONTAINER)
 
-    with Check("the version output contains the FIPS 140-3 status line"):
-        assert FIPS_VERSION_LABEL in r.output, error(
-            f"Expected `{FIPS_VERSION_LABEL}` in `--version` output, but it was missing.\n{r.output}"
+    with Then(f"`{FIPS_VERSION_LABEL}` line is present"):
+        assert status is not None, error(
+            f"`{FIPS_VERSION_LABEL}` line missing from `--version`:\n{output}"
         )
 
-    with Check("the FIPS 140-3 status is `true`"):
-        output = r.output
-        # Find the status line in `--version` output.
-        status_line = None
-        for line in output.splitlines():
-            normalized = line.strip()
-            if normalized.lower().startswith(FIPS_VERSION_LABEL.lower()):
-                status_line = normalized
-                break
-
-        assert status_line is not None, error(
-            f"Could not find a `{FIPS_VERSION_LABEL}` status line in output.\n\n{output}"
+    with And(f"`{FIPS_VERSION_LABEL}` reports `{FIPS_VERSION_TRUE}`"):
+        assert status == FIPS_VERSION_TRUE, error(
+            f"Expected `{FIPS_VERSION_LABEL} {FIPS_VERSION_TRUE}`, got `{status}`.\n{output}"
         )
 
-        raw_status = status_line.split(":", 1)[1] if ":" in status_line else ""
-        status_value = raw_status.strip().lower()
-        assert status_value == FIPS_VERSION_TRUE, error(
-            f"Expected `{FIPS_VERSION_LABEL} {FIPS_VERSION_TRUE}`, got `{status_line}`.\n\n{output}"
+
+@TestScenario
+@Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Version_Status("1.0")
+)
+def clickhouse_backup_fips_version_output_negative_check(self):
+    """Self-check for `clickhouse_backup_fips_version_output`.
+
+    Run the same ``--version`` parser against the regular (non-FIPS)
+    ``clickhouse-backup`` binary - which is exactly what ``make build-race``
+    produces, i.e. equivalent to a ``Makefile`` where ``GOFIPS140=v1.0.0``
+    has been stripped out of the ``build-race-fips`` target. The status
+    line MUST report ``false``; if it ever reported ``true`` the positive
+    scenario above would silently accept any binary and would no longer be
+    enforcing FIPS at all.
+
+    Reuses the shared ``self.context.backup`` container - no extra binary
+    is mounted, no Makefile is touched, no files are written - so the check
+    runs identically locally and on CI/CD.
+    """
+    backup = self.context.backup
+
+    with When("I run `clickhouse-backup --version` on the non-FIPS binary"):
+        status, output = _read_fips_status(backup, "/bin/clickhouse-backup")
+
+    with Then(f"`{FIPS_VERSION_LABEL}` line is present"):
+        assert status is not None, error(
+            f"`{FIPS_VERSION_LABEL}` line missing from non-FIPS `--version`:\n{output}"
+        )
+
+    with And(f"`{FIPS_VERSION_LABEL}` does NOT report `{FIPS_VERSION_TRUE}`"):
+        assert status != FIPS_VERSION_TRUE, error(
+            f"non-FIPS binary unexpectedly reports `{FIPS_VERSION_LABEL} {FIPS_VERSION_TRUE}`. "
+            f"`clickhouse_backup_fips_version_output` would not catch a Makefile with FIPS removed.\n{output}"
         )
 
 
@@ -319,6 +356,7 @@ def fips_140_3(self):
     """FIPS 140-3 automation entrypoint for clickhouse-backup.
     """
     Scenario(run=clickhouse_backup_fips_version_output, flags=TE)
+    Scenario(run=clickhouse_backup_fips_version_output_negative_check, flags=TE)
     Scenario(run=gofips140_build_flags_present, flags=TE)
     Scenario(run=godebug_fips140_modes, flags=TE)
     Scenario(run=connectivity_against_non_fips_clickhouse_server, flags=TE)
