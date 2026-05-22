@@ -433,13 +433,19 @@ func (api *APIServer) actionsAsyncCommandsHandler(command string, args []string,
 	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		return actionsResults, ErrAPILocked
 	}
+	skipActions := api.GetConfig().API.IsBackupActionsSkipCommand(command)
 	// to avoid race condition between GET /backup/actions and POST /backup/actions
-	commandId, _ := status.Current.Start(row.Command)
+	commandId := status.NotFromAPI
+	if !skipActions {
+		commandId, _ = status.Current.Start(row.Command)
+	}
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics(command, 0, func() error {
 			return api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
 		})
-		status.Current.Stop(commandId, err)
+		if !skipActions {
+			status.Current.Stop(commandId, err)
+		}
 		if err != nil {
 			log.Error().Msgf("API /backup/actions error: %v", err)
 			return
@@ -878,13 +884,26 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 	if wherePresent {
 		fullCommand += " " + where
 	}
-	commandId, ctx := status.Current.Start(fullCommand)
+	skipActions := cfg.API.IsBackupActionsSkipCommand("list")
+	var commandId int
+	var ctx context.Context
+	if skipActions {
+		commandId = status.NotFromAPI
+		ctx = context.Background()
+	} else {
+		commandId, ctx = status.Current.Start(fullCommand)
+	}
+	stopStatus := func(err error) {
+		if !skipActions {
+			status.Current.Stop(commandId, err)
+		}
+	}
 	b := backup.NewBackuper(cfg)
 	if where == "local" || !wherePresent {
 		var localBackups []backup.LocalBackup
 		localBackups, _, err = b.GetLocalBackups(ctx, nil)
 		if err != nil && !os.IsNotExist(err) {
-			status.Current.Stop(commandId, err)
+			stopStatus(err)
 			api.writeError(w, http.StatusInternalServerError, "list", err)
 			return
 		}
@@ -921,7 +940,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		brokenBackups := 0
 		remoteBackups, listErr := b.GetRemoteBackups(ctx, true)
 		if listErr != nil {
-			status.Current.Stop(commandId, listErr)
+			stopStatus(listErr)
 			api.writeError(w, http.StatusInternalServerError, "list", listErr)
 			return
 		}
@@ -961,7 +980,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		api.metrics.NumberBackupsRemote.Set(float64(len(remoteBackups)))
 	}
 	api.sendJSONEachRow(w, http.StatusOK, backupsJSON)
-	status.Current.Stop(commandId, nil)
+	stopStatus(nil)
 }
 
 // httpCreateHandler - create a backup

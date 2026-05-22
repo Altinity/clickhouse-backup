@@ -379,6 +379,7 @@ api:
   create_integration_tables: false # API_CREATE_INTEGRATION_TABLES, create `system.backup_list` and `system.backup_actions`
   complete_resumable_after_restart: true # API_COMPLETE_RESUMABLE_AFTER_RESTART, after API server startup, if `/var/lib/clickhouse/backup/*/(upload|download).state2` present, then operation will continue in the background
   watch_is_main_process: false # WATCH_IS_MAIN_PROCESS, treats 'watch' command as a main api process, if it is stopped unexpectedly, api server is also stopped. Does not stop api server if 'watch' command canceled by the user. 
+  backup_actions_skip_commands: [] # API_BACKUP_ACTIONS_SKIP_COMMANDS, list of commands that must NOT be recorded into the in-memory async status exposed via `system.backup_actions` and `/backup/actions`. Useful to keep high-frequency monitoring calls (typically `list`) from growing the actions state and consuming RAM during long-running backups. Example: `[list]`
 
 ```
 

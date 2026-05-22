@@ -295,6 +295,21 @@ type APIConfig struct {
 	AllowParallel                 bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
 	CompleteResumableAfterRestart bool   `yaml:"complete_resumable_after_restart" envconfig:"API_COMPLETE_RESUMABLE_AFTER_RESTART"`
 	WatchIsMainProcess            bool   `yaml:"watch_is_main_process" envconfig:"WATCH_IS_MAIN_PROCESS"`
+	// BackupActionsSkipCommands - commands that should not be tracked in system.backup_actions
+	// (the in-memory async status list). Useful to exclude high-frequency monitoring calls
+	// like "list" from growing the actions state. See https://github.com/Altinity/clickhouse-backup/issues/1359
+	BackupActionsSkipCommands []string `yaml:"backup_actions_skip_commands" envconfig:"API_BACKUP_ACTIONS_SKIP_COMMANDS"`
+}
+
+// IsBackupActionsSkipCommand returns true if the given command must NOT be recorded
+// into the in-memory async status (system.backup_actions).
+func (cfg *APIConfig) IsBackupActionsSkipCommand(command string) bool {
+	for _, c := range cfg.BackupActionsSkipCommands {
+		if c == command {
+			return true
+		}
+	}
+	return false
 }
 
 // ArchiveExtensions - list of available compression formats and associated file extensions
