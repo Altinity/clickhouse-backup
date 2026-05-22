@@ -1614,6 +1614,16 @@ func (env *TestEnvironment) resolveConfigPaths(r *require.Assertions, configFile
 	default:
 		r.FailNow(fmt.Sprintf("resolveConfigPaths %s: unsupported remote_storage=%q", configFile, cfg.General.RemoteStorage))
 	}
+	if env.ch.Config.Timeout == "" {
+		env.ch.Config.Timeout = "3m"
+	}
+	host, port, err := env.tc.GetMappedPort(context.Background(), "clickhouse", "9000")
+	if err == nil {
+		env.ch.Config.Host = host
+		env.ch.Config.Port = uint(port)
+		env.ch.Config.MaxConnections = 1
+		env.ch.BreakConnectOnError = true
+	}
 	r.NoError(env.ch.Connect(), "resolveConfigPaths %s: ch.Connect", configFile)
 	ctx := context.Background()
 	resolvedPath, err := env.ch.ApplyMacros(ctx, rawPath)
