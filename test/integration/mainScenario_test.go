@@ -35,7 +35,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	log.Debug().Msg("Clean before start")
 	fullCleanup(t, r, env, []string{fullBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, true, false, false, backupConfig)
 	createAllTypesOfObjectTables := !strings.Contains(remoteStorageType, "CUSTOM")
-	testData := generateTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultTestData)
+	testData := generateTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultTestData())
 
 	log.Debug().Msg("Create full backup")
 	createCmd := "clickhouse-backup -c /etc/clickhouse-backup/" + backupConfig + " create --resume --tables=" + tablesPattern + " " + fullBackupName
@@ -46,7 +46,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	env.checkResumeAlreadyProcessed(uploadCmd, fullBackupName, "upload", r, remoteStorageType)
 
 	log.Debug().Msg("Create increment1 with data")
-	incrementData := generateIncrementTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultIncrementData, 1)
+	incrementData := generateIncrementTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultIncrementData(), 1)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, incrementBackupName)
 
 	// https://github.com/Altinity/clickhouse-backup/pull/900

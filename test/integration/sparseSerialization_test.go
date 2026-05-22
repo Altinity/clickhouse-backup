@@ -27,7 +27,7 @@ func TestSparseSerialization(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
-	dbName := "test_sparse_serialization"
+	dbName := "test_sparse_serialization_" + t.Name()
 	tableName := "rmt_sparse"
 	backupName := "test_sparse_serialization_backup"
 
@@ -84,6 +84,6 @@ func TestSparseSerialization(t *testing.T) {
 	r.NoError(env.ch.SelectSingleRowNoCtx(&zeroSum, "SELECT sum(zero_col) FROM "+dbName+"."+tableName))
 	r.Equal(uint64(0), zeroSum, "zero_col must still be all zeros after restore")
 
-	fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{dbName}, true, true, true, "config-s3.yml")
+	fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{dbName}, false, true, true, "config-s3.yml")
 	env.Cleanup(t, r)
 }

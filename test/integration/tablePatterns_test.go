@@ -19,7 +19,7 @@ func TestTablePatterns(t *testing.T) {
 	for _, createPattern := range []bool{true, false} {
 		for _, restorePattern := range []bool{true, false} {
 			fullCleanup(t, r, env, []string{testBackupName}, []string{"remote", "local"}, databaseList, true, false, false, "config-s3.yml")
-			generateTestData(t, r, env, "S3", false, defaultTestData)
+			generateTestData(t, r, env, "S3", false, defaultTestData())
 			if createPattern {
 				env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--rbac", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName)
 				out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "tables", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName)

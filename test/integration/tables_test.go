@@ -22,7 +22,7 @@ func TestTablesCommand(t *testing.T) {
 	dbNameAtomicTest := dbNameAtomic + "_" + t.Name()
 
 	fullCleanup(t, r, env, []string{testBackupName}, []string{"remote", "local"}, databaseList, true, false, false, "config-s3.yml")
-	generateTestData(t, r, env, "S3", false, defaultTestData)
+	generateTestData(t, r, env, "S3", false, defaultTestData())
 
 	// Live tables -- the no-backup case still works.
 	out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "tables", "--tables", " "+dbNameAtomicTest+".*")
