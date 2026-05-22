@@ -15,10 +15,21 @@ FIPS_VERSION_TRUE = "true"
 FIPS_GO_BUILD_SETTING = "build\tGOFIPS140=v1.0.0"
 
 
-FIPS_TLS_CONFIG_PATH                = "/etc/clickhouse-backup/config-fips-api-tls.yml"
-FIPS_OUTBOUND_CH_CONFIG_PATH        = "/etc/clickhouse-backup/config-fips-outbound-clickhouse-tls.yml"
-FIPS_OUTBOUND_S3_CONFIG_PATH        = "/etc/clickhouse-backup/config-fips-outbound-s3-tls.yml"
+# All clickhouse-backup-fips per-scenario configs live in the dedicated
+# ``configs/backup/fips/`` subfolder; ``regression.py`` copies the whole
+# ``configs/backup/`` tree per-PID and bind-mounts it at
+# ``/etc/clickhouse-backup``, so the in-container path keeps the subdir.
+FIPS_TLS_CONFIG_PATH                = "/etc/clickhouse-backup/fips/config-fips-api-tls.yml"
+FIPS_OUTBOUND_CH_CONFIG_PATH        = "/etc/clickhouse-backup/fips/config-fips-outbound-clickhouse-tls.yml"
+FIPS_OUTBOUND_S3_CONFIG_PATH        = "/etc/clickhouse-backup/fips/config-fips-outbound-s3-tls.yml"
 FIPS_TLS_LISTEN_PORT                = 7172
+
+FIPS_CONNECTIVITY_FIPS_CONFIG_PATH      = "/etc/clickhouse-backup/fips/config-fips-connectivity-fips-server.yml"
+FIPS_CONNECTIVITY_NONFIPS_CONFIG_PATH   = "/etc/clickhouse-backup/fips/config-fips-connectivity-nonfips-server.yml"
+FIPS_CH_SERVER_IMAGE                    = "altinity/clickhouse-server:25.3.8.30001.altinityfips"
+NON_FIPS_CH_SERVER_IMAGE                = "altinity/clickhouse-server:25.8.16.10002.altinitystable"
+FIPS_CH_SERVER_NAME                     = "clickhouse_fips_server"
+NON_FIPS_CH_SERVER_NAME                 = "clickhouse_nonfips_server"
 
 # Standard ClickHouse secure native-TCP port
 FIPS_OUTBOUND_CH_TLS_PORT           = 9440
@@ -340,16 +351,94 @@ def godebug_fips140_modes(self):
     xfail("not implemented yet")
 
 
-@TestScenario
-def connectivity_against_non_fips_clickhouse_server(self):
-    """Validate `clickhouse-backup-fips` connectivity against non-FIPS ClickHouse server when `GODEBUG=fips140=on`"""
-    xfail("not implemented yet")
+def _assert_tables_succeeds(backup_fips, *, config, godebug):
+    """Run ``clickhouse-backup-fips -c <config> tables`` and assert it exits 0.
+
+    Wrapped in ``timeout`` so a hung handshake or DNS failure does not
+    block the regression for minutes; on success the command is fast.
+    """
+    cmd = (
+        f"timeout {OUTBOUND_TLS_CMD_TIMEOUT_SEC} env GODEBUG={godebug} "
+        f"{FIPS_BINARY_IN_CONTAINER} -c {config} tables"
+    )
+    r = backup_fips.cmd(cmd, no_checks=True)
+    assert r.exitcode == 0, error(
+        f"`clickhouse-backup-fips tables` against `{config}` failed "
+        f"(exit={r.exitcode}, GODEBUG={godebug}):\n{r.output}"
+    )
 
 
 @TestScenario
+@Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Connectivity_FIPSEndpoint("1.0")
+)
 def connectivity_against_fips_clickhouse_server(self):
-    """Validate `clickhouse-backup-fips` connectivity against FIPS-compatible ClickHouse server when `GODEBUG=fips140=only`."""
-    xfail("not implemented yet")
+    """Validate `clickhouse-backup-fips tables` against a FIPS-compatible ClickHouse server.
+
+    Brings up a dedicated `altinity/clickhouse-server:25.3.8.30001.altinityfips`
+    container with `tcp_port_secure: 9440` enabled by
+    `configs/clickhouse_fips_server/config.d/listeners.xml`, then runs
+    `clickhouse-backup-fips -c <config> tables` from the FIPS backup
+    container with `GODEBUG=fips140=only`. Exit code MUST be 0.
+    """
+    backup_fips = _require_fips_container(self)
+    cluster = self.context.cluster
+    listeners_xml = os.path.join(
+        cluster.tests_dir,
+        "configs/clickhouse_fips_server/config.d/listeners.xml",
+    )
+
+    try:
+        with Given("a dedicated FIPS-compatible Altinity ClickHouse server"):
+            cluster.start_clickhouse_server_container(
+                name=FIPS_CH_SERVER_NAME,
+                image_tag=FIPS_CH_SERVER_IMAGE,
+                extra_volumes=[
+                    (cluster.ssl_certs_dir, "/etc/clickhouse-server/ssl"),
+                    (listeners_xml, "/etc/clickhouse-server/config.d/listeners.xml"),
+                ],
+            )
+        with When("I run `clickhouse-backup-fips tables` over secure native TCP 9440"):
+            _assert_tables_succeeds(
+                backup_fips,
+                config=FIPS_CONNECTIVITY_FIPS_CONFIG_PATH,
+                godebug="fips140=only",
+            )
+    finally:
+        cluster.stop_auxiliary_container(FIPS_CH_SERVER_NAME)
+
+
+@TestScenario
+@Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Connectivity_NonFIPSEndpoint("1.0")
+)
+def connectivity_against_non_fips_clickhouse_server(self):
+    """Validate `clickhouse-backup-fips tables` against a non-FIPS ClickHouse server.
+
+    Brings up a dedicated `altinity/clickhouse-server:25.8.16.10002.altinitystable`
+    container (image defaults: plain native TCP `9000`, no TLS), then runs
+    `clickhouse-backup-fips -c <config> tables` from the FIPS backup
+    container with `GODEBUG=fips140=on`. Exit code MUST be 0 - the FIPS
+    binary stays interoperable with a non-FIPS server in `on` mode (the
+    strict `only` mode is reserved for FIPS-vs-FIPS).
+    """
+    backup_fips = _require_fips_container(self)
+    cluster = self.context.cluster
+
+    try:
+        with Given("a dedicated non-FIPS Altinity ClickHouse server"):
+            cluster.start_clickhouse_server_container(
+                name=NON_FIPS_CH_SERVER_NAME,
+                image_tag=NON_FIPS_CH_SERVER_IMAGE,
+            )
+        with When("I run `clickhouse-backup-fips tables` over plain native TCP 9000"):
+            _assert_tables_succeeds(
+                backup_fips,
+                config=FIPS_CONNECTIVITY_NONFIPS_CONFIG_PATH,
+                godebug="fips140=on",
+            )
+    finally:
+        cluster.stop_auxiliary_container(NON_FIPS_CH_SERVER_NAME)
 
 
 @TestScenario
@@ -402,7 +491,7 @@ def inbound_tls_cipher_negotiation(self):
 
     Starts ``clickhouse-backup-fips server`` inside the dedicated
     ``clickhouse_backup_fips`` container with ``GODEBUG=fips140=only`` and
-    the static TLS-API config at ``/etc/clickhouse-backup/config-fips-api-tls.yml``,
+    the static TLS-API config at ``/etc/clickhouse-backup/fips/config-fips-api-tls.yml``,
     then runs ``openssl s_client`` from inside the same container to try a
     TLS connection against the listener on ``localhost:7172`` for each
     cipher / cipher suite / protocol the SRS calls out, and asserts:
@@ -508,7 +597,7 @@ def outbound_tls_cipher_negotiation(self):
 
     The ``s_server`` container reuses the cluster's static SSL configuration and
     the ``clickhouse-backup-fips`` config is the static
-    ``configs/backup/config-fips-outbound-clickhouse-tls.yml`` with
+    ``configs/backup/fips/config-fips-outbound-clickhouse-tls.yml`` with
     ``skip_verify: true`` so the assertion stays focused on cipher policy.
     """
     backup_fips = _require_fips_container(self)
@@ -579,7 +668,7 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
 
     The ``s_server`` container reuses the cluster's static SSL fixtures
     and the ``clickhouse-backup-fips`` config is the static
-    ``configs/backup/config-fips-outbound-s3-tls.yml`` with
+    ``configs/backup/fips/config-fips-outbound-s3-tls.yml`` with
     ``s3.disable_cert_verification: true`` so the assertion stays
     focused on cipher policy.
     """
@@ -655,8 +744,8 @@ def fips_140_3(self):
     Scenario(run=clickhouse_backup_fips_version_output_negative_check, flags=TE) # done
     Scenario(run=gofips140_build_flags_present, flags=TE) # done
     Scenario(run=godebug_fips140_modes, flags=TE)
-    Scenario(run=connectivity_against_non_fips_clickhouse_server, flags=TE)
-    Scenario(run=connectivity_against_fips_clickhouse_server, flags=TE)
+    Scenario(run=connectivity_against_non_fips_clickhouse_server, flags=TE) # done
+    Scenario(run=connectivity_against_fips_clickhouse_server, flags=TE) # done
     Scenario(run=fips_integrity_self_test_failure_on_tampered_binary, flags=TE) # done
     Scenario(run=inbound_tls_cipher_negotiation, flags=TE) # done
     Scenario(run=outbound_tls_cipher_negotiation, flags=TE) # done

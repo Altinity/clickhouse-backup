@@ -4,7 +4,7 @@
 # ``configs/backup/`` performed by ``regression.py`` (see
 # ``shutil.copytree(base_config_dir, config_dir)``). Only the
 # ``clickhouse_backup_fips`` container actually consumes it - tests start the
-# FIPS server explicitly with ``-c /etc/clickhouse-backup/config-fips-api-tls.yml``.
+# FIPS server explicitly with ``-c /etc/clickhouse-backup/fips/config-fips-api-tls.yml``.
 #
 # TLS files are reused from the cluster's static SSL fixtures, inherited
 # inside the FIPS container via ``volumes_from_name="clickhouse1"``

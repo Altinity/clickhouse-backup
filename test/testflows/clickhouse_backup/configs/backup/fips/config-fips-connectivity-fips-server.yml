@@ -1,0 +1,25 @@
+# Static config used by `connectivity_against_fips_clickhouse_server`.
+#
+# Mounted into the FIPS backup container via the per-PID copy of
+# ``configs/backup/`` used by ``regression.py``.
+#
+# `clickhouse.host: clickhouse_fips_server` resolves on the docker network
+# to the dedicated FIPS-compatible ClickHouse server brought up by the
+# scenario (`altinity/clickhouse-server:25.3.8.30001.altinityfips`).
+# `clickhouse.port: 9440` is the secure native TCP port enabled by
+# ``configs/clickhouse_fips_server/config.d/listeners.xml`` on that
+# server.  `skip_verify: true` lets the connection get past the static
+# self-signed test certificate so the assertion stays focused on
+# FIPS-binary <-> FIPS-server interoperability.
+general:
+  log_level: warn
+  remote_storage: none
+clickhouse:
+  config_dir: /etc/clickhouse-server
+  host: clickhouse_fips_server
+  port: 9440
+  username: default
+  password: ''
+  timeout: 5s
+  secure: true
+  skip_verify: true

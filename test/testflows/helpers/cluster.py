@@ -1138,6 +1138,19 @@ class Cluster(object):
         self._stop_container(name)
 
     @property
+    def tests_dir(self):
+        """Host-side root of the testflows tests for this cluster.
+
+        Resolves the same way as ``_do_up`` does internally: the
+        ``CLICKHOUSE_TESTS_DIR`` env var when set, otherwise the directory
+        that constructed this :class:`Cluster` (``clickhouse_backup/`` when
+        the cluster is brought up by ``regression.py``). Tests use this to
+        compute host paths of fixture files (config.d overrides, scripts,
+        certificates, ...) without duplicating the env-var fallback.
+        """
+        return os.environ.get("CLICKHOUSE_TESTS_DIR", self.configs_dir)
+
+    @property
     def ssl_certs_dir(self):
         """Host-side directory containing the cluster's static SSL fixtures.
 
@@ -1146,8 +1159,60 @@ class Cluster(object):
         the same source the cluster bind-mounts on every ClickHouse node.
         Tests reuse these files so they never have to generate certificates.
         """
-        tests_dir = os.environ.get("CLICKHOUSE_TESTS_DIR", self.configs_dir)
-        return os.path.join(tests_dir, "configs/clickhouse/ssl")
+        return os.path.join(self.tests_dir, "configs/clickhouse/ssl")
+
+    def start_clickhouse_server_container(self, name, image_tag, *,
+                                          extra_volumes=None, env=None,
+                                          ports=None, hostname=None,
+                                          timeout=180):
+        """Start a dedicated ClickHouse server on the cluster network.
+
+        Used by FIPS connectivity scenarios to bring up a fixed-version
+        Altinity ClickHouse image next to the regression's default
+        ``clickhouse1`` / ``clickhouse2`` nodes - without altering the
+        cluster-wide image / version chosen via ``CLICKHOUSE_VERSION``.
+
+        :param name: cluster-unique container name (also used as docker
+            hostname / network alias by default; other cluster nodes can
+            reach the server at ``<name>:<port>``).
+        :param image_tag: full ``image:tag`` reference, e.g.
+            ``altinity/clickhouse-server:25.3.8.30001.altinityfips`` or
+            ``altinity/clickhouse-server:25.8.16.10002.altinitystable``.
+        :param extra_volumes: optional list of ``(host_path, container_path)``
+            bind-mount tuples (FIPS scenario uses this to drop a TLS
+            ``config.d`` override and the cluster's static SSL certs in).
+        :param env: optional dict of additional env vars; defaults already
+            include ``CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1`` so the image's
+            ``default`` user keeps no-password access from across the docker
+            network (matches the rest of the regression).
+        :param ports: optional list of container ports to publish on the
+            host. Inter-container communication uses the docker network so
+            this is normally not needed.
+        :param hostname: docker hostname / network alias; defaults to ``name``.
+        :param timeout: seconds to wait for the image's HEALTHCHECK to flip
+            to ``healthy`` (default 180s, generous for first-time pulls).
+        """
+        merged_env = {"CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT": "1"}
+        if env:
+            merged_env.update(env)
+        return self.start_auxiliary_container(
+            name=name,
+            image=image_tag,
+            hostname=hostname or name,
+            env=merged_env,
+            volumes=list(extra_volumes) if extra_volumes else [],
+            ports=ports,
+            cap_add=["SYS_PTRACE", "SYS_NICE"],
+            healthcheck={
+                "Test": ["CMD-SHELL", "wget -q -T 2 -O- http://localhost:8123/ping || exit 1"],
+                "Interval": 3 * 1_000_000_000,
+                "Timeout": 3 * 1_000_000_000,
+                "Retries": 30,
+                "StartPeriod": 5 * 1_000_000_000,
+            },
+            wait_healthy=True,
+            timeout=timeout,
+        )
 
     def start_openssl_container(self, name, role, listen=9443, cert_path=None, key_path=None,
                                 dhparam_path=None,

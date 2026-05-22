@@ -13,13 +13,13 @@
 #     A custom endpoint cannot be combined with FIPS
 #
 # ... before any TCP socket is opened, so no TLS handshake ever happens
-# and the cipher-policy assertion can't fire. By leaving ``endpoint`` blank
+# and the cipher-policy assertion can't fire. By leaving `endpoint` blank
 # we let the SDK derive the AWS FIPS hostname for the configured region
 # (``https://s3-fips.us-east-1.amazonaws.com`` for ``us-east-1``).
 #
-# The test scenario then starts an ``openssl s_server`` sidecar named
+# The test scenario then starts an ``openssl s_server``  named
 # ``s3-fips.us-east-1.amazonaws.com`` so Docker's embedded DNS resolves
-# the SDK-generated hostname to the sidecar's IP, and the sidecar listens
+# the SDK-generated hostname to the container's IP, and the container listens
 # on the default HTTPS port (443) since the SDK's URL has no port suffix.
 #
 # ``s3.disable_cert_verification: true`` skips X.509 chain *and* hostname
