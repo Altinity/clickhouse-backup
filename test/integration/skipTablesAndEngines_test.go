@@ -59,41 +59,41 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create test_skip_full_backup")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 CLICKHOUSE_SKIP_TABLES=*.test_memory clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload test_skip_full_backup")
-	env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json")
-	r.Error(env.DockerExec("minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
-	env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_mv.json")
-	env.DockerExecNoError(r, "minio", "bash", "-ce", "ls -la /minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/*inner*.json")
+	env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json"))
+	r.Error(env.DockerExec("minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/test_memory.json")))
+	env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/test_mv.json"))
+	env.DockerExecNoError(r, "minio", "bash", "-ce", "ls -la "+env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/*inner*.json"))
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") < 0 {
-		env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json")
+		env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/test_live_view.json"))
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
-		env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_window_view.json")
+		env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/test_window_view.json"))
 	}
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview,liveview,windowview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload test_skip_full_backup")
-	env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json")
-	r.Error(env.DockerExec("minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
-	r.Error(env.DockerExec("minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_mv.json"))
-	env.DockerExecNoError(r, "minio", "bash", "-ce", "ls -la /minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/*inner*.json")
+	env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json"))
+	r.Error(env.DockerExec("minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/test_memory.json")))
+	r.Error(env.DockerExec("minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/test_mv.json")))
+	env.DockerExecNoError(r, "minio", "bash", "-ce", "ls -la "+env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/*inner*.json"))
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") < 0 {
-		r.Error(env.DockerExec("minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json"))
+		r.Error(env.DockerExec("minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/test_live_view.json")))
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
-		r.Error(env.DockerExec("minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_window_view.json"))
+		r.Error(env.DockerExec("minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/test_window_view.json")))
 	}
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload test_skip_full_backup")
-	env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json")
-	env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_memory.json")
-	env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_mv.json")
-	env.DockerExecNoError(r, "minio", "bash", "-ce", "ls -la /minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/*inner*.json")
+	env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json"))
+	env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
+	env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/test_mv.json"))
+	env.DockerExecNoError(r, "minio", "bash", "-ce", "ls -la "+env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/*inner*.json"))
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") < 0 {
-		env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json")
+		env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/test_live_view.json"))
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
-		env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_window_view.json")
+		env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "test_skip_full_backup/metadata/test_skip_tables/test_window_view.json"))
 	}
 
 	//download

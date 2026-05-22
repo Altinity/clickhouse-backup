@@ -87,10 +87,10 @@ func main() {
 		{
 			Name:      "tables",
 			Usage:     "List of tables, exclude skip_tables",
-			UsageText: "clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--all]",
+			UsageText: "clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all]",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.PrintTables(c.Bool("all"), c.String("table"), c.String("remote-backup"))
+				return b.PrintTables(c.Bool("all"), c.String("table"), c.String("remote-backup"), c.String("local-backup"), c.String("format"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.BoolFlag{
@@ -106,7 +106,17 @@ func main() {
 				cli.StringFlag{
 					Name:   "remote-backup",
 					Hidden: false,
-					Usage:  "List tables from remote backup",
+					Usage:  "List tables from a remote backup, including per-table size and parts count",
+				},
+				cli.StringFlag{
+					Name:   "local-backup",
+					Hidden: false,
+					Usage:  "List tables from a local backup (read from disk, no live ClickHouse query), including per-table size and parts count",
+				},
+				cli.StringFlag{
+					Name:   "format, f",
+					Hidden: false,
+					Usage:  "Output format (text|json|yaml|csv|tsv)",
 				},
 			),
 		},

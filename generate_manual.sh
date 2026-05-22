@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-CLICKHOUSE_BACKUP_BIN=${CLICKHOUSE_BACKUP_BIN:-build/linux/$(dpkg --print-architecture)/clickhouse-backup}
-make clean ${CLICKHOUSE_BACKUP_BIN}
+CLICKHOUSE_BACKUP_BIN=${CLICKHOUSE_BACKUP_BIN:-build/$(go env GOOS)/$(go env GOARCH)/clickhouse-backup}
+make clean ${CLICKHOUSE_BACKUP_BIN} >&2
 cmds=(
   tables
   create

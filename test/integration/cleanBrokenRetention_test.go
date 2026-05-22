@@ -30,11 +30,24 @@ import (
 // var (GCS_TESTS, AZURE_TESTS, QA_TENCENT_SECRET_KEY/QA_TENCENT_SECRET_ID) is unset.
 
 // cleanBrokenRetentionCase wires one remote-storage backend to the shared scenario.
+//
+// pathRoot/objRoot are derived in runCleanBrokenRetentionScenario from
+// configFile: env.resolveConfigPaths reads path/object_disk_path from the YAML
+// and asks ClickHouse to expand {cluster}/{shard}/{version} via ApplyMacros.
+// pathPrefix is prepended to both — used by backends where the config path is
+// logical (mc alias, ftp chroot home) rather than physical.
+//
+// When fsContainer is non-empty, runCleanBrokenRetentionScenario will
+// `mkdir -p pathRoot objRoot` inside that container right after path
+// resolution. Backends that need additional FS setup (chmod, chown, ssh keys)
+// can express it via setup.
 type cleanBrokenRetentionCase struct {
 	name           string
 	configFile     string
+	pathPrefix     string
 	pathRoot       string
 	objRoot        string
+	fsContainer    string
 	skip           func() bool
 	skipReason     string
 	setup          func(env *TestEnvironment, r *require.Assertions)
@@ -86,6 +99,14 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 	defer env.Cleanup(t, r)
 
 	r.NoError(env.DockerCP("configs/"+tc.configFile, "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
+
+	cfgPath, cfgObjPath := env.resolveConfigPaths(r, tc.configFile)
+	tc.pathRoot = tc.pathPrefix + cfgPath
+	tc.objRoot = tc.pathPrefix + cfgObjPath
+
+	if tc.fsContainer != "" {
+		env.DockerExecNoError(r, tc.fsContainer, "mkdir", "-p", tc.pathRoot, tc.objRoot)
+	}
 	if tc.setup != nil {
 		tc.setup(env, r)
 	}
@@ -151,13 +172,15 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", keepBackup)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean_remote_broken", "--include="+cleanBrokenRetentionIncludeGlob)
 	if tc.finalEmptyType != "" {
-		env.checkObjectStorageIsEmpty(t, r, tc.finalEmptyType)
+		env.checkObjectStorageIsEmpty(t, r, tc.finalEmptyType, tc.configFile)
 	}
 }
 
-// containerFSCase builds a case for a backend that maps its remote storage to a
-// path on the given docker container's filesystem.
-func containerFSCase(name, configFile, container, pathRoot, objRoot, finalEmptyType string) cleanBrokenRetentionCase {
+// containerFSCase builds a case for a backend that maps its remote storage to
+// a path on the given docker container's filesystem. pathRoot/objRoot are
+// resolved later from configFile in runCleanBrokenRetentionScenario; setting
+// fsContainer lets the scenario `mkdir -p` them before the test runs.
+func containerFSCase(name, configFile, container, finalEmptyType string) cleanBrokenRetentionCase {
 	plant := func(env *TestEnvironment, r *require.Assertions, root, name string) {
 		env.DockerExecNoError(r, container, "sh", "-c", fmt.Sprintf(
 			"mkdir -p %s/%s/sub && echo garbage > %s/%s/data.bin && echo garbage > %s/%s/sub/nested.bin && chmod -R 777 %s/%s",
@@ -174,8 +197,7 @@ func containerFSCase(name, configFile, container, pathRoot, objRoot, finalEmptyT
 	return cleanBrokenRetentionCase{
 		name:           name,
 		configFile:     configFile,
-		pathRoot:       pathRoot,
-		objRoot:        objRoot,
+		fsContainer:    container,
 		plant:          plant,
 		assertExists:   exists,
 		assertGone:     gone,
@@ -187,8 +209,6 @@ func s3CleanBrokenRetentionCase() cleanBrokenRetentionCase {
 	// Plant via `mc cp` instead of direct FS writes — MinIO ignores raw files on disk and
 	// only sees objects that went through its S3 API.
 	const mcAliasCmd = "mc alias set local https://localhost:9000 access_key it_is_my_super_secret_key >/dev/null 2>&1"
-	const bucketPath = "local/clickhouse/backup/cluster/0"
-	const objBucketPath = "local/clickhouse/object_disk/cluster/0"
 	plant := func(env *TestEnvironment, r *require.Assertions, root, name string) {
 		env.DockerExecNoError(r, "minio", "bash", "-c", fmt.Sprintf(
 			"%s && echo garbage > /tmp/data.bin && mc cp /tmp/data.bin %s/%s/data.bin >/dev/null && mc cp /tmp/data.bin %s/%s/sub/nested.bin >/dev/null",
@@ -208,8 +228,7 @@ func s3CleanBrokenRetentionCase() cleanBrokenRetentionCase {
 	return cleanBrokenRetentionCase{
 		name:           "S3",
 		configFile:     "config-s3.yml",
-		pathRoot:       bucketPath,
-		objRoot:        objBucketPath,
+		pathPrefix:     "local/clickhouse/", // mc alias + bucket; config path is relative to bucket
 		plant:          plant,
 		assertExists:   exists,
 		assertGone:     gone,
@@ -218,10 +237,9 @@ func s3CleanBrokenRetentionCase() cleanBrokenRetentionCase {
 }
 
 func sftpCleanBrokenRetentionCase() cleanBrokenRetentionCase {
-	tc := containerFSCase("SFTP", "config-sftp-auth-key.yaml", "sshd", "/root", "/object_disk", "")
+	tc := containerFSCase("SFTP", "config-sftp-auth-key.yaml", "sshd", "")
 	tc.setup = func(env *TestEnvironment, r *require.Assertions) {
 		env.uploadSSHKeys(r, "clickhouse-backup")
-		env.DockerExecNoError(r, "sshd", "mkdir", "-p", "/object_disk")
 	}
 	return tc
 }
@@ -231,12 +249,15 @@ func ftpCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 	if isAdvancedMode() {
 		home = "/home/ftpusers/test_backup"
 	}
-	tc := containerFSCase("FTP", "config-ftp.yaml", "ftp", home+"/backup", home+"/object_disk", "")
+	tc := containerFSCase("FTP", "config-ftp.yaml", "ftp", "")
+	// FTP server chroots users to `home`; config paths like `/backup` resolve to
+	// `<home>/backup` on the container filesystem.
+	tc.pathPrefix = home
 	tc.skip = func() bool { return compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") <= 0 }
 	tc.skipReason = "FTP scenario only validated on ClickHouse > 21.8"
 	tc.setup = func(env *TestEnvironment, r *require.Assertions) {
 		// proftpd/vsftpd containers don't create `test_backup` as a system user; uid 1000 owns the home dir.
-		env.DockerExecNoError(r, "ftp", "sh", "-c", fmt.Sprintf("mkdir -p %s/backup %s/object_disk && chown -R 1000:1000 %s && chmod -R 0777 %s", home, home, home, home))
+		env.DockerExecNoError(r, "ftp", "sh", "-c", fmt.Sprintf("chown -R 1000:1000 %s && chmod -R 0777 %s", home, home))
 	}
 	return tc
 }
@@ -251,26 +272,24 @@ func gcsEmulatorCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 		obj := root + "/" + name
 		env.DockerExecNoError(r, "gcs", "sh", "-c", fmt.Sprintf(
 			`echo garbage > /tmp/data.bin && `+
-				`curl -s -o /dev/null -X POST "%s/upload/storage/v1/b/%s/o?name=%s/data.bin&uploadType=media" -H "Content-Type: application/octet-stream" --data-binary @/tmp/data.bin && `+
-				`curl -s -o /dev/null -X POST "%s/upload/storage/v1/b/%s/o?name=%s/sub/nested.bin&uploadType=media" -H "Content-Type: application/octet-stream" --data-binary @/tmp/data.bin`,
+				`curl -g -s -o /dev/null -X POST "%s/upload/storage/v1/b/%s/o?name=%s/data.bin&uploadType=media" -H "Content-Type: application/octet-stream" --data-binary @/tmp/data.bin && `+
+				`curl -g -s -o /dev/null -X POST "%s/upload/storage/v1/b/%s/o?name=%s/sub/nested.bin&uploadType=media" -H "Content-Type: application/octet-stream" --data-binary @/tmp/data.bin`,
 			baseURL, bucket, obj, baseURL, bucket, obj))
 	}
 	assertExists := func(env *TestEnvironment, r *require.Assertions, root, name string) {
 		out, err := env.DockerExecOut("gcs", "sh", "-c", fmt.Sprintf(
-			`curl -s "%s/storage/v1/b/%s/o?prefix=%s/"`, baseURL, bucket, root+"/"+name))
+			`curl -g -s "%s/storage/v1/b/%s/o?prefix=%s/"`, baseURL, bucket, root+"/"+name))
 		r.NoError(err, "assertExists list failed: %s", out)
 		r.Contains(out, "data.bin", "expected data.bin under %s/%s", root, name)
 	}
 	assertGone := func(env *TestEnvironment, r *require.Assertions, root, name string) {
 		out, _ := env.DockerExecOut("gcs", "sh", "-c", fmt.Sprintf(
-			`curl -s "%s/storage/v1/b/%s/o?prefix=%s/"`, baseURL, bucket, root+"/"+name))
+			`curl -g -s "%s/storage/v1/b/%s/o?prefix=%s/"`, baseURL, bucket, root+"/"+name))
 		r.NotContains(out, "data.bin", "expected no blobs under %s/%s", root, name)
 	}
 	return cleanBrokenRetentionCase{
 		name:           "GCS_EMULATOR",
 		configFile:     "config-gcs-custom-endpoint.yml",
-		pathRoot:       "backup/cluster/0",
-		objRoot:        "object_disks/cluster/0",
 		setup:          setup,
 		plant:          plant,
 		assertExists:   assertExists,
@@ -281,7 +300,7 @@ func gcsEmulatorCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 
 func gcsRealCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 	const bucket = "altinity-qa-test"
-	const image = "google/cloud-sdk:slim"
+	const image = "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim"
 	// All gsutil invocations need the service account activated first.
 	const authPrefix = "gcloud auth activate-service-account --key-file=$GOOGLE_APPLICATION_CREDENTIALS >/dev/null 2>&1 && "
 	gsutil := func(env *TestEnvironment, r *require.Assertions, sh string) string {
@@ -299,8 +318,6 @@ func gcsRealCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 	return cleanBrokenRetentionCase{
 		name:       "GCS",
 		configFile: "config-gcs.yml",
-		pathRoot:   "backup/cluster/0",
-		objRoot:    "object_disks/cluster/0",
 		skip:       func() bool { return isTestShouldSkip("GCS_TESTS") },
 		skipReason: "Skipping GCS integration tests (GCS_TESTS not set)",
 		setup: func(env *TestEnvironment, r *require.Assertions) {
@@ -346,8 +363,6 @@ func cosCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 	return cleanBrokenRetentionCase{
 		name:       "COS",
 		configFile: "config-cos.yml",
-		pathRoot:   "backup/cluster/0",
-		objRoot:    "object_disk/cluster/0",
 		skip: func() bool {
 			return os.Getenv("QA_TENCENT_SECRET_KEY") == "" || os.Getenv("QA_TENCENT_SECRET_ID") == ""
 		},
@@ -454,8 +469,6 @@ func azblobCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 	return cleanBrokenRetentionCase{
 		name:       "AZBLOB",
 		configFile: "config-azblob.yml",
-		pathRoot:   "backup",
-		objRoot:    "object_disks",
 		skip:       func() bool { return isTestShouldSkip("AZURE_TESTS") },
 		skipReason: "Skipping AZBLOB integration tests (AZURE_TESTS not set)",
 		setup:      setup,

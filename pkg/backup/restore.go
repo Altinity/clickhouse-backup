@@ -2318,7 +2318,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					if err != nil {
 						return errors.WithMessage(err, "ReadMetadataFromFile")
 					}
-					if objMeta.StorageObjectCount < 1 && objMeta.Version != object_disk.VersionInlineData {
+					if objMeta.StorageObjectCount < 1 && objMeta.Version != object_disk.VersionInlineData && objMeta.TotalSize > 0 {
 						return errors.Errorf("%s: invalid object_disk.Metadata: %#v", fPath, objMeta)
 					}
 					needObjMetaRewrite := false

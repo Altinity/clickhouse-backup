@@ -429,17 +429,19 @@ Kill selected command from `GET /backup/actions` command list, kill process shou
 
 ### GET /backup/tables
 
-Print list of tables: `curl -s localhost:7171/backup/tables | jq .`, exclude pattern matched tables from `skip_tables` configuration parameters
+Print list of tables: `curl -s localhost:7171/backup/tables | jq .`, exclude pattern matched tables from `skip_tables` configuration parameters.
 
 - Optional query argument `table` works the same as the `--table=pattern` CLI argument.
-- Optional query argument `remote_backup` or `remote-backup` works the same as `--remote-backup=name` CLI argument.
+- Optional query argument `remote_backup` (or `remote-backup`) works the same as the `--remote-backup=name` CLI argument. The response then includes per-table `size`, `total_bytes`, `parts`, and `disks` (JSON array of disk names) fields read from the remote backup metadata.
+- Optional query argument `local_backup` (or `local-backup`) works the same as the `--local-backup=name` CLI argument: it lists tables from a local backup directly from disk (no live ClickHouse query required), with `size`, `total_bytes`, `parts`, and `disks` (JSON array) fields.
 
 ### GET /backup/tables/all
 
 Print list of tables: `curl -s localhost:7171/backup/tables/all | jq .`, ignore `skip_tables` configuration parameters.
 
 - Optional query argument `table` works the same as the `--table=pattern` CLI argument.
-- Optional query argument `remote_backup`or `remote-backup` works the same as `--remote-backup=name` CLI argument.
+- Optional query argument `remote_backup` (or `remote-backup`) works the same as the `--remote-backup=name` CLI argument; response shape matches `GET /backup/tables` with the remote-backup parameter.
+- Optional query argument `local_backup` (or `local-backup`) works the same as the `--local-backup=name` CLI argument; response shape matches `GET /backup/tables` with the local-backup parameter.
 
 ### POST /backup/create
 
@@ -666,14 +668,16 @@ NAME:
    clickhouse-backup tables - List of tables, exclude skip_tables
 
 USAGE:
-   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--all]
+   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all]
 
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
    --all, -a                                  Print table even when match with skip_tables pattern
    --table value, --tables value, -t value    List tables only match with table name patterns, separated by comma, allow ? and * as wildcard
-   --remote-backup value                      List tables from remote backup
+   --remote-backup value                      List tables from a remote backup, including per-table size and parts count
+   --local-backup value                       List tables from a local backup (read from disk, no live ClickHouse query), including per-table size and parts count
+   --format value, -f value                   Output format (text|json|yaml|csv|tsv)
    
 ```
 ### CLI command - create
@@ -855,7 +859,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --restore-schema-as-attach                                                        Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --replicated-copy-to-detached                                                     Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step
    --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
-
+   
 ```
 ### CLI command - restore_remote
 ```
@@ -893,7 +897,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --restore-schema-as-attach                                                        Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --hardlink-exists-files                                                           Create hardlinks for existing files instead of downloading
    --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
-
+   
 ```
 ### CLI command - delete
 ```

@@ -4,14 +4,16 @@ NAME:
    clickhouse-backup tables - List of tables, exclude skip_tables
 
 USAGE:
-   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--all]
+   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all]
 
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
    --all, -a                                  Print table even when match with skip_tables pattern
    --table value, --tables value, -t value    List tables only match with table name patterns, separated by comma, allow ? and * as wildcard
-   --remote-backup value                      List tables from remote backup
+   --remote-backup value                      List tables from a remote backup, including per-table size and parts count
+   --local-backup value                       List tables from a local backup (read from disk, no live ClickHouse query), including per-table size and parts count
+   --format value, -f value                   Output format (text|json|yaml|csv|tsv)
    
 ```
 ### CLI command - create
@@ -193,7 +195,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --restore-schema-as-attach                                                        Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --replicated-copy-to-detached                                                     Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step
    --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
-
+   
 ```
 ### CLI command - restore_remote
 ```
@@ -231,7 +233,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --restore-schema-as-attach                                                        Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --hardlink-exists-files                                                           Create hardlinks for existing files instead of downloading
    --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
-
+   
 ```
 ### CLI command - delete
 ```
