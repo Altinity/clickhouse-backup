@@ -45,6 +45,27 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	uploadCmd := fmt.Sprintf("%s_COMPRESSION_FORMAT=zstd CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/%s clickhouse-backup upload --resume %s", remoteStorageType, backupConfig, fullBackupName)
 	env.checkResumeAlreadyProcessed(uploadCmd, fullBackupName, "upload", r, remoteStorageType)
 
+	// https://github.com/Altinity/clickhouse-backup/issues/1373
+	// create a table that exists ONLY in the increment backup (not in the full)
+	log.Debug().Msg("Create increment-only table (issue #1373)")
+	incrementOnlyData := []TestDataStruct{
+		{
+			Database: dbNameAtomic, DatabaseEngine: "Atomic",
+			Name:   "increment_only_table",
+			Schema: "(id UInt64, value String) ENGINE = MergeTree ORDER BY id",
+			Rows: []map[string]interface{}{
+				{"id": uint64(1), "value": "increment-only-1"},
+				{"id": uint64(2), "value": "increment-only-2"},
+			},
+			Fields:  []string{"id", "value"},
+			OrderBy: "id",
+		},
+	}
+	for _, data := range incrementOnlyData {
+		r.NoError(env.createTestSchema(t, data, remoteStorageType))
+		r.NoError(env.createTestData(t, data))
+	}
+
 	log.Debug().Msg("Create increment1 with data")
 	incrementData := generateIncrementTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultIncrementData(), 1)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, incrementBackupName)
@@ -153,6 +174,11 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 		} else {
 			r.NoError(env.checkData(t, r, testDataItem))
 		}
+	}
+
+	log.Debug().Msg("Check increment-only table data (issue #1373)")
+	for _, data := range incrementOnlyData {
+		r.NoError(env.checkData(t, r, data))
 	}
 
 	// test end

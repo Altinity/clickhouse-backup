@@ -961,10 +961,28 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 	if err != nil {
 		return 0, errors.WithMessage(err, "ReadBackupMetadataRemote")
 	}
-	requiredTable, err := b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: table.Database, Table: table.Table})
-	if err != nil {
-		log.Warn().Msgf("downloadTableMetadataIfNotExists %s / %s.%s return error", requiredBackup.BackupName, table.Database, table.Table)
-		return 0, errors.WithMessage(err, "downloadTableMetadataIfNotExists")
+	// https://github.com/Altinity/clickhouse-backup/issues/1373
+	// tables created after the full backup have no Required parts; skip the
+	// required-backup metadata fetch since it will fail with "not found".
+	hasRequiredParts := false
+	for _, diskParts := range table.Parts {
+		for _, part := range diskParts {
+			if part.Required {
+				hasRequiredParts = true
+				break
+			}
+		}
+		if hasRequiredParts {
+			break
+		}
+	}
+	var requiredTable *metadata.TableMetadata
+	if hasRequiredParts {
+		requiredTable, err = b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: table.Database, Table: table.Table})
+		if err != nil {
+			log.Warn().Msgf("downloadTableMetadataIfNotExists %s / %s.%s return error", requiredBackup.BackupName, table.Database, table.Table)
+			return 0, errors.WithMessage(err, "downloadTableMetadataIfNotExists")
+		}
 	}
 
 	for disk, parts := range table.Parts {
@@ -1476,4 +1494,3 @@ func (b *Backuper) getDownloadDiskForNonExistsDisk(notExistsDiskType string, fil
 	}
 	return false, filteredDisks[leastUsedIdx].Name, filteredDisks[leastUsedIdx].FreeSpace - partSize, nil
 }
-
