@@ -1137,7 +1137,20 @@ class Cluster(object):
         """Stop and remove a previously started auxiliary container."""
         self._stop_container(name)
 
+    @property
+    def ssl_certs_dir(self):
+        """Host-side directory containing the cluster's static SSL fixtures.
+
+        Always points at ``configs/clickhouse/ssl/`` of the testflows project,
+        which holds ``server.crt``, ``server.key`` and ``dhparam.pem`` and is
+        the same source the cluster bind-mounts on every ClickHouse node.
+        Tests reuse these files so they never have to generate certificates.
+        """
+        tests_dir = os.environ.get("CLICKHOUSE_TESTS_DIR", self.configs_dir)
+        return os.path.join(tests_dir, "configs/clickhouse/ssl")
+
     def start_openssl_container(self, name, role, listen=9443, cert_path=None, key_path=None,
+                                dhparam_path=None,
                                 cipher=None, ciphersuites=None, tls_version="-tls1_2",
                                 extra_args=""):
         """Convenience helper to start an ``openssl s_server`` container.
@@ -1151,6 +1164,9 @@ class Cluster(object):
             ``/certs/server.crt``. Reuse the static cluster certs in
             ``configs/clickhouse/ssl/server.crt`` to avoid generating new ones.
         :param key_path: absolute host path of the server key.
+        :param dhparam_path: optional host path of a DH-parameters file to bind-mount
+            at ``/certs/dhparam.pem``. Required for DHE-* ciphers on some OpenSSL
+            builds; reuse ``configs/clickhouse/ssl/dhparam.pem`` if present.
         :param cipher: TLSv1.2 ``-cipher`` argument (OpenSSL name format).
         :param ciphersuites: TLSv1.3 ``-ciphersuites`` argument.
         :param tls_version: ``-tls1_2`` or ``-tls1_3``.
@@ -1165,6 +1181,8 @@ class Cluster(object):
             (cert_path, "/certs/server.crt"),
             (key_path, "/certs/server.key"),
         ]
+        if dhparam_path:
+            volumes.append((dhparam_path, "/certs/dhparam.pem"))
         flags = [
             f"-accept {int(listen)}",
             "-cert /certs/server.crt",
@@ -1172,6 +1190,8 @@ class Cluster(object):
             tls_version,
             "-www",
         ]
+        if dhparam_path:
+            flags.append("-dhparam /certs/dhparam.pem")
         if cipher:
             flags.append(f"-cipher '{cipher}'")
         if ciphersuites:
@@ -1637,8 +1657,6 @@ class Cluster(object):
                         "LOG_LEVEL": log_level,
                         "GCS_CREDENTIALS_JSON": gcs_cred_json,
                         "GCS_CREDENTIALS_JSON_ENCODED": gcs_cred_json_encoded,
-                        "CLICKHOUSE_HOST": "clickhouse1",
-                        "CLICKHOUSE_BACKUP_CONFIG": "/etc/clickhouse-backup/config.yml",
                         "TZ": "Europe/Moscow",
                         "GOCOVERDIR": "/tmp/_coverage_/",
                     },
@@ -1652,8 +1670,9 @@ class Cluster(object):
                         "apt-get update && "
                         "apt-get install -y --no-install-recommends "
                         # binutils -> readelf (.go.fipsinfo offset lookup),
-                        # python3 -> tamper_go_fips_checksum.sh byte editor.
-                        "ca-certificates tzdata bash curl openssl procps binutils python3 && "
+                        # python3  -> tamper_go_fips_checksum.sh byte editor,
+                        # golang-go -> `go version -m` for build-flag scenario.
+                        "ca-certificates tzdata bash curl openssl procps binutils python3 golang-go && "
                         "update-ca-certificates && "
                         # Do not start the binary; tests start/stop it explicitly.
                         "exec sleep infinity"

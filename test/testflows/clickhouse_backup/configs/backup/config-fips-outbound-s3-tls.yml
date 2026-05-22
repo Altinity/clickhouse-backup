@@ -1,0 +1,65 @@
+# Static config for the FIPS *outbound* TLS scenario against a fake S3
+# HTTPS endpoint controlled by ``openssl s_server`` (Test Plan section
+# 6.2.8, "Outbound TLS to S3 Endpoint").
+#
+# IMPORTANT: ``s3.endpoint`` is intentionally *unset* here.
+#
+# ``clickhouse-backup-fips`` calls ``os.Setenv("AWS_USE_FIPS_ENDPOINT", "true")``
+# at startup (see ``cmd/clickhouse-backup/main.go``); the AWS SDK Go v2
+# endpoint rule engine then refuses to combine that with a custom
+# ``s3.endpoint`` and aborts with::
+#
+#     S3 ResolveEndpoint: endpoint rule error,
+#     A custom endpoint cannot be combined with FIPS
+#
+# ... before any TCP socket is opened, so no TLS handshake ever happens
+# and the cipher-policy assertion can't fire. By leaving ``endpoint`` blank
+# we let the SDK derive the AWS FIPS hostname for the configured region
+# (``https://s3-fips.us-east-1.amazonaws.com`` for ``us-east-1``).
+#
+# The test scenario then starts an ``openssl s_server`` sidecar named
+# ``s3-fips.us-east-1.amazonaws.com`` so Docker's embedded DNS resolves
+# the SDK-generated hostname to the sidecar's IP, and the sidecar listens
+# on the default HTTPS port (443) since the SDK's URL has no port suffix.
+#
+# ``s3.disable_cert_verification: true`` skips X.509 chain *and* hostname
+# validation against the self-signed test certificate
+# (``InsecureSkipVerify: true`` in ``pkg/storage/s3.go``), keeping the
+# assertion focused on TLS *cipher policy* rather than X.509 trust.
+#
+# ``clickhouse.host: clickhouse1`` is just a real CH node on the cluster
+# network so config validation and any preliminary connection succeed -
+# the test command (``list remote``) only exercises the S3 HTTPS path.
+general:
+  log_level: warn
+  remote_storage: s3
+clickhouse:
+  config_dir: /etc/clickhouse-server
+  host: clickhouse1
+  port: 9000
+  username: ''
+  password: ''
+  timeout: 5s
+s3:
+  # Dummy credentials, NOT real AWS keys. They have to be this long because
+  # the AWS SDK Go v2 SigV4 signer derives the signing key with
+  # ``HMAC("AWS4"+secret_key, date)``; under ``GODEBUG=fips140=only`` the Go
+  # FIPS module panics with::
+  #
+  #     crypto/hmac: use of keys shorter than 112 bits is not allowed in
+  #     FIPS 140-only mode
+  #
+  # ... if the HMAC key is shorter than 14 bytes - so ``secret_key`` MUST be
+  # at least 10 chars (``"AWS4"`` + 10 = 14). Without this the panic fires
+  # before any TCP socket is opened and the cipher-policy assertion can
+  # never reach the TLS layer (this is why the integration test in
+  # ``test/integration/configs/config-s3-fips.yml`` uses real 40-char AWS
+  # credentials). We use a long obvious-dummy string so it's clear the
+  # value is a placeholder, not a leaked secret.
+  access_key: AKIAFIPSDUMMYTESTKEYS
+  secret_key: FIPSdummyTestSecretMustBe14PlusCharsForHMAC
+  bucket: anybucket
+  region: us-east-1
+  force_path_style: true
+  disable_ssl: false
+  disable_cert_verification: true

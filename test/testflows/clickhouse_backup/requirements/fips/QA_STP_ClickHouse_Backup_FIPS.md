@@ -328,11 +328,17 @@ Results:
 
 Check that `clickhouse-backup-fips` enforces the same TLS policy on outbound HTTPS to an S3-style remote storage endpoint.
 
-Point `s3.endpoint` in the `clickhouse-backup` config to a local `openssl s_server` on `127.0.0.1:9443` with a chosen cipher profile, then run `clickhouse-backup-fips list remote` with `GODEBUG=fips140=only`. Cipher names below come from the official Altinity FIPS configuration documentation.
+Three FIPS-specific items shape this setup:
+
+* Leave `s3.endpoint` blank and set `s3.region` (e.g. `us-east-1`); the SDK targets the AWS FIPS hostname `s3-fips.us-east-1.amazonaws.com`.
+* Name the `openssl s_server` container after that hostname and have it listen on port `443`.
+* Set `s3.secret_key` to at least 10 characters and `s3.disable_cert_verification: true`.
+
+Run `clickhouse-backup-fips list remote` with `GODEBUG=fips140=only`. Cipher names below come from the official Altinity FIPS configuration documentation.
 
 FIPS-approved profiles (handshake MUST be accepted by `clickhouse-backup-fips` policy):
 
-* `openssl s_server -tls1_2 -cipher ECDHE-RSA-AES128-GCM-SHA256` — expected result: TLS handshake is not rejected by the FIPS policy (downstream HTTP/auth errors from `openssl s_server -www` are acceptable, since this server is not a real S3 API).
+* `openssl s_server -tls1_2 -cipher ECDHE-RSA-AES128-GCM-SHA256` — expected result: TLS handshake is not rejected by the FIPS policy (downstream HTTP / S3-protocol errors from `openssl s_server -www` are acceptable, since this server is not a real S3 API).
 * `openssl s_server -tls1_2 -cipher ECDHE-RSA-AES256-GCM-SHA384` — expected result: same as above.
 * `openssl s_server -tls1_3 -ciphersuites TLS_AES_128_GCM_SHA256` — expected result: same as above.
 * `openssl s_server -tls1_3 -ciphersuites TLS_AES_256_GCM_SHA384` — expected result: same as above.
