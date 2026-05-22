@@ -34,8 +34,8 @@ s3:
   disable_cert_verification: true
   acl: private
   force_path_style: true
-  path: backup/{cluster}/{shard}
-  object_disk_path: object_disk/{cluster}/{shard}
+  path: backup/{cluster}/{shard}/{version}
+  object_disk_path: object_disk/{cluster}/{shard}/{version}
   compression_format: tar
   allow_multipart_download: true
   concurrency: 3

@@ -169,5 +169,5 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	// test for specified partitions backup
 	testBackupSpecifiedPartitions(t, r, env, remoteStorageType, backupConfig)
 
-	env.checkObjectStorageIsEmpty(t, r, remoteStorageType)
+	env.checkObjectStorageIsEmpty(t, r, remoteStorageType, backupConfig)
 }

@@ -71,6 +71,6 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	r.Equal(uint64(100+20*numBackupsWithData), res)
 	fullCleanup(t, r, env, []string{latestIncrementBackup}, []string{"local"}, nil, false, true, true, "config-s3.yml")
 	fullCleanup(t, r, env, backupNames, []string{"remote"}, databaseList, true, true, true, "config-s3.yml")
-	env.checkObjectStorageIsEmpty(t, r, "S3")
+	env.checkObjectStorageIsEmpty(t, r, "S3", "config-s3.yml")
 	env.Cleanup(t, r)
 }
