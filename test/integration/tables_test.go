@@ -141,6 +141,6 @@ func TestTablesCommand(t *testing.T) {
 	r.Contains(strings.ToLower(out+fmt.Sprint(err)), "unknown format")
 
 	fullCleanup(t, r, env, []string{testBackupName}, []string{"remote", "local"}, databaseList, true, true, true, "config-s3.yml")
-	env.checkObjectStorageIsEmpty(t, r, "S3")
+	env.checkObjectStorageIsEmpty(t, r, "S3", "config-s3.yml")
 	env.Cleanup(t, r)
 }
