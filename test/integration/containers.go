@@ -352,6 +352,65 @@ func (tc *TestContainers) DumpAllContainerLogs(ctx context.Context) {
 	}
 }
 
+// DumpContainerLogsSince dumps state and logs for a single container limited to a time window.
+// Used to provide focused diagnostics when a query fails — we only want logs from the moment the
+// query started, not the entire test history. A small look-back buffer is added to catch
+// shutdown/restart messages that may precede the failure.
+func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name string, since time.Time) {
+	info := tc.containers[name]
+	if info == nil {
+		return
+	}
+	inspect, err := tc.client.ContainerInspect(ctx, info.ID)
+	if err != nil {
+		log.Error().Err(err).Msgf("can't inspect container %s (%s)", name, info.ID[:12])
+		return
+	}
+	state := "unknown"
+	if inspect.State != nil {
+		state = inspect.State.Status
+		if inspect.State.Health != nil {
+			state += ", health=" + inspect.State.Health.Status
+		}
+		if inspect.State.ExitCode != 0 {
+			state += fmt.Sprintf(", exitCode=%d", inspect.State.ExitCode)
+		}
+		if inspect.State.OOMKilled {
+			state += ", OOMKilled"
+		}
+		if inspect.State.StartedAt != "" {
+			state += ", startedAt=" + inspect.State.StartedAt
+		}
+		if inspect.State.FinishedAt != "" && inspect.State.FinishedAt != "0001-01-01T00:00:00Z" {
+			state += ", finishedAt=" + inspect.State.FinishedAt
+		}
+	}
+	if since.IsZero() {
+		since = time.Now()
+	}
+	since = since.Add(-30 * time.Second)
+	log.Error().Msgf("=== container %s (%s) state: %s ===", name, info.ID[:12], state)
+
+	logOpts := container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Timestamps: true,
+		Since:      fmt.Sprintf("%d", since.Unix()),
+	}
+	reader, logErr := tc.client.ContainerLogs(ctx, info.ID, logOpts)
+	if logErr != nil {
+		log.Error().Err(logErr).Msgf("can't get logs for %s", name)
+		return
+	}
+	defer func() {
+		if closeErr := reader.Close(); closeErr != nil {
+			log.Error().Err(closeErr).Msg("can't close DumpContainerLogsSince reader")
+		}
+	}()
+	logBytes, _ := io.ReadAll(reader)
+	log.Error().Msgf("=== %s logs since %s ===\n%s", name, since.Format(time.RFC3339), string(logBytes))
+}
+
 func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 	info := tc.containers[name]
 	if info == nil {
