@@ -1,0 +1,24 @@
+# Static config used by `connectivity_against_non_fips_clickhouse_server`.
+#
+# Mounted into the FIPS backup container via the per-PID copy of
+# ``configs/backup/`` performed by ``regression.py``.
+#
+# `clickhouse.host: clickhouse_nonfips_server` resolves on the docker
+# network to the dedicated non-FIPS ClickHouse server brought up by the
+# scenario (`altinity/clickhouse-server:25.8.16.10002.altinitystable`).
+# `clickhouse.port: 9000` is the standard plain native TCP port (image
+# default).  `secure: false` is intentional: the test plan defines this
+# as a positive interoperability check between the FIPS-built binary and
+# a non-FIPS ClickHouse, not a TLS/cipher policy check (those live in the
+# inbound / outbound TLS scenarios).
+general:
+  log_level: warn
+  remote_storage: none
+clickhouse:
+  config_dir: /etc/clickhouse-server
+  host: clickhouse_nonfips_server
+  port: 9000
+  username: default
+  password: ''
+  timeout: 5s
+  secure: false

@@ -326,17 +326,19 @@ and the peer (e.g. `openssl s_server`) SHALL report `no shared cipher`.
 #### RQ.SRS-013.ClickHouse.BackupUtility.FIPS.TLS.Outbound.S3.Ciphers.Approved
 version: 1.0
 
-The [clickhouse-backup-fips] binary, when started with `GODEBUG=fips140=only` and configured with an S3 remote storage endpoint (`s3.endpoint`) pointed at a [TLS] server on `127.0.0.1:9443`, SHALL successfully complete the [TLS] handshake when the remote endpoint offers any of the following FIPS-approved profiles:
+The [clickhouse-backup-fips] binary, when started with `GODEBUG=fips140=only` and configured against an S3-compatible HTTPS endpoint as described above, SHALL NOT have its [TLS] handshake rejected by the FIPS policy when the remote endpoint offers any of the following FIPS-approved profiles:
 
 * TLSv1.2 with `ECDHE-RSA-AES128-GCM-SHA256`
 * TLSv1.2 with `ECDHE-RSA-AES256-GCM-SHA384`
 * TLSv1.3 with `TLS_AES_128_GCM_SHA256`
 * TLSv1.3 with `TLS_AES_256_GCM_SHA384`.
 
+Downstream HTTP / S3-protocol errors are acceptable, since `openssl s_server -www` is not a real S3 API.
+
 #### RQ.SRS-013.ClickHouse.BackupUtility.FIPS.TLS.Outbound.S3.NonApprovedCiphers.Reject
 version: 1.0
 
-The [clickhouse-backup-fips] binary, when started with `GODEBUG=fips140=only` and configured with an S3-style remote storage endpoint (`s3.endpoint`) pointed at a [TLS] server on `127.0.0.1:9443`, SHALL refuse to complete the [TLS] handshake when the remote endpoint offers only non-FIPS-approved cipher suites, including:
+The [clickhouse-backup-fips] binary, when started with `GODEBUG=fips140=only` and configured against an S3-compatible HTTPS endpoint as described above, SHALL refuse to complete the [TLS] handshake when the remote endpoint offers only non-FIPS-approved cipher suites, including:
 
 * TLSv1.2 with `ECDHE-RSA-CHACHA20-POLY1305`
 * TLSv1.2 with `DHE-RSA-AES256-GCM-SHA384`

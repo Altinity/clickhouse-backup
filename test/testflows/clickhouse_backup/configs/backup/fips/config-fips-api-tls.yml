@@ -1,0 +1,30 @@
+# Static config for the FIPS REST API TLS-cipher scenarios.
+#
+# Mounted into both backup containers via the per-PID copy of
+# ``configs/backup/`` performed by ``regression.py`` (see
+# ``shutil.copytree(base_config_dir, config_dir)``). Only the
+# ``clickhouse_backup_fips`` container actually consumes it - tests start the
+# FIPS server explicitly with ``-c /etc/clickhouse-backup/fips/config-fips-api-tls.yml``.
+#
+# TLS files are reused from the cluster's static SSL fixtures, inherited
+# inside the FIPS container via ``volumes_from_name="clickhouse1"``
+# (so ``/etc/clickhouse-server/ssl/`` is the same files as in the CH nodes).
+# Tests do not generate certificates of their own.
+general:
+  log_level: warn
+  remote_storage: none
+clickhouse:
+  config_dir: /etc/clickhouse-server
+  host: clickhouse1
+  port: 9000
+  username: ''
+  password: ''
+  timeout: 5s
+  secure: false
+api:
+  listen: 0.0.0.0:7172
+  secure: true
+  certificate_file: /etc/clickhouse-server/ssl/server.crt
+  private_key_file: /etc/clickhouse-server/ssl/server.key
+  enable_metrics: false
+  enable_pprof: false
