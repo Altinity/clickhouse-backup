@@ -36,9 +36,9 @@ FIPS_OUTBOUND_CH_TLS_PORT           = 9440
 
 # Default HTTPS port. The S3 outbound scenario must use 443 because the AWS
 # SDK Go v2 generates the FIPS endpoint URL as bare
-# ``https://s3-fips.<region>.amazonaws.com`` (no port suffix), so the
+# `https://s3-fips.<region>.amazonaws.com` (no port suffix), so the
 # container has to be reachable on the default HTTPS port for the SDK's
-# request to land on it. See ``config-fips-outbound-s3-tls.yml`` for the
+# request to land on it. See `config-fips-outbound-s3-tls.yml` for the
 # full reasoning behind the AWS-style hostname approach.
 FIPS_OUTBOUND_S3_TLS_PORT           = 443
 
@@ -74,10 +74,25 @@ NON_FIPS_TLS12_INBOUND_REST = (
     "DES-CBC3-SHA",
 )
 
-# Non-FIPS TLS1.2 suites for the outbound verification
+# Non-FIPS TLS1.2 suites for the outbound verification.
+#
+# The set covers three different reasons a TLS1.2 cipher must be rejected
+# by the Go FIPS 140-3 outbound policy:
+#
+# 1. Non-approved bulk cipher (CHACHA20):
+#       ECDHE-RSA-CHACHA20-POLY1305
+# 2. Non-approved key exchange (DHE):
+#       DHE-RSA-AES256-GCM-SHA384
+#       DHE-RSA-AES128-GCM-SHA256
+# 3. Plain RSA static key exchange (no forward secrecy):
+#       AES256-GCM-SHA384
+#       AES128-GCM-SHA256
 NON_FIPS_TLS12_OUTBOUND = (
     "ECDHE-RSA-CHACHA20-POLY1305",
     "DHE-RSA-AES256-GCM-SHA384",
+    "DHE-RSA-AES128-GCM-SHA256",
+    "AES256-GCM-SHA384",
+    "AES128-GCM-SHA256",
 )
 
 
@@ -235,18 +250,26 @@ def _check_outbound_tls_with_cipher(cluster, backup_fips, *, listen, command,
                                     aux_name=OPENSSL_AUX_NAME):
     """One outbound TLS handshake check for one cipher profile.
 
-    Brings up an ``openssl s_server`` container named ``aux_name``, listening
-    on ``listen`` with the given cipher / cipher suite, runs ``command``
-    inside the FIPS backup container, asserts the FIPS-policy outcome via
-    :func:`_check_outbound_tls_handshake`, and stops the container.
+    Brings up an ``openssl s_server`` container, runs ``command`` inside
+    the FIPS backup container, asserts the FIPS-policy outcome via
+    `check_outbound_tls_handshake`, and stops the aux container in
+    `Finally`. The aux container reuses the cluster's static SSL fixtures
+    (`configs/clickhouse/ssl/{server.crt,server.key,dhparam.pem}`).
 
-    ``aux_name`` doubles as the container's docker hostname (and network
-    alias), so callers can route a specific DNS name to it - the S3
-    scenario uses ``s3-fips.us-east-1.amazonaws.com`` so the AWS SDK's
-    auto-generated FIPS endpoint URL resolves to the container.
-
-    The container reuses the cluster's static SSL fixtures
-    (``configs/clickhouse/ssl/{server.crt,server.key,dhparam.pem}``)
+    :param cluster: cluster used to start/stop the aux container.
+    :param backup_fips: FIPS backup container that runs `command`.
+    :param listen: port the aux `openssl s_server` accepts on.
+    :param command: full `clickhouse-backup-fips` invocation string
+        (already wrapped with `env GODEBUG=fips140=only ...`).
+    :param expected_success: `True` if the FIPS policy MUST accept the
+        handshake, `False` if it MUST reject it.
+    :param tls_version: `-tls1_2` or `-tls1_3` (passed to `s_server`).
+    :param cipher: TLSv1.2 OpenSSL cipher name (use with `-tls1_2`);
+        mutually exclusive with `ciphersuites`.
+    :param ciphersuites: TLSv1.3 IANA cipher-suite name (use with
+        `-tls1_3`); mutually exclusive with `cipher`.
+    :param aux_name: docker hostname / network alias of the aux container;
+        callers can name it after a target hostname.
     """
     ssl_dir = cluster.ssl_certs_dir
     try:
@@ -582,8 +605,8 @@ def outbound_tls_cipher_negotiation(self):
     """Validate outbound TLS policy when `clickhouse-backup-fips` connects to ClickHouse over TLS.
 
     For each cipher / cipher suite from the shared FIPS-approved /
-    non-approved lists, start ``openssl s_server`` on the secure native
-    ClickHouse port ``9440`` with that profile and run::
+    non-approved lists, start `openssl s_server` on the secure native
+    ClickHouse port `9440` with that profile and run:
 
         `GODEBUG=fips140=only clickhouse-backup-fips -c <config> tables`
 
@@ -593,12 +616,12 @@ def outbound_tls_cipher_negotiation(self):
       policy.
 
     * non-approved profiles - the FIPS client refuses the handshake with
-      ``remote error: tls: handshake failure`` / ``no shared cipher``.
+      `remote error: tls: handshake failure` / `no shared cipher`.
 
     The ``s_server`` container reuses the cluster's static SSL configuration and
-    the ``clickhouse-backup-fips`` config is the static
-    ``configs/backup/fips/config-fips-outbound-clickhouse-tls.yml`` with
-    ``skip_verify: true`` so the assertion stays focused on cipher policy.
+    the `clickhouse-backup-fips` config is the static
+    `configs/backup/fips/config-fips-outbound-clickhouse-tls.yml` with
+    `skip_verify: true` so the assertion stays focused on cipher policy.
     """
     backup_fips = _require_fips_container(self)
     cluster = self.context.cluster
