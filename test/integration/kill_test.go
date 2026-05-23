@@ -29,7 +29,7 @@ func TestKill(t *testing.T) {
 	const dbName = "kill_test_db"
 	const backupName = "kill_test_backup"
 
-	env.queryWithNoError(r, "DROP DATABASE IF EXISTS "+dbName+" SYNC")
+	r.NoError(env.dropDatabase(dbName, true))
 	env.queryWithNoError(r, "CREATE DATABASE "+dbName)
 	// Many partitions => many upload chunks => upload stays in-progress
 	// long enough for the test to observe and kill it.
@@ -119,7 +119,7 @@ func TestKill(t *testing.T) {
 	// cleanup
 	_, _ = env.DockerExecOut("clickhouse-backup", "bash", "-ce",
 		fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/remote/%s' || true", backupName))
-	env.queryWithNoError(r, "DROP DATABASE IF EXISTS "+dbName+" SYNC")
+	r.NoError(env.dropDatabase(dbName, true))
 	env.Cleanup(t, r)
 }
 
