@@ -33,6 +33,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
@@ -173,7 +174,9 @@ func (api *APIServer) RunWatch(cliCtx *cli.Context) {
 
 // Stop cancel all running commands, @todo think about graceful period
 func (api *APIServer) Stop() error {
-	status.Current.CancelAll("canceled during server stop")
+	for _, cmd := range status.Current.CancelAll("canceled during server stop") {
+		pidlock.RemovePidFileForCommand(cmd)
+	}
 	return api.server.Close()
 }
 
@@ -187,7 +190,9 @@ func (api *APIServer) Restart() error {
 			log.Error().Err(createErr).Send()
 		}
 	}
-	status.Current.CancelAll("canceled via API /restart")
+	for _, cmd := range status.Current.CancelAll("canceled via API /restart") {
+		pidlock.RemovePidFileForCommand(cmd)
+	}
 	if api.server != nil {
 		_ = api.server.Close()
 	}
@@ -469,11 +474,12 @@ func (api *APIServer) actionsKillHandler(row status.ActionRow, args []string, ac
 		killCommand = args[1]
 	}
 	commandId, _ := status.Current.Start(row.Command)
-	err := status.Current.Cancel(killCommand, errors.New("canceled from API /backup/actions"))
+	canceledCommand, err := status.Current.Cancel(killCommand, errors.New("canceled from API /backup/actions"))
 	defer status.Current.Stop(commandId, err)
 	if err != nil {
 		return actionsResults, err
 	}
+	pidlock.RemovePidFileForCommand(canceledCommand)
 	actionsResults = append(actionsResults, actionsResultsRow{
 		Status:    "success",
 		Operation: row.Command,
@@ -751,12 +757,15 @@ func (api *APIServer) httpVersionHandler(w http.ResponseWriter, _ *http.Request)
 
 // httpKillHandler - kill selected command if it InProgress
 func (api *APIServer) httpKillHandler(w http.ResponseWriter, r *http.Request) {
-	var err error
+	var (
+		err             error
+		canceledCommand string
+	)
 	command, exists := r.URL.Query()["command"]
 	if exists && len(command) > 0 {
-		err = status.Current.Cancel(command[0], errors.New("canceled from API /backup/kill"))
+		canceledCommand, err = status.Current.Cancel(command[0], errors.New("canceled from API /backup/kill"))
 	} else {
-		err = status.Current.Cancel("", errors.New("canceled from API /backup/kill"))
+		canceledCommand, err = status.Current.Cancel("", errors.New("canceled from API /backup/kill"))
 	}
 	if err != nil {
 		api.sendJSONEachRow(w, http.StatusInternalServerError, struct {
@@ -768,17 +777,18 @@ func (api *APIServer) httpKillHandler(w http.ResponseWriter, r *http.Request) {
 			Operation: "kill",
 			Error:     err.Error(),
 		})
-	} else {
-		api.sendJSONEachRow(w, http.StatusOK, struct {
-			Status    string `json:"status"`
-			Operation string `json:"operation"`
-			Command   string `json:"command"`
-		}{
-			Status:    "success",
-			Operation: "kill",
-			Command:   command[0],
-		})
+		return
 	}
+	pidlock.RemovePidFileForCommand(canceledCommand)
+	api.sendJSONEachRow(w, http.StatusOK, struct {
+		Status    string `json:"status"`
+		Operation string `json:"operation"`
+		Command   string `json:"command"`
+	}{
+		Status:    "success",
+		Operation: "kill",
+		Command:   canceledCommand,
+	})
 }
 
 // httpTablesHandler - display list of tables.
@@ -2394,6 +2404,7 @@ func (api *APIServer) ReloadConfig(w http.ResponseWriter, command string) (*conf
 	api.setConfig(cfg)
 	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
 	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
+	status.SetCancelWaitTimeout(cfg.API.CancelOperationTimeoutDuration)
 	return cfg, nil
 }
 

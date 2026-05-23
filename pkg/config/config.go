@@ -299,6 +299,13 @@ type APIConfig struct {
 	// (the in-memory async status list). Useful to exclude high-frequency monitoring calls
 	// like "list" from growing the actions state. See https://github.com/Altinity/clickhouse-backup/issues/1359
 	BackupActionsSkipCommands []string `yaml:"backup_actions_skip_commands" envconfig:"API_BACKUP_ACTIONS_SKIP_COMMANDS"`
+	// CancelOperationTimeout bounds how long /backup/kill (and server stop/restart)
+	// wait for the underlying command goroutine to actually finish after the
+	// context is canceled. If the goroutine is stuck (e.g. on an IO without
+	// timeout), kill returns once this timeout elapses. See
+	// https://github.com/Altinity/clickhouse-backup/issues/1365
+	CancelOperationTimeout         string        `yaml:"cancel_operation_timeout" envconfig:"API_CANCEL_OPERATION_TIMEOUT"`
+	CancelOperationTimeoutDuration time.Duration `yaml:"-"`
 }
 
 // IsBackupActionsSkipCommand returns true if the given command must NOT be recorded
@@ -536,6 +543,15 @@ func ValidateConfig(cfg *Config) error {
 			cfg.General.FullDuration = duration
 		}
 	}
+	if cfg.API.CancelOperationTimeout != "" {
+		duration, err := time.ParseDuration(cfg.API.CancelOperationTimeout)
+		if err != nil {
+			return errors.Wrap(err, "invalid api.cancel_operation_timeout")
+		}
+		cfg.API.CancelOperationTimeoutDuration = duration
+	} else {
+		cfg.API.CancelOperationTimeoutDuration = 1800 * time.Second
+	}
 	return nil
 }
 
@@ -696,9 +712,11 @@ func DefaultConfig() *Config {
 			DeleteConcurrency:      50,
 		},
 		API: APIConfig{
-			ListenAddr:                    "localhost:7171",
-			EnableMetrics:                 true,
-			CompleteResumableAfterRestart: true,
+			ListenAddr:                     "localhost:7171",
+			EnableMetrics:                  true,
+			CompleteResumableAfterRestart:  true,
+			CancelOperationTimeout:         "1800s",
+			CancelOperationTimeoutDuration: 1800 * time.Second,
 		},
 		FTP: FTPConfig{
 			Timeout:           "2m",

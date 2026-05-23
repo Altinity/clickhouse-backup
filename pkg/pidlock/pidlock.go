@@ -53,3 +53,48 @@ func RemovePidFile(backupName string) {
 	pidPath := path.Join(os.TempDir(), fmt.Sprintf("clickhouse-backup.%s.pid", backupName))
 	_ = os.Remove(pidPath)
 }
+
+// ExtractBackupNameFromCommand parses a backup_actions command string (e.g.
+// `upload --resumable=1 my_backup`, `delete local my_backup`,
+// `restore_remote --rm my_backup`) and returns the backup name (last
+// positional token), or empty string if the command does not target a
+// single backup (watch, clean, list, kill, ...).
+func ExtractBackupNameFromCommand(command string) string {
+	fields := strings.Fields(command)
+	if len(fields) < 2 {
+		return ""
+	}
+	cmd := fields[0]
+	switch cmd {
+	case "create", "upload", "download", "restore", "delete",
+		"create_remote", "restore_remote":
+		// proceed
+	default:
+		return ""
+	}
+	// pick the last token that doesn't start with "-" or "--"
+	for i := len(fields) - 1; i >= 1; i-- {
+		tok := fields[i]
+		if strings.HasPrefix(tok, "-") {
+			continue
+		}
+		// for `delete local NAME` / `delete remote NAME` skip the
+		// "local"/"remote" subcommand token
+		if cmd == "delete" && (tok == "local" || tok == "remote") {
+			continue
+		}
+		return strings.Trim(tok, `"'`)
+	}
+	return ""
+}
+
+// RemovePidFileForCommand extracts the backup name from a backup_actions
+// command string and removes the corresponding pid file, if any. Safe to
+// call for commands that don't have a pid file (no-op).
+func RemovePidFileForCommand(command string) {
+	backupName := ExtractBackupNameFromCommand(command)
+	if backupName == "" {
+		return
+	}
+	RemovePidFile(backupName)
+}

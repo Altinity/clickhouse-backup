@@ -380,6 +380,7 @@ api:
   complete_resumable_after_restart: true # API_COMPLETE_RESUMABLE_AFTER_RESTART, after API server startup, if `/var/lib/clickhouse/backup/*/(upload|download).state2` present, then operation will continue in the background
   watch_is_main_process: false # WATCH_IS_MAIN_PROCESS, treats 'watch' command as a main api process, if it is stopped unexpectedly, api server is also stopped. Does not stop api server if 'watch' command canceled by the user. 
   backup_actions_skip_commands: [] # API_BACKUP_ACTIONS_SKIP_COMMANDS, list of commands that must NOT be recorded into the in-memory async status exposed via `system.backup_actions` and `/backup/actions`. Useful to keep high-frequency monitoring calls (typically `list`) from growing the actions state and consuming RAM during long-running backups. Example: `[list]`
+  cancel_operation_timeout: "1800s" # API_CANCEL_OPERATION_TIMEOUT, how long `/backup/kill` (and server stop/restart) waits for the underlying command goroutine to actually return after the context is canceled. If the goroutine is stuck on an IO without timeout, kill returns once this timeout elapses. See https://github.com/Altinity/clickhouse-backup/issues/1365
 
 ```
 
