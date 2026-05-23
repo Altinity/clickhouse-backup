@@ -247,7 +247,7 @@ func testAPIBackupActionsSkipCommands(r *require.Assertions, env *TestEnvironmen
 
 	env.DockerExecNoError(r, "clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
 	time.Sleep(2 * time.Second)
-	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce", "API_BACKUP_ACTIONS_SKIP_COMMANDS=list clickhouse-backup server --watch &>>/tmp/clickhouse-backup-server.log")
+	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce", "API_BACKUP_ACTIONS_SKIP_COMMANDS=list clickhouse-backup server &>>/tmp/clickhouse-backup-server.log")
 	time.Sleep(3 * time.Second)
 
 	// snapshot after restart — in-memory async status is cleared on restart
