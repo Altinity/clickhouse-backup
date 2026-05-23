@@ -25,5 +25,6 @@ _instances/
 _coverage_/
 __pycache__/
 *.py[cod]
+test/testflows/clickhouse_backup/configs/backup_*/
 .agents/
 pyrightconfig.json

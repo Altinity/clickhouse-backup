@@ -1,0 +1,25 @@
+# Static config for the FIPS *outbound* TLS scenario against a fake
+# ClickHouse native-TLS endpoint controlled by ``openssl s_server``
+# (Test Plan section 6.2.7, "Outbound TLS to ClickHouse Server").
+#
+# Mounted into the FIPS backup container via the per-PID copy of
+# ``configs/backup/`` performed by ``regression.py``.
+#
+# `clickhouse.host: openssl_server` resolves on the docker network to the
+# auxiliary container started by ``cluster.start_openssl_container(...)``.
+# `clickhouse.port: 9440` matches the secure-native-TCP port from the
+# Altinity FIPS docs and the test plan. `skip_verify: true` lets the
+# connection get past the self-signed test certificate so the assertion
+# stays focused on TLS *cipher policy* rather than chain validation.
+general:
+  log_level: warn
+  remote_storage: none
+clickhouse:
+  config_dir: /etc/clickhouse-server
+  host: openssl_server
+  port: 9440
+  username: ''
+  password: ''
+  timeout: 5s
+  secure: true
+  skip_verify: true
