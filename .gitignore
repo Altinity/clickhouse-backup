@@ -25,5 +25,8 @@ _instances/
 _coverage_/
 __pycache__/
 *.py[cod]
+# Per-PID per-run copies of configs/backup/ created by regression.py;
+# normally cleaned up in `finally:` but can persist if a run is hard-killed.
+test/testflows/clickhouse_backup/configs/backup_*/
 .agents/
 pyrightconfig.json
