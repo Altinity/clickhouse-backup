@@ -131,6 +131,35 @@ EOT
 fi
 fi
 
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[8-9]|^21\.[0-9]{2} || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
+# https://github.com/Altinity/clickhouse-backup/issues/1374
+# disk with SSE-C; deterministic 32-byte raw key -> base64
+cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_ssec_s3.xml
+<yandex>
+  <storage_configuration>
+    <disks>
+      <disk_s3_ssec>
+        <type>s3</type>
+        <endpoint>https://minio:9000/clickhouse/disk_s3_ssec/{cluster}/{shard}/</endpoint>
+        <use_environment_credentials>1</use_environment_credentials>
+        <send_metadata>false</send_metadata>
+        <server_side_encryption_customer_key_base64>AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=</server_side_encryption_customer_key_base64>
+      </disk_s3_ssec>
+    </disks>
+    <policies>
+      <s3_only_ssec>
+        <volumes>
+          <s3_only_ssec>
+            <disk>disk_s3_ssec</disk>
+          </s3_only_ssec>
+        </volumes>
+      </s3_only_ssec>
+    </policies>
+  </storage_configuration>
+</yandex>
+EOT
+fi
+
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9]+ || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 
 if [[ "" != "${QA_GCS_OVER_S3_BUCKET}" ]]; then
