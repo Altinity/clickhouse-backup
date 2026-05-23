@@ -69,7 +69,7 @@ func TestS3SSEC(t *testing.T) {
 
 	env.checkCount(r, 1, 2000, fmt.Sprintf("SELECT count() FROM %s.%s", dbName, tableName))
 
-	fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{dbName}, true, true, true, "config-s3.yml")
+	fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{dbName}, false, true, true, "config-s3.yml")
 	env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3_ssec")
 	env.Cleanup(t, r)
 }
