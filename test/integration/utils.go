@@ -681,9 +681,13 @@ func (env *TestEnvironment) connect(t *testing.T, timeOut string) error {
 // Query and data methods
 
 func (env *TestEnvironment) queryWithNoError(r *require.Assertions, query string, args ...interface{}) {
+	startedAt := time.Now()
 	err := env.ch.Query(query, args...)
 	if err != nil {
 		log.Error().Err(err).Msgf("queryWithNoError(%s) error", query)
+		if env.tc != nil {
+			env.tc.DumpContainerLogsSince(context.Background(), "clickhouse", startedAt)
+		}
 	}
 	r.NoError(err)
 }
