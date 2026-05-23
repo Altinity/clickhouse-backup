@@ -17,6 +17,10 @@ from helpers.cluster import Cluster
 from helpers.argparser import argparser
 
 from clickhouse_backup.requirements.requirements import *
+
+from clickhouse_backup.requirements.fips.requirements import (
+    QA_SRS013_ClickHouse_Backup_Utility_FIPS_Compatibility,
+)
 from clickhouse_backup.tests.common import simple_data_types_columns
 
 testflows_settings.show_skipped = True # used for debug if a check is unintentionally skipped
@@ -37,7 +41,8 @@ xfails = {
 @XFails(xfails)
 @ArgumentParser(argparser)
 @Specifications(
-    QA_SRS013_ClickHouse_Backup_Utility
+    QA_SRS013_ClickHouse_Backup_Utility,
+    QA_SRS013_ClickHouse_Backup_Utility_FIPS_Compatibility,
 )
 def regression(self, local):
     """ClickHouse Backup utility test regression suite.
