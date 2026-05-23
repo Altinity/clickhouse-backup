@@ -309,14 +309,20 @@ func (tc *TestContainers) GetMappedPort(ctx context.Context, name string, contai
 	return host, port, nil
 }
 
-// RestartContainer restarts a container by name.
+// RestartContainer restarts a container by name and waits for it to become healthy.
+// Waiting for healthy avoids racing with the entrypoint's init-time clickhouse-server,
+// which entrypoint.sh SIGTERMs before exec'ing the real server when
+// CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS=true.
 func (tc *TestContainers) RestartContainer(ctx context.Context, name string) error {
 	info := tc.containers[name]
 	if info == nil {
 		return fmt.Errorf("no container %s", name)
 	}
 	timeout := 30
-	return tc.client.ContainerRestart(ctx, info.ID, container.StopOptions{Timeout: &timeout})
+	if err := tc.client.ContainerRestart(ctx, info.ID, container.StopOptions{Timeout: &timeout}); err != nil {
+		return err
+	}
+	return tc.waitHealthy(ctx, name, 3*time.Minute)
 }
 
 func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout time.Duration) error {
