@@ -36,9 +36,9 @@ func TestKill(t *testing.T) {
 	env.queryWithNoError(r, fmt.Sprintf(
 		"CREATE TABLE %s.t1 (id UInt64, s String) ENGINE=MergeTree() PARTITION BY (id %% 64) ORDER BY id",
 		dbName))
+	payload := strings.Repeat("x", 2048)
 	env.queryWithNoError(r, fmt.Sprintf(
-		// repeat() was added in CH 19.14; for older versions use arrayStringConcat+range.
-		"INSERT INTO %s.t1 SELECT number, arrayStringConcat(arrayMap(i -> 'x', range(2048))) FROM numbers(800000)", dbName))
+		"INSERT INTO %s.t1 SELECT number, '%s' FROM numbers(800000)", dbName, payload))
 
 	log.Debug().Msg("start clickhouse-backup server with UPLOAD_CONCURRENCY=1 in background")
 	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce",
