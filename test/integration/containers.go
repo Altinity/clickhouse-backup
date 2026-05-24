@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -216,7 +217,7 @@ func (tc *TestContainers) StartAll(ctx context.Context) error {
 	healthCh := make(chan startResult, len(healthServices))
 	for _, svc := range healthServices {
 		go func(name string, timeout time.Duration) {
-			healthCh <- startResult{name: name, err: tc.waitHealthy(ctx, name, timeout)}
+			healthCh <- startResult{name: name, err: tc.waitHealthy(ctx, name, timeout, "")}
 		}(svc.name, svc.timeout)
 	}
 	for range healthServices {
@@ -230,7 +231,7 @@ func (tc *TestContainers) StartAll(ctx context.Context) error {
 	if err = tc.startClickHouse(ctx, curDir, configsDir); err != nil {
 		return err
 	}
-	if err = tc.waitHealthy(ctx, "clickhouse", 300*time.Second); err != nil {
+	if err = tc.waitHealthy(ctx, "clickhouse", 300*time.Second, ""); err != nil {
 		return fmt.Errorf("wait clickhouse: %w", err)
 	}
 
@@ -238,7 +239,7 @@ func (tc *TestContainers) StartAll(ctx context.Context) error {
 	if err = tc.startClickHouseBackup(ctx, curDir, configsDir); err != nil {
 		return err
 	}
-	if err = tc.waitHealthy(ctx, "clickhouse-backup", 60*time.Second); err != nil {
+	if err = tc.waitHealthy(ctx, "clickhouse-backup", 60*time.Second, ""); err != nil {
 		return fmt.Errorf("wait clickhouse-backup: %w", err)
 	}
 
@@ -313,7 +314,8 @@ func (tc *TestContainers) GetMappedPort(ctx context.Context, name string, contai
 // Waiting for healthy avoids racing with the entrypoint's init-time clickhouse-server,
 // which entrypoint.sh SIGTERMs before exec'ing the real server when
 // CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS=true.
-func (tc *TestContainers) RestartContainer(ctx context.Context, name string) error {
+func (tc *TestContainers) RestartContainer(t *testing.T, name string) error {
+	ctx := t.Context()
 	info := tc.containers[name]
 	if info == nil {
 		return fmt.Errorf("no container %s", name)
@@ -322,10 +324,10 @@ func (tc *TestContainers) RestartContainer(ctx context.Context, name string) err
 	if err := tc.client.ContainerRestart(ctx, info.ID, container.StopOptions{Timeout: &timeout}); err != nil {
 		return err
 	}
-	return tc.waitHealthy(ctx, name, 3*time.Minute)
+	return tc.waitHealthy(ctx, name, 3*time.Minute, t.Name())
 }
 
-func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout time.Duration) error {
+func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout time.Duration, testName string) error {
 	info := tc.containers[name]
 	if info == nil {
 		return fmt.Errorf("no container %s", name)
@@ -341,6 +343,11 @@ func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout 
 		time.Sleep(2 * time.Second)
 	}
 	tc.dumpContainerInfo(ctx, name)
+	if name == "clickhouse" && strings.HasPrefix(testName, "TestAzure") {
+		if _, ok := tc.containers["azure"]; ok {
+			tc.dumpContainerInfo(ctx, "azure")
+		}
+	}
 	return fmt.Errorf("container %s not healthy after %v", name, timeout)
 }
 

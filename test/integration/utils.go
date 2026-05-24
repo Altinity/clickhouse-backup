@@ -1363,7 +1363,7 @@ func replaceStorageDiskNameForReBalance(t *testing.T, r *require.Assertions, env
 		env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/"+oldDisk+"")
 	}
 	env.ch.Close()
-	r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
+	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
 	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 }
 

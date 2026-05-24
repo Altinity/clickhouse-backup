@@ -58,7 +58,7 @@ func TestKeeperTLS(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse", "bash", "-c",
 		fmt.Sprintf("cat > /etc/clickhouse-server/config.d/zz_keeper_tls.xml <<'XML'\n%s\nXML", strictKeeperTLSXML))
 	env.ch.Close()
-	r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
+	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
 	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 
 	// create table using ZooKeeper
@@ -109,6 +109,6 @@ func TestKeeperTLS(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse", "rm", "-f", "/etc/clickhouse-server/config.d/zz_keeper_tls.xml", "/etc/clickhouse-server/keeper_tls_ca_bundle.crt")
 	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-f", "/etc/clickhouse-server/keeper_tls_ca_bundle.crt")
 	env.ch.Close()
-	r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
+	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
 	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 }
