@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -305,14 +306,18 @@ func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {
 		listOut, listErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "local")
 		r.NoError(listErr)
 		log.Error().Msg(listOut)
+		env.tc.dumpContainerInfo(context.Background(), "clickhouse-backup")
+		env.tc.dumpContainerInfo(context.Background(), "clickhouse")
 	}
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_local %d", apiBackupNumber))
 
 	// +1 watch backup
 	if !strings.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_remote %d", apiBackupNumber+1)) {
-		listOut, listErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "local")
+		listOut, listErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "remote")
 		r.NoError(listErr)
 		log.Error().Msg(listOut)
+		env.tc.dumpContainerInfo(context.Background(), "clickhouse-backup")
+		env.tc.dumpContainerInfo(context.Background(), "clickhouse")
 	}
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_remote %d", apiBackupNumber+1))
 	r.Contains(out, "clickhouse_backup_number_backups_local_expected 0")

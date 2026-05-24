@@ -442,7 +442,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 	}
 	log.Error().Msgf("=== container %s (%s) state: %s ===", name, info.ID[:12], state)
 
-	logOpts := container.LogsOptions{ShowStdout: true, ShowStderr: true, Tail: "500"}
+	logOpts := container.LogsOptions{ShowStdout: true, ShowStderr: true}
 	reader, logErr := tc.client.ContainerLogs(ctx, info.ID, logOpts)
 	if logErr != nil {
 		log.Error().Err(logErr).Msgf("can't get logs for %s", name)
@@ -454,7 +454,41 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 		}
 	}()
 	logBytes, _ := io.ReadAll(reader)
-	log.Error().Msgf("=== last 500 lines of %s logs ===\n%s", name, string(logBytes))
+	log.Error().Msgf("=== full %s logs ===\n%s", name, string(logBytes))
+
+	// For the clickhouse-server container, healthcheck failures may leave
+	// nothing in stdout/stderr because clickhouse-server writes auth/config
+	// errors only to clickhouse-server.err.log. Dump it so silent 3-minute
+	// "not healthy" failures are diagnosable.
+	if name == "clickhouse" {
+		for _, logPath := range []string{
+			"/var/log/clickhouse-server/clickhouse-server.err.log",
+			"/var/log/clickhouse-server/clickhouse-server.log",
+		} {
+			execCmd := osExec.CommandContext(ctx, "docker", "exec", info.ID, "cat", logPath)
+			errOut, execErr := execCmd.CombinedOutput()
+			if execErr != nil {
+				log.Error().Err(execErr).Msgf("can't cat %s in %s: %s", logPath, name, string(errOut))
+			} else {
+				log.Error().Msgf("=== full %s:%s ===\n%s", name, logPath, string(errOut))
+			}
+		}
+	}
+
+	// For the clickhouse-backup container, the server is launched as a
+	// background process from the entrypoint and its stdout/stderr is
+	// redirected to /tmp/clickhouse-backup-server.log. Dump it so we can see
+	// what the API server actually did on test failure.
+	if name == "clickhouse-backup" {
+		serverLogPath := "/tmp/clickhouse-backup-server.log"
+		execCmd := osExec.CommandContext(ctx, "docker", "exec", info.ID, "cat", serverLogPath)
+		serverOut, execErr := execCmd.CombinedOutput()
+		if execErr != nil {
+			log.Error().Err(execErr).Msgf("can't cat %s in %s: %s", serverLogPath, name, string(serverOut))
+		} else {
+			log.Error().Msgf("=== full %s:%s ===\n%s", name, serverLogPath, string(serverOut))
+		}
+	}
 }
 
 func (tc *TestContainers) startContainer(ctx context.Context, name string, cfg *container.Config, hostCfg *container.HostConfig, hostname string, extraAliases ...string) error {
@@ -906,9 +940,9 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 		ExposedPorts: nat.PortSet{"8123/tcp": {}, "9000/tcp": {}},
 		Healthcheck: &container.HealthConfig{
 			Test:        []string{"CMD-SHELL", "clickhouse client -q 'SELECT 1'"},
-			Interval:    3 * time.Second,
-			Retries:     60,
-			StartPeriod: 120 * time.Second,
+			Interval:    10 * time.Second,
+			Retries:     6,
+			StartPeriod: 60 * time.Second,
 		},
 	}
 	if tc.isAdvanced {
