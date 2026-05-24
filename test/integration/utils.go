@@ -1364,7 +1364,7 @@ func replaceStorageDiskNameForReBalance(t *testing.T, r *require.Assertions, env
 	}
 	env.ch.Close()
 	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
-	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
+	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 10*time.Minute)
 }
 
 func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *TestEnvironment, remoteStorageType string, backupConfig string) {
