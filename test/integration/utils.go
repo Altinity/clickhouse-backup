@@ -645,6 +645,16 @@ func (env *TestEnvironment) connectWithWait(t *testing.T, r *require.Assertions,
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.4") >= 0 {
 		r.NoError(env.ch.QueryContext(t.Context(), "SET show_table_uuid_in_table_create_query_if_not_nil=1"))
 	}
+	// Workaround for ClickHouse race in src/Common/CounterInFile.h:
+	// concurrent FREEZE/UNFREEZE on a fresh shadow/ dir can leave
+	// shadow/increment.txt at size 0, after which every subsequent FREEZE fails
+	// permanently with code 32 "File ... is empty. You must fill it manually".
+	// Reproduced on clickhouse/clickhouse-server:26.3 with parallel FREEZE+UNFREEZE.
+	// Remove the empty file so ClickHouse recreates it on next FREEZE.
+	if out, err := env.DockerExecOut("clickhouse", "bash", "-c",
+		"if [ -e /var/lib/clickhouse/shadow/increment.txt ] && [ ! -s /var/lib/clickhouse/shadow/increment.txt ]; then rm -f /var/lib/clickhouse/shadow/increment.txt && echo removed-empty-increment; fi"); err == nil && strings.Contains(out, "removed-empty-increment") {
+		log.Warn().Msg("removed empty /var/lib/clickhouse/shadow/increment.txt (ClickHouse FREEZE race workaround)")
+	}
 }
 
 func (env *TestEnvironment) connect(t *testing.T, timeOut string) error {
