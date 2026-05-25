@@ -26,7 +26,7 @@ func TestRestoreSchemaOnClusterSafety(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables="+dbName+".*", backupName)
 
 	// table still has data, no --rm, env var not set -> must fail with explicit message.
-	out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--schema", backupName)
+	out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--env", "USE_RESUMABLE_STATE=false", "--schema", backupName)
 	r.Error(err, "restore must fail without --rm when cluster tables contain data, output: %s", out)
 	r.True(strings.Contains(out, "issues/1325") || strings.Contains(out, "Re-run with --rm"),
 		"error must mention --rm safety guidance, got: %s", out)
