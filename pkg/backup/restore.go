@@ -284,8 +284,8 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		// Safety check: prevent accidental data loss when restore_schema_on_cluster is set
 		// via config but RESTORE_SCHEMA_ON_CLUSTER env var is empty, and --rm/--drop is not provided.
 		// https://github.com/Altinity/clickhouse-backup/issues/1325
-		if !dropExists && b.cfg.General.RestoreSchemaOnCluster != "" && os.Getenv("RESTORE_SCHEMA_ON_CLUSTER") == "" {
-			if err = b.checkClusterTablesHaveDataBeforeDrop(ctx, tablesForRestore); err != nil {
+		if !dropExists && !b.resume && b.cfg.General.RestoreSchemaOnCluster != "" && os.Getenv("RESTORE_SCHEMA_ON_CLUSTER") == "" {
+			if err = b.checkClusterTablesHaveDataBeforeDrop(ctx, tablesForRestore, version); err != nil {
 				return errors.WithMessage(err, "checkClusterTablesHaveDataBeforeDrop")
 			}
 		}
@@ -1866,11 +1866,19 @@ func (b *Backuper) replaceCreateToAttachForView(schema *metadata.TableMetadata) 
 // would drop ON CLUSTER currently contain rows on any replica. Triggered only when
 // restore_schema_on_cluster is set via config, RESTORE_SCHEMA_ON_CLUSTER env var is empty
 // and --rm/--drop is not provided. https://github.com/Altinity/clickhouse-backup/issues/1325
-func (b *Backuper) checkClusterTablesHaveDataBeforeDrop(ctx context.Context, tablesForRestore ListOfTables) error {
+func (b *Backuper) checkClusterTablesHaveDataBeforeDrop(ctx context.Context, tablesForRestore ListOfTables, version int) error {
 	if len(tablesForRestore) == 0 {
 		return nil
 	}
-	cluster := b.cfg.General.RestoreSchemaOnCluster
+	// system.tables.total_rows appeared in ClickHouse 20.4 (commit 2489481a46a, "Add total_rows to the system.tables").
+	if version < 20004000 {
+		log.Warn().Int("version", version).Msg("checkClusterTablesHaveDataBeforeDrop: skipped, system.tables.total_rows requires ClickHouse >= 20.4")
+		return nil
+	}
+	cluster, err := b.ch.ApplyMacros(ctx, b.cfg.General.RestoreSchemaOnCluster)
+	if err != nil {
+		return errors.Wrapf(err, "checkClusterTablesHaveDataBeforeDrop: can't apply macros to cluster name '%s'", b.cfg.General.RestoreSchemaOnCluster)
+	}
 	tableTuples := make([]string, 0, len(tablesForRestore))
 	for _, t := range tablesForRestore {
 		db := t.Database
@@ -1894,8 +1902,9 @@ func (b *Backuper) checkClusterTablesHaveDataBeforeDrop(ctx context.Context, tab
 			"WHERE (database, name) IN (%s) GROUP BY database, name HAVING total_rows > 0 ORDER BY total_rows DESC LIMIT 10",
 		cluster, strings.Join(tableTuples, ","),
 	)
+	log.Debug().Str("query", query).Msg("checkClusterTablesHaveDataBeforeDrop")
 	if err := b.ch.SelectContext(ctx, &nonEmpty, query); err != nil {
-		return errors.Wrapf(err, "can't check cluster '%s' tables data via clusterAllReplicas, query: %s", cluster, query)
+		return errors.Wrapf(err, "checkClusterTablesHaveDataBeforeDrop: clusterAllReplicas('%s', system.parts) failed", cluster)
 	}
 	if len(nonEmpty) == 0 {
 		return nil
