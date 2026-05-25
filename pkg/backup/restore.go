@@ -281,6 +281,14 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	}
 
 	if schemaOnly || dropExists || (schemaOnly == dataOnly) {
+		// Safety check: prevent accidental data loss when restore_schema_on_cluster is set
+		// via config but RESTORE_SCHEMA_ON_CLUSTER env var is empty, and --rm/--drop is not provided.
+		// https://github.com/Altinity/clickhouse-backup/issues/1325
+		if !dropExists && b.cfg.General.RestoreSchemaOnCluster != "" && os.Getenv("RESTORE_SCHEMA_ON_CLUSTER") == "" {
+			if err = b.checkClusterTablesHaveDataBeforeDrop(ctx, tablesForRestore); err != nil {
+				return errors.WithMessage(err, "checkClusterTablesHaveDataBeforeDrop")
+			}
+		}
 		if err = b.RestoreSchema(ctx, backupName, backupMetadata, disks, tablesForRestore, ignoreDependencies, version, schemaAsAttach); err != nil {
 			return errors.WithMessage(err, "RestoreSchema")
 		}
@@ -1851,6 +1859,57 @@ func (b *Backuper) replaceCreateToAttachForView(schema *metadata.TableMetadata) 
 	)
 	schema.Query = strings.Replace(
 		schema.Query, "CREATE LIVE VIEW", "ATTACH LIVE VIEW", 1,
+	)
+}
+
+// checkClusterTablesHaveDataBeforeDrop returns an error if any of the tables that restore
+// would drop ON CLUSTER currently contain rows on any replica. Triggered only when
+// restore_schema_on_cluster is set via config, RESTORE_SCHEMA_ON_CLUSTER env var is empty
+// and --rm/--drop is not provided. https://github.com/Altinity/clickhouse-backup/issues/1325
+func (b *Backuper) checkClusterTablesHaveDataBeforeDrop(ctx context.Context, tablesForRestore ListOfTables) error {
+	if len(tablesForRestore) == 0 {
+		return nil
+	}
+	cluster := b.cfg.General.RestoreSchemaOnCluster
+	tableTuples := make([]string, 0, len(tablesForRestore))
+	for _, t := range tablesForRestore {
+		db := t.Database
+		if mapped, ok := b.cfg.General.RestoreDatabaseMapping[db]; ok {
+			db = mapped
+		}
+		tbl := t.Table
+		if mapped, ok := b.cfg.General.RestoreTableMapping[tbl]; ok {
+			tbl = mapped
+		}
+		tableTuples = append(tableTuples, fmt.Sprintf("('%s','%s')",
+			strings.ReplaceAll(db, "'", "\\'"), strings.ReplaceAll(tbl, "'", "\\'")))
+	}
+	var nonEmpty []struct {
+		Database  string `ch:"database"`
+		Name      string `ch:"name"`
+		TotalRows uint64 `ch:"total_rows"`
+	}
+	query := fmt.Sprintf(
+		"SELECT database, name, sum(total_rows) AS total_rows FROM clusterAllReplicas('%s', system.tables) "+
+			"WHERE (database, name) IN (%s) GROUP BY database, name HAVING total_rows > 0 ORDER BY total_rows DESC LIMIT 10",
+		cluster, strings.Join(tableTuples, ","),
+	)
+	if err := b.ch.SelectContext(ctx, &nonEmpty, query); err != nil {
+		return errors.Wrapf(err, "can't check cluster '%s' tables data via clusterAllReplicas, query: %s", cluster, query)
+	}
+	if len(nonEmpty) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(nonEmpty))
+	for _, r := range nonEmpty {
+		names = append(names, fmt.Sprintf("`%s`.`%s` (rows=%d)", r.Database, r.Name, r.TotalRows))
+	}
+	return errors.Errorf(
+		"restore_schema_on_cluster='%s' is set and the following tables contain data across the cluster: %s. "+
+			"Restore would drop these tables on every replica. Re-run with --rm (or --drop) to explicitly confirm dropping, "+
+			"or set RESTORE_SCHEMA_ON_CLUSTER env var to acknowledge the cluster scope. "+
+			"See https://github.com/Altinity/clickhouse-backup/issues/1325",
+		cluster, strings.Join(names, ", "),
 	)
 }
 
