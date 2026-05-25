@@ -964,7 +964,7 @@ func (b *Backuper) hardlinkByHashOfAllFiles(ctx context.Context, backupName stri
 		Path string `ch:"path"`
 		Disk string `ch:"disk_name"`
 	}
-	q := "SELECT name, path, disk_name FROM system.parts WHERE database=? AND `table`=? AND hash_of_all_files=? AND active"
+	q := "SELECT name, path, disk_name FROM system.parts WHERE database=? AND `table`=? AND lower(hash_of_all_files)=? AND active"
 	if err := b.ch.SelectContext(ctx, &rows, q, table.Database, table.Table, expected); err != nil {
 		return false, 0, errors.Wrap(err, "system.parts lookup by hash_of_all_files")
 	}

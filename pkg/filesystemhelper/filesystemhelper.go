@@ -14,7 +14,6 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/part_checksum"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
@@ -272,19 +271,12 @@ func IsFileInPartition(disk, fileName string, partitionsBackupMap common.EmptyMa
 	return false
 }
 
-func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap, table *clickhouse.Table, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk, skipProjections []string, version int) ([]metadata.Part, int64, map[string]uint64, map[string]string, error) {
+func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap, table *clickhouse.Table, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk, skipProjections []string, version int, computeChecksums bool) ([]metadata.Part, int64, map[string]uint64, error) {
 	size := int64(0)
 	parts := make([]metadata.Part, 0)
 	checksums := make(map[string]uint64)
-	hashOfAllFiles := make(map[string]string)
-	useHashOfAllFiles := version >= 19011000
 	calcChecksums := func(partName, partPath string) error {
-		if useHashOfAllFiles {
-			h, err := part_checksum.HashOfAllFiles(partPath)
-			if err != nil {
-				return errors.Wrapf(err, "part_checksum.HashOfAllFiles")
-			}
-			hashOfAllFiles[partName] = h
+		if !computeChecksums {
 			return nil
 		}
 		c, err := common.CalculateChecksum(partPath, "checksums.txt")
@@ -359,11 +351,11 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 		}
 	})
 	if walkErr != nil {
-		return nil, 0, nil, nil, walkErr
+		return nil, 0, nil, walkErr
 	}
 	// https://github.com/ClickHouse/ClickHouse/issues/71009
 	metadata.SortPartsByMinBlock(parts)
-	return parts, size, checksums, hashOfAllFiles, nil
+	return parts, size, checksums, nil
 }
 
 func IsSkipProjections(skipProjections []string, relativePath string) bool {

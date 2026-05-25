@@ -976,7 +976,12 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 			}
 			// If partitionsIdsMap is not empty, only parts in this partition will back up.
 			start := time.Now()
-			parts, size, newChecksums, newHashOfAllFiles, err := filesystemhelper.MoveShadowToBackup(shadowPath, backupShadowPath, partitionsIdsMap, table, diffTableMetadata, disk, skipProjections, version)
+			useHashOfAllFiles := version >= 19011000
+			// Old CH still gets the legacy CRC64-of-checksums.txt path. For modern
+			// CH we let MoveShadowToBackup skip CRC64 entirely and pull
+			// hash_of_all_files from system.parts after the shadow tree is walked
+			// (see post-loop SELECT below).
+			parts, size, newChecksums, err := filesystemhelper.MoveShadowToBackup(shadowPath, backupShadowPath, partitionsIdsMap, table, diffTableMetadata, disk, skipProjections, version, !useHashOfAllFiles)
 			if err != nil {
 				return nil, nil, nil, nil, nil, errors.WithMessage(err, "filesystemhelper.MoveShadowToBackup")
 			}
@@ -986,8 +991,18 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 			for pName, c := range newChecksums {
 				checksums[pName] = c
 			}
-			for pName, h := range newHashOfAllFiles {
-				hashOfAllFiles[pName] = h
+			if useHashOfAllFiles && len(parts) > 0 {
+				partNames := make([]string, 0, len(parts))
+				for _, p := range parts {
+					partNames = append(partNames, p.Name)
+				}
+				diskHashes, hashErr := b.fetchHashOfAllFiles(ctx, table.Database, table.Name, disk.Name, partNames)
+				if hashErr != nil {
+					return nil, nil, nil, nil, nil, errors.WithMessage(hashErr, "fetchHashOfAllFiles")
+				}
+				for pName, h := range diskHashes {
+					hashOfAllFiles[pName] = h
+				}
 			}
 
 			logger.Debug().Str("disk", disk.Name).Str("duration", utils.HumanizeDuration(time.Since(start))).Msg("shadow moved")
@@ -1032,6 +1047,37 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		"database":  table.Database,
 	}).Msg("done")
 	return disksToPartsMap, realSize, objectDiskSize, checksums, hashOfAllFiles, nil
+}
+
+// fetchHashOfAllFiles returns name → hash_of_all_files for the given parts on
+// disk `diskName`. The value is whatever ClickHouse prints in
+// system.parts.hash_of_all_files (already lowercased); the storage and
+// compare paths are version-agnostic because both ends use the server's
+// formatting.
+//
+// Called right after FREEZE so the active-set delta is essentially zero —
+// inactive parts also remain visible in system.parts for ~480s, which makes
+// the race window practically impossible to hit. If a frozen part is missing
+// from the result we surface a hard error rather than silently dropping it.
+func (b *Backuper) fetchHashOfAllFiles(ctx context.Context, database, table, diskName string, partNames []string) (map[string]string, error) {
+	var rows []struct {
+		Name string `ch:"name"`
+		Hash string `ch:"hash_of_all_files"`
+	}
+	q := "SELECT name, lower(hash_of_all_files) AS hash_of_all_files FROM system.parts WHERE database=? AND `table`=? AND disk_name=? AND name IN ?"
+	if err := b.ch.SelectContext(ctx, &rows, q, database, table, diskName, partNames); err != nil {
+		return nil, errors.Wrap(err, "SELECT hash_of_all_files FROM system.parts")
+	}
+	hashByName := make(map[string]string, len(rows))
+	for _, r := range rows {
+		hashByName[r.Name] = r.Hash
+	}
+	for _, name := range partNames {
+		if _, ok := hashByName[name]; !ok {
+			return nil, errors.Errorf("part %q not found in system.parts (database=%s, table=%s, disk_name=%s) after FREEZE", name, database, table, diskName)
+		}
+	}
+	return hashByName, nil
 }
 
 func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string, tableDiffFromRemote metadata.TableMetadata, backupShadowPath string, disk clickhouse.Disk) (int64, error) {

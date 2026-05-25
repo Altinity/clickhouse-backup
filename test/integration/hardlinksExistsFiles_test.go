@@ -59,9 +59,9 @@ func TestHardlinksExistsFiles(t *testing.T) {
 				r.Contains(tableMeta.HashOfAllFiles, part.Name)
 				hexStr := tableMeta.HashOfAllFiles[part.Name]
 				r.Len(hexStr, 32, "hash_of_all_files must be 32 hex chars for part %s, got %q", part.Name, hexStr)
-				// Cross-check against the live ClickHouse value.
+				// Stored value is exactly what ClickHouse prints in system.parts; we just
+				// verify the post-FREEZE SELECT survived the round-trip into metadata.
 				var liveHash string
-				// hash_of_all_files is already a 32-char hex string column, do NOT hex() it again.
 				r.NoError(env.ch.SelectSingleRowNoCtx(&liveHash, "SELECT lower(hash_of_all_files) FROM system.parts WHERE database=? AND `table`=? AND name=? AND active LIMIT 1", dbNameFull, tableName, part.Name))
 				r.Equal(liveHash, hexStr, "hash_of_all_files for part %s must match system.parts", part.Name)
 			}
