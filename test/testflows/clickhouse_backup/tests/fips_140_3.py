@@ -96,6 +96,70 @@ NON_FIPS_TLS12_OUTBOUND = (
 )
 
 
+# Cryptographic Algorithm Self-Test (CAST) names are from Go's FIPS 140-3
+# module. Shows `allCASTs` in `crypto/internal/fips140test/cast_test.go`
+# of the Go release used to build `clickhouse-backup-race-fips`. Each name
+# is a valid value for `GODEBUG=failfipscast=<NAME>`: setting it forces
+# that one CAST to fail at startup, which Go's FIPS module turns into a
+# fatal abort.
+FIPS_FAILFIPSCAST_NAMES = (
+    "AES-CBC",
+    "CTR_DRBG",
+    "CounterKDF",
+    "DetECDSA P-256 SHA2-512 sign",
+    "ECDH PCT",
+    "ECDSA P-256 SHA2-512 sign and verify",
+    "ECDSA PCT",
+    "Ed25519 sign and verify",
+    "Ed25519 sign and verify PCT",
+    "HKDF-SHA2-256",
+    "HMAC-SHA2-256",
+    "KAS-ECC-SSC P-256",
+    "ML-DSA sign and verify PCT",
+    "ML-DSA-44",
+    "ML-KEM PCT",
+    "ML-KEM-768",
+    "PBKDF2",
+    "RSA sign and verify PCT",
+    "RSASSA-PKCS-v1.5 2048-bit sign and verify",
+    "SHA2-256",
+    "SHA2-512",
+    "TLSv1.2-SHA2-256",
+    "TLSv1.3-SHA2-256",
+    "cSHAKE128",
+)
+
+# Marker that Go's FIPS module writes to stderr on a failfipscast-forced
+# CAST. The full line is
+# `fatal error: FIPS 140-3 self-test failed: <NAME>: simulated CAST failure`.
+FIPS_FAILFIPSCAST_MARKER = "simulated CAST failure"
+
+# Required CAST names that MUST be registered in any Go FIPS module (these
+# are foundational names present since v1.0.0). If forcing one of
+# these does NOT abort `clickhouse-backup-fips`, the failfipscast hook
+# itself is broken or the binary is not running in FIPS mode.
+FIPS_FAILFIPSCAST_REQUIRED_NAMES = (
+    "SHA2-256",
+    "HMAC-SHA2-256",
+    "AES-CBC",
+)
+
+# ACVP wrapper scenario opt-in.
+# Set `RUN_ACVP_TESTS=1` locally or in the CI workflow to enable it.
+FIPS_ACVP_ENV_FLAG          = "RUN_ACVP_TESTS"
+FIPS_ACVP_ENV_FLAG_VALUES   = ("1", "true", "yes", "on")
+# Path to the wrapper script, relative to `cluster.tests_dir`
+# (`test/testflows/clickhouse_backup`). The script is part of the merged
+# ACVP wrapper PR and lives at the repository root.
+FIPS_ACVP_SCRIPT_RELPATH    = "../../../pkg/acvpwrapper/run.sh"
+# Oracle line printed by `check_expected.go` when the run passes. Tracked
+# in `pkg/acvpwrapper/README.md` ("Reproduce The Current Result").
+FIPS_ACVP_EXPECTED_OUTPUT   = "38 ACVP tests matched expectations"
+# Timeout for the host shell - first run does Docker image pulls,
+# a boringssl clone, an acvptool build, and then the ACVP run itself.
+FIPS_ACVP_TIMEOUT_SEC       = 30 * 60
+
+
 def _require_fips_container(test):
     """Skip the calling scenario if no FIPS backup container is available.
 
@@ -748,15 +812,153 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
 
 
 @TestScenario
+@Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_CAST_ForcedFailure("1.0"),
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_CAST_Coverage("1.0"),
+)
 def forced_cast_failures(self):
-    """Validate forced CAST failures with `GODEBUG=failfipscast=...,fips140=on`."""
-    xfail("not implemented yet")
+    """Validate forced CAST failures with `GODEBUG=failfipscast=<NAME>,fips140=on`.
+
+    For each CAST name in `FIPS_FAILFIPSCAST_NAMES` (mirrors Go's upstream
+    `allCASTs` slice), run
+
+        env 'GODEBUG=failfipscast=<NAME>,fips140=on' clickhouse-backup-fips --version
+
+    inside the FIPS container and classify the outcome:
+
+    * Abort with `fatal error: FIPS 140-3 self-test failed: <NAME>:
+      simulated CAST failure` - the hook forced this CAST (PASS).
+    * Normal startup with exit 0 - Go silently ignores the failfipscast
+      value because `<NAME>` is not registered in the active Go FIPS
+      module (`GOFIPS140=v1.0.0` ships a subset of the upstream list).
+      Names listed in `FIPS_FAILFIPSCAST_REQUIRED_NAMES` MUST always
+      abort; any other unrecognised name marks the Check as Skip.
+    * Anything else - FAIL.
+
+    After the loop the scenario asserts at least one CAST was forced, so
+    a binary with the failfipscast hook fully disabled cannot pass on
+    skips alone.
+    """
+    backup_fips = _require_fips_container(self)
+
+    forced_count = 0
+
+    with When(
+        "for each CAST name I run `clickhouse-backup-fips --version` "
+        "with `GODEBUG=failfipscast=<NAME>,fips140=on`"
+    ):
+        for cast in FIPS_FAILFIPSCAST_NAMES:
+            with Check(f"forced CAST failure: {cast}"):
+                # Single-quote the GODEBUG value so CAST names containing
+                # spaces (e.g. `DetECDSA P-256 SHA2-512 sign`) are passed
+                # through as one argument to `env`. `2>&1` because Go writes
+                # `fatal error:` lines to stderr.
+                cmd = (
+                    f"env 'GODEBUG=failfipscast={cast},fips140=on' "
+                    f"{FIPS_BINARY_IN_CONTAINER} --version 2>&1"
+                )
+                r = backup_fips.cmd(cmd, no_checks=True)
+                output = r.output or ""
+
+                marker_present = FIPS_FAILFIPSCAST_MARKER in output
+                cast_in_output = cast in output
+
+                if r.exitcode != 0 and marker_present and cast_in_output:
+                    forced_count += 1
+                    continue
+
+                if r.exitcode == 0 and not marker_present:
+                    # Go's failfipscast silently ignores unknown CAST names.
+                    # Required CASTs must always be registered; everything
+                    # else is treated as "not in this module version" and
+                    # the Check is skipped.
+                    if cast in FIPS_FAILFIPSCAST_REQUIRED_NAMES:
+                        assert False, error(
+                            f"required CAST `{cast}` was not forced "
+                            f"(exit=0, no `{FIPS_FAILFIPSCAST_MARKER}` "
+                            f"marker). This name has been registered in "
+                            f"every Go FIPS module since v1.0.0; if it "
+                            f"does not abort the binary, the failfipscast "
+                            f"hook is broken or the binary is not running "
+                            f"in FIPS mode.\n{output}"
+                        )
+                    skip(
+                        f"CAST `{cast}` is not registered in the Go FIPS "
+                        f"module the binary was built against "
+                        f"(`GOFIPS140=v1.0.0`); refresh "
+                        f"`FIPS_FAILFIPSCAST_NAMES` after a Go upgrade."
+                    )
+
+                # Any other combination is an unexpected failure mode
+                # (non-zero exit without the marker, or marker without
+                # the cast name).
+                assert False, error(
+                    f"unexpected outcome for `failfipscast={cast}` "
+                    f"(exit={r.exitcode}, marker={marker_present}, "
+                    f"cast_in_output={cast_in_output}). Expected either "
+                    f"a forced CAST abort or a normal startup with exit=0."
+                    f"\n{output}"
+                )
+
+    with Then("at least one CAST was actually forced"):
+        assert forced_count > 0, error(
+            f"no CAST in `FIPS_FAILFIPSCAST_NAMES` aborted the binary "
+            f"(forced_count=0). The `failfipscast` enforcement appears "
+            f"to be disabled."
+        )
 
 
 @TestScenario
+@Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_ACVP_Wrapper("1.0"),
+)
 def acvp_tests(self):
-    """Validate ACVP tests."""
-    xfail("not implemented yet")
+    """Validate the bundled ACVP wrapper (`pkg/acvpwrapper/run.sh`).
+
+    Runs the wrapper on the host (the script itself orchestrates Docker)
+    and asserts it exits 0 and prints the expected line tracked
+    in `FIPS_ACVP_EXPECTED_OUTPUT`.
+
+    Opt-in: skipped unless `RUN_ACVP_TESTS=1` is set.
+    """
+    flag = os.environ.get(FIPS_ACVP_ENV_FLAG, "").strip().lower()
+    if flag not in FIPS_ACVP_ENV_FLAG_VALUES:
+        skip(
+            f"set {FIPS_ACVP_ENV_FLAG}=1 to enable; the wrapper pulls "
+            f"Docker images and clones upstream repos."
+        )
+
+    cluster = self.context.cluster
+    script_path = os.path.normpath(os.path.join(cluster.tests_dir, FIPS_ACVP_SCRIPT_RELPATH))
+
+    if not os.path.isfile(script_path):
+        skip(f"ACVP wrapper script not found at {script_path}")
+
+    # The wrapper drives `docker run` itself, so it must execute on the
+    # host, not inside a cluster container. The first invocation pulls
+    # images and clones boringssl + acvp-testdata, hence the extended
+    # timeout.
+    host = cluster.bash(None)
+    prev_timeout = host.timeout
+    host.timeout = FIPS_ACVP_TIMEOUT_SEC
+    try:
+        with When(f"I run `bash {script_path}` on the host"):
+            r = host(f"bash {script_path} 2>&1")
+    finally:
+        host.timeout = prev_timeout
+
+    output = r.output or ""
+
+    with Then("the script exits 0"):
+        assert r.exitcode == 0, error(
+            f"`bash {script_path}` exit={r.exitcode}.\n{output}"
+        )
+
+    with And(f"output contains `{FIPS_ACVP_EXPECTED_OUTPUT}`"):
+        assert FIPS_ACVP_EXPECTED_OUTPUT in output, error(
+            f"ACVP run did not print `{FIPS_ACVP_EXPECTED_OUTPUT}`. "
+            f"See `pkg/acvpwrapper/README.md` for the expected oracle.\n{output}"
+        )
 
 @TestFeature
 @Name("FIPS 140-3 Compatibility")
@@ -773,8 +975,8 @@ def fips_140_3(self):
     Scenario(run=inbound_tls_cipher_negotiation, flags=TE) # done
     Scenario(run=outbound_tls_cipher_negotiation, flags=TE) # done
     Scenario(run=outbound_tls_to_s3_endpoint_with_openssl_s_server, flags=TE) # done
-    Scenario(run=forced_cast_failures, flags=TE)
-    Scenario(run=acvp_tests, flags=TE)
+    Scenario(run=forced_cast_failures, flags=TE) # done
+    Scenario(run=acvp_tests, flags=TE) # done
 
 
 if main():
