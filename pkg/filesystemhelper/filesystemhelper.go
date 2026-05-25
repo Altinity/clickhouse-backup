@@ -358,6 +358,47 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 	return parts, size, checksums, nil
 }
 
+// LinkPartFromShadow walks shadowPath and hard-links (or renames for older CH)
+// every file that belongs to partName into backupPartsPath. Used to back up a
+// part that was initially marked Required against --diff-from-remote by name
+// but whose content fingerprint (hash_of_all_files / checksums) later turned
+// out to differ from the diff source, so it must be uploaded locally instead.
+func LinkPartFromShadow(shadowPath, backupPartsPath, partName string, table *clickhouse.Table, skipProjections []string, version int) (int64, error) {
+	size := int64(0)
+	walkErr := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if strings.Contains(info.Name(), "frozen_metadata.txt") {
+			return nil
+		}
+		relativePath := strings.Trim(strings.TrimPrefix(filePath, shadowPath), "/")
+		pathParts := strings.SplitN(relativePath, "/", 4)
+		if len(pathParts) != 4 {
+			return nil
+		}
+		if pathParts[3] != partName && !strings.HasPrefix(pathParts[3], partName+"/") {
+			return nil
+		}
+		if IsSkipProjections(skipProjections, path.Join(table.Database, table.Name, path.Join(pathParts[3:]...))) {
+			return nil
+		}
+		dstFilePath := filepath.Join(backupPartsPath, pathParts[3])
+		if info.IsDir() {
+			return os.MkdirAll(dstFilePath, 0750)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		size += info.Size()
+		if version < 21004000 {
+			return os.Rename(filePath, dstFilePath)
+		}
+		return os.Link(filePath, dstFilePath)
+	})
+	return size, walkErr
+}
+
 func IsSkipProjections(skipProjections []string, relativePath string) bool {
 	if skipProjections == nil || len(skipProjections) == 0 {
 		return false

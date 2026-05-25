@@ -1005,6 +1005,38 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 				}
 			}
 
+			// Validate parts marked Required by name against the diff source's
+			// content fingerprint. If hash_of_all_files (or, when absent on
+			// either side, checksums) disagree, demote the part and link its
+			// files from shadow so it is backed up locally.
+			// See https://github.com/Altinity/clickhouse-backup/issues/1307
+			if diffTableMetadata.Database != "" && len(diffTableMetadata.Parts[disk.Name]) > 0 {
+				for idx := range parts {
+					if !parts[idx].Required {
+						continue
+					}
+					name := parts[idx].Name
+					matches := true
+					if diffHash, ok := diffTableMetadata.HashOfAllFiles[name]; ok {
+						liveHash := hashOfAllFiles[name]
+						matches = liveHash != "" && diffHash == liveHash
+					} else if diffCksum, ok := diffTableMetadata.Checksums[name]; ok {
+						liveCksum, liveOk := newChecksums[name]
+						matches = liveOk && diffCksum == liveCksum
+					}
+					if matches {
+						continue
+					}
+					logger.Info().Str("disk", disk.Name).Str("part", name).Msg("part name matched diff source but content fingerprint mismatch, backing up locally")
+					parts[idx].Required = false
+					linkedSize, linkErr := filesystemhelper.LinkPartFromShadow(shadowPath, backupShadowPath, name, table, skipProjections, version)
+					if linkErr != nil {
+						return nil, nil, nil, nil, nil, errors.Wrapf(linkErr, "LinkPartFromShadow part %s", name)
+					}
+					realSize[disk.Name] += linkedSize
+				}
+			}
+
 			logger.Debug().Str("disk", disk.Name).Str("duration", utils.HumanizeDuration(time.Since(start))).Msg("shadow moved")
 			if len(parts) > 0 && (b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, diskList)) {
 				start = time.Now()
@@ -1012,7 +1044,7 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 					Str("database", table.Database).Str("table", table.Name).
 					Str("disk", disk.Name).Str("size", utils.FormatBytes(uint64(size))).
 					Msg("upload object_disk start")
-				if size, err = b.uploadObjectDiskParts(ctx, backupName, diffTableMetadata, backupShadowPath, disk); err != nil {
+				if size, err = b.uploadObjectDiskParts(ctx, backupName, parts, backupShadowPath, disk); err != nil {
 					return nil, nil, nil, nil, nil, errors.WithMessage(err, "b.uploadObjectDiskParts")
 				}
 				objectDiskSize[disk.Name] = size
@@ -1080,7 +1112,7 @@ func (b *Backuper) fetchHashOfAllFiles(ctx context.Context, database, table, dis
 	return hashByName, nil
 }
 
-func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string, tableDiffFromRemote metadata.TableMetadata, backupShadowPath string, disk clickhouse.Disk) (int64, error) {
+func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string, localParts []metadata.Part, backupShadowPath string, disk clickhouse.Disk) (int64, error) {
 	var size int64
 	var err error
 	if err = object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, disk.Name); err != nil {
@@ -1114,10 +1146,15 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 		}
 		var realSize, objSize int64
 		// upload only not required parts, https://github.com/Altinity/clickhouse-backup/issues/865
-		if tableDiffFromRemote.Database != "" && tableDiffFromRemote.Table != "" && len(tableDiffFromRemote.Parts[disk.Name]) > 0 {
+		// localParts already reflects the post-demotion Required flag from the
+		// hash_of_all_files / checksums comparison done in AddTableToLocalBackup
+		// (see https://github.com/Altinity/clickhouse-backup/issues/1307), so a
+		// Required=true entry here means the part's content also matched the
+		// diff source and the diff backup will provide the object-disk blobs.
+		if len(localParts) > 0 {
 			partPaths := strings.SplitN(strings.TrimPrefix(fPath, backupShadowPath), "/", 2)
-			for _, part := range tableDiffFromRemote.Parts[disk.Name] {
-				if part.Name == partPaths[0] {
+			for _, part := range localParts {
+				if part.Required && part.Name == partPaths[0] {
 					log.Debug().Msgf("%s exists in diff-from-remote backup", part.Name)
 					return nil
 				}
