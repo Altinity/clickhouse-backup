@@ -44,7 +44,7 @@ xfails = {
     QA_SRS013_ClickHouse_Backup_Utility,
     QA_SRS013_ClickHouse_Backup_Utility_FIPS_Compatibility,
 )
-def regression(self, local):
+def regression(self, local, stress=False, fips=True):
     """ClickHouse Backup utility test regression suite.
     """
     nodes = {

@@ -1137,6 +1137,37 @@ class Cluster(object):
         """Stop and remove a previously started auxiliary container."""
         self._stop_container(name)
 
+    def container_logs(self, name, *, tail=None):
+        """Return stdout+stderr of the named container as a single string.
+
+        Useful for tests that need to corroborate an in-container event by
+        inspecting what the container itself printed - for example, the
+        FIPS outbound-TLS scenarios cross-check the client-side handshake
+        outcome against the ``openssl s_server`` aux-container's log
+        (``Cipher    : <name>`` line, ``no shared cipher`` error, etc.).
+
+        :param name: cluster service name passed to
+            :py:meth:`start_auxiliary_container` /
+            :py:meth:`start_clickhouse_server_container` /
+            :py:meth:`start_openssl_container`.
+        :param tail: optional integer; when set, return only the last
+            ``tail`` log lines (forwarded to the Docker API). ``None``
+            (default) returns the full log.
+        """
+        cid = self._container_ids.get(name)
+        if cid is None:
+            raise RuntimeError(
+                f"container '{name}' is not registered with this cluster; "
+                f"call start_auxiliary_container / start_openssl_container first."
+            )
+        kwargs = {}
+        if tail is not None:
+            kwargs["tail"] = int(tail)
+        raw = self._docker_client.api.logs(cid, **kwargs)
+        if isinstance(raw, bytes):
+            return raw.decode("utf-8", errors="replace")
+        return raw
+
     @property
     def tests_dir(self):
         """Host-side root of the testflows tests for this cluster.

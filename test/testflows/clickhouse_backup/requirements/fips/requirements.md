@@ -49,6 +49,12 @@
         * 4.8.2 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.TLS.Outbound.S3.NonApprovedCiphers.Reject](#rqsrs-013clickhousebackuputilityfipstlsoutbounds3nonapprovedciphersreject)
     * 4.9 [ACVP](#acvp)
         * 4.9.1 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.ACVP.Wrapper](#rqsrs-013clickhousebackuputilityfipsacvpwrapper)
+    * 4.10 [Network Surface](#network-surface)
+        * 4.10.1 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.NetworkSurface](#rqsrs-013clickhousebackuputilityfipsnetworksurface)
+    * 4.11 [Client Configuration](#client-configuration)
+        * 4.11.1 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Configuration.SecureClickHouse](#rqsrs-013clickhousebackuputilityfipsconfigurationsecureclickhouse)
+    * 4.12 [Server Listener](#server-listener)
+        * 4.12.1 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Server.Listener](#rqsrs-013clickhousebackuputilityfipsserverlistener)
 * 5 [References](#references)
 
 ## Revision History
@@ -353,6 +359,38 @@ For each of the above, `clickhouse-backup-fips list remote` SHALL fail with
 version: 1.0
 
 The [ACVP] wrapper bundled with [clickhouse-backup] at `pkg/acvpwrapper/run.sh` SHALL execute the algorithm test vectors against the [clickhouse-backup-fips] binary and SHALL execute successfully with zero failures across the entire run.
+
+### Network Surface
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.FIPS.NetworkSurface
+version: 1.0
+
+The [clickhouse-backup-fips] binary SHALL expose the following network surface during FIPS-compatible operation:
+
+* Inbound: a REST API [TLS] listener on TCP port `7172` when started in `server` mode with `api.secure: true`; no plain HTTP listener.
+* Outbound to ClickHouse: secure native [TLS] TCP port `9440`.
+* Outbound to S3-compatible storage: HTTPS to the AWS FIPS hostname `s3-fips.<region>.amazonaws.com:443`.
+
+No other ports SHALL be opened or used by the [clickhouse-backup-fips] binary in FIPS-compatible operation.
+
+### Client Configuration
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Configuration.SecureClickHouse
+version: 1.0
+
+A FIPS-compatible [clickhouse-backup-fips] configuration SHALL satisfy all of the following:
+
+* `clickhouse.secure: true`.
+* `clickhouse.port: 9440` (secure native [TLS]). Plain native TCP `9000` and plain HTTP `8123` SHALL NOT be used against a FIPS-configured ClickHouse server.
+* `api.secure: true` plus a valid certificate and private key when running `clickhouse-backup-fips server`.
+* `s3.endpoint` left empty and `s3.region` set to a valid AWS region so the SDK targets the AWS FIPS hostname `s3-fips.<region>.amazonaws.com`.
+
+### Server Listener
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Server.Listener
+version: 1.0
+
+`clickhouse-backup-fips server`, when started with a FIPS-compatible REST API configuration (`api.secure: true`, no plain ports configured), SHALL open exactly one [TLS] listener on TCP port `7172` and SHALL NOT bind any other port. The single listener SHALL accept only the FIPS-approved [TLS] cipher suites defined by [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Approved.CipherSuites.TLSv12.Approved](#rqsrs-013clickhousebackuputilityfipsapprovedciphersuitestlsv12approved) and [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Approved.CipherSuites.TLSv13.Approved](#rqsrs-013clickhousebackuputilityfipsapprovedciphersuitestlsv13approved).
 
 ## References
 
