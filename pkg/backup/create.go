@@ -1064,7 +1064,7 @@ func (b *Backuper) fetchHashOfAllFiles(ctx context.Context, database, table, dis
 		Name string `ch:"name"`
 		Hash string `ch:"hash_of_all_files"`
 	}
-	q := "SELECT name, lower(hash_of_all_files) AS hash_of_all_files FROM system.parts WHERE database=? AND `table`=? AND disk_name=? AND name IN ?"
+	q := "SELECT name, lower(hash_of_all_files) AS hash_of_all_files FROM system.parts WHERE database=? AND `table`=? AND disk_name=? AND has(?, name)"
 	if err := b.ch.SelectContext(ctx, &rows, q, database, table, diskName, partNames); err != nil {
 		return nil, errors.Wrap(err, "SELECT hash_of_all_files FROM system.parts")
 	}
