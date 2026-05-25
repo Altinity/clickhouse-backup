@@ -127,6 +127,30 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		// Should have 200 rows (100 from base + 100 from increment)
 		env.checkCount(r, 1, 100, "SELECT count() FROM "+dbNameFull+"."+tableName)
 
+		// Branch: download must hardlink from an existing live part whose name
+		// differs from backup metadata but whose hash_of_all_files matches.
+		// TRUNCATE+re-INSERT advances block numbers, so identical data lands
+		// under a new part name while hash_of_all_files stays the same.
+		if useHashOfAllFiles {
+			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", baseBackupName)
+
+			env.queryWithNoError(r, "TRUNCATE TABLE "+dbNameFull+"."+tableName)
+			env.queryWithNoError(r, "INSERT INTO "+dbNameFull+"."+tableName+" SELECT number FROM numbers(100)")
+			var renamedPart string
+			r.NoError(env.ch.SelectSingleRowNoCtx(&renamedPart, "SELECT name FROM system.parts WHERE database=? AND `table`=? AND active ORDER BY name LIMIT 1", dbNameFull, tableName))
+			r.NotEqual("all_1_1_0", renamedPart, "expected new part name after TRUNCATE+INSERT but got %q", renamedPart)
+
+			downloadOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", "--hardlink-exists-files", baseBackupName)
+			log.Debug().Msg(downloadOut)
+			r.NoError(err, downloadOut)
+			r.Contains(downloadOut, "hash_of_all_files match", "expected hash_of_all_files match for renamed live part")
+			r.Contains(downloadOut, "live part \""+renamedPart+"\"", "expected hash match to point at renamed live part %q", renamedPart)
+
+			// Restore on top of the truncated+reinserted table to confirm the hardlinked parts are usable.
+			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables="+dbNameFull+"."+tableName, baseBackupName)
+			env.checkCount(r, 1, 100, "SELECT count() FROM "+dbNameFull+"."+tableName)
+		}
+
 		// Cleanup after test
 		fullCleanup(t, r, env, []string{baseBackupName, incrementBackupName}, []string{"remote", "local"}, []string{dbNameShort}, true, true, true, "config-s3.yml")
 	}
