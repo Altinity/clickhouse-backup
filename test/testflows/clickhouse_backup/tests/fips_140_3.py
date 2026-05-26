@@ -6,61 +6,32 @@ from testflows.asserts import error
 append_path(sys.path, "../..")
 from clickhouse_backup.requirements.fips.requirements import *
 
-
+ # the following are common fips variables:
 FIPS_BINARY_IN_CONTAINER = "/bin/clickhouse-backup-fips"
 FIPS_VERSION_LABEL = "FIPS 140-3:"
 FIPS_VERSION_TRUE = "true"
+FIPS_CH_SERVER_NAME = "clickhouse_fips_server"
+NON_FIPS_CH_SERVER_NAME  = "clickhouse_nonfips_server"
 
-
-FIPS_GO_BUILD_SETTING = "build\tGOFIPS140=v1.0.0"
-
-# Go FIPS 140-3 runtime modes covered by `godebug_fips140_modes`.
-#
-# * ``None``           - leave ``GODEBUG`` unset; the binary falls back
-#                        to the build-time default selected by
-#                        ``GOFIPS140=v1.0.0`` (FIPS active, not strict).
-# * ``"fips140=on"``   - FIPS active without strict enforcement.
-# * ``"fips140=only"`` - FIPS active with strict enforcement; any
-#                        non-approved cryptographic operation triggers
-#                        an error or panic.
-FIPS_GODEBUG_MODES = (None, "fips140=on", "fips140=only")
-
-
-# All clickhouse-backup-fips per-scenario configs live in the dedicated
+# clickhouse-backup-fips configs:
 # ``configs/backup/fips/`` subfolder; ``regression.py`` copies the whole
 # ``configs/backup/`` tree per-PID and bind-mounts it at
 # ``/etc/clickhouse-backup``, so the in-container path keeps the subdir.
-FIPS_TLS_CONFIG_PATH                = "/etc/clickhouse-backup/fips/config-fips-api-tls.yml"
-FIPS_OUTBOUND_CH_CONFIG_PATH        = "/etc/clickhouse-backup/fips/config-fips-outbound-clickhouse-tls.yml"
-FIPS_OUTBOUND_S3_CONFIG_PATH        = "/etc/clickhouse-backup/fips/config-fips-outbound-s3-tls.yml"
-FIPS_TLS_LISTEN_PORT                = 7172
+FIPS_TLS_CONFIG_PATH = "/etc/clickhouse-backup/fips/config-fips-api-tls.yml"
+FIPS_OUTBOUND_CH_CONFIG_PATH = "/etc/clickhouse-backup/fips/config-fips-outbound-clickhouse-tls.yml"
+FIPS_OUTBOUND_S3_CONFIG_PATH = "/etc/clickhouse-backup/fips/config-fips-outbound-s3-tls.yml"
+FIPS_CONNECTIVITY_FIPS_CONFIG_PATH = "/etc/clickhouse-backup/fips/config-fips-connectivity-fips-server.yml"
+FIPS_CONNECTIVITY_NONFIPS_CONFIG_PATH = "/etc/clickhouse-backup/fips/config-fips-connectivity-nonfips-server.yml"
+FIPS_TLS_LISTEN_PORT = 7172
 
-FIPS_CONNECTIVITY_FIPS_CONFIG_PATH      = "/etc/clickhouse-backup/fips/config-fips-connectivity-fips-server.yml"
-FIPS_CONNECTIVITY_NONFIPS_CONFIG_PATH   = "/etc/clickhouse-backup/fips/config-fips-connectivity-nonfips-server.yml"
-FIPS_CH_SERVER_IMAGE                    = "altinity/clickhouse-server:25.3.8.30001.altinityfips"
-NON_FIPS_CH_SERVER_IMAGE                = "altinity/clickhouse-server:25.8.16.10002.altinitystable"
-FIPS_CH_SERVER_NAME                     = "clickhouse_fips_server"
-NON_FIPS_CH_SERVER_NAME                 = "clickhouse_nonfips_server"
-
-# Standard ClickHouse secure native-TCP port
-FIPS_OUTBOUND_CH_TLS_PORT           = 9440
-
-# Default HTTPS port. The S3 outbound scenario must use 443 because the AWS
-# SDK Go v2 generates the FIPS endpoint URL as bare
-# `https://s3-fips.<region>.amazonaws.com` (no port suffix), so the
-# container has to be reachable on the default HTTPS port for the SDK's
-# request to land on it. See `config-fips-outbound-s3-tls.yml` for the
-# full reasoning behind the AWS-style hostname approach.
-FIPS_OUTBOUND_S3_TLS_PORT           = 443
-
-# Hostname of the auxiliary ``openssl s_server``
-OPENSSL_AUX_NAME                    = "openssl_server"
-
-# For the S3 outbound scenario the container is named after the AWS S3 FIPS
-# endpoint hostname so Docker's embedded DNS resolves the SDK-generated
-# URL (``https://s3-fips.us-east-1.amazonaws.com``) to it. ``us-east-1``
-# matches ``s3.region`` in ``config-fips-outbound-s3-tls.yml``.
-OPENSSL_S3_FIPS_AUX_NAME            = "s3-fips.us-east-1.amazonaws.com"
+# Backup configs for `outbound_tls_to_nonfips_clickhouse_with_cipher_profile`.
+# Each one points at the non-FIPS CH server on its secure native port `9440`,
+# with `secure: true` and `skip_verify: true` so the assertion stays focused
+# on cipher-policy outcomes; the server's `<openSSL><cipherList>` /
+# `<cipherSuites>` are switched per case via `listeners-*.xml` overrides.
+FIPS_NONFIPS_CH_TLS_FIPSCIPHER_CONFIG_PATH      = "/etc/clickhouse-backup/fips/config-fips-nonfips-ch-tls-fipscipher.yml"
+FIPS_CH_SERVER_IMAGE                        = "altinity/clickhouse-server:25.3.8.30001.altinityfips"
+NON_FIPS_CH_SERVER_IMAGE                    = "altinity/clickhouse-server:25.8.16.10002.altinitystable"
 
 # OpenSSL CLI uses two different flags:
 #   ``-ciphersuites <name>``  : TLSv1.3 (IANA names, e.g. ``TLS_AES_128_GCM_SHA256``)
@@ -78,98 +49,13 @@ FIPS_TLS13_APPROVED = (
 # Single non-approved TLSv1.3 suite
 NON_FIPS_TLS13 = ("TLS_CHACHA20_POLY1305_SHA256",)
 
-# Non-FIPS TLS1.2 suites for the inbound REST API
-NON_FIPS_TLS12_INBOUND_REST = (
-    "ECDHE-RSA-CHACHA20-POLY1305",
-    "RC4-SHA",
-    "DES-CBC3-SHA",
-)
-
-# Non-FIPS TLS1.2 suites for the outbound verification.
-#
-# The set covers three different reasons a TLS1.2 cipher must be rejected
-# by the Go FIPS 140-3 outbound policy:
-#
-# 1. Non-approved bulk cipher (CHACHA20):
-#       ECDHE-RSA-CHACHA20-POLY1305
-# 2. Non-approved key exchange (DHE):
-#       DHE-RSA-AES256-GCM-SHA384
-#       DHE-RSA-AES128-GCM-SHA256
-# 3. Plain RSA static key exchange (no forward secrecy):
-#       AES256-GCM-SHA384
-#       AES128-GCM-SHA256
 NON_FIPS_TLS12_OUTBOUND = (
-    "ECDHE-RSA-CHACHA20-POLY1305",
-    "DHE-RSA-AES256-GCM-SHA384",
-    "DHE-RSA-AES128-GCM-SHA256",
-    "AES256-GCM-SHA384",
-    "AES128-GCM-SHA256",
+"ECDHE-RSA-CHACHA20-POLY1305",
+"DHE-RSA-AES256-GCM-SHA384",
+"DHE-RSA-AES128-GCM-SHA256",
+"AES256-GCM-SHA384",
+"AES128-GCM-SHA256",
 )
-
-
-# Cryptographic Algorithm Self-Test (CAST) names are from Go's FIPS 140-3
-# module. Shows `allCASTs` in `crypto/internal/fips140test/cast_test.go`
-# of the Go release used to build `clickhouse-backup-race-fips`. Each name
-# is a valid value for `GODEBUG=failfipscast=<NAME>`: setting it forces
-# that one CAST to fail at startup, which Go's FIPS module turns into a
-# fatal abort.
-FIPS_FAILFIPSCAST_NAMES = (
-    "AES-CBC",
-    "CTR_DRBG",
-    "CounterKDF",
-    "DetECDSA P-256 SHA2-512 sign",
-    "ECDH PCT",
-    "ECDSA P-256 SHA2-512 sign and verify",
-    "ECDSA PCT",
-    "Ed25519 sign and verify",
-    "Ed25519 sign and verify PCT",
-    "HKDF-SHA2-256",
-    "HMAC-SHA2-256",
-    "KAS-ECC-SSC P-256",
-    "ML-DSA sign and verify PCT",
-    "ML-DSA-44",
-    "ML-KEM PCT",
-    "ML-KEM-768",
-    "PBKDF2",
-    "RSA sign and verify PCT",
-    "RSASSA-PKCS-v1.5 2048-bit sign and verify",
-    "SHA2-256",
-    "SHA2-512",
-    "TLSv1.2-SHA2-256",
-    "TLSv1.3-SHA2-256",
-    "cSHAKE128",
-)
-
-# Marker that Go's FIPS module writes to stderr on a failfipscast-forced
-# CAST. The full line is
-# `fatal error: FIPS 140-3 self-test failed: <NAME>: simulated CAST failure`.
-FIPS_FAILFIPSCAST_MARKER = "simulated CAST failure"
-
-# Required CAST names that MUST be registered in any Go FIPS module (these
-# are foundational names present since v1.0.0). If forcing one of
-# these does NOT abort `clickhouse-backup-fips`, the failfipscast hook
-# itself is broken or the binary is not running in FIPS mode.
-FIPS_FAILFIPSCAST_REQUIRED_NAMES = (
-    "SHA2-256",
-    "HMAC-SHA2-256",
-    "AES-CBC",
-)
-
-# ACVP wrapper scenario opt-in.
-# Set `RUN_ACVP_TESTS=1` locally or in the CI workflow to enable it.
-FIPS_ACVP_ENV_FLAG          = "RUN_ACVP_TESTS"
-FIPS_ACVP_ENV_FLAG_VALUES   = ("1", "true", "yes", "on")
-# Path to the wrapper script, relative to `cluster.tests_dir`
-# (`test/testflows/clickhouse_backup`). The script is part of the merged
-# ACVP wrapper PR and lives at the repository root.
-FIPS_ACVP_SCRIPT_RELPATH    = "../../../pkg/acvpwrapper/run.sh"
-# Oracle line printed by `check_expected.go` when the run passes. Tracked
-# in `pkg/acvpwrapper/README.md` ("Reproduce The Current Result").
-FIPS_ACVP_EXPECTED_OUTPUT   = "38 ACVP tests matched expectations"
-# Timeout for the host shell - first run does Docker image pulls,
-# a boringssl clone, an acvptool build, and then the ACVP run itself.
-FIPS_ACVP_TIMEOUT_SEC       = 30 * 60
-
 
 def _require_fips_container(test):
     """Skip the calling scenario if no FIPS backup container is available.
@@ -199,16 +85,17 @@ def _read_fips_status(node, binary, *, godebug=None):
         FIPS binary's build-time default.
     """
     env_prefix = f"env GODEBUG={godebug} " if godebug else ""
-    r = node.cmd(f"{env_prefix}{binary} --version")
-    for line in r.output.splitlines():
+    result = node.cmd(f"{env_prefix}{binary} --version")
+    for line in result.output.splitlines():
         normalized = line.strip()
         if normalized.lower().startswith(FIPS_VERSION_LABEL.lower()):
             value = normalized.split(":", 1)[1].strip().lower() if ":" in normalized else ""
-            return value, r.output
-    return None, r.output
+            return value, result.output
+    return None, result.output
 
 
-def _check_tls_handshake(node, target, tls_flag, cipher=None, ciphersuites=None,
+@TestStep(Check)
+def _check_tls_handshake(self, node, target, tls_flag, cipher=None, ciphersuites=None,
                          expected_success=True):
     """Try to open a TLS connection with ``openssl s_client`` and check the result.
 
@@ -244,10 +131,10 @@ def _check_tls_handshake(node, target, tls_flag, cipher=None, ciphersuites=None,
 
     cmd = (
         f"timeout 10 openssl s_client -connect {target} -brief "
-        f"{tls_flag} {cipher_arg} </dev/null 2>&1"
+        f"{tls_flag} {cipher_arg} </dev/null 2>&1"  # `2>&1` redirects stderr to stdout.
     )
-    r = node.cmd(cmd, no_checks=True)
-    output = (r.output or "")
+    result = node.cmd(cmd, no_checks=True)
+    output = (result.output or "")
     output_lower = output.lower()
 
     cipher_unavailable = (
@@ -257,7 +144,7 @@ def _check_tls_handshake(node, target, tls_flag, cipher=None, ciphersuites=None,
         or "cipher_list" in output_lower and "no cipher" in output_lower
     )
 
-    handshake_failed = r.exitcode != 0 and (
+    handshake_failed = result.exitcode != 0 and (
         "handshake failure" in output_lower
         or "no shared cipher" in output_lower
         or "ssl alert" in output_lower
@@ -272,19 +159,20 @@ def _check_tls_handshake(node, target, tls_flag, cipher=None, ciphersuites=None,
         assert not cipher_unavailable, error(
             f"openssl client refused to offer the cipher; cannot test the positive case.\n{output}"
         )
-        assert r.exitcode == 0, error(
-            f"Expected handshake to succeed, exit={r.exitcode}\n{output}"
+        assert result.exitcode == 0, error(
+            f"Expected handshake to succeed, exit={result.exitcode}\n{output}"
         )
     else:
         assert handshake_failed, error(
-            f"Expected handshake rejection, exit={r.exitcode}\n{output}"
+            f"Expected handshake rejection, exit={result.exitcode}\n{output}"
         )
 
 
 OUTBOUND_TLS_CMD_TIMEOUT_SEC = 15
 
 
-def _check_outbound_tls_handshake(node, command, expected_success):
+@TestStep(Check)
+def _check_outbound_tls_handshake(self, node, command, expected_success):
     """Run ``command`` inside ``node`` and assert on the *outbound* TLS outcome.
 
     ``command`` invokes ``clickhouse-backup-fips`` with
@@ -300,8 +188,8 @@ def _check_outbound_tls_handshake(node, command, expected_success):
       handshake.
     """
     bounded = f"timeout {OUTBOUND_TLS_CMD_TIMEOUT_SEC} {command}"
-    r = node.cmd(bounded, no_checks=True)
-    output = (r.output or "")
+    result = node.cmd(bounded, no_checks=True)
+    output = (result.output or "")
     output_lower = output.lower()
 
     handshake_rejected = (
@@ -324,16 +212,71 @@ def _check_outbound_tls_handshake(node, command, expected_success):
         )
 
 
-def _check_outbound_tls_with_cipher(cluster, backup_fips, *, listen, command,
+@TestStep(Check)
+def _assert_s_server_logs_match_outcome(self, cluster, aux_name, expected_success):
+    """Soft-check the s_server's stdout corroborates the client-side outcome.
+
+    The client probe only sees what `clickhouse-backup-fips` printed, so this
+    helper reads the s_server container's stdout and looks for handshake
+    markers. Mismatches are reported via `note(...)` (not hard asserts) since
+    OpenSSL log formatting varies across Alpine builds and TLS versions.
+
+    Variables:
+      * ``cluster``           - test Cluster, used to fetch container logs.
+      * ``aux_name``          - name of the auxiliary openssl s_server container.
+      * ``expected_success``  - True if the handshake should have negotiated
+                                a cipher; False if it should have been rejected.
+      * ``s_server_log``      - captured stdout of the s_server container.
+      * ``success_markers``   - substrings that prove cipher negotiation
+                                completed (e.g. ``Cipher : <name>``).
+      * ``failure_markers``   - substrings that prove the server rejected the
+                                handshake (e.g. ``no shared cipher``).
+    """
+    try:
+        s_server_log = cluster.container_logs(aux_name)
+    except Exception as exc:
+        note(f"could not fetch s_server logs for `{aux_name}`: {exc}")
+        return
+
+    log_lower = (s_server_log or "").lower()
+    success_markers = ("cipher    :", "cipher   :", "shared ciphers:")
+    failure_markers = (
+        "no shared cipher",
+        "no suitable signature algorithm",
+        "tlsv1 alert handshake failure",
+        "ssl handshake failure",
+        "wrong version number",
+    )
+
+    has_success_marker = any(marker in log_lower for marker in success_markers)
+    has_failure_marker = any(marker in log_lower for marker in failure_markers)
+    log_tail = s_server_log[-1000:] if s_server_log else "<empty>"
+
+    if expected_success and not has_success_marker:
+        note(
+            f"s_server `{aux_name}` log lacks a cipher-negotiation marker even "
+            f"though the client-side check passed. Tail of log:\n{log_tail}"
+        )
+    elif not expected_success and not has_failure_marker:
+        note(
+            f"s_server `{aux_name}` log lacks a handshake-rejection marker even "
+            f"though the client-side check expected failure. Tail of log:\n{log_tail}"
+        )
+
+
+@TestStep(Check)
+def _check_outbound_tls_with_cipher(self, cluster, backup_fips, *, listen, command,
                                     expected_success, tls_version,
                                     cipher=None, ciphersuites=None,
-                                    aux_name=OPENSSL_AUX_NAME):
+                                    aux_name='openssl_server'):
     """One outbound TLS handshake check for one cipher profile.
 
     Brings up an ``openssl s_server`` container, runs ``command`` inside
     the FIPS backup container, asserts the FIPS-policy outcome via
-    `check_outbound_tls_handshake`, and stops the aux container in
-    `Finally`. The aux container reuses the cluster's static SSL fixtures
+    `check_outbound_tls_handshake`, corroborates the outcome by
+    inspecting the s_server's stdout (`_assert_s_server_logs_match_outcome`),
+    and stops the aux container in `Finally`. The aux container reuses
+    the cluster's static SSL fixtures
     (`configs/clickhouse/ssl/{server.crt,server.key,dhparam.pem}`).
 
     :param cluster: cluster used to start/stop the aux container.
@@ -361,7 +304,16 @@ def _check_outbound_tls_with_cipher(cluster, backup_fips, *, listen, command,
             cipher=cipher, ciphersuites=ciphersuites,
             tls_version=tls_version,
         )
-        _check_outbound_tls_handshake(backup_fips, command, expected_success)
+        _check_outbound_tls_handshake(
+            node=backup_fips,
+            command=command,
+            expected_success=expected_success,
+        )
+        _assert_s_server_logs_match_outcome(
+            cluster=cluster,
+            aux_name=aux_name,
+            expected_success=expected_success,
+        )
     finally:
         cluster.stop_auxiliary_container(aux_name)
 
@@ -428,19 +380,26 @@ def gofips140_build_flags_present(self):
     """Validate `go version -m clickhouse-backup-fips` output contains `build\tGOFIPS140=v1.0.0`.
 
     Confirms the FIPS binary was built against the Go FIPS 140-3 module.
+
+    The `go` toolchain is invoked **inside** the `clickhouse_backup_fips`
+    container (where `golang-go` is installed by `helpers/cluster.py`,
+    line ~1740), not on the host. This keeps the assertion independent
+    of whether a Go toolchain is available on the developer's machine.
     """
+
+    FIPS_GO_BUILD_SETTING = "build\tGOFIPS140=v1.0.0"
     backup_fips = _require_fips_container(self)
 
     with When("I run `go version -m` against the FIPS binary"):
-        r = backup_fips.cmd(f"go version -m {FIPS_BINARY_IN_CONTAINER}")
-        debug(f"STDOUT:\n{r.output}")
-        debug(f"EXIT CODE: {r.exitcode}")
+        result = backup_fips.cmd(f"go version -m {FIPS_BINARY_IN_CONTAINER}")
+        debug(f"STDOUT:\n{result.output}")
+        debug(f"EXIT CODE: {result.exitcode}")
         debug(f"FIPS_GO_BUILD_SETTING: {FIPS_GO_BUILD_SETTING!r}")
 
     with Then(f"the output contains the build setting `{FIPS_GO_BUILD_SETTING}`"):
-        assert FIPS_GO_BUILD_SETTING in r.output, error(
+        assert FIPS_GO_BUILD_SETTING in result.output, error(
             f"`go version -m {FIPS_BINARY_IN_CONTAINER}` output is missing "
-            f"`{FIPS_GO_BUILD_SETTING}`:\n{r.output}"
+            f"`{FIPS_GO_BUILD_SETTING}`:\n{result.output}"
         )
 
 
@@ -477,8 +436,19 @@ def godebug_fips140_modes(self):
     `outbound_tls_to_s3_endpoint_with_openssl_s_server`). This scenario
     only covers the positive path of each mode plus the mode dispatch.
     """
+    # Go FIPS 140-3 runtime modes covered by `godebug_fips140_modes`.
+    #
+    # * ``None``           - leave ``GODEBUG`` unset; the binary falls back
+    #                        to the build-time default selected by
+    #                        ``GOFIPS140=v1.0.0`` (FIPS active, not strict).
+    # * ``"fips140=on"``   - FIPS active without strict enforcement.
+    # * ``"fips140=only"`` - FIPS active with strict enforcement; any
+    #                        non-approved cryptographic operation triggers
+    #                        an error or panic.
+    FIPS_GODEBUG_MODES = (None, "fips140=on", "fips140=only")
     backup_fips = _require_fips_container(self)
     cluster = self.context.cluster
+    
     listeners_xml = os.path.join(
         cluster.tests_dir,
         "configs/clickhouse_fips_server/config.d/listeners.xml",
@@ -522,7 +492,7 @@ def godebug_fips140_modes(self):
                         f"FIPS ClickHouse server (GODEBUG={label})"
                     ):
                         _assert_tables_succeeds(
-                            backup_fips,
+                            backup_fips=backup_fips,
                             config=FIPS_CONNECTIVITY_FIPS_CONFIG_PATH,
                             godebug=godebug,
                         )
@@ -530,7 +500,8 @@ def godebug_fips140_modes(self):
         cluster.stop_auxiliary_container(FIPS_CH_SERVER_NAME)
 
 
-def _assert_tables_succeeds(backup_fips, *, config, godebug):
+@TestStep(Check)
+def _assert_tables_succeeds(self, backup_fips, *, config, godebug):
     """Run ``clickhouse-backup-fips -c <config> tables`` and assert it exits 0.
 
     Wrapped in ``timeout`` so a hung handshake or DNS failure does not
@@ -545,11 +516,11 @@ def _assert_tables_succeeds(backup_fips, *, config, godebug):
         f"timeout {OUTBOUND_TLS_CMD_TIMEOUT_SEC} {env_prefix}"
         f"{FIPS_BINARY_IN_CONTAINER} -c {config} tables"
     )
-    r = backup_fips.cmd(cmd, no_checks=True)
+    result = backup_fips.cmd(cmd, no_checks=True)
     label = godebug if godebug else "<unset>"
-    assert r.exitcode == 0, error(
+    assert result.exitcode == 0, error(
         f"`clickhouse-backup-fips tables` against `{config}` failed "
-        f"(exit={r.exitcode}, GODEBUG={label}):\n{r.output}"
+        f"(exit={result.exitcode}, GODEBUG={label}):\n{result.output}"
     )
 
 
@@ -585,7 +556,7 @@ def connectivity_against_fips_clickhouse_server(self):
             )
         with When("I run `clickhouse-backup-fips tables` over secure native TCP 9440"):
             _assert_tables_succeeds(
-                backup_fips,
+                backup_fips=backup_fips,
                 config=FIPS_CONNECTIVITY_FIPS_CONFIG_PATH,
                 godebug="fips140=only",
             )
@@ -618,7 +589,7 @@ def connectivity_against_non_fips_clickhouse_server(self):
             )
         with When("I run `clickhouse-backup-fips tables` over plain native TCP 9000"):
             _assert_tables_succeeds(
-                backup_fips,
+                backup_fips=backup_fips,
                 config=FIPS_CONNECTIVITY_NONFIPS_CONFIG_PATH,
                 godebug="fips140=on",
             )
@@ -647,21 +618,32 @@ def fips_integrity_self_test_failure_on_tampered_binary(self):
     backup_fips = _require_fips_container(self)
 
     with When("I run the FIPS checksum tamper script against the FIPS binary"):
-        r = backup_fips.cmd(
+        result = backup_fips.cmd(
             f"/scripts/tamper_go_fips_checksum.sh {FIPS_BINARY_IN_CONTAINER}",
             no_checks=True,
         )
+        output = result.output or ""
 
-    with Then("the tampered binary panics with `fips140: verification mismatch`"):
-        assert "fips140: verification mismatch" in (r.output or ""), error(
-            f"tamper script did not see `fips140: verification mismatch` in the "
-            f"tampered binary's output (script exit={r.exitcode}).\n{r.output}"
+    with Then("the tampered binary output includes `panic: fips140: verification mismatch`"):
+        # The script prints an informational banner containing the phrase
+        # `fips140: verification mismatch` before it executes the binary.
+        # Check for the panic marker instead of a generic substring so this
+        # assertion cannot pass on banner text alone.
+        assert "panic: fips140: verification mismatch" in output, error(
+            f"tamper script did not capture "
+            f"`panic: fips140: verification mismatch` in tampered binary output "
+            f"(script exit={result.exitcode}).\n{output}"
         )
 
     with Then("the tamper script exits 0 (tampered binary exited non-zero as required)"):
-        assert r.exitcode == 0, error(
-            f"tamper script exit={r.exitcode} (expected 0). See script docstring "
-            f"for the meaning of non-zero exit codes.\n{r.output}"
+        assert result.exitcode == 0, error(
+            f"tamper script exit={result.exitcode} (expected 0). See script docstring "
+            f"for the meaning of non-zero exit codes.\n{output}"
+        )
+
+    with And("the tamper script reports its explicit success marker"):
+        assert "== OK: FIPS integrity check failed as expected ==" in output, error(
+            f"tamper script did not print the expected success marker.\n{output}"
         )
 
 
@@ -692,6 +674,12 @@ def inbound_tls_cipher_negotiation(self):
     (``/etc/clickhouse-server/ssl/server.{crt,key}``), inherited via
     ``volumes_from_name="clickhouse1"`` on the FIPS container.
     """
+    # Non-FIPS TLS1.2 suites for the inbound REST API
+    NON_FIPS_TLS12_INBOUND_REST = (
+        "ECDHE-RSA-CHACHA20-POLY1305",
+        "RC4-SHA",
+        "DES-CBC3-SHA",
+    )
     backup_fips = _require_fips_container(self)
 
     target = f"localhost:{FIPS_TLS_LISTEN_PORT}"
@@ -713,7 +701,7 @@ def inbound_tls_cipher_negotiation(self):
             for ciphersuite in FIPS_TLS13_APPROVED:
                 with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be accepted"):
                     _check_tls_handshake(
-                        backup_fips, target=target, tls_flag="-tls1_3",
+                        node=backup_fips, target=target, tls_flag="-tls1_3",
                         ciphersuites=ciphersuite, expected_success=True,
                     )
 
@@ -721,7 +709,7 @@ def inbound_tls_cipher_negotiation(self):
             for cipher in FIPS_TLS12_APPROVED:
                 with Check(f"TLSv1.2 cipher {cipher} should be accepted"):
                     _check_tls_handshake(
-                        backup_fips, target=target, tls_flag="-tls1_2",
+                        node=backup_fips, target=target, tls_flag="-tls1_2",
                         cipher=cipher, expected_success=True,
                     )
 
@@ -729,7 +717,7 @@ def inbound_tls_cipher_negotiation(self):
             for ciphersuite in NON_FIPS_TLS13:
                 with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
                     _check_tls_handshake(
-                        backup_fips, target=target, tls_flag="-tls1_3",
+                        node=backup_fips, target=target, tls_flag="-tls1_3",
                         ciphersuites=ciphersuite, expected_success=False,
                     )
 
@@ -737,19 +725,19 @@ def inbound_tls_cipher_negotiation(self):
             for cipher in NON_FIPS_TLS12_INBOUND_REST:
                 with Check(f"TLSv1.2 cipher {cipher} should be rejected"):
                     _check_tls_handshake(
-                        backup_fips, target=target, tls_flag="-tls1_2",
+                        node=backup_fips, target=target, tls_flag="-tls1_2",
                         cipher=cipher, expected_success=False,
                     )
 
         with And("I try to connect using legacy TLSv1.0 / TLSv1.1 protocols"):
             with Check("TLSv1.0 handshake should be rejected"):
                 _check_tls_handshake(
-                    backup_fips, target=target, tls_flag="-tls1",
+                    node=backup_fips, target=target, tls_flag="-tls1",
                     expected_success=False,
                 )
             with Check("TLSv1.1 handshake should be rejected"):
                 _check_tls_handshake(
-                    backup_fips, target=target, tls_flag="-tls1_1",
+                    node=backup_fips, target=target, tls_flag="-tls1_1",
                     expected_success=False,
                 )
 
@@ -785,19 +773,34 @@ def outbound_tls_cipher_negotiation(self):
     `configs/backup/fips/config-fips-outbound-clickhouse-tls.yml` with
     `skip_verify: true` so the assertion stays focused on cipher policy.
     """
+    
+    FIPS_OUTBOUND_CH_TLS_PORT = 9440 # Standard ClickHouse secure native-TCP port
+    # Non-FIPS TLS1.2 suites for the outbound verification.
+    # The set covers three different reasons a TLS1.2 cipher must be rejected
+    # by the Go FIPS 140-3 outbound policy:
+    #
+    # 1. Non-approved bulk cipher (CHACHA20):
+    #       ECDHE-RSA-CHACHA20-POLY1305
+    # 2. Non-approved key exchange (DHE):
+    #       DHE-RSA-AES256-GCM-SHA384
+    #       DHE-RSA-AES128-GCM-SHA256
+    # 3. Plain RSA static key exchange (no forward secrecy):
+    #       AES256-GCM-SHA384
+    #       AES128-GCM-SHA256
+    
     backup_fips = _require_fips_container(self)
     cluster = self.context.cluster
 
     cmd = (
         f"env GODEBUG=fips140=only {FIPS_BINARY_IN_CONTAINER} "
-        f"-c {FIPS_OUTBOUND_CH_CONFIG_PATH} tables 2>&1"
+        f"-c {FIPS_OUTBOUND_CH_CONFIG_PATH} tables 2>&1"  # `2>&1` redirects stderr to stdout.
     )
 
     with When("I try each FIPS-approved TLSv1.3 cipher suite on the CH endpoint"):
         for ciphersuite in FIPS_TLS13_APPROVED:
             with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be accepted"):
                 _check_outbound_tls_with_cipher(
-                    cluster, backup_fips,
+                    cluster=cluster, backup_fips=backup_fips,
                     listen=FIPS_OUTBOUND_CH_TLS_PORT, tls_version="-tls1_3",
                     ciphersuites=ciphersuite, command=cmd, expected_success=True,
                 )
@@ -806,7 +809,7 @@ def outbound_tls_cipher_negotiation(self):
         for cipher in FIPS_TLS12_APPROVED:
             with Check(f"TLSv1.2 cipher {cipher} should be accepted"):
                 _check_outbound_tls_with_cipher(
-                    cluster, backup_fips,
+                    cluster=cluster, backup_fips=backup_fips,
                     listen=FIPS_OUTBOUND_CH_TLS_PORT, tls_version="-tls1_2",
                     cipher=cipher, command=cmd, expected_success=True,
                 )
@@ -815,7 +818,7 @@ def outbound_tls_cipher_negotiation(self):
         for ciphersuite in NON_FIPS_TLS13:
             with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
                 _check_outbound_tls_with_cipher(
-                    cluster, backup_fips,
+                    cluster=cluster, backup_fips=backup_fips,
                     listen=FIPS_OUTBOUND_CH_TLS_PORT, tls_version="-tls1_3",
                     ciphersuites=ciphersuite, command=cmd, expected_success=False,
                 )
@@ -824,7 +827,7 @@ def outbound_tls_cipher_negotiation(self):
         for cipher in NON_FIPS_TLS12_OUTBOUND:
             with Check(f"TLSv1.2 cipher {cipher} should be rejected"):
                 _check_outbound_tls_with_cipher(
-                    cluster, backup_fips,
+                    cluster=cluster, backup_fips=backup_fips,
                     listen=FIPS_OUTBOUND_CH_TLS_PORT, tls_version="-tls1_2",
                     cipher=cipher, command=cmd, expected_success=False,
                 )
@@ -857,6 +860,19 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
     ``s3.disable_cert_verification: true`` so the assertion stays
     focused on cipher policy.
     """
+    # Default HTTPS port. The S3 outbound scenario must use 443 because the AWS
+    # SDK Go v2 generates the FIPS endpoint URL as bare
+    # `https://s3-fips.<region>.amazonaws.com` (no port suffix), so the
+    # container has to be reachable on the default HTTPS port for the SDK's
+    # request to land on it. See `config-fips-outbound-s3-tls.yml` for the
+    # full reasoning behind the AWS-style hostname approach.
+    FIPS_OUTBOUND_S3_TLS_PORT = 443
+    # For the S3 outbound scenario the container is named after the AWS S3 FIPS
+    # endpoint hostname so Docker's embedded DNS resolves the SDK-generated
+    # URL (``https://s3-fips.us-east-1.amazonaws.com``) to it. ``us-east-1``
+    # matches ``s3.region`` in ``config-fips-outbound-s3-tls.yml``.
+    OPENSSL_S3_FIPS_AUX_NAME            = "s3-fips.us-east-1.amazonaws.com"
+    
     backup_fips = _require_fips_container(self)
     cluster = self.context.cluster
 
@@ -865,14 +881,14 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
     # cmd - command to run inside the FIPS container
     cmd = (
         f"env GODEBUG=fips140=only {FIPS_BINARY_IN_CONTAINER} "
-        f"-c {FIPS_OUTBOUND_S3_CONFIG_PATH} list remote 2>&1"
+        f"-c {FIPS_OUTBOUND_S3_CONFIG_PATH} list remote 2>&1"  # `2>&1` redirects stderr to stdout.
     )
 
     with When("I try each FIPS-approved TLSv1.3 cipher suite on the S3 endpoint"):
         for ciphersuite in FIPS_TLS13_APPROVED:
             with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be accepted"):
                 _check_outbound_tls_with_cipher(
-                    cluster, backup_fips,
+                    cluster=cluster, backup_fips=backup_fips,
                     aux_name=OPENSSL_S3_FIPS_AUX_NAME,
                     listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_3",
                     ciphersuites=ciphersuite, command=cmd, expected_success=True,
@@ -882,7 +898,7 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
         for cipher in FIPS_TLS12_APPROVED:
             with Check(f"TLSv1.2 cipher {cipher} should be accepted"):
                 _check_outbound_tls_with_cipher(
-                    cluster, backup_fips,
+                    cluster=cluster, backup_fips=backup_fips,
                     aux_name=OPENSSL_S3_FIPS_AUX_NAME,
                     listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_2",
                     cipher=cipher, command=cmd, expected_success=True,
@@ -892,7 +908,7 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
         for ciphersuite in NON_FIPS_TLS13:
             with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
                 _check_outbound_tls_with_cipher(
-                    cluster, backup_fips,
+                    cluster=cluster, backup_fips=backup_fips,
                     aux_name=OPENSSL_S3_FIPS_AUX_NAME,
                     listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_3",
                     ciphersuites=ciphersuite, command=cmd, expected_success=False,
@@ -902,7 +918,7 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
         for cipher in NON_FIPS_TLS12_OUTBOUND:
             with Check(f"TLSv1.2 cipher {cipher} should be rejected"):
                 _check_outbound_tls_with_cipher(
-                    cluster, backup_fips,
+                    cluster=cluster, backup_fips=backup_fips,
                     aux_name=OPENSSL_S3_FIPS_AUX_NAME,
                     listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_2",
                     cipher=cipher, command=cmd, expected_success=False,
@@ -915,37 +931,122 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
     RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_CAST_Coverage("1.0"),
 )
 def forced_cast_failures(self):
-    """Validate forced CAST failures with `GODEBUG=failfipscast=<NAME>,fips140=on`.
+    """Validate CAST startup behavior in normal and forced-failure modes.
 
-    For each CAST name in `FIPS_FAILFIPSCAST_NAMES` (mirrors Go's upstream
-    `allCASTs` slice), run
+    For each effective CAST name:
 
-        env 'GODEBUG=failfipscast=<NAME>,fips140=on' clickhouse-backup-fips --version
-
-    inside the FIPS container and classify the outcome:
-
-    * Abort with `fatal error: FIPS 140-3 self-test failed: <NAME>:
-      simulated CAST failure` - the hook forced this CAST (PASS).
-    * Normal startup with exit 0 - Go silently ignores the failfipscast
-      value because `<NAME>` is not registered in the active Go FIPS
-      module (`GOFIPS140=v1.0.0` ships a subset of the upstream list).
-      Names listed in `FIPS_FAILFIPSCAST_REQUIRED_NAMES` MUST always
-      abort; any other unrecognised name marks the Check as Skip.
-    * Anything else - FAIL.
-
-    After the loop the scenario asserts at least one CAST was forced, so
-    a binary with the failfipscast hook fully disabled cannot pass on
-    skips alone.
+    1. Run the binary with ``GODEBUG=fips140=on`` and verify startup succeeds.
+    2. Run the binary with ``GODEBUG=failfipscast=<NAME>,fips140=on`` and verify
+       startup fails with the expected CAST failure markers.
     """
+    # Cryptographic Algorithm Self-Test (CAST) names are from Go's FIPS 140-3
+    # module. Shows `allCASTs` in `crypto/internal/fips140test/cast_test.go`
+    # of the Go release used to build `clickhouse-backup-race-fips`. Each name
+    # is a valid value for `GODEBUG=failfipscast=<NAME>`: setting it forces
+    # that one CAST to fail at startup, which Go's FIPS module turns into a
+    # fatal abort.
+    #
+    # Source list for failfipscast checks.
+    # Mirrors Go's `allCASTs` labels from `crypto/internal/fips140test/cast_test.go`.
+    # This list is "superset by module version": version-specific filtering
+    
+    FIPS_FAILFIPSCAST_ALL_NAMES = (
+    "AES-CBC",
+    "CTR_DRBG",
+    "CounterKDF",
+    "DetECDSA P-256 SHA2-512 sign",
+    "ECDH PCT",
+    "ECDSA P-256 SHA2-512 sign and verify",
+    "ECDSA PCT",
+    "Ed25519 sign and verify",
+    "Ed25519 sign and verify PCT",
+    "HKDF-SHA2-256",
+    "HMAC-SHA2-256",
+    "KAS-ECC-SSC P-256",
+    "ML-DSA sign and verify PCT",
+    "ML-DSA-44",
+    "ML-KEM PCT",
+    "ML-KEM-768",
+    "PBKDF2",
+    "RSA sign and verify PCT",
+    "RSASSA-PKCS-v1.5 2048-bit sign and verify",
+    "SHA2-256",
+    "SHA2-512",
+    "TLSv1.2-SHA2-256",
+    "TLSv1.3-SHA2-256",
+    "cSHAKE128",
+    )
+
+    # Marker that Go's FIPS module writes to stderr on a failfipscast-forced CAST.
+    # The full line is:
+    # `fatal error: FIPS 140-3 self-test failed: <NAME>: simulated CAST failure`.
+    FIPS_FAILFIPSCAST_MARKER = "simulated CAST failure"
+    FIPS_FAILFIPSCAST_SELFTEST_PREFIX = "self-test failed: "
+
     backup_fips = _require_fips_container(self)
 
-    forced_count = 0
+    with Given("I detect the GOFIPS140 module version baked into the binary"):
+        result = backup_fips.cmd(
+            f"go version -m {FIPS_BINARY_IN_CONTAINER}",
+            no_checks=True,
+        )
+        if result.exitcode != 0:
+            raise AssertionError(error(
+                f"`go version -m {FIPS_BINARY_IN_CONTAINER}` failed with "
+                f"exit code {result.exitcode}:\n{result.output}"
+            ))
+
+        module_version = None
+        for line in (result.output or "").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("build\tGOFIPS140="):
+                module_version = stripped.split("=", 1)[1].strip()
+                break
+
+        assert module_version is not None, error(
+            f"`go version -m {FIPS_BINARY_IN_CONTAINER}` output is missing "
+            "`build\\tGOFIPS140=<version>`; cannot derive effective CAST list."
+        )
+
+        if module_version == "v1.0.0":
+            cast_names = tuple(
+                cast for cast in FIPS_FAILFIPSCAST_ALL_NAMES
+                if not cast.startswith("ML-DSA")
+            )
+        else:
+            cast_names = FIPS_FAILFIPSCAST_ALL_NAMES
+
+        debug(f"GOFIPS140 module version: {module_version}")
+        debug(f"effective CAST names ({len(cast_names)}): {cast_names}")
 
     with When(
         "for each CAST name I run `clickhouse-backup-fips --version` "
+        "with `GODEBUG=fips140=on`"
+    ):
+        for cast in cast_names:
+            # The command does not consume CAST name directly in this mode;
+            # iterating per CAST guarantees one check per effective CAST label.
+            with Check(f"CAST startup succeeds: {cast}"):
+                cmd = (
+                    f"env GODEBUG=fips140=on "
+                    f"{FIPS_BINARY_IN_CONTAINER} --version 2>&1"
+                )
+                result = backup_fips.cmd(cmd, no_checks=True)
+                output = result.output or ""
+                assert result.exitcode == 0, error(
+                    f"CAST baseline startup failed for `{cast}` "
+                    f"(exit={result.exitcode}, GOFIPS140={module_version}).\n{output}"
+                )
+                assert FIPS_FAILFIPSCAST_MARKER not in output, error(
+                    f"Unexpected `{FIPS_FAILFIPSCAST_MARKER}` marker in baseline "
+                    f"run for `{cast}` (GOFIPS140={module_version}).\n{output}"
+                )
+
+    with Then(
+        "for each CAST name I run `clickhouse-backup-fips --version` "
         "with `GODEBUG=failfipscast=<NAME>,fips140=on`"
     ):
-        for cast in FIPS_FAILFIPSCAST_NAMES:
+        for cast in cast_names:
             with Check(f"forced CAST failure: {cast}"):
                 # Single-quote the GODEBUG value so CAST names containing
                 # spaces (e.g. `DetECDSA P-256 SHA2-512 sign`) are passed
@@ -955,55 +1056,230 @@ def forced_cast_failures(self):
                     f"env 'GODEBUG=failfipscast={cast},fips140=on' "
                     f"{FIPS_BINARY_IN_CONTAINER} --version 2>&1"
                 )
-                r = backup_fips.cmd(cmd, no_checks=True)
-                output = r.output or ""
+                result = backup_fips.cmd(cmd, no_checks=True)
+                output = result.output or ""
 
                 marker_present = FIPS_FAILFIPSCAST_MARKER in output
-                cast_in_output = cast in output
-
-                if r.exitcode != 0 and marker_present and cast_in_output:
-                    forced_count += 1
-                    continue
-
-                if r.exitcode == 0 and not marker_present:
-                    # Go's failfipscast silently ignores unknown CAST names.
-                    # Required CASTs must always be registered; everything
-                    # else is treated as "not in this module version" and
-                    # the Check is skipped.
-                    if cast in FIPS_FAILFIPSCAST_REQUIRED_NAMES:
-                        assert False, error(
-                            f"required CAST `{cast}` was not forced "
-                            f"(exit=0, no `{FIPS_FAILFIPSCAST_MARKER}` "
-                            f"marker). This name has been registered in "
-                            f"every Go FIPS module since v1.0.0; if it "
-                            f"does not abort the binary, the failfipscast "
-                            f"hook is broken or the binary is not running "
-                            f"in FIPS mode.\n{output}"
-                        )
-                    skip(
-                        f"CAST `{cast}` is not registered in the Go FIPS "
-                        f"module the binary was built against "
-                        f"(`GOFIPS140=v1.0.0`); refresh "
-                        f"`FIPS_FAILFIPSCAST_NAMES` after a Go upgrade."
-                    )
-
-                # Any other combination is an unexpected failure mode
-                # (non-zero exit without the marker, or marker without
-                # the cast name).
-                assert False, error(
-                    f"unexpected outcome for `failfipscast={cast}` "
-                    f"(exit={r.exitcode}, marker={marker_present}, "
-                    f"cast_in_output={cast_in_output}). Expected either "
-                    f"a forced CAST abort or a normal startup with exit=0."
-                    f"\n{output}"
+                selftest_cast_present = (
+                    f"{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}" in output
                 )
 
-    with Then("at least one CAST was actually forced"):
-        assert forced_count > 0, error(
-            f"no CAST in `FIPS_FAILFIPSCAST_NAMES` aborted the binary "
-            f"(forced_count=0). The `failfipscast` enforcement appears "
-            f"to be disabled."
-        )
+                assert result.exitcode != 0, error(
+                    f"forced CAST failure expected non-zero exit for `{cast}` "
+                    f"(GOFIPS140={module_version}).\n{output}"
+                )
+                assert marker_present, error(
+                    f"forced CAST failure output missing "
+                    f"`{FIPS_FAILFIPSCAST_MARKER}` for `{cast}` "
+                    f"(GOFIPS140={module_version}).\n{output}"
+                )
+                assert selftest_cast_present, error(
+                    f"forced CAST failure output missing "
+                    f"`{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}` "
+                    f"(GOFIPS140={module_version}).\n{output}"
+                )
+
+
+@TestScenario
+@Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Configuration_SecureClickHouse("1.0"),
+)
+def connection_to_fips_clickhouse_with_nonfips_config(self):
+    """Validate that a non-FIPS-correct backup config cannot reach a FIPS CH server's secure port.
+
+    Brings up the dedicated FIPS-compatible Altinity ClickHouse server
+    (`altinity/clickhouse-server:25.3.8.30001.altinityfips`) with
+    `tcp_port_secure: 9440` enabled by
+    `configs/clickhouse_fips_server/config.d/listeners.xml`, then runs:
+
+        env GODEBUG=fips140=only clickhouse-backup-fips -c <misconfig> tables
+
+    where `<misconfig>` points at `clickhouse_fips_server:9440` with
+    `secure: false` (i.e. the binary tries the plain native protocol
+    against a TLS-only listener).
+
+    Expected result:
+
+    * The command exits with a non-zero code.
+    * The output does NOT contain the list-of-tables success marker
+      (no Atomic / Ordinary database row).
+
+    OPTIONAL DESCRIPTION: this scenario is the deployment-level
+    counterpart to `outbound_tls_cipher_negotiation`, which probes
+    cipher selection while keeping the config FIPS-correct. Here the
+    config itself violates `RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Configuration.SecureClickHouse`
+    (`secure: true` is mandatory for FIPS-configured ClickHouse), and
+    the assertion confirms the misconfiguration also fails in practice
+    when the server is TLS-only.
+    """
+    # Same FIPS CH host/port as the canonical FIPS connectivity config but with
+    # ``secure: false`` - used by `connection_to_fips_clickhouse_with_nonfips_config`
+    # to assert that plain native TCP into a TLS-only listener fails.
+    FIPS_CONNECTIVITY_FIPS_MISCONFIG_PATH = "/etc/clickhouse-backup/fips/config-fips-connectivity-fips-server-misconfig.yml"
+    backup_fips = _require_fips_container(self)
+    cluster = self.context.cluster
+    listeners_xml = os.path.join(
+        cluster.tests_dir,
+        "configs/clickhouse_fips_server/config.d/listeners.xml",
+    )
+
+    try:
+        with Given("a dedicated FIPS-compatible Altinity ClickHouse server"):
+            cluster.start_clickhouse_server_container(
+                name=FIPS_CH_SERVER_NAME,
+                image_tag=FIPS_CH_SERVER_IMAGE,
+                extra_volumes=[
+                    (cluster.ssl_certs_dir, "/etc/clickhouse-server/ssl"),
+                    (listeners_xml, "/etc/clickhouse-server/config.d/listeners.xml"),
+                ],
+            )
+
+        with When(
+            "I run `clickhouse-backup-fips tables` with the non-FIPS misconfig "
+            "(secure: false) against the secure TLS port"
+        ):
+            cmd = (
+                f"timeout {OUTBOUND_TLS_CMD_TIMEOUT_SEC} "
+                f"env GODEBUG=fips140=only "
+                f"{FIPS_BINARY_IN_CONTAINER} "
+                f"-c {FIPS_CONNECTIVITY_FIPS_MISCONFIG_PATH} tables 2>&1"  # `2>&1` redirects stderr to stdout.
+            )
+            result = backup_fips.cmd(cmd, no_checks=True)
+            output = result.output or ""
+
+        with Then("the command fails (non-zero exit)"):
+            assert result.exitcode != 0, error(
+                f"`clickhouse-backup-fips tables` unexpectedly succeeded with the "
+                f"non-FIPS misconfig (`secure: false`) against the FIPS CH server's "
+                f"TLS-only :9440 listener. A FIPS-deployed CH server MUST NOT be "
+                f"reachable via plain native TCP.\n{output}"
+            )
+
+        with And("the output does not include the list-of-tables success marker"):
+            output_lower = output.lower()
+            assert "atomic" not in output_lower and "ordinary" not in output_lower, error(
+                f"`tables` produced what looks like a successful database listing "
+                f"despite the non-FIPS misconfig. The connection should have failed "
+                f"before any rows were returned.\n{output}"
+            )
+    finally:
+        cluster.stop_auxiliary_container(FIPS_CH_SERVER_NAME)
+
+
+@TestScenario
+@Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Server_Listener("1.0"),
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_NetworkSurface("1.0"),
+)
+def server_listens_only_on_fips_api_port(self):
+    """Validate `clickhouse-backup-fips server` opens only the FIPS REST API TLS port.
+
+    Starts the FIPS server with `GODEBUG=fips140=only` and the TLS API
+    config, then reads TCP listeners from the container's own network
+    namespace via `/proc/net/tcp{,6}`. The FIPS container runs only the
+    FIPS server, so its listeners are the server's listeners; no PID lookup
+    or `sudo ss` on the host is needed.
+
+    Asserts that the server listens on exactly `FIPS_TLS_LISTEN_PORT` (`7172`).
+    """
+    backup_fips = _require_fips_container(self)
+
+    try:
+        with Given("I start clickhouse-backup-fips server with GODEBUG=fips140=only"):
+            backup_fips.start_server(
+                binary=FIPS_BINARY_IN_CONTAINER,
+                config=FIPS_TLS_CONFIG_PATH,
+                extra_env={"GODEBUG": "fips140=only"},
+                listen_port=FIPS_TLS_LISTEN_PORT,
+                timeout=60,
+            )
+
+        with When("I read TCP listeners from the container's net namespace"):
+            # /proc/net/tcp{,6}: column 2 = local_addr "IP:PORT" (hex),
+            # column 4 = state ("0A" = TCP_LISTEN). Skip Docker's embedded
+            # DNS resolver at 127.0.0.11 (hex `0B00007F`); it lives in every
+            # container on a user-defined network and is not our server.
+            result = backup_fips.cmd(
+                "awk 'NR>1 && $4==\"0A\" && $2 !~ /^0B00007F:/ {print $2}' "
+                "/proc/net/tcp /proc/net/tcp6"
+            )
+            ports = sorted({
+                int(addr.rsplit(":", 1)[1], 16)
+                for addr in (result.output or "").splitlines() if addr.strip()
+            })
+
+        with Then(f"the server listens on exactly [{FIPS_TLS_LISTEN_PORT}]"):
+            assert ports == [FIPS_TLS_LISTEN_PORT], error(
+                f"expected the FIPS container to listen on [{FIPS_TLS_LISTEN_PORT}], "
+                f"got {ports}.\n{result.output}"
+            )
+    finally:
+        with Finally("I stop the FIPS server"):
+            backup_fips.stop_server()
+
+
+@TestScenario
+@Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_TLS_Outbound_ClickHouseEndpoint_Ciphers_Approved("1.0"),
+)
+def outbound_tls_to_nonfips_clickhouse_with_cipher_profile(self):
+    """End-to-end smoke check: FIPS binary talks native-TLS to a non-FIPS ClickHouse.
+
+    Brings up a non-FIPS Altinity ClickHouse on `tcp_port_secure: 9440`
+    with its OpenSSL listener configured to offer a FIPS-approved cipher
+    (`ECDHE-RSA-AES128-GCM-SHA256` / `TLS_AES_128_GCM_SHA256`), then runs
+    `clickhouse-backup-fips tables` end-to-end and asserts the command
+    succeeds (TLS + native CH protocol).
+
+    Cipher-policy rejection (FIPS binary refusing non-approved ciphers) is
+    covered deterministically by `outbound_tls_cipher_negotiation` using
+    `openssl s_server`; replaying the negative case here would be flaky
+    because ClickHouse's `<openSSL>` config merging does not strictly
+    limit the offered cipher set.
+    """
+    backup_fips = _require_fips_container(self)
+    cluster = self.context.cluster
+    listeners_xml = os.path.join(
+        cluster.tests_dir,
+        "configs/clickhouse_nonfips_server/config.d/listeners-fips-cipher.xml",
+    )
+
+    try:
+        with Given(
+            "a non-FIPS Altinity ClickHouse server offering a FIPS-approved cipher",
+            description=f"listeners.xml={listeners_xml}",
+        ):
+            cluster.start_clickhouse_server_container(
+                name=NON_FIPS_CH_SERVER_NAME,
+                image_tag=NON_FIPS_CH_SERVER_IMAGE,
+                extra_volumes=[
+                    (cluster.ssl_certs_dir, "/etc/clickhouse-server/ssl"),
+                    (listeners_xml, "/etc/clickhouse-server/config.d/listeners.xml"),
+                ],
+            )
+
+        with When("I run `clickhouse-backup-fips tables` over secure native TCP 9440"):
+            cmd = (
+                f"timeout {OUTBOUND_TLS_CMD_TIMEOUT_SEC} "
+                f"env GODEBUG=fips140=only "
+                f"{FIPS_BINARY_IN_CONTAINER} "
+                f"-c {FIPS_NONFIPS_CH_TLS_FIPSCIPHER_CONFIG_PATH} tables 2>&1"
+            )
+            result = backup_fips.cmd(cmd, no_checks=True)
+            output = result.output or ""
+
+        with Then("the command succeeds (exit 0)"):
+            assert result.exitcode == 0, error(
+                f"`clickhouse-backup-fips tables` failed unexpectedly "
+                f"(exit={result.exitcode}).\n{output}"
+            )
+
+        with And("the output includes a ClickHouse connection success marker"):
+            assert "clickhouse connection success" in output.lower(), error(
+                f"`tables` output does not show the expected connection-success marker.\n{output}"
+            )
+    finally:
+        cluster.stop_auxiliary_container(NON_FIPS_CH_SERVER_NAME)
 
 
 @TestScenario
@@ -1019,6 +1295,21 @@ def acvp_tests(self):
 
     Opt-in: skipped unless `RUN_ACVP_TESTS=1` is set.
     """
+    # ACVP wrapper scenario opt-in.
+    # Set `RUN_ACVP_TESTS=1` locally or in the CI workflow to enable it.
+
+    FIPS_ACVP_ENV_FLAG          = "RUN_ACVP_TESTS"
+    FIPS_ACVP_ENV_FLAG_VALUES   = ("1", "true", "yes", "on")
+    # Path to the wrapper script, relative to `cluster.tests_dir`
+    # (`test/testflows/clickhouse_backup`). The script is part of the ACVP wrapper 
+    # and lives at the repository root.
+    FIPS_ACVP_SCRIPT_RELPATH    = "../../../pkg/acvpwrapper/run.sh"
+    # Oracle line printed by `check_expected.go` when the run passes. Tracked
+    # in `pkg/acvpwrapper/README.md` ("Reproduce The Current Result").
+    FIPS_ACVP_EXPECTED_OUTPUT   = "38 ACVP tests matched expectations"
+    # Timeout for the host shell - first run does Docker image pulls,
+    # a boringssl clone, an acvptool build, and then the ACVP run itself.
+    FIPS_ACVP_TIMEOUT_SEC       = 30 * 60
     flag = os.environ.get(FIPS_ACVP_ENV_FLAG, "").strip().lower()
     if flag not in FIPS_ACVP_ENV_FLAG_VALUES:
         skip(
@@ -1034,22 +1325,21 @@ def acvp_tests(self):
 
     # The wrapper drives `docker run` itself, so it must execute on the
     # host, not inside a cluster container. The first invocation pulls
-    # images and clones boringssl + acvp-testdata, hence the extended
-    # timeout.
+    # images and clones boringssl + acvp-testdata, hence the extended timeout.
     host = cluster.bash(None)
     prev_timeout = host.timeout
     host.timeout = FIPS_ACVP_TIMEOUT_SEC
     try:
         with When(f"I run `bash {script_path}` on the host"):
-            r = host(f"bash {script_path} 2>&1")
+            result = host(f"bash {script_path} 2>&1")  # `2>&1` redirects stderr to stdout.
     finally:
         host.timeout = prev_timeout
 
-    output = r.output or ""
+    output = result.output or ""
 
     with Then("the script exits 0"):
-        assert r.exitcode == 0, error(
-            f"`bash {script_path}` exit={r.exitcode}.\n{output}"
+        assert result.exitcode == 0, error(
+            f"`bash {script_path}` exit={result.exitcode}.\n{output}"
         )
 
     with And(f"output contains `{FIPS_ACVP_EXPECTED_OUTPUT}`"):
@@ -1073,6 +1363,9 @@ def fips_140_3(self):
     Scenario(run=inbound_tls_cipher_negotiation, flags=TE)
     Scenario(run=outbound_tls_cipher_negotiation, flags=TE)
     Scenario(run=outbound_tls_to_s3_endpoint_with_openssl_s_server, flags=TE)
+    Scenario(run=outbound_tls_to_nonfips_clickhouse_with_cipher_profile, flags=TE) # new
+    Scenario(run=connection_to_fips_clickhouse_with_nonfips_config, flags=TE) # new
+    Scenario(run=server_listens_only_on_fips_api_port, flags=TE) # new
     Scenario(run=forced_cast_failures, flags=TE)
     Scenario(run=acvp_tests, flags=TE) # optional, `RUN_ACVP_TESTS=1` (see `pkg/acvpwrapper/README.md`)
 
