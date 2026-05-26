@@ -293,11 +293,12 @@ NAME:
    clickhouse-backup clean_remote_broken - Remove all broken remote backups
 
 USAGE:
-   clickhouse-backup clean_remote_broken [command options] [arguments...]
+   clickhouse-backup clean_remote_broken [--include=glob ...]
 
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
+   --include value                            Glob (path.Match syntax) to scope cleanup only to broken backup names matching these patterns; can be passed multiple times; if omitted, all broken backups are deleted
    
 ```
 ### CLI command - clean_local_broken
@@ -319,15 +320,16 @@ NAME:
    clickhouse-backup clean_broken_retention - Remove orphan entries under remote `path` and `object_disks_path` that are not in the live backup list
 
 USAGE:
-   clickhouse-backup clean_broken_retention [--commit] [--keep=glob ...]
+   clickhouse-backup clean_broken_retention [--commit] [--include=glob ...] [--exclude=glob ...]
 
 DESCRIPTION:
-   Walks top-level of remote `path` and `object_disks_path`, batch-deletes (with retry) every entry that is not a live backup and does not match any --keep glob. Runs in dry-run mode unless --commit is set.
+   Walks top-level of remote `path` and `object_disks_path`, batch-deletes (with retry) every entry that is not a live backup and is not excluded by --exclude globs and is matched by --include globs (if provided). Object disk orphans are deleted in parallel with progress tracking. Pass --commit to actually delete; without it the command only logs what would be deleted.
 
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
-   --keep value                               Glob (path.Match syntax) of backup names to preserve in addition to live backups; can be passed multiple times
+   --include value                            Glob (path.Match syntax) to scope cleanup only to backup names matching these patterns; can be passed multiple times; if omitted, all orphans are candidates
+   --exclude value                            Glob (path.Match syntax) of backup names to preserve even if they appear as orphans; can be passed multiple times
    --commit                                   Actually delete orphans; without this flag the command only logs what would be deleted
    
 ```

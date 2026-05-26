@@ -141,7 +141,8 @@ general:
 
   retries_on_failure: 3          # RETRIES_ON_FAILURE, how many times to retry after a failure during upload or download
   retries_pause: 5s              # RETRIES_PAUSE, duration time to pause after each download or upload failure
-  retries_jitter: 30             # RETRIES_JITTER, percent of RETRIES_PAUSE for jitter to avoid same time retries from parallel operations 
+  retries_jitter: 30             # RETRIES_JITTER, percent of RETRIES_PAUSE for jitter to avoid same time retries from parallel operations
+  delete_batch_size: 1000        # DELETE_BATCH_SIZE, default batch size for bulk DeleteObjects() requests in remote storages that support batch delete (e.g. S3); upper bound for one API call 
 
   watch_interval: 1h       # WATCH_INTERVAL, use only for `watch` command, backup will create every 1h
   full_interval: 24h       # FULL_INTERVAL, use only for `watch` command, full backup will create every 24h
@@ -227,6 +228,7 @@ clickhouse:
   check_parts_columns: true # CLICKHOUSE_CHECK_PARTS_COLUMNS, check data types from system.parts_columns during create backup to guarantee mutation is complete
   max_connections: 0 # CLICKHOUSE_MAX_CONNECTIONS, how many parallel connections could be opened during operations
 azblob:
+  endpoint_schema: "https"            # AZBLOB_ENDPOINT_SCHEMA, URL scheme used to build the AZBLOB endpoint (e.g. http for Azurite emulator)
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
   account_name: ""               # AZBLOB_ACCOUNT_NAME
   account_key: ""                # AZBLOB_ACCOUNT_KEY
@@ -241,6 +243,8 @@ azblob:
   sse_key: ""                    # AZBLOB_SSE_KEY
   max_parts_count: 256           # AZBLOB_MAX_PARTS_COUNT, number of parts for AZBLOB uploads, for properly calculate buffer size
   max_buffers: 3                 # AZBLOB_MAX_BUFFERS, similar with S3_CONCURRENCY
+  timeout: 4h                    # AZBLOB_TIMEOUT, per-blob upload/download/delete operation timeout (Go duration), defaults to 4h
+  delete_concurrency: 50         # AZBLOB_DELETE_CONCURRENCY, how many blobs delete in parallel during clean/delete operations
   debug: false                   # AZBLOB_DEBUG
 s3:
   access_key: ""                   # S3_ACCESS_KEY
@@ -279,6 +283,8 @@ s3:
   allow_multipart_download: false  # S3_ALLOW_MULTIPART_DOWNLOAD, allow faster multipart download speed, but will require additional disk space, download_concurrency * part size in worst case
   checksum_algorithm: ""           # S3_CHECKSUM_ALGORITHM, use it when you use object lock which allow to avoid delete keys from bucket until some timeout after creation, use CRC32 as fastest
   request_content_md5: false       # S3_REQUEST_CONTENT_MD5, set to true for S3-compatible storage that requires Content-MD5 header for DeleteObjects API (e.g., some MinIO configurations), see https://github.com/aws/aws-sdk-go-v2/discussions/2960
+  retry_mode: standard             # S3_RETRY_MODE, AWS SDK retry mode, allowed values: standard, adaptive
+  delete_concurrency: 10           # S3_DELETE_CONCURRENCY, how many parallel DeleteObjects requests during clean/delete operations
 
   # S3_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
@@ -306,6 +312,7 @@ gcs:
   storage_class: STANDARD      # GCS_STORAGE_CLASS
   chunk_size: 0                # GCS_CHUNK_SIZE, default 16 * 1024 * 1024 (16MB)
   client_pool_size: 500        # GCS_CLIENT_POOL_SIZE, default max(upload_concurrency, download concurrency) * 3, should be at least 3 times bigger than `UPLOAD_CONCURRENCY` or `DOWNLOAD_CONCURRENCY` in each upload and download case to avoid stuck
+  delete_concurrency: 50       # GCS_DELETE_CONCURRENCY, how many objects delete in parallel during clean/delete operations
   # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
   object_labels: {}
@@ -329,6 +336,7 @@ cos:
   max_parts_count: 1000        # COS_MAX_PARTS_COUNT, number of parts for COS multipart uploads and downloads
   concurrency: 1               # COS_CONCURRENCY, concurrency for multipart upload and download, default: (download_concurrency + 1)
   allow_multipart_download: false  # COS_ALLOW_MULTIPART_DOWNLOAD, allow faster multipart download speed, but will require additional disk space, download_concurrency * part size in worst case
+  delete_concurrency: 50       # COS_DELETE_CONCURRENCY, how many objects delete in parallel during clean/delete operations
 ftp:
   address: ""                  # FTP_ADDRESS in format `host:port`
   timeout: 2m                  # FTP_TIMEOUT
@@ -959,11 +967,12 @@ NAME:
    clickhouse-backup clean_remote_broken - Remove all broken remote backups
 
 USAGE:
-   clickhouse-backup clean_remote_broken [command options] [arguments...]
+   clickhouse-backup clean_remote_broken [--include=glob ...]
 
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
+   --include value                            Glob (path.Match syntax) to scope cleanup only to broken backup names matching these patterns; can be passed multiple times; if omitted, all broken backups are deleted
    
 ```
 ### CLI command - clean_local_broken
@@ -985,15 +994,16 @@ NAME:
    clickhouse-backup clean_broken_retention - Remove orphan entries under remote `path` and `object_disks_path` that are not in the live backup list
 
 USAGE:
-   clickhouse-backup clean_broken_retention [--commit] [--keep=glob ...]
+   clickhouse-backup clean_broken_retention [--commit] [--include=glob ...] [--exclude=glob ...]
 
 DESCRIPTION:
-   Walks top-level of remote `path` and `object_disks_path`, batch-deletes (with retry) every entry that is not a live backup and does not match any --keep glob. Runs in dry-run mode unless --commit is set.
+   Walks top-level of remote `path` and `object_disks_path`, batch-deletes (with retry) every entry that is not a live backup and is not excluded by --exclude globs and is matched by --include globs (if provided). Object disk orphans are deleted in parallel with progress tracking. Pass --commit to actually delete; without it the command only logs what would be deleted.
 
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
-   --keep value                               Glob (path.Match syntax) of backup names to preserve in addition to live backups; can be passed multiple times
+   --include value                            Glob (path.Match syntax) to scope cleanup only to backup names matching these patterns; can be passed multiple times; if omitted, all orphans are candidates
+   --exclude value                            Glob (path.Match syntax) of backup names to preserve even if they appear as orphans; can be passed multiple times
    --commit                                   Actually delete orphans; without this flag the command only logs what would be deleted
    
 ```

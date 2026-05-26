@@ -1,7 +1,32 @@
 # v2.7.0 unreleased
 
 NEW FEATURES
-- add `clean_broken_retention` CLI command — walks top-level of remote `path` and `object_disks_path` and batch-deletes (with retry) every entry that is not present in the live backup list and not matched by any `--keep=<glob>`. Dry-run by default; pass `--commit` to actually delete. Useful for cleaning up orphans left by failed retention runs
+- add `clean_broken_retention` CLI command — walks top-level of remote `path` and `object_disks_path` and batch-deletes (with retry) every entry that is not present in the live backup list and not matched by any `--exclude=<glob>` (and optionally scoped by `--include=<glob>`). Dry-run by default; pass `--commit` to actually delete. Useful for cleaning up orphans left by failed retention runs, fix [#1371](https://github.com/Altinity/clickhouse-backup/pull/1371)
+- add `info` CLI command for per-table backup size breakdown — shows per-table size, part count, and disk breakdown for local and remote backups, supports `--tables=<db>.<table>` glob filter and `--format=text|json|yaml|csv|tsv`, accepts `all|local|remote` scope, fix [#1388](https://github.com/Altinity/clickhouse-backup/issues/1388)
+- add `force_rebalance` config option (`clickhouse.force_rebalance`, env `CLICKHOUSE_FORCE_REBALANCE`) — distribute restored data across multiple JBOD disks under the same storage policy even when the source disk name (e.g. `default`) exists on the target machine, fix [#1350](https://github.com/Altinity/clickhouse-backup/issues/1350)
+- switch FIPS variant from FIPS 140-2 boringssl to native Go 1.24+ FIPS 140-3 (`GODEBUG=fips140=on`); embed an ACVP wrapper into the shipped `clickhouse-backup-fips` binary with dual entry points (`clickhouse-backup-acvp` argv0 dispatch and `clickhouse-backup acvp` subcommand) and ship a tracked public-scope ACVP reproducibility flow, fix [#1341](https://github.com/Altinity/clickhouse-backup/issues/1341), [#1364](https://github.com/Altinity/clickhouse-backup/pull/1364), [#1391](https://github.com/Altinity/clickhouse-backup/pull/1391), [#1395](https://github.com/Altinity/clickhouse-backup/pull/1395)
+- add safety check to `restore`/`restore_remote`: fail without `--rm`/`--drop` when target tables already exist and contain rows (checked via `clusterAllReplicas('{cluster}')` when `restore_schema_on_cluster` is set) to avoid dangerous accidental `DROP TABLE`, fix [#1325](https://github.com/Altinity/clickhouse-backup/issues/1325)
+- add checksum verification during `upload --diff-from` / `--diff-from-remote` when part name matches, to avoid uploading mismatched data and to detect silent corruption, fix [#1307](https://github.com/Altinity/clickhouse-backup/issues/1307)
+
+IMPROVEMENTS
+- speed up `restore_remote` from S3 incremental chains: cache backup list and avoid redundant `ListObjects` calls per table (previously 8h on 280GB / 3500 tables shrinks to minutes), fix [#1362](https://github.com/Altinity/clickhouse-backup/issues/1362), [#1361](https://github.com/Altinity/clickhouse-backup/pull/1361)
+- reduce backup memory footprint for databases with thousands of tables (regression introduced in v2.6.42), fix [#1360](https://github.com/Altinity/clickhouse-backup/issues/1360)
+- wrap S3 credentials with `aws.NewCredentialsCache()` to avoid resolving credentials on every API call (IMDS/STS), reducing latency and throttling in IRSA + AssumeRole flows, fix [#1335](https://github.com/Altinity/clickhouse-backup/pull/1335)
+- simplify `hash_of_all_files` computation via a single post-FREEZE `SELECT` from `system.parts` instead of per-file hashing — also enables `--hardlinks-exists-files` to consult `system.parts` checksums during download, fix [#1338](https://github.com/Altinity/clickhouse-backup/issues/1338)
+- isolate FREEZE shadow directory per backup as `/var/lib/clickhouse/shadow/backup-{uuid}` so concurrent backups and cleanup-after-failure don't clobber each other's shadow data, fix [#1345](https://github.com/Altinity/clickhouse-backup/issues/1345)
+- add option to skip persisting `list` calls into the API server `actions` state — prevents unbounded growth of actions state when `/backup/list` is used as a monitoring endpoint during long-running backups, fix [#1359](https://github.com/Altinity/clickhouse-backup/issues/1359)
+- improve `kill` command to ensure all in-flight operations really finish and to remove leftover `.pid` files, fix [#1365](https://github.com/Altinity/clickhouse-backup/issues/1365)
+- document missing/incorrect concurrency defaults in `ReadMe.md` (`download_concurrency`, `s3.concurrency`, `cos.concurrency`, `sftp.concurrency`, `ftp.concurrency`), fix [#1346](https://github.com/Altinity/clickhouse-backup/issues/1346)
+- migrate integration tests to testcontainers-go for better parallelism and isolation, fix [#1336](https://github.com/Altinity/clickhouse-backup/pull/1336)
+- fix the `list_duration` log field formatting in `pkg/storage/general.go` (was emitting raw nanoseconds), fix [#1337](https://github.com/Altinity/clickhouse-backup/issues/1337)
+
+BUG FIXES
+- fix `restore_remote` for tables using sparse-column serialization: accept empty sparse metadata files instead of treating `StorageObjectCount=0` as corruption, affects ClickHouse 23.8+, fix [#1372](https://github.com/Altinity/clickhouse-backup/issues/1372)
+- fix `restore_remote` aborting the entire restore when an incremental backup contains a table absent from the required full backup; the missing table is now skipped with a warning, fix [#1373](https://github.com/Altinity/clickhouse-backup/issues/1373)
+- fix `object_disk` backup on S3 sources with SSE-C: handle 404 from server-side `CopyObject` by falling back to streaming and stop issuing `HeadObject` (returns 400) on SSE-C source objects before `GetObject`, fix [#1374](https://github.com/Altinity/clickhouse-backup/issues/1374)
+- fix `--rbac-only` backup failing with "is empty backup" when the database contains RBAC objects but no tables and `allow_empty_backups=false`, fix [#1355](https://github.com/Altinity/clickhouse-backup/issues/1355)
+- fix nested `ssh` consuming stdin from the `while read` loop in the rsync helper (use `ssh -n`) so all backup metadata files are processed instead of only the first, fix [#1368](https://github.com/Altinity/clickhouse-backup/pull/1368)
+- fix backup retention logic in the rsync helper: correct line counting, numeric comparison and arithmetic handling so old backups are properly cleaned up, fix [#1369](https://github.com/Altinity/clickhouse-backup/pull/1369)
 
 # v2.6.44 (hotfix released only docker image)
 
