@@ -1,4 +1,4 @@
-# Static config used by `connectivity_against_non_fips_clickhouse_server`.
+# Static clickhouse-backup-fips config used by `connectivity_against_non_fips_clickhouse_server`.
 #
 # Mounted into the FIPS backup container via the per-PID copy of
 # ``configs/backup/`` performed by ``regression.py``.

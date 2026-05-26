@@ -1,4 +1,4 @@
-# Static config for the FIPS *outbound* TLS scenario against a fake S3
+# Static clickhouse-backup-fips config for the FIPS *outbound* TLS scenario against a fake S3
 # HTTPS endpoint controlled by ``openssl s_server`` (Test Plan section
 # 6.2.8, "Outbound TLS to S3 Endpoint").
 #
