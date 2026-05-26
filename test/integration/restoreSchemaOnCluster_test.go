@@ -3,6 +3,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,9 @@ import (
 // when restore_schema_on_cluster is set via config, RESTORE_SCHEMA_ON_CLUSTER env var
 // is empty, and target tables have data, restore must fail unless --rm is passed.
 func TestRestoreSchemaOnClusterSafety(t *testing.T) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.4") < 0 {
+		t.Skipf("safety check requires system.tables.total_rows (ClickHouse >= 20.4), got %s", os.Getenv("CLICKHOUSE_VERSION"))
+	}
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 

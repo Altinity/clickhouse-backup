@@ -1459,7 +1459,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	// we just replace partition in exists table, and have incremented data in 2 tables
 	checkRestoredDataWithPartitions(100)
 
-	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore_remote --partitions=\"(0,'2022-01-01')\" "+incrementBackupName)
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore_remote --rm --partitions=\"(0,'2022-01-01')\" "+incrementBackupName)
 	log.Debug().Msg(out)
 	r.NoError(err)
 	r.NotContains(out, "DROP PARTITION")
@@ -1486,12 +1486,12 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	r.NoError(err)
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
 
-	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName)
+	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--rm", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName)
 	r.NoError(err, "%s\nunexpected error: %v", out, err)
 	r.NotContains(out, "DROP PARTITION")
 	checkRestoredDataWithPartitions(40)
 
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", fullBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--rm", fullBackupName)
 	checkRestoredDataWithPartitions(80)
 
 	log.Debug().Msg("check delete remote > delete local")
@@ -1516,7 +1516,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", partitionBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName)
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore_remote", partitionBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore_remote", "--rm", partitionBackupName)
 	checkPartialRestoredT1 := func(createPartial bool) {
 		log.Debug().Msg("Check partial restored t1")
 		result = 0
@@ -1563,7 +1563,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName)
 
 	// restore partial uploaded
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore_remote", partitionBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore_remote", "--rm", partitionBackupName)
 	checkPartialRestoredT1(false)
 
 	log.Debug().Msg("DELETE partition backup")
