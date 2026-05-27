@@ -1081,11 +1081,20 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 	return disksToPartsMap, realSize, objectDiskSize, checksums, hashOfAllFiles, nil
 }
 
-// fetchHashOfAllFiles returns name → hash_of_all_files for the given parts on
-// disk `diskName`. The value is whatever ClickHouse prints in
-// system.parts.hash_of_all_files (already lowercased); the storage and
-// compare paths are version-agnostic because both ends use the server's
-// formatting.
+// fetchHashOfAllFiles returns name → hash_of_all_files for the given parts of
+// `database`.`table` (frozen from disk `diskName`). The value is whatever
+// ClickHouse prints in system.parts.hash_of_all_files (already lowercased); the
+// storage and compare paths are version-agnostic because both ends use the
+// server's formatting.
+//
+// We deliberately do NOT filter by disk_name: when a cache disk wraps an object
+// disk, both share the same metadata path, and system.parts reports the part
+// under the cache disk name (the disk named in the storage policy), not the
+// underlying disk that clickhouse-backup walks the shadow tree from. Filtering
+// by diskName would miss those parts (see issue #1396). Part names are unique
+// within a table's active set, and inactive copies left by a move carry
+// identical content (hence identical hash_of_all_files), so matching by
+// database+table+name is unambiguous.
 //
 // Called right after FREEZE so the active-set delta is essentially zero —
 // inactive parts also remain visible in system.parts for ~480s, which makes
@@ -1096,8 +1105,8 @@ func (b *Backuper) fetchHashOfAllFiles(ctx context.Context, database, table, dis
 		Name string `ch:"name"`
 		Hash string `ch:"hash_of_all_files"`
 	}
-	q := "SELECT name, lower(hash_of_all_files) AS hash_of_all_files FROM system.parts WHERE database=? AND `table`=? AND disk_name=? AND has(?, name)"
-	if err := b.ch.SelectContext(ctx, &rows, q, database, table, diskName, partNames); err != nil {
+	q := "SELECT name, lower(hash_of_all_files) AS hash_of_all_files FROM system.parts WHERE database=? AND `table`=? AND has(?, name)"
+	if err := b.ch.SelectContext(ctx, &rows, q, database, table, partNames); err != nil {
 		return nil, errors.Wrap(err, "SELECT hash_of_all_files FROM system.parts")
 	}
 	hashByName := make(map[string]string, len(rows))
