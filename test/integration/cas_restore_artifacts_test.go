@@ -90,7 +90,7 @@ func testCASRestoreRBACOnly(t *testing.T, env *TestEnvironment, r *require.Asser
 
 	// Restart so ClickHouse reloads access/.
 	env.ch.Close()
-	r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
+	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
 	env.connectWithWait(t, r, 2*time.Second, 2*time.Second, 1*time.Minute)
 
 	// RBAC must be restored.
@@ -159,7 +159,7 @@ func testCASRestoreRBACWithTables(t *testing.T, env *TestEnvironment, r *require
 	r.Contains(out, "RBAC successfully restored", "expected RBAC restore message: %s", out)
 
 	env.ch.Close()
-	r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
+	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
 	env.connectWithWait(t, r, 2*time.Second, 2*time.Second, 1*time.Minute)
 
 	// Tables restored.

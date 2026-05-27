@@ -35,7 +35,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	log.Debug().Msg("Clean before start")
 	fullCleanup(t, r, env, []string{fullBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, true, false, false, backupConfig)
 	createAllTypesOfObjectTables := !strings.Contains(remoteStorageType, "CUSTOM")
-	testData := generateTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultTestData)
+	testData := generateTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultTestData())
 
 	log.Debug().Msg("Create full backup")
 	createCmd := "clickhouse-backup -c /etc/clickhouse-backup/" + backupConfig + " create --resume --tables=" + tablesPattern + " " + fullBackupName
@@ -45,8 +45,29 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	uploadCmd := fmt.Sprintf("%s_COMPRESSION_FORMAT=zstd CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/%s clickhouse-backup upload --resume %s", remoteStorageType, backupConfig, fullBackupName)
 	env.checkResumeAlreadyProcessed(uploadCmd, fullBackupName, "upload", r, remoteStorageType)
 
+	// https://github.com/Altinity/clickhouse-backup/issues/1373
+	// create a table that exists ONLY in the increment backup (not in the full)
+	log.Debug().Msg("Create increment-only table (issue #1373)")
+	incrementOnlyData := []TestDataStruct{
+		{
+			Database: dbNameAtomic, DatabaseEngine: "Atomic",
+			Name:   "increment_only_table",
+			Schema: "(id UInt64, value String) ENGINE = MergeTree ORDER BY id",
+			Rows: []map[string]interface{}{
+				{"id": uint64(1), "value": "increment-only-1"},
+				{"id": uint64(2), "value": "increment-only-2"},
+			},
+			Fields:  []string{"id", "value"},
+			OrderBy: "id",
+		},
+	}
+	for _, data := range incrementOnlyData {
+		r.NoError(env.createTestSchema(t, data, remoteStorageType))
+		r.NoError(env.createTestData(t, data))
+	}
+
 	log.Debug().Msg("Create increment1 with data")
-	incrementData := generateIncrementTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultIncrementData, 1)
+	incrementData := generateIncrementTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultIncrementData(), 1)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, incrementBackupName)
 
 	// https://github.com/Altinity/clickhouse-backup/pull/900
@@ -90,7 +111,8 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--data", fullBackupName)
 
 	log.Debug().Msg("Full restore")
-	restoreCmd := "clickhouse-backup -c /etc/clickhouse-backup/" + backupConfig + " restore --resume " + fullBackupName
+	// --rm needed: previous `restore --data` populated the cluster, safety check from issue #1325 refuses drop without it
+	restoreCmd := "clickhouse-backup -c /etc/clickhouse-backup/" + backupConfig + " restore --resume --rm " + fullBackupName
 	env.checkResumeAlreadyProcessed(restoreCmd, fullBackupName, "restore", r, remoteStorageType)
 
 	log.Debug().Msg("Full restore with rm")
@@ -155,6 +177,11 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 		}
 	}
 
+	log.Debug().Msg("Check increment-only table data (issue #1373)")
+	for _, data := range incrementOnlyData {
+		r.NoError(env.checkData(t, r, data))
+	}
+
 	// test end
 	log.Debug().Msg("Clean after finish")
 	// during download increment, partially downloaded full will also clean
@@ -169,5 +196,5 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	// test for specified partitions backup
 	testBackupSpecifiedPartitions(t, r, env, remoteStorageType, backupConfig)
 
-	env.checkObjectStorageIsEmpty(t, r, remoteStorageType)
+	env.checkObjectStorageIsEmpty(t, r, remoteStorageType, backupConfig)
 }

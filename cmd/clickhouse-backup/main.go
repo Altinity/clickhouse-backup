@@ -91,10 +91,10 @@ func main() {
 		{
 			Name:      "tables",
 			Usage:     "List of tables, exclude skip_tables",
-			UsageText: "clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--all]",
+			UsageText: "clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all]",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.PrintTables(c.Bool("all"), c.String("table"), c.String("remote-backup"))
+				return b.PrintTables(c.Bool("all"), c.String("table"), c.String("remote-backup"), c.String("local-backup"), c.String("format"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.BoolFlag{
@@ -110,7 +110,17 @@ func main() {
 				cli.StringFlag{
 					Name:   "remote-backup",
 					Hidden: false,
-					Usage:  "List tables from remote backup",
+					Usage:  "List tables from a remote backup, including per-table size and parts count",
+				},
+				cli.StringFlag{
+					Name:   "local-backup",
+					Hidden: false,
+					Usage:  "List tables from a local backup (read from disk, no live ClickHouse query), including per-table size and parts count",
+				},
+				cli.StringFlag{
+					Name:   "format, f",
+					Hidden: false,
+					Usage:  "Output format (text|json|yaml|csv|tsv)",
 				},
 			),
 		},
@@ -705,13 +715,19 @@ func main() {
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:  "clean_remote_broken",
-			Usage: "Remove all broken remote backups",
+			Name:      "clean_remote_broken",
+			Usage:     "Remove all broken remote backups",
+			UsageText: "clickhouse-backup clean_remote_broken [--include=glob ...]",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CleanRemoteBroken(status.NotFromAPI)
+				return b.CleanRemoteBroken(status.NotFromAPI, c.StringSlice("include"))
 			},
-			Flags: cliapp.Flags,
+			Flags: append(cliapp.Flags,
+				cli.StringSliceFlag{
+					Name:  "include",
+					Usage: "Glob (path.Match syntax) to scope cleanup only to broken backup names matching these patterns; can be passed multiple times; if omitted, all broken backups are deleted",
+				},
+			),
 		},
 		{
 			Name:  "clean_local_broken",
@@ -721,6 +737,30 @@ func main() {
 				return b.CleanLocalBroken(status.NotFromAPI)
 			},
 			Flags: cliapp.Flags,
+		},
+		{
+			Name:        "clean_broken_retention",
+			Usage:       "Remove orphan entries under remote `path` and `object_disks_path` that are not in the live backup list",
+			UsageText:   "clickhouse-backup clean_broken_retention [--commit] [--include=glob ...] [--exclude=glob ...]",
+			Description: "Walks top-level of remote `path` and `object_disks_path`, batch-deletes (with retry) every entry that is not a live backup and is not excluded by --exclude globs and is matched by --include globs (if provided). Object disk orphans are deleted in parallel with progress tracking. Pass --commit to actually delete; without it the command only logs what would be deleted.",
+			Action: func(c *cli.Context) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				return b.CleanBrokenRetention(status.NotFromAPI, c.StringSlice("include"), c.StringSlice("exclude"), c.Bool("commit"))
+			},
+			Flags: append(cliapp.Flags,
+				cli.StringSliceFlag{
+					Name:  "include",
+					Usage: "Glob (path.Match syntax) to scope cleanup only to backup names matching these patterns; can be passed multiple times; if omitted, all orphans are candidates",
+				},
+				cli.StringSliceFlag{
+					Name:  "exclude",
+					Usage: "Glob (path.Match syntax) of backup names to preserve even if they appear as orphans; can be passed multiple times",
+				},
+				cli.BoolFlag{
+					Name:  "commit",
+					Usage: "Actually delete orphans; without this flag the command only logs what would be deleted",
+				},
+			),
 		},
 
 		{

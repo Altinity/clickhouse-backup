@@ -19,6 +19,11 @@ var (
 	ErrConditionalPutNotSupported = errors.New("conditional PutFile not supported by this backend")
 )
 
+// NewErrNotFound wraps ErrNotFound with key; errors.Is(err, ErrNotFound) still matches.
+func NewErrNotFound(key string) error {
+	return fmt.Errorf("%w: %s", ErrNotFound, key)
+}
+
 // KeyError represents an error for a specific key during batch deletion
 type KeyError struct {
 	Key string

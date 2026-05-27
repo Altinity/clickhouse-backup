@@ -81,13 +81,16 @@ func (c *COS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 func (c *COS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, error) {
 	// @todo - COS Stat file max size is 5Gb
 	resp, err := c.client.Object.Get(ctx, key, nil)
-	if err != nil {
+	if err != nil || resp == nil {
 		if cosIsNotFound(err) {
-			return nil, ErrNotFound
+			return nil, NewErrNotFound(key)
 		}
 		return nil, errors.WithMessage(err, "COS StatFileAbsolute Get")
 	}
-	modifiedTime, _ := parseTime(resp.Response.Header.Get("Date"))
+	modifiedTime, parseErr := parseTime(resp.Response.Header.Get("Date"))
+	if parseErr != nil {
+		log.Warn().Err(parseErr).Stack().Msg("parseTime(COS.Response.Header.Get(\"Date\")) return error")
+	}
 	return &cosFile{
 		size:         resp.Response.ContentLength,
 		name:         resp.Request.URL.Path,
@@ -109,6 +112,10 @@ func (c *COS) Walk(ctx context.Context, cosPath string, recursive bool, process 
 }
 
 func (c *COS) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(context.Context, RemoteFile) error) error {
+	// COS API needs prefix to end with "/" for proper directory listing.
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
 
 	delimiter := ""
 	if !recursive {
@@ -160,7 +167,7 @@ func (c *COS) GetFileReader(ctx context.Context, key string) (io.ReadCloser, err
 
 func (c *COS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
 	resp, err := c.client.Object.Get(ctx, key, nil)
-	if err != nil {
+	if err != nil || resp == nil {
 		return nil, errors.WithMessage(err, "COS GetFileReaderAbsolute Get")
 	}
 	return resp.Body, nil

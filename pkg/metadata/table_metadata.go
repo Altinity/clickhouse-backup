@@ -23,6 +23,7 @@ type TableMetadata struct {
 	MetadataOnly         bool                `json:"metadata_only"`
 	LocalFile            string              `json:"local_file,omitempty"`
 	Checksums            map[string]uint64   `json:"checksums,omitempty"`
+	HashOfAllFiles       map[string]string   `json:"hash_of_all_files,omitempty"`
 }
 
 func (tm *TableMetadata) Save(location string, metadataOnly bool) (uint64, error) {
@@ -40,6 +41,7 @@ func (tm *TableMetadata) Save(location string, metadataOnly bool) (uint64, error
 		newTM.Files = tm.Files
 		newTM.Parts = tm.Parts
 		newTM.Checksums = tm.Checksums
+		newTM.HashOfAllFiles = tm.HashOfAllFiles
 		newTM.Size = tm.Size
 		newTM.TotalBytes = tm.TotalBytes
 		newTM.RebalancedFiles = tm.RebalancedFiles

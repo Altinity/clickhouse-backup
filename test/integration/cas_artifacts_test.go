@@ -84,7 +84,7 @@ func testCASArtifactsRBAC(t *testing.T, env *TestEnvironment, r *require.Asserti
 
 	// Restart so ClickHouse reloads the access directory.
 	env.ch.Close()
-	r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
+	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
 	env.connectWithWait(t, r, 2*time.Second, 2*time.Second, 1*time.Minute)
 
 	// Verify RBAC objects exist with retry (ClickHouse may still be loading).

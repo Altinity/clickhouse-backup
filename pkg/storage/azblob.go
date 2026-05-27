@@ -361,7 +361,7 @@ func (a *AzureBlob) StatFileAbsolute(ctx context.Context, key string) (RemoteFil
 		if !errors.As(err, &se) || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
 			return nil, errors.WithMessage(err, "AzureBlob StatFileAbsolute GetProperties")
 		}
-		return nil, ErrNotFound
+		return nil, NewErrNotFound(key)
 	}
 	return &azureBlobFile{
 		name:         key,

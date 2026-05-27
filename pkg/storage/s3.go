@@ -19,8 +19,8 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsV2Config "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
@@ -807,7 +807,7 @@ func (s *S3) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, erro
 			var httpErr *smithyhttp.ResponseError
 			if errors.As(opError.Err, &httpErr) {
 				if httpErr.Response.StatusCode == http.StatusNotFound {
-					return nil, ErrNotFound
+					return nil, NewErrNotFound(key)
 				}
 			}
 		}

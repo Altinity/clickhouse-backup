@@ -109,7 +109,7 @@ func (sftp *SFTP) StatFileAbsolute(ctx context.Context, key string) (RemoteFile,
 	if err != nil {
 		sftp.Debug("[SFTP_DEBUG] StatFile::STAT %s return error %v", key, err)
 		if strings.Contains(err.Error(), "not exist") {
-			return nil, ErrNotFound
+			return nil, NewErrNotFound(key)
 		}
 		return nil, errors.WithMessage(err, "SFTP StatFileAbsolute Stat")
 	}

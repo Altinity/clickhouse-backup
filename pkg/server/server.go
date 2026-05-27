@@ -33,6 +33,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
@@ -178,7 +179,9 @@ func (api *APIServer) RunWatch(cliCtx *cli.Context) {
 
 // Stop cancel all running commands, @todo think about graceful period
 func (api *APIServer) Stop() error {
-	status.Current.CancelAll("canceled during server stop")
+	for _, cmd := range status.Current.CancelAll("canceled during server stop") {
+		pidlock.RemovePidFileForCommand(cmd)
+	}
 	return api.server.Close()
 }
 
@@ -192,7 +195,9 @@ func (api *APIServer) Restart() error {
 			log.Error().Err(createErr).Send()
 		}
 	}
-	status.Current.CancelAll("canceled via API /restart")
+	for _, cmd := range status.Current.CancelAll("canceled via API /restart") {
+		pidlock.RemovePidFileForCommand(cmd)
+	}
 	if api.server != nil {
 		_ = api.server.Close()
 	}
@@ -451,13 +456,19 @@ func (api *APIServer) actionsAsyncCommandsHandler(command string, args []string,
 	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		return actionsResults, ErrAPILocked
 	}
+	skipActions := api.GetConfig().API.IsBackupActionsSkipCommand(command)
 	// to avoid race condition between GET /backup/actions and POST /backup/actions
-	commandId, _ := status.Current.Start(row.Command)
+	commandId := status.NotFromAPI
+	if !skipActions {
+		commandId, _ = status.Current.Start(row.Command)
+	}
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics(command, 0, func() error {
 			return api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
 		})
-		status.Current.Stop(commandId, err)
+		if !skipActions {
+			status.Current.Stop(commandId, err)
+		}
 		if err != nil {
 			log.Error().Msgf("API /backup/actions error: %v", err)
 			return
@@ -481,11 +492,12 @@ func (api *APIServer) actionsKillHandler(row status.ActionRow, args []string, ac
 		killCommand = args[1]
 	}
 	commandId, _ := status.Current.Start(row.Command)
-	err := status.Current.Cancel(killCommand, errors.New("canceled from API /backup/actions"))
+	canceledCommand, err := status.Current.Cancel(killCommand, errors.New("canceled from API /backup/actions"))
 	defer status.Current.Stop(commandId, err)
 	if err != nil {
 		return actionsResults, err
 	}
+	pidlock.RemovePidFileForCommand(canceledCommand)
 	actionsResults = append(actionsResults, actionsResultsRow{
 		Status:    "success",
 		Operation: row.Command,
@@ -569,7 +581,7 @@ func (api *APIServer) actionsCleanRemoteBrokenHandler(w http.ResponseWriter, row
 		return actionsResults, err
 	}
 	b := backup.NewBackuper(cfg)
-	err = b.CleanRemoteBroken(commandId)
+	err = b.CleanRemoteBroken(commandId, nil)
 	if err != nil {
 		log.Error().Msgf("Clean remote broken error: %v", err)
 		status.Current.Stop(commandId, err)
@@ -763,12 +775,15 @@ func (api *APIServer) httpVersionHandler(w http.ResponseWriter, _ *http.Request)
 
 // httpKillHandler - kill selected command if it InProgress
 func (api *APIServer) httpKillHandler(w http.ResponseWriter, r *http.Request) {
-	var err error
+	var (
+		err             error
+		canceledCommand string
+	)
 	command, exists := r.URL.Query()["command"]
 	if exists && len(command) > 0 {
-		err = status.Current.Cancel(command[0], errors.New("canceled from API /backup/kill"))
+		canceledCommand, err = status.Current.Cancel(command[0], errors.New("canceled from API /backup/kill"))
 	} else {
-		err = status.Current.Cancel("", errors.New("canceled from API /backup/kill"))
+		canceledCommand, err = status.Current.Cancel("", errors.New("canceled from API /backup/kill"))
 	}
 	if err != nil {
 		api.sendJSONEachRow(w, http.StatusInternalServerError, struct {
@@ -780,20 +795,27 @@ func (api *APIServer) httpKillHandler(w http.ResponseWriter, r *http.Request) {
 			Operation: "kill",
 			Error:     err.Error(),
 		})
-	} else {
-		api.sendJSONEachRow(w, http.StatusOK, struct {
-			Status    string `json:"status"`
-			Operation string `json:"operation"`
-			Command   string `json:"command"`
-		}{
-			Status:    "success",
-			Operation: "kill",
-			Command:   command[0],
-		})
+		return
 	}
+	pidlock.RemovePidFileForCommand(canceledCommand)
+	api.sendJSONEachRow(w, http.StatusOK, struct {
+		Status    string `json:"status"`
+		Operation string `json:"operation"`
+		Command   string `json:"command"`
+	}{
+		Status:    "success",
+		Operation: "kill",
+		Command:   canceledCommand,
+	})
 }
 
-// httpTablesHandler - display list of tables
+// httpTablesHandler - display list of tables.
+// Query parameters:
+//   - table            - filter by db.table glob pattern (comma-separated)
+//   - remote_backup    - list tables from a remote backup (per-table size and parts)
+//   - local_backup     - list tables from a local backup (per-table size and parts), no live ClickHouse query needed
+//
+// /backup/tables/all also returns tables that match skip_tables.
 func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) {
 	cfg, err := api.ReloadConfig(w, "tables")
 	if err != nil {
@@ -801,18 +823,34 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	b := backup.NewBackuper(cfg)
 	q := r.URL.Query()
-	var tables []clickhouse.Table
-	// https://github.com/Altinity/clickhouse-backup/issues/778
-	if remoteBackup, exists := api.getQueryParameter(q, "remote_backup"); exists {
-		tables, err = b.GetTablesRemote(context.Background(), remoteBackup, q.Get("table"))
-	} else {
-		tables, err = b.GetTables(context.Background(), q.Get("table"))
+	tablePattern := q.Get("table")
+	printAll := r.URL.Path == "/backup/tables/all"
+
+	// https://github.com/Altinity/clickhouse-backup/issues/1388
+	if localBackup, exists := api.getQueryParameter(q, "local_backup"); exists {
+		rows, err := b.GetTableRowsForLocalBackup(context.Background(), localBackup, tablePattern, printAll)
+		if err != nil {
+			api.writeError(w, http.StatusInternalServerError, "tables", err)
+			return
+		}
+		api.sendJSONEachRow(w, http.StatusOK, rows)
+		return
 	}
+	if remoteBackup, exists := api.getQueryParameter(q, "remote_backup"); exists {
+		rows, err := b.GetTableRowsForRemoteBackup(context.Background(), remoteBackup, tablePattern, printAll)
+		if err != nil {
+			api.writeError(w, http.StatusInternalServerError, "tables", err)
+			return
+		}
+		api.sendJSONEachRow(w, http.StatusOK, rows)
+		return
+	}
+	tables, err := b.GetTables(context.Background(), tablePattern)
 	if err != nil {
 		api.writeError(w, http.StatusInternalServerError, "tables", err)
 		return
 	}
-	if r.URL.Path == "/backup/tables/all" {
+	if printAll {
 		api.sendJSONEachRow(w, http.StatusOK, tables)
 		return
 	}
@@ -879,13 +917,26 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 	if wherePresent {
 		fullCommand += " " + where
 	}
-	commandId, ctx := status.Current.Start(fullCommand)
+	skipActions := cfg.API.IsBackupActionsSkipCommand("list")
+	var commandId int
+	var ctx context.Context
+	if skipActions {
+		commandId = status.NotFromAPI
+		ctx = context.Background()
+	} else {
+		commandId, ctx = status.Current.Start(fullCommand)
+	}
+	stopStatus := func(err error) {
+		if !skipActions {
+			status.Current.Stop(commandId, err)
+		}
+	}
 	b := backup.NewBackuper(cfg)
 	if where == "local" || !wherePresent {
 		var localBackups []backup.LocalBackup
 		localBackups, _, err = b.GetLocalBackups(ctx, nil)
 		if err != nil && !os.IsNotExist(err) {
-			status.Current.Stop(commandId, err)
+			stopStatus(err)
 			api.writeError(w, http.StatusInternalServerError, "list", err)
 			return
 		}
@@ -901,7 +952,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 				description += item.Tags
 			}
 			backupsJSON = append(backupsJSON, backupJSON{
-				Name:                item.BackupName,
+				Name: item.BackupName,
 				// Kind omitted for v1 entries (omitempty) so legacy ClickHouse
 				// integration tables that don't set input_format_skip_unknown_fields
 				// (CH < 21.1) keep parsing /backup/list output.
@@ -925,7 +976,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		brokenBackups := 0
 		remoteBackups, listErr := b.GetRemoteBackups(ctx, true)
 		if listErr != nil {
-			status.Current.Stop(commandId, listErr)
+			stopStatus(listErr)
 			api.writeError(w, http.StatusInternalServerError, "list", listErr)
 			return
 		}
@@ -943,7 +994,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			fullSize := item.GetFullSize()
 			backupsJSON = append(backupsJSON, backupJSON{
-				Name:                item.BackupName,
+				Name: item.BackupName,
 				// Kind omitted for v1 entries (omitempty) so legacy ClickHouse
 				// integration tables that don't set input_format_skip_unknown_fields
 				// (CH < 21.1) keep parsing /backup/list output.
@@ -987,7 +1038,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	api.sendJSONEachRow(w, http.StatusOK, backupsJSON)
-	status.Current.Stop(commandId, nil)
+	stopStatus(nil)
 }
 
 // httpCreateHandler - create a backup
@@ -1426,7 +1477,7 @@ func (api *APIServer) httpCleanRemoteBrokenHandler(w http.ResponseWriter, _ *htt
 	defer status.Current.Stop(commandId, err)
 
 	b := backup.NewBackuper(cfg)
-	err = b.CleanRemoteBroken(commandId)
+	err = b.CleanRemoteBroken(commandId, nil)
 	if err != nil {
 		log.Error().Msgf("Clean remote broken error: %v", err)
 		api.writeError(w, http.StatusInternalServerError, "clean_remote_broken", err)
@@ -2411,6 +2462,7 @@ func (api *APIServer) ReloadConfig(w http.ResponseWriter, command string) (*conf
 	api.setConfig(cfg)
 	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
 	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
+	status.SetCancelWaitTimeout(cfg.API.CancelOperationTimeoutDuration)
 	return cfg, nil
 }
 

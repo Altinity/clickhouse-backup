@@ -768,13 +768,32 @@ func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTa
 				existsPartsMap[p.Name] = struct{}{}
 			}
 			for i := range newParts {
-				if _, partExists := existsPartsMap[newParts[i].Name]; !partExists {
+				name := newParts[i].Name
+				if _, partExists := existsPartsMap[name]; !partExists {
 					continue
+				}
+				// Name matched in the diff backup — verify content fingerprint
+				// before treating the part as a duplicate. Prefer
+				// hash_of_all_files; fall back to legacy checksums; if neither
+				// side has any fingerprint, accept the name match.
+				// See https://github.com/Altinity/clickhouse-backup/issues/1307
+				if diffHash, ok := existsTable.HashOfAllFiles[name]; ok {
+					newHash := newTable.HashOfAllFiles[name]
+					if newHash == "" || diffHash != newHash {
+						log.Debug().Msgf("part %s.%s/%s name matched diff backup %s but hash_of_all_files mismatch (%q vs %q), will be re-uploaded", existsTable.Database, existsTable.Table, name, backup.RequiredBackup, diffHash, newHash)
+						continue
+					}
+				} else if diffCksum, ok := existsTable.Checksums[name]; ok {
+					newCksum, newOk := newTable.Checksums[name]
+					if !newOk || diffCksum != newCksum {
+						log.Debug().Msgf("part %s.%s/%s name matched diff backup %s but checksums mismatch (%d vs %d), will be re-uploaded", existsTable.Database, existsTable.Table, name, backup.RequiredBackup, diffCksum, newCksum)
+						continue
+					}
 				}
 				if checkLocal {
 					dbAndTablePath := path.Join(common.TablePathEncode(existsTable.Database), common.TablePathEncode(existsTable.Table))
-					existsPath := path.Join(b.DiskToPathMap[disk], "backup", backup.RequiredBackup, "shadow", dbAndTablePath, disk, newParts[i].Name)
-					newPath := path.Join(b.DiskToPathMap[disk], "backup", backup.BackupName, "shadow", dbAndTablePath, disk, newParts[i].Name)
+					existsPath := path.Join(b.DiskToPathMap[disk], "backup", backup.RequiredBackup, "shadow", dbAndTablePath, disk, name)
+					newPath := path.Join(b.DiskToPathMap[disk], "backup", backup.BackupName, "shadow", dbAndTablePath, disk, name)
 
 					if err := filesystemhelper.IsDuplicatedParts(existsPath, newPath); err != nil {
 						log.Debug().Msgf("part '%s' and '%s' must be the same: %v", existsPath, newPath, err)

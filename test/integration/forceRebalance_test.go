@@ -82,7 +82,7 @@ cat > /etc/clickhouse-server/config.d/force_rebalance_test.xml <<'XML'
 XML
 `)
 	env.ch.Close()
-	r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
+	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
 	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 
 	// Step 5: Download with force_rebalance — parts should be distributed across hdd1 and hdd2
@@ -117,7 +117,7 @@ XML
 	env.DockerExecNoError(r, "clickhouse", "rm", "-f", "/etc/clickhouse-server/config.d/force_rebalance_test.xml")
 	fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{"test_force_rebalance"}, true, true, true, "config-s3.yml")
 	env.ch.Close()
-	r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
+	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
 	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 	env.Cleanup(t, r)
 }

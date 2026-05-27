@@ -455,7 +455,7 @@ func (gcs *GCS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, e
 		}
 		if err != nil {
 			if gcsIsNotFound(err) {
-				return nil, ErrNotFound
+				return nil, NewErrNotFound(key)
 			}
 			return nil, errors.WithMessage(err, "GCS StatFileAbsolute Attrs")
 		}

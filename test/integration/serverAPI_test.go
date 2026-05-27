@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -49,6 +50,8 @@ func TestServerAPI(t *testing.T) {
 
 	testAPIBackupTablesRemote(r, env)
 
+	testAPIBackupTablesLocal(r, env)
+
 	testAPIBackupRestoreRemote(r, env)
 
 	testAPIBackupStatus(r, env)
@@ -70,6 +73,8 @@ func TestServerAPI(t *testing.T) {
 	testAPIBackupDelete(r, env)
 
 	testAPIBackupClean(r, env)
+
+	testAPIBackupActionsSkipCommands(r, env)
 
 	env.DockerExecNoError(r, "clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
 	r.NoError(env.dropDatabase("long_schema", false))
@@ -235,6 +240,46 @@ func testAPIBackupClean(r *require.Assertions, env *TestEnvironment) {
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{"clean", "clean_remote_broken", "clean_local_broken"}, false)
 }
 
+// testAPIBackupActionsSkipCommands verifies https://github.com/Altinity/clickhouse-backup/issues/1359
+// when api.backup_actions_skip_commands contains "list", neither GET /backup/list nor
+// INSERT INTO system.backup_actions ('list ...') must produce rows in system.backup_actions.
+func testAPIBackupActionsSkipCommands(r *require.Assertions, env *TestEnvironment) {
+	log.Debug().Msg("Check api.backup_actions_skip_commands excludes 'list' from system.backup_actions")
+
+	env.DockerExecNoError(r, "clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
+	time.Sleep(2 * time.Second)
+	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce", "API_BACKUP_ACTIONS_SKIP_COMMANDS=list clickhouse-backup server &>>/tmp/clickhouse-backup-server.log")
+	time.Sleep(3 * time.Second)
+
+	// snapshot after restart — in-memory async status is cleared on restart
+	var listRowsBefore uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&listRowsBefore, "SELECT count() FROM system.backup_actions WHERE command LIKE 'list%'"))
+
+	for i := 0; i < 3; i++ {
+		out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL -XGET 'http://localhost:7171/backup/list'")
+		r.NoError(err, "%s\nunexpected GET /backup/list error: %v", out, err)
+	}
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL -XGET 'http://localhost:7171/backup/list/local'")
+	r.NoError(err, "%s\nunexpected GET /backup/list/local error: %v", out, err)
+
+	// system.backup_list is a URL table engine pointing at GET /backup/list,
+	// so this also exercises the skip path through ClickHouse itself.
+	for i := 0; i < 3; i++ {
+		env.queryWithNoError(r, "SELECT * FROM system.backup_list FORMAT Null")
+	}
+	time.Sleep(2 * time.Second)
+
+	var listRowsAfter uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&listRowsAfter, "SELECT count() FROM system.backup_actions WHERE command LIKE 'list%'"))
+	r.Equal(listRowsBefore, listRowsAfter, "expected no new 'list%%' rows in system.backup_actions, before=%d after=%d", listRowsBefore, listRowsAfter)
+
+	var createRows uint64
+	runClickHouseClientInsertSystemBackupActions(r, env, []string{"create skip_commands_test"}, true)
+	r.NoError(env.ch.SelectSingleRowNoCtx(&createRows, "SELECT count() FROM system.backup_actions WHERE command='create skip_commands_test' AND status=?", status.SuccessStatus))
+	r.Equal(uint64(1), createRows, "non-skipped commands must still be recorded in system.backup_actions")
+	runClickHouseClientInsertSystemBackupActions(r, env, []string{"delete local skip_commands_test"}, false)
+}
+
 func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Check /metrics clickhouse_backup_last_backup_size_remote")
 	var lastRemoteSize uint64
@@ -261,14 +306,18 @@ func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {
 		listOut, listErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "local")
 		r.NoError(listErr)
 		log.Error().Msg(listOut)
+		env.tc.dumpContainerInfo(context.Background(), "clickhouse-backup")
+		env.tc.dumpContainerInfo(context.Background(), "clickhouse")
 	}
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_local %d", apiBackupNumber))
 
 	// +1 watch backup
 	if !strings.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_remote %d", apiBackupNumber+1)) {
-		listOut, listErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "local")
+		listOut, listErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "remote")
 		r.NoError(listErr)
 		log.Error().Msg(listOut)
+		env.tc.dumpContainerInfo(context.Background(), "clickhouse-backup")
+		env.tc.dumpContainerInfo(context.Background(), "clickhouse")
 	}
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_remote %d", apiBackupNumber+1))
 	r.Contains(out, "clickhouse_backup_number_backups_local_expected 0")
@@ -528,6 +577,43 @@ func testAPIBackupTablesRemote(r *require.Assertions, env *TestEnvironment) {
 	r.NotContains(out, "INFORMATION_SCHEMA")
 	r.NotContains(out, "information_schema")
 	r.NotContains(out, "command is already running")
+	// /backup/tables?remote_backup=... must include per-table size and parts (https://github.com/Altinity/clickhouse-backup/issues/1388).
+	r.Contains(out, `"size":`)
+	r.Contains(out, `"parts":`)
+	r.Contains(out, `"total_bytes":`)
+	r.Contains(out, `"disks":[`)
+}
+
+// testAPIBackupTablesLocal exercises /backup/tables?local_backup=<name>
+// (https://github.com/Altinity/clickhouse-backup/issues/1388) — listing tables
+// from a local backup without a live ClickHouse query, with size and parts.
+func testAPIBackupTablesLocal(r *require.Assertions, env *TestEnvironment) {
+	log.Debug().Msg("Check /backup/tables?local_backup=z_backup_1")
+	out, err := env.DockerExecOut(
+		"clickhouse-backup",
+		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables?local_backup=z_backup_1\"",
+	)
+	r.NoError(err, "%s\nunexpected GET /backup/tables?local_backup=z_backup_1 error: %v", out, err)
+	r.Contains(out, "long_schema")
+	r.NotContains(out, "Connection refused")
+	r.NotContains(out, "another operation is currently running")
+	r.NotContains(out, "\"status\":\"error\"")
+	r.NotContains(out, "system")
+	r.NotContains(out, "INFORMATION_SCHEMA")
+	r.NotContains(out, "information_schema")
+	r.Contains(out, `"size":`)
+	r.Contains(out, `"parts":`)
+	r.Contains(out, `"total_bytes":`)
+	r.Contains(out, `"disks":[`)
+
+	// Filtered by table pattern.
+	out, err = env.DockerExecOut(
+		"clickhouse-backup",
+		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables?local_backup=z_backup_1&table=long_schema.t0\"",
+	)
+	r.NoError(err, "%s\nunexpected GET /backup/tables?local_backup=z_backup_1&table=long_schema.t0 error: %v", out, err)
+	r.Contains(out, `"table":"t0"`)
+	r.NotContains(out, `"table":"t1"`)
 }
 
 func testAPIBackupVersion(r *require.Assertions, env *TestEnvironment) {

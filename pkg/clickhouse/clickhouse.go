@@ -1435,7 +1435,7 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 		return nil
 	}
 
-	// Build the WHERE clause for all tables
+	// Build per-table conditions, filtering tables that need a parts_columns check
 	var conditions []string
 	for _, table := range tables {
 		if table.Skip {
@@ -1452,26 +1452,37 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 		return nil
 	}
 
-	partColumnsDataTypes := make([]ColumnDataTypesWithTable, 0)
-	partsColumnsSQL := "SELECT database, table, column, min(type) AS min_type, max(type) AS max_type " +
-		"FROM system.parts_columns " +
-		"WHERE active AND (" + strings.Join(conditions, " OR ") + ") " +
-		"AND type NOT LIKE 'Enum%(%' AND type NOT LIKE 'Tuple(%' AND type NOT LIKE 'Nullable(Enum%(%' " +
-		"AND type NOT LIKE 'Nullable(Tuple(%' AND type NOT LIKE 'Array(Tuple(%' AND type NOT LIKE 'Nullable(Array(Tuple(%' " +
-		"GROUP BY database, table, column HAVING min_type != max_type"
-
-	if err := ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL); err != nil {
-		return errors.WithMessage(err, "CheckSystemPartsColumnsForTables: select parts columns")
-	}
-
-	// Group results by table and check consistency
+	// https://github.com/Altinity/clickhouse-backup/issues/1360
+	// Batch the WHERE OR-list to keep per-query memory bounded on instances with thousands of tables.
+	const partsColumnsBatchSize = 100
 	tableDataTypes := make(map[string][]ColumnDataTypes)
-	for _, colData := range partColumnsDataTypes {
-		key := fmt.Sprintf("%s.%s", colData.Database, colData.Table)
-		tableDataTypes[key] = append(tableDataTypes[key], ColumnDataTypes{
-			Column: colData.Column,
-			Types:  []string{colData.MinType, colData.MaxType},
-		})
+	for start := 0; start < len(conditions); start += partsColumnsBatchSize {
+		end := start + partsColumnsBatchSize
+		if end > len(conditions) {
+			end = len(conditions)
+		}
+		batchConditions := conditions[start:end]
+
+		partColumnsDataTypes := make([]ColumnDataTypesWithTable, 0)
+		partsColumnsSQL := "SELECT database, table, column, min(type) AS min_type, max(type) AS max_type " +
+			"FROM system.parts_columns " +
+			"WHERE active AND (" + strings.Join(batchConditions, " OR ") + ") " +
+			"AND type NOT LIKE 'Enum%(%' AND type NOT LIKE 'Tuple(%' AND type NOT LIKE 'Nullable(Enum%(%' " +
+			"AND type NOT LIKE 'Nullable(Tuple(%' AND type NOT LIKE 'Array(Tuple(%' AND type NOT LIKE 'Nullable(Array(Tuple(%' " +
+			"GROUP BY database, table, column HAVING min_type != max_type " +
+			"SETTINGS max_bytes_before_external_group_by=100000000, max_memory_usage=200000000"
+
+		if err := ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL); err != nil {
+			return errors.WithMessage(err, "CheckSystemPartsColumnsForTables: select parts columns")
+		}
+
+		for _, colData := range partColumnsDataTypes {
+			key := fmt.Sprintf("%s.%s", colData.Database, colData.Table)
+			tableDataTypes[key] = append(tableDataTypes[key], ColumnDataTypes{
+				Column: colData.Column,
+				Types:  []string{colData.MinType, colData.MaxType},
+			})
+		}
 	}
 
 	// Check each table that has inconsistent types

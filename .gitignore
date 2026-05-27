@@ -25,6 +25,7 @@ _instances/
 _coverage_/
 __pycache__/
 *.py[cod]
+test/testflows/clickhouse_backup/configs/backup_*/
 .agents/
 pyrightconfig.json
 docs/clickhouse-backup-v2-design-state.md

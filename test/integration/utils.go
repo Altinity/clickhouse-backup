@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -26,6 +27,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/rs/zerolog/pkgerrors"
 	"golang.org/x/mod/semver"
+	"gopkg.in/yaml.v3"
 
 	_ "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/google/uuid"
@@ -94,374 +96,378 @@ type TestEnvironment struct {
 	tc          *TestContainers
 }
 
-var defaultTestData = []TestDataStruct{
-	{
-		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		// .inner. shall resolve in https://github.com/ClickHouse/ClickHouse/issues/67669
-		Name:   ".inner_table1",
-		Schema: "(Date Date, TimeStamp DateTime, Logger String) ENGINE = MergeTree(Date, (TimeStamp, Logger), 8192)",
-		Rows: []map[string]interface{}{
-			{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:14"), "Logger": "One"},
-			{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:15"), "Logger": "Two"},
-			{"Date": toDate("2018-10-24"), "TimeStamp": toTS("2018-10-24 07:37:16"), "Logger": "Three"},
-			{"Date": toDate("2018-10-24"), "TimeStamp": toTS("2018-10-24 07:37:17"), "Logger": "Four"},
-			{"Date": toDate("2019-10-25"), "TimeStamp": toTS("2019-01-25 07:37:18"), "Logger": "Five"},
-			{"Date": toDate("2019-10-25"), "TimeStamp": toTS("2019-01-25 07:37:19"), "Logger": "Six"},
+func defaultTestData() []TestDataStruct {
+	return []TestDataStruct{
+		{
+			Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
+			// .inner. shall resolve in https://github.com/ClickHouse/ClickHouse/issues/67669
+			Name:   ".inner_table1",
+			Schema: "(Date Date, TimeStamp DateTime, Logger String) ENGINE = MergeTree(Date, (TimeStamp, Logger), 8192)",
+			Rows: []map[string]interface{}{
+				{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:14"), "Logger": "One"},
+				{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:15"), "Logger": "Two"},
+				{"Date": toDate("2018-10-24"), "TimeStamp": toTS("2018-10-24 07:37:16"), "Logger": "Three"},
+				{"Date": toDate("2018-10-24"), "TimeStamp": toTS("2018-10-24 07:37:17"), "Logger": "Four"},
+				{"Date": toDate("2019-10-25"), "TimeStamp": toTS("2019-01-25 07:37:18"), "Logger": "Five"},
+				{"Date": toDate("2019-10-25"), "TimeStamp": toTS("2019-01-25 07:37:19"), "Logger": "Six"},
+			},
+			Fields:  []string{"Date", "TimeStamp", "Logger"},
+			OrderBy: "TimeStamp",
+		}, {
+			Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
+			Name:   "2. Таблица №2",
+			Schema: "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
+			Rows: []map[string]interface{}{
+				{"id": uint64(1), "User": "Alice"},
+				{"id": uint64(2), "User": "Bob"},
+				{"id": uint64(3), "User": "John"},
+				{"id": uint64(4), "User": "Frank"},
+				{"id": uint64(5), "User": "Nancy"},
+				{"id": uint64(6), "User": "Brandon"},
+			},
+			Fields:  []string{"id", "User"},
+			OrderBy: "id",
+		}, {
+			Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
+			Name:   "-table-$-",
+			Schema: "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
+			Rows: []map[string]interface{}{
+				{"TimeStamp": toTS("2018-10-23 07:37:14"), "Item": "One"},
+				{"TimeStamp": toTS("2018-10-23 07:37:15"), "Item": "Two"},
+				{"TimeStamp": toTS("2018-10-24 07:37:16"), "Item": "Three"},
+				{"TimeStamp": toTS("2018-10-24 07:37:17"), "Item": "Four"},
+				{"TimeStamp": toTS("2019-01-25 07:37:18"), "Item": "Five"},
+				{"TimeStamp": toTS("2019-01-25 07:37:19"), "Item": "Six"},
+			},
+			Fields:  []string{"TimeStamp", "Item"},
+			OrderBy: "TimeStamp",
+		}, {
+			Database: Issue331Issue1091Atomic, DatabaseEngine: "Atomic",
+			Name:   Issue331Issue1091Atomic, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
+			Schema: fmt.Sprintf("(`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY `%s` ORDER BY (`%s`, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192", Issue331Issue1091Atomic, Issue331Issue1091Atomic, Issue331Issue1091Atomic),
+			Rows: func() []map[string]interface{} {
+				var result []map[string]interface{}
+				for i := 0; i < 100; i++ {
+					result = append(result, map[string]interface{}{Issue331Issue1091Atomic: uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+				}
+				return result
+			}(),
+			Fields:  []string{Issue331Issue1091Atomic, "Col1", "Col2", "Col3", "Col4", "Col5"},
+			OrderBy: Issue331Issue1091Atomic + "_{test}",
+		}, {
+			Database: Issue331Issue1091Ordinary, DatabaseEngine: "Ordinary",
+			Name:   Issue331Issue1091Ordinary, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
+			Schema: fmt.Sprintf("(`%s` String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, `%s`)", Issue331Issue1091Ordinary, Issue331Issue1091Ordinary),
+			Rows: []map[string]interface{}{
+				{Issue331Issue1091Ordinary: "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
+				{Issue331Issue1091Ordinary: "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
+			},
+			Fields:  []string{Issue331Issue1091Ordinary, "order_time", "amount"},
+			OrderBy: Issue331Issue1091Ordinary + "_{test}",
+		}, {
+			Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
+			Name:   "yuzhichang_table3",
+			Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMMDD(order_time) ORDER BY (order_time, order_id)",
+			Rows: []map[string]interface{}{
+				{"order_id": "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
+				{"order_id": "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
+			},
+			Fields:  []string{"order_id", "order_time", "amount"},
+			OrderBy: "order_id",
+		}, {
+			Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
+			Name:   "yuzhichang_table4",
+			Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY (toYYYYMM(order_time), order_id) ORDER BY (order_time, order_id)",
+			Rows: []map[string]interface{}{
+				{"order_id": "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
+				{"order_id": "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
+			},
+			Fields:  []string{"order_id", "order_time", "amount"},
+			OrderBy: "order_id",
+		}, {
+			Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
+			Name:   "jbod#$_table",
+			Schema: "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'jbod'",
+			Rows: func() []map[string]interface{} {
+				var result []map[string]interface{}
+				for i := 0; i < 100; i++ {
+					result = append(result, map[string]interface{}{"id": uint64(i)})
+				}
+				return result
+			}(),
+			Fields:  []string{"id"},
+			OrderBy: "id",
+		}, {
+			Database: dbNameAtomic, DatabaseEngine: "Atomic",
+			Name:   "jbod#$_table",
+			Schema: "(t DateTime, id UInt64) Engine=MergeTree PARTITION BY (toYYYYMM(t), id % 4) ORDER BY id SETTINGS storage_policy = 'jbod'",
+			Rows: func() []map[string]interface{} {
+				var result []map[string]interface{}
+				for i := 0; i < 100; i++ {
+					result = append(result, map[string]interface{}{"t": toTS("2022-01-01 00:00:00"), "id": uint64(i)})
+				}
+				return result
+			}(),
+			Fields:  []string{"t", "id"},
+			OrderBy: "id",
+		}, {
+			Database: dbNameAtomic, DatabaseEngine: "Atomic",
+			Name:   "mv_src_table",
+			Schema: "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','replica1') ORDER BY id",
+			Rows: func() []map[string]interface{} {
+				var result []map[string]interface{}
+				for i := 0; i < 100; i++ {
+					result = append(result, map[string]interface{}{"id": uint64(i)})
+				}
+				return result
+			}(),
+			Fields:  []string{"id"},
+			OrderBy: "id",
 		},
-		Fields:  []string{"Date", "TimeStamp", "Logger"},
-		OrderBy: "TimeStamp",
-	}, {
-		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Name:   "2. Таблица №2",
-		Schema: "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
-		Rows: []map[string]interface{}{
-			{"id": uint64(1), "User": "Alice"},
-			{"id": uint64(2), "User": "Bob"},
-			{"id": uint64(3), "User": "John"},
-			{"id": uint64(4), "User": "Frank"},
-			{"id": uint64(5), "User": "Nancy"},
-			{"id": uint64(6), "User": "Brandon"},
+		{
+			Database:       dbNameAtomic,
+			DatabaseEngine: "Atomic",
+			Name:           "mv_dst_table",
+			Schema:         "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}/{uuid}','replica1') ORDER BY id",
+			SkipInsert:     true,
+			Rows: func() []map[string]interface{} {
+				return []map[string]interface{}{
+					{"id": uint64(0)},
+					{"id": uint64(99)},
+				}
+			}(),
+			Fields:  []string{"id"},
+			OrderBy: "id",
 		},
-		Fields:  []string{"id", "User"},
-		OrderBy: "id",
-	}, {
-		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Name:   "-table-$-",
-		Schema: "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
-		Rows: []map[string]interface{}{
-			{"TimeStamp": toTS("2018-10-23 07:37:14"), "Item": "One"},
-			{"TimeStamp": toTS("2018-10-23 07:37:15"), "Item": "Two"},
-			{"TimeStamp": toTS("2018-10-24 07:37:16"), "Item": "Three"},
-			{"TimeStamp": toTS("2018-10-24 07:37:17"), "Item": "Four"},
-			{"TimeStamp": toTS("2019-01-25 07:37:18"), "Item": "Five"},
-			{"TimeStamp": toTS("2019-01-25 07:37:19"), "Item": "Six"},
+		{
+			Database:           dbNameAtomic,
+			DatabaseEngine:     "Atomic",
+			IsMaterializedView: true,
+			Name:               "mv_max_with_inner",
+			Schema:             fmt.Sprintf("(id UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}/{uuid}','replica1') ORDER BY id AS SELECT max(id) AS id FROM `%s`.`mv_src_table_{test}`", dbNameAtomic),
+			SkipInsert:         true,
+			Rows: func() []map[string]interface{} {
+				return []map[string]interface{}{
+					{"id": uint64(99)},
+				}
+			}(),
+			Fields:  []string{"id"},
+			OrderBy: "id",
 		},
-		Fields:  []string{"TimeStamp", "Item"},
-		OrderBy: "TimeStamp",
-	}, {
-		Database: Issue331Issue1091Atomic, DatabaseEngine: "Atomic",
-		Name:   Issue331Issue1091Atomic, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
-		Schema: fmt.Sprintf("(`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY `%s` ORDER BY (`%s`, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192", Issue331Issue1091Atomic, Issue331Issue1091Atomic, Issue331Issue1091Atomic),
-		Rows: func() []map[string]interface{} {
-			var result []map[string]interface{}
-			for i := 0; i < 100; i++ {
-				result = append(result, map[string]interface{}{Issue331Issue1091Atomic: uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
-			}
-			return result
-		}(),
-		Fields:  []string{Issue331Issue1091Atomic, "Col1", "Col2", "Col3", "Col4", "Col5"},
-		OrderBy: Issue331Issue1091Atomic + "_{test}",
-	}, {
-		Database: Issue331Issue1091Ordinary, DatabaseEngine: "Ordinary",
-		Name:   Issue331Issue1091Ordinary, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
-		Schema: fmt.Sprintf("(`%s` String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, `%s`)", Issue331Issue1091Ordinary, Issue331Issue1091Ordinary),
-		Rows: []map[string]interface{}{
-			{Issue331Issue1091Ordinary: "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
-			{Issue331Issue1091Ordinary: "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
+		{
+			Database: dbNameAtomic, DatabaseEngine: "Atomic",
+			Name:   "replicated_empty_engine",
+			Schema: "(id UInt64) Engine=ReplicatedMergeTree() ORDER BY id",
+			Rows: func() []map[string]interface{} {
+				var result []map[string]interface{}
+				for i := 0; i < 100; i++ {
+					result = append(result, map[string]interface{}{"id": uint64(i)})
+				}
+				return result
+			}(),
+			Fields:  []string{"id"},
+			OrderBy: "id",
 		},
-		Fields:  []string{Issue331Issue1091Ordinary, "order_time", "amount"},
-		OrderBy: Issue331Issue1091Ordinary + "_{test}",
-	}, {
-		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Name:   "yuzhichang_table3",
-		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMMDD(order_time) ORDER BY (order_time, order_id)",
-		Rows: []map[string]interface{}{
-			{"order_id": "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
-			{"order_id": "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
+		{
+			Database:       dbNameAtomic,
+			DatabaseEngine: "Atomic",
+			IsView:         true,
+			Name:           "test_view",
+			Schema:         fmt.Sprintf(" AS SELECT count() AS cnt FROM `%s`.`mv_src_table_{test}`", dbNameAtomic),
+			SkipInsert:     true,
+			Rows: func() []map[string]interface{} {
+				return []map[string]interface{}{
+					{"cnt": uint64(100)},
+				}
+			}(),
+			Fields:  []string{"cnt"},
+			OrderBy: "cnt",
 		},
-		Fields:  []string{"order_id", "order_time", "amount"},
-		OrderBy: "order_id",
-	}, {
-		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Name:   "yuzhichang_table4",
-		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY (toYYYYMM(order_time), order_id) ORDER BY (order_time, order_id)",
-		Rows: []map[string]interface{}{
-			{"order_id": "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
-			{"order_id": "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
+		// https://github.com/Altinity/clickhouse-backup/issues/1199
+		{
+			Database:       dbNameAtomic,
+			DatabaseEngine: "Atomic",
+			IsView:         true,
+			Name:           "test_view_from_view",
+			Schema:         fmt.Sprintf(" AS SELECT count() AS cnt FROM `%s`.`test_view_{test}`", dbNameAtomic),
+			SkipInsert:     true,
+			Rows: func() []map[string]interface{} {
+				return []map[string]interface{}{
+					{"cnt": uint64(1)},
+				}
+			}(),
+			Fields:  []string{"cnt"},
+			OrderBy: "cnt",
 		},
-		Fields:  []string{"order_id", "order_time", "amount"},
-		OrderBy: "order_id",
-	}, {
-		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Name:   "jbod#$_table",
-		Schema: "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'jbod'",
-		Rows: func() []map[string]interface{} {
-			var result []map[string]interface{}
-			for i := 0; i < 100; i++ {
-				result = append(result, map[string]interface{}{"id": uint64(i)})
-			}
-			return result
-		}(),
-		Fields:  []string{"id"},
-		OrderBy: "id",
-	}, {
-		Database: dbNameAtomic, DatabaseEngine: "Atomic",
-		Name:   "jbod#$_table",
-		Schema: "(t DateTime, id UInt64) Engine=MergeTree PARTITION BY (toYYYYMM(t), id % 4) ORDER BY id SETTINGS storage_policy = 'jbod'",
-		Rows: func() []map[string]interface{} {
-			var result []map[string]interface{}
-			for i := 0; i < 100; i++ {
-				result = append(result, map[string]interface{}{"t": toTS("2022-01-01 00:00:00"), "id": uint64(i)})
-			}
-			return result
-		}(),
-		Fields:  []string{"t", "id"},
-		OrderBy: "id",
-	}, {
-		Database: dbNameAtomic, DatabaseEngine: "Atomic",
-		Name:   "mv_src_table",
-		Schema: "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','replica1') ORDER BY id",
-		Rows: func() []map[string]interface{} {
-			var result []map[string]interface{}
-			for i := 0; i < 100; i++ {
-				result = append(result, map[string]interface{}{"id": uint64(i)})
-			}
-			return result
-		}(),
-		Fields:  []string{"id"},
-		OrderBy: "id",
-	},
-	{
-		Database:       dbNameAtomic,
-		DatabaseEngine: "Atomic",
-		Name:           "mv_dst_table",
-		Schema:         "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}/{uuid}','replica1') ORDER BY id",
-		SkipInsert:     true,
-		Rows: func() []map[string]interface{} {
-			return []map[string]interface{}{
-				{"id": uint64(0)},
-				{"id": uint64(99)},
-			}
-		}(),
-		Fields:  []string{"id"},
-		OrderBy: "id",
-	},
-	{
-		Database:           dbNameAtomic,
-		DatabaseEngine:     "Atomic",
-		IsMaterializedView: true,
-		Name:               "mv_max_with_inner",
-		Schema:             fmt.Sprintf("(id UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}/{uuid}','replica1') ORDER BY id AS SELECT max(id) AS id FROM `%s`.`mv_src_table_{test}`", dbNameAtomic),
-		SkipInsert:         true,
-		Rows: func() []map[string]interface{} {
-			return []map[string]interface{}{
-				{"id": uint64(99)},
-			}
-		}(),
-		Fields:  []string{"id"},
-		OrderBy: "id",
-	},
-	{
-		Database: dbNameAtomic, DatabaseEngine: "Atomic",
-		Name:   "replicated_empty_engine",
-		Schema: "(id UInt64) Engine=ReplicatedMergeTree() ORDER BY id",
-		Rows: func() []map[string]interface{} {
-			var result []map[string]interface{}
-			for i := 0; i < 100; i++ {
-				result = append(result, map[string]interface{}{"id": uint64(i)})
-			}
-			return result
-		}(),
-		Fields:  []string{"id"},
-		OrderBy: "id",
-	},
-	{
-		Database:       dbNameAtomic,
-		DatabaseEngine: "Atomic",
-		IsView:         true,
-		Name:           "test_view",
-		Schema:         fmt.Sprintf(" AS SELECT count() AS cnt FROM `%s`.`mv_src_table_{test}`", dbNameAtomic),
-		SkipInsert:     true,
-		Rows: func() []map[string]interface{} {
-			return []map[string]interface{}{
-				{"cnt": uint64(100)},
-			}
-		}(),
-		Fields:  []string{"cnt"},
-		OrderBy: "cnt",
-	},
-	// https://github.com/Altinity/clickhouse-backup/issues/1199
-	{
-		Database:       dbNameAtomic,
-		DatabaseEngine: "Atomic",
-		IsView:         true,
-		Name:           "test_view_from_view",
-		Schema:         fmt.Sprintf(" AS SELECT count() AS cnt FROM `%s`.`test_view_{test}`", dbNameAtomic),
-		SkipInsert:     true,
-		Rows: func() []map[string]interface{} {
-			return []map[string]interface{}{
-				{"cnt": uint64(1)},
-			}
-		}(),
-		Fields:  []string{"cnt"},
-		OrderBy: "cnt",
-	},
-	{
-		Database:           dbNameAtomic,
-		DatabaseEngine:     "Atomic",
-		IsMaterializedView: true,
-		Name:               "mv_max_with_dst",
-		Schema:             fmt.Sprintf(" TO `%s`.`mv_dst_table_{test}` AS SELECT max(id) AS id FROM `%s`.mv_src_table_{test}", dbNameAtomic, dbNameAtomic),
-		SkipInsert:         true,
-		Rows: func() []map[string]interface{} {
-			return []map[string]interface{}{
-				{"id": uint64(0)},
-				{"id": uint64(99)},
-			}
-		}(),
-		Fields:  []string{"id"},
-		OrderBy: "id",
-	},
-	{
-		Database:           dbNameAtomic,
-		DatabaseEngine:     "Atomic",
-		IsMaterializedView: true,
-		Name:               "mv_min_with_nested_dependency",
-		Schema:             fmt.Sprintf(" TO `%s`.`mv_dst_table_{test}` AS SELECT min(id) * 2 AS id FROM `%s`.mv_src_table_{test}", dbNameAtomic, dbNameAtomic),
-		SkipInsert:         true,
-		Rows: func() []map[string]interface{} {
-			return []map[string]interface{}{
-				{"id": uint64(0)},
-				{"id": uint64(99)},
-			}
-		}(),
-		Fields:  []string{"id"},
-		OrderBy: "id",
-	},
-	{
-		Database:       dbNameAtomic,
-		DatabaseEngine: "Atomic",
-		IsDictionary:   true,
-		Name:           "dict_example",
-		Schema: fmt.Sprintf(
-			" (`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) PRIMARY KEY `%s` "+
-				" SOURCE(CLICKHOUSE(host 'localhost' port 9000 db '%s' table '%s' user 'default' password ''))"+
-				" LAYOUT(HASHED()) LIFETIME(60)",
-			Issue331Issue1091Atomic, Issue331Issue1091Atomic, Issue331Issue1091Atomic, Issue331Issue1091Atomic), // same table and name need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
-		SkipInsert: true,
-		Rows: func() []map[string]interface{} {
-			var result []map[string]interface{}
-			for i := 0; i < 100; i++ {
-				result = append(result, map[string]interface{}{Issue331Issue1091Atomic: uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
-			}
-			return result
-		}(),
-		Fields:  []string{},
-		OrderBy: Issue331Issue1091Atomic + "_{test}",
-	},
-	{
-		Database: dbNameMySQL, DatabaseEngine: "MySQL('mysql:3306','mysql','root','root')",
-		CheckDatabaseOnly: true,
-	},
-	{
-		Database: dbNamePostgreSQL, DatabaseEngine: "PostgreSQL('pgsql:5432','postgres','root','root')",
-		CheckDatabaseOnly: true,
-	},
-	{
-		IsFunction: true,
-		Name:       "test_function",
-		Schema:     fmt.Sprintf(" AS (a, b) -> a+b"),
-		SkipInsert: true,
-		Rows: func() []map[string]interface{} {
-			var result []map[string]interface{}
-			for i := 0; i < 3; i++ {
-				result = append(result, map[string]interface{}{"test_result": uint64(i + (i + 1))})
-			}
-			return result
-		}(),
-	},
+		{
+			Database:           dbNameAtomic,
+			DatabaseEngine:     "Atomic",
+			IsMaterializedView: true,
+			Name:               "mv_max_with_dst",
+			Schema:             fmt.Sprintf(" TO `%s`.`mv_dst_table_{test}` AS SELECT max(id) AS id FROM `%s`.mv_src_table_{test}", dbNameAtomic, dbNameAtomic),
+			SkipInsert:         true,
+			Rows: func() []map[string]interface{} {
+				return []map[string]interface{}{
+					{"id": uint64(0)},
+					{"id": uint64(99)},
+				}
+			}(),
+			Fields:  []string{"id"},
+			OrderBy: "id",
+		},
+		{
+			Database:           dbNameAtomic,
+			DatabaseEngine:     "Atomic",
+			IsMaterializedView: true,
+			Name:               "mv_min_with_nested_dependency",
+			Schema:             fmt.Sprintf(" TO `%s`.`mv_dst_table_{test}` AS SELECT min(id) * 2 AS id FROM `%s`.mv_src_table_{test}", dbNameAtomic, dbNameAtomic),
+			SkipInsert:         true,
+			Rows: func() []map[string]interface{} {
+				return []map[string]interface{}{
+					{"id": uint64(0)},
+					{"id": uint64(99)},
+				}
+			}(),
+			Fields:  []string{"id"},
+			OrderBy: "id",
+		},
+		{
+			Database:       dbNameAtomic,
+			DatabaseEngine: "Atomic",
+			IsDictionary:   true,
+			Name:           "dict_example",
+			Schema: fmt.Sprintf(
+				" (`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) PRIMARY KEY `%s` "+
+					" SOURCE(CLICKHOUSE(host 'localhost' port 9000 db '%s' table '%s' user 'default' password ''))"+
+					" LAYOUT(HASHED()) LIFETIME(60)",
+				Issue331Issue1091Atomic, Issue331Issue1091Atomic, Issue331Issue1091Atomic, Issue331Issue1091Atomic), // same table and name need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
+			SkipInsert: true,
+			Rows: func() []map[string]interface{} {
+				var result []map[string]interface{}
+				for i := 0; i < 100; i++ {
+					result = append(result, map[string]interface{}{Issue331Issue1091Atomic: uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+				}
+				return result
+			}(),
+			Fields:  []string{},
+			OrderBy: Issue331Issue1091Atomic + "_{test}",
+		},
+		{
+			Database: dbNameMySQL, DatabaseEngine: "MySQL('mysql:3306','mysql','root','root')",
+			CheckDatabaseOnly: true,
+		},
+		{
+			Database: dbNamePostgreSQL, DatabaseEngine: "PostgreSQL('pgsql:5432','postgres','root','root')",
+			CheckDatabaseOnly: true,
+		},
+		{
+			IsFunction: true,
+			Name:       "test_function",
+			Schema:     fmt.Sprintf(" AS (a, b) -> a+b"),
+			SkipInsert: true,
+			Rows: func() []map[string]interface{} {
+				var result []map[string]interface{}
+				for i := 0; i < 3; i++ {
+					result = append(result, map[string]interface{}{"test_result": uint64(i + (i + 1))})
+				}
+				return result
+			}(),
+		},
+	}
 }
 
-var defaultIncrementData = []TestDataStruct{
-	{
-		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		// .inner. shall resolve in https://github.com/ClickHouse/ClickHouse/issues/67669
-		Name:   ".inner_table1",
-		Schema: "(Date Date, TimeStamp DateTime, Logger String) ENGINE = MergeTree(Date, (TimeStamp, Logger), 8192)",
-		Rows: []map[string]interface{}{
-			{"Date": toDate("2019-10-26"), "TimeStamp": toTS("2019-01-26 07:37:19"), "Logger": "Seven"},
+func defaultIncrementData() []TestDataStruct {
+	return []TestDataStruct{
+		{
+			Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
+			// .inner. shall resolve in https://github.com/ClickHouse/ClickHouse/issues/67669
+			Name:   ".inner_table1",
+			Schema: "(Date Date, TimeStamp DateTime, Logger String) ENGINE = MergeTree(Date, (TimeStamp, Logger), 8192)",
+			Rows: []map[string]interface{}{
+				{"Date": toDate("2019-10-26"), "TimeStamp": toTS("2019-01-26 07:37:19"), "Logger": "Seven"},
+			},
+			Fields:  []string{"Date", "TimeStamp", "Logger"},
+			OrderBy: "TimeStamp",
+		}, {
+			Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
+			Name:   "2. Таблица №2",
+			Schema: "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
+			Rows: []map[string]interface{}{
+				{"id": uint64(7), "User": "Alice"},
+				{"id": uint64(8), "User": "Bob"},
+				{"id": uint64(9), "User": "John"},
+				{"id": uint64(10), "User": "Frank"},
+			},
+			Fields:  []string{"id", "User"},
+			OrderBy: "id",
+		}, {
+			Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
+			Name:   "-table-$-",
+			Schema: "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
+			Rows: []map[string]interface{}{
+				{"TimeStamp": toTS("2019-01-26 07:37:18"), "Item": "Seven"},
+				{"TimeStamp": toTS("2019-01-27 07:37:19"), "Item": "Eight"},
+			},
+			Fields:  []string{"TimeStamp", "Item"},
+			OrderBy: "TimeStamp",
+		}, {
+			Database: Issue331Issue1091Atomic, DatabaseEngine: "Atomic",
+			Name:   Issue331Issue1091Atomic, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
+			Schema: fmt.Sprintf("(`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY `%s` ORDER BY (`%s`, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192", Issue331Issue1091Atomic, Issue331Issue1091Atomic, Issue331Issue1091Atomic),
+			Rows: func() []map[string]interface{} {
+				var result []map[string]interface{}
+				for i := 200; i < 220; i++ {
+					result = append(result, map[string]interface{}{Issue331Issue1091Atomic: uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+				}
+				return result
+			}(),
+			Fields:  []string{Issue331Issue1091Atomic, "Col1", "Col2", "Col3", "Col4", "Col5"},
+			OrderBy: Issue331Issue1091Atomic + "_{test}",
+		}, {
+			Database: Issue331Issue1091Ordinary, DatabaseEngine: "Ordinary",
+			Name:   Issue331Issue1091Ordinary, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
+			Schema: fmt.Sprintf("(`%s` String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, `%s`)", Issue331Issue1091Ordinary, Issue331Issue1091Ordinary),
+			Rows: []map[string]interface{}{
+				{Issue331Issue1091Ordinary: "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
+				{Issue331Issue1091Ordinary: "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
+			},
+			Fields:  []string{Issue331Issue1091Ordinary, "order_time", "amount"},
+			OrderBy: Issue331Issue1091Ordinary + "_{test}",
+		}, {
+			Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
+			Name:   "yuzhichang_table3",
+			Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMMDD(order_time) ORDER BY (order_time, order_id)",
+			Rows: []map[string]interface{}{
+				{"order_id": "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
+				{"order_id": "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
+			},
+			Fields:  []string{"order_id", "order_time", "amount"},
+			OrderBy: "order_id",
+		}, {
+			Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
+			Name:   "yuzhichang_table4",
+			Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY (toYYYYMM(order_time), order_id) ORDER BY (order_time, order_id)",
+			Rows: []map[string]interface{}{
+				{"order_id": "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
+				{"order_id": "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
+			},
+			Fields:  []string{"order_id", "order_time", "amount"},
+			OrderBy: "order_id",
+		}, {
+			Database: dbNameAtomic, DatabaseEngine: "Atomic",
+			Name:   "jbod#$_table",
+			Schema: "(t DateTime, id UInt64) Engine=MergeTree PARTITION BY (toYYYYMM(t), id % 4) ORDER BY id SETTINGS storage_policy = 'jbod'",
+			Rows: func() []map[string]interface{} {
+				var result []map[string]interface{}
+				for i := 100; i < 200; i++ {
+					result = append(result, map[string]interface{}{"t": toTS("2022-02-01 00:00:00"), "id": uint64(i)})
+				}
+				return result
+			}(),
+			Fields:  []string{"t", "id"},
+			OrderBy: "id",
 		},
-		Fields:  []string{"Date", "TimeStamp", "Logger"},
-		OrderBy: "TimeStamp",
-	}, {
-		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Name:   "2. Таблица №2",
-		Schema: "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
-		Rows: []map[string]interface{}{
-			{"id": uint64(7), "User": "Alice"},
-			{"id": uint64(8), "User": "Bob"},
-			{"id": uint64(9), "User": "John"},
-			{"id": uint64(10), "User": "Frank"},
-		},
-		Fields:  []string{"id", "User"},
-		OrderBy: "id",
-	}, {
-		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Name:   "-table-$-",
-		Schema: "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
-		Rows: []map[string]interface{}{
-			{"TimeStamp": toTS("2019-01-26 07:37:18"), "Item": "Seven"},
-			{"TimeStamp": toTS("2019-01-27 07:37:19"), "Item": "Eight"},
-		},
-		Fields:  []string{"TimeStamp", "Item"},
-		OrderBy: "TimeStamp",
-	}, {
-		Database: Issue331Issue1091Atomic, DatabaseEngine: "Atomic",
-		Name:   Issue331Issue1091Atomic, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
-		Schema: fmt.Sprintf("(`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY `%s` ORDER BY (`%s`, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192", Issue331Issue1091Atomic, Issue331Issue1091Atomic, Issue331Issue1091Atomic),
-		Rows: func() []map[string]interface{} {
-			var result []map[string]interface{}
-			for i := 200; i < 220; i++ {
-				result = append(result, map[string]interface{}{Issue331Issue1091Atomic: uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
-			}
-			return result
-		}(),
-		Fields:  []string{Issue331Issue1091Atomic, "Col1", "Col2", "Col3", "Col4", "Col5"},
-		OrderBy: Issue331Issue1091Atomic + "_{test}",
-	}, {
-		Database: Issue331Issue1091Ordinary, DatabaseEngine: "Ordinary",
-		Name:   Issue331Issue1091Ordinary, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
-		Schema: fmt.Sprintf("(`%s` String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, `%s`)", Issue331Issue1091Ordinary, Issue331Issue1091Ordinary),
-		Rows: []map[string]interface{}{
-			{Issue331Issue1091Ordinary: "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
-			{Issue331Issue1091Ordinary: "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
-		},
-		Fields:  []string{Issue331Issue1091Ordinary, "order_time", "amount"},
-		OrderBy: Issue331Issue1091Ordinary + "_{test}",
-	}, {
-		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Name:   "yuzhichang_table3",
-		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMMDD(order_time) ORDER BY (order_time, order_id)",
-		Rows: []map[string]interface{}{
-			{"order_id": "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
-			{"order_id": "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
-		},
-		Fields:  []string{"order_id", "order_time", "amount"},
-		OrderBy: "order_id",
-	}, {
-		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Name:   "yuzhichang_table4",
-		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY (toYYYYMM(order_time), order_id) ORDER BY (order_time, order_id)",
-		Rows: []map[string]interface{}{
-			{"order_id": "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
-			{"order_id": "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
-		},
-		Fields:  []string{"order_id", "order_time", "amount"},
-		OrderBy: "order_id",
-	}, {
-		Database: dbNameAtomic, DatabaseEngine: "Atomic",
-		Name:   "jbod#$_table",
-		Schema: "(t DateTime, id UInt64) Engine=MergeTree PARTITION BY (toYYYYMM(t), id % 4) ORDER BY id SETTINGS storage_policy = 'jbod'",
-		Rows: func() []map[string]interface{} {
-			var result []map[string]interface{}
-			for i := 100; i < 200; i++ {
-				result = append(result, map[string]interface{}{"t": toTS("2022-02-01 00:00:00"), "id": uint64(i)})
-			}
-			return result
-		}(),
-		Fields:  []string{"t", "id"},
-		OrderBy: "id",
-	},
+	}
 }
 
 var dockerExecTimeout = 900 * time.Second
@@ -488,7 +494,7 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 
 func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	// Dump container logs when test fails to aid debugging
-	if t.Failed() {
+	if t.Failed() && os.Getenv("DUMP_FAILED_TEST_CONTAINER_LOGS") != "" {
 		t.Logf("=== %s FAILED, dumping container logs ===", t.Name())
 		env.tc.DumpAllContainerLogs(t.Context())
 	}
@@ -682,6 +688,16 @@ func (env *TestEnvironment) connectWithWait(t *testing.T, r *require.Assertions,
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.4") >= 0 {
 		r.NoError(env.ch.QueryContext(t.Context(), "SET show_table_uuid_in_table_create_query_if_not_nil=1"))
 	}
+	// Workaround for ClickHouse race in src/Common/CounterInFile.h:
+	// concurrent FREEZE/UNFREEZE on a fresh shadow/ dir can leave
+	// shadow/increment.txt at size 0, after which every subsequent FREEZE fails
+	// permanently with code 32 "File ... is empty. You must fill it manually".
+	// Reproduced on clickhouse/clickhouse-server:26.3 with parallel FREEZE+UNFREEZE.
+	// Remove the empty file so ClickHouse recreates it on next FREEZE.
+	if out, err := env.DockerExecOut("clickhouse", "bash", "-c",
+		"if [ -e /var/lib/clickhouse/shadow/increment.txt ] && [ ! -s /var/lib/clickhouse/shadow/increment.txt ]; then rm -f /var/lib/clickhouse/shadow/increment.txt && echo removed-empty-increment; fi"); err == nil && strings.Contains(out, "removed-empty-increment") {
+		log.Warn().Msg("removed empty /var/lib/clickhouse/shadow/increment.txt (ClickHouse FREEZE race workaround)")
+	}
 }
 
 func (env *TestEnvironment) connect(t *testing.T, timeOut string) error {
@@ -718,9 +734,13 @@ func (env *TestEnvironment) connect(t *testing.T, timeOut string) error {
 // Query and data methods
 
 func (env *TestEnvironment) queryWithNoError(r *require.Assertions, query string, args ...interface{}) {
+	startedAt := time.Now()
 	err := env.ch.Query(query, args...)
 	if err != nil {
 		log.Error().Err(err).Msgf("queryWithNoError(%s) error", query)
+		if env.tc != nil {
+			env.tc.DumpContainerLogsSince(context.Background(), "clickhouse", startedAt)
+		}
 	}
 	r.NoError(err)
 }
@@ -961,7 +981,7 @@ func (env *TestEnvironment) dropDatabase(database string, ifExists bool) (err er
 
 // Validation methods
 
-func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.Assertions, remoteStorageType string) {
+func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.Assertions, remoteStorageType, configFile string) {
 	if remoteStorageType == "AZBLOB" || remoteStorageType == "AZBLOB_EMBEDDED_URL" {
 		t.Log("wait when resolve https://github.com/Azure/Azurite/issues/2362, todo try to use mysql as azurite storage")
 	}
@@ -976,26 +996,79 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 			env.ch.Close()
 		}
 	}
-	checkRemoteDir := func(expected string, container string, cmd ...string) {
-		out, err := env.DockerExecOut(container, cmd...)
-		r.NoError(err, "%s\nunexpected checkRemoteDir error: %v", out, err)
-		r.Equal(expected, strings.Trim(out, "\r\n\t "))
-	}
-	if remoteStorageType == "S3" || remoteStorageType == "S3_EMBEDDED_URL" {
-		checkRemoteDir("total 0", "minio", "bash", "-c", "ls -lh /minio/data/clickhouse/")
-	}
-	if remoteStorageType == "SFTP" {
-		checkRemoteDir("total 0", "sshd", "bash", "-c", "ls -lh /root/")
-	}
-	if remoteStorageType == "FTP" {
-		if isAdvancedMode() {
-			checkRemoteDir("total 0", "ftp", "bash", "-c", "ls -lh /home/ftpusers/test_backup/backup/")
-		} else {
-			checkRemoteDir("total 0", "ftp", "sh", "-c", "ls -lh /home/test_backup/backup/")
+	// checkRemoteNoFiles verifies that no entries exist under `path` on
+	// `container`. Uses `ls -A` (available in busybox/alpine) instead of
+	// `find` because not all containers ship with find (e.g. minio).
+	// If the directory does not exist (exit code 2), that's fine — it
+	// means cleanup already removed it.
+	checkRemoteNoFiles := func(container, path string) {
+		out, err := env.DockerExecOut(container, "sh", "-c", "ls -A "+path+" 2>/dev/null")
+		if err != nil {
+			debugOut, _ := env.DockerExecOut(container, "sh", "-c", "ls -A "+filepath.Dir(path)+" 2>/dev/null")
+			t.Logf("checkRemoteNoFiles %s:%s: ls failed (dir may not exist), parent %s contents: %q", container, path, filepath.Dir(path), debugOut)
+			return
+		}
+		trimmed := strings.Trim(out, "\r\n\t ")
+		if trimmed != "" {
+			t.Errorf("%s:%s expected to contain no files, got:\n%s", container, path, trimmed)
 		}
 	}
-	if remoteStorageType == "GCS_EMULATOR" {
-		checkRemoteDir("total 0", "gcs", "sh", "-c", "ls -lh /data/altinity-qa-test/")
+
+	// When a configFile is provided, resolve {version} macros to get exact
+	// backup and object_disk paths inside the container, then check those.
+	if configFile != "" {
+		cfgPath, cfgObjPath := env.resolveConfigPaths(r, configFile)
+		switch remoteStorageType {
+		case "S3", "S3_EMBEDDED_URL":
+			if cfgPath != "" {
+				checkRemoteNoFiles("minio", "/minio/data/clickhouse/"+cfgPath)
+			}
+			if cfgObjPath != "" {
+				checkRemoteNoFiles("minio", "/minio/data/clickhouse/"+cfgObjPath)
+			}
+		case "SFTP":
+			if cfgPath != "" {
+				checkRemoteNoFiles("sshd", cfgPath)
+			}
+			if cfgObjPath != "" {
+				checkRemoteNoFiles("sshd", cfgObjPath)
+			}
+		case "FTP":
+			ftpFSRoot := "/home/test_backup"
+			if isAdvancedMode() {
+				ftpFSRoot = "/home/ftpusers/test_backup"
+			}
+			if cfgPath != "" {
+				checkRemoteNoFiles("ftp", ftpFSRoot+cfgPath)
+			}
+			if cfgObjPath != "" {
+				checkRemoteNoFiles("ftp", ftpFSRoot+cfgObjPath)
+			}
+		case "GCS_EMULATOR":
+			if cfgPath != "" {
+				checkRemoteNoFiles("gcs", "/data/altinity-qa-test/"+cfgPath)
+			}
+			if cfgObjPath != "" {
+				checkRemoteNoFiles("gcs", "/data/altinity-qa-test/"+cfgObjPath)
+			}
+		case "CUSTOM":
+			switch configFile {
+			case "config-custom-rsync.yml":
+				checkRemoteNoFiles("sshd", "/root/rsync_backups/cluster/shard0/")
+			case "config-custom-restic.yml":
+				// restic physically removes snapshot objects from S3 on
+				// `forget --prune --unsafe-allow-remove-all`; the restic
+				// repository metadata (config, keys, index) persists but
+				// the `snapshots/` subdirectory will be empty or gone.
+				checkRemoteNoFiles("minio", "/minio/data/clickhouse/restic/cluster_name/shard_number/snapshots/")
+			case "config-custom-kopia.yml":
+				// kopia does not physically remove content blobs from S3
+				// during `snapshot delete`, only the index is updated.
+				// A filesystem-level emptiness check cannot verify that
+				// snapshots were deleted; the fullCleanup error check
+				// provides coverage instead.
+			}
+		}
 	}
 }
 
@@ -1333,8 +1406,8 @@ func replaceStorageDiskNameForReBalance(t *testing.T, r *require.Assertions, env
 		env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/"+oldDisk+"")
 	}
 	env.ch.Close()
-	r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
-	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
+	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
+	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 10*time.Minute)
 }
 
 func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *TestEnvironment, remoteStorageType string, backupConfig string) {
@@ -1429,7 +1502,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	// we just replace partition in exists table, and have incremented data in 2 tables
 	checkRestoredDataWithPartitions(100)
 
-	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore_remote --partitions=\"(0,'2022-01-01')\" "+incrementBackupName)
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore_remote --rm --partitions=\"(0,'2022-01-01')\" "+incrementBackupName)
 	log.Debug().Msg(out)
 	r.NoError(err)
 	r.NotContains(out, "DROP PARTITION")
@@ -1456,12 +1529,12 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	r.NoError(err)
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
 
-	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName)
+	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--rm", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName)
 	r.NoError(err, "%s\nunexpected error: %v", out, err)
 	r.NotContains(out, "DROP PARTITION")
 	checkRestoredDataWithPartitions(40)
 
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", fullBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--rm", fullBackupName)
 	checkRestoredDataWithPartitions(80)
 
 	log.Debug().Msg("check delete remote > delete local")
@@ -1486,7 +1559,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", partitionBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName)
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore_remote", partitionBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore_remote", "--rm", partitionBackupName)
 	checkPartialRestoredT1 := func(createPartial bool) {
 		log.Debug().Msg("Check partial restored t1")
 		result = 0
@@ -1533,7 +1606,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName)
 
 	// restore partial uploaded
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore_remote", partitionBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore_remote", "--rm", partitionBackupName)
 	checkPartialRestoredT1(false)
 
 	log.Debug().Msg("DELETE partition backup")
@@ -1569,3 +1642,70 @@ func runClickHouseClientInsertSystemBackupActions(r *require.Assertions, env *Te
 // Unused import placeholders to ensure compilation
 var _ = bufio.Scanner{}
 var _ = rand.Int
+
+// resolveConfigPaths reads test/integration/configs/<configFile>, picks
+// path/object_disk_path for the configured remote_storage section, and asks
+// the live ClickHouse server (via ApplyMacros) to expand {cluster}/{shard}/
+// {version} the same way it would for the running clickhouse-backup binary.
+//
+// Pass configFile as the basename (e.g. "config-gcs.yml") — integration tests
+// run from test/integration/, so configs/<name> resolves. env.ch is connected
+// on demand.
+func (env *TestEnvironment) resolveConfigPaths(r *require.Assertions, configFile string) (string, string) {
+	raw, err := os.ReadFile("configs/" + configFile)
+	r.NoError(err, "resolveConfigPaths read %s", configFile)
+	cfg := config.DefaultConfig()
+	r.NoError(yaml.Unmarshal(raw, cfg), "resolveConfigPaths unmarshal %s", configFile)
+	var rawPath, rawObjPath string
+	switch cfg.General.RemoteStorage {
+	case "s3":
+		rawPath, rawObjPath = cfg.S3.Path, cfg.S3.ObjectDiskPath
+	case "gcs":
+		rawPath, rawObjPath = cfg.GCS.Path, cfg.GCS.ObjectDiskPath
+	case "azblob":
+		rawPath, rawObjPath = cfg.AzureBlob.Path, cfg.AzureBlob.ObjectDiskPath
+	case "cos":
+		rawPath, rawObjPath = cfg.COS.Path, cfg.COS.ObjectDiskPath
+	case "ftp":
+		rawPath, rawObjPath = cfg.FTP.Path, cfg.FTP.ObjectDiskPath
+	case "sftp":
+		rawPath, rawObjPath = cfg.SFTP.Path, cfg.SFTP.ObjectDiskPath
+	case "custom", "none":
+		return "", ""
+	default:
+		r.FailNow(fmt.Sprintf("resolveConfigPaths %s: unsupported remote_storage=%q", configFile, cfg.General.RemoteStorage))
+	}
+	if env.ch.Config.Timeout == "" {
+		env.ch.Config.Timeout = "3m"
+	}
+	host, port, err := env.tc.GetMappedPort(context.Background(), "clickhouse", "9000")
+	if err == nil {
+		env.ch.Config.Host = host
+		env.ch.Config.Port = uint(port)
+		env.ch.Config.MaxConnections = 1
+		env.ch.BreakConnectOnError = true
+	}
+	r.NoError(env.ch.Connect(), "resolveConfigPaths %s: ch.Connect", configFile)
+	ctx := context.Background()
+	resolvedPath, err := env.ch.ApplyMacros(ctx, rawPath)
+	r.NoError(err, "resolveConfigPaths %s ApplyMacros(path=%q)", configFile, rawPath)
+	resolvedObjPath, err := env.ch.ApplyMacros(ctx, rawObjPath)
+	r.NoError(err, "resolveConfigPaths %s ApplyMacros(object_disk_path=%q)", configFile, rawObjPath)
+	return resolvedPath, resolvedObjPath
+}
+
+// minioBackupFSPath returns the absolute filesystem path on the `minio`
+// container for the configured backup `path` plus the given suffix. Used by
+// tests that previously hardcoded "/minio/data/clickhouse/backup/cluster/0/..."
+// and now have to follow the {version} macro added to all configs.
+//
+// Example: minioBackupFSPath(r, "config-s3.yml", "skip_disk_upload_test/shadow/test_skip_disks/table_default")
+// returns "/minio/data/clickhouse/backup/cluster/0/25_8_24/skip_disk_upload_test/shadow/test_skip_disks/table_default".
+func (env *TestEnvironment) minioBackupFSPath(r *require.Assertions, configFile, suffix string) string {
+	cfgPath, _ := env.resolveConfigPaths(r, configFile)
+	p := "/minio/data/clickhouse/" + cfgPath
+	if suffix != "" {
+		p += "/" + suffix
+	}
+	return p
+}
