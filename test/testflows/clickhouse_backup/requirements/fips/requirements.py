@@ -1,6 +1,6 @@
 # These requirements were auto generated
 # from software requirements specification (SRS)
-# document by TestFlows v2.1.240306.1133530.
+# document by TestFlows v2.0.250110.1002922.
 # Do not edit by hand but re-generate instead
 # using 'tfs requirements generate' command.
 from testflows.core import Specification
@@ -161,9 +161,12 @@ RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Connectivity_NonFIPSEndpoint = Requirem
     type=None,
     uid=None,
     description=(
-        'The [clickhouse-backup-fips] binary SHALL successfully connect to a non-FIPS ClickHouse endpoint\n'
-        'over standard native TCP port `9000` and SHALL return the list of tables from\n'
-        '`clickhouse-backup-fips tables`, exiting with code `0`.\n'
+        'The [clickhouse-backup-fips] binary, when run with `GODEBUG=fips140=only` and a FIPS-compatible\n'
+        'ClickHouse client configuration (`clickhouse.secure: true`, `clickhouse.port: 9440`), SHALL fail\n'
+        'to connect to a default-config non-FIPS ClickHouse endpoint that does not expose `tcp_port_secure`.\n'
+        '\n'
+        '`clickhouse-backup-fips tables` SHALL exit with a non-zero code in this case, and output SHALL NOT\n'
+        'contain table-listing success markers.\n'
         '\n'
     ),
     link=None,
@@ -181,6 +184,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Version_Status = Requirement(
     description=(
         'The `clickhouse-backup-fips --version` output SHALL contain the line `FIPS 140-3: true`,\n'
         'corresponding to [`crypto/fips140.Enabled()`][`crypto/fips140` package] returning `true` at runtime.\n'
+        'The regular non-FIPS `clickhouse-backup --version` output SHALL report `FIPS 140-3: false`.\n'
         '\n'
     ),
     link=None,
@@ -436,6 +440,10 @@ RQ_SRS_013_ClickHouse_BackupUtility_FIPS_TLS_Outbound_ClickHouseEndpoint_Ciphers
         '* TLSv1.3 with `TLS_AES_128_GCM_SHA256`\n'
         '* TLSv1.3 with `TLS_AES_256_GCM_SHA384`\n'
         '\n'
+        'When tested end-to-end against a non-FIPS ClickHouse server that exposes secure native TLS on\n'
+        'port `9440` and is restricted to one approved profile, `clickhouse-backup-fips tables` SHALL\n'
+        'exit with code `0` and report a successful ClickHouse connection.\n'
+        '\n'
     ),
     link=None,
     level=3,
@@ -458,6 +466,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_FIPS_TLS_Outbound_ClickHouseEndpoint_NonAppr
         '\n'
         'For each of the above, [clickhouse-backup-fips] SHALL fail with `remote error: tls: handshake failure`\n'
         'and the peer (e.g. `openssl s_server`) SHALL report `no shared cipher`.\n'
+        '\n'
+        'When tested end-to-end against a non-FIPS ClickHouse server that exposes secure native TLS on\n'
+        'port `9440` and is restricted to one non-approved profile, `clickhouse-backup-fips` SHALL fail\n'
+        'with a TLS handshake-failure marker such as `remote error: tls: handshake failure`,\n'
+        '`no shared cipher`, or `tls: protocol version not supported`.\n'
         '\n'
     ),
     link=None,
@@ -520,6 +533,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_FIPS_ACVP_Wrapper = Requirement(
     uid=None,
     description=(
         'The [ACVP] wrapper bundled with [clickhouse-backup] at `pkg/acvpwrapper/run.sh` SHALL execute the algorithm test vectors against the [clickhouse-backup-fips] binary and SHALL execute successfully with zero failures across the entire run.\n'
+        'In automation, this check SHALL run only when `RUN_ACVP_TESTS=1` is set.\n'
         '\n'
     ),
     link=None,
@@ -560,9 +574,13 @@ RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Configuration_SecureClickHouse = Requir
         'A FIPS-compatible [clickhouse-backup-fips] configuration SHALL satisfy all of the following:\n'
         '\n'
         '* `clickhouse.secure: true`.\n'
-        '* `clickhouse.port: 9440` (secure native [TLS]). Plain native TCP `9000` and plain HTTP `8123` SHALL NOT be used against a FIPS-configured ClickHouse server.\n'
+        '* `clickhouse.port: 9440` (secure native [TLS]). Plain native TCP `9000` and plain HTTP `8123` SHALL NOT be used by [clickhouse-backup-fips] during FIPS-compatible operation.\n'
         '* `api.secure: true` plus a valid certificate and private key when running `clickhouse-backup-fips server`.\n'
         '* `s3.endpoint` left empty and `s3.region` set to a valid AWS region so the SDK targets the AWS FIPS hostname `s3-fips.<region>.amazonaws.com`.\n'
+        '\n'
+        'If a non-FIPS configuration uses `clickhouse.secure: false` against a FIPS ClickHouse TLS-only\n'
+        'endpoint (`:9440`), `clickhouse-backup-fips tables` SHALL fail with a non-zero exit code and SHALL\n'
+        'NOT produce a table-listing success marker.\n'
         '\n'
     ),
     link=None,
@@ -688,7 +706,7 @@ QA_SRS013_ClickHouse_Backup_Utility_FIPS_Compatibility = Specification(
         RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Configuration_SecureClickHouse,
         RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Server_Listener,
         ),
-    content='''
+    content=r'''
 # QA-SRS013 ClickHouse Backup Utility FIPS Compatibility
 # Software Requirements Specification
 
@@ -864,9 +882,12 @@ from `clickhouse-backup-fips tables` without [TLS] or authentication errors, exi
 #### RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Connectivity.NonFIPSEndpoint
 version: 1.0
 
-The [clickhouse-backup-fips] binary SHALL successfully connect to a non-FIPS ClickHouse endpoint
-over standard native TCP port `9000` and SHALL return the list of tables from
-`clickhouse-backup-fips tables`, exiting with code `0`.
+The [clickhouse-backup-fips] binary, when run with `GODEBUG=fips140=only` and a FIPS-compatible
+ClickHouse client configuration (`clickhouse.secure: true`, `clickhouse.port: 9440`), SHALL fail
+to connect to a default-config non-FIPS ClickHouse endpoint that does not expose `tcp_port_secure`.
+
+`clickhouse-backup-fips tables` SHALL exit with a non-zero code in this case, and output SHALL NOT
+contain table-listing success markers.
 
 ### Version Output
 
@@ -875,6 +896,7 @@ version: 1.0
 
 The `clickhouse-backup-fips --version` output SHALL contain the line `FIPS 140-3: true`,
 corresponding to [`crypto/fips140.Enabled()`][`crypto/fips140` package] returning `true` at runtime.
+The regular non-FIPS `clickhouse-backup --version` output SHALL report `FIPS 140-3: false`.
 
 #### RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Version.BuildSetting
 version: 1.0
@@ -1006,6 +1028,10 @@ The [clickhouse-backup-fips] binary, when started with `GODEBUG=fips140=only` an
 * TLSv1.3 with `TLS_AES_128_GCM_SHA256`
 * TLSv1.3 with `TLS_AES_256_GCM_SHA384`
 
+When tested end-to-end against a non-FIPS ClickHouse server that exposes secure native TLS on
+port `9440` and is restricted to one approved profile, `clickhouse-backup-fips tables` SHALL
+exit with code `0` and report a successful ClickHouse connection.
+
 #### RQ.SRS-013.ClickHouse.BackupUtility.FIPS.TLS.Outbound.ClickHouseEndpoint.NonApprovedCiphers.Reject
 version: 1.0
 
@@ -1017,6 +1043,11 @@ The [clickhouse-backup-fips] binary, when started with `GODEBUG=fips140=only` an
 
 For each of the above, [clickhouse-backup-fips] SHALL fail with `remote error: tls: handshake failure`
 and the peer (e.g. `openssl s_server`) SHALL report `no shared cipher`.
+
+When tested end-to-end against a non-FIPS ClickHouse server that exposes secure native TLS on
+port `9440` and is restricted to one non-approved profile, `clickhouse-backup-fips` SHALL fail
+with a TLS handshake-failure marker such as `remote error: tls: handshake failure`,
+`no shared cipher`, or `tls: protocol version not supported`.
 
 ### Outbound TLS — S3 Endpoint
 
@@ -1050,6 +1081,7 @@ For each of the above, `clickhouse-backup-fips list remote` SHALL fail with
 version: 1.0
 
 The [ACVP] wrapper bundled with [clickhouse-backup] at `pkg/acvpwrapper/run.sh` SHALL execute the algorithm test vectors against the [clickhouse-backup-fips] binary and SHALL execute successfully with zero failures across the entire run.
+In automation, this check SHALL run only when `RUN_ACVP_TESTS=1` is set.
 
 ### Network Surface
 
@@ -1072,9 +1104,13 @@ version: 1.0
 A FIPS-compatible [clickhouse-backup-fips] configuration SHALL satisfy all of the following:
 
 * `clickhouse.secure: true`.
-* `clickhouse.port: 9440` (secure native [TLS]). Plain native TCP `9000` and plain HTTP `8123` SHALL NOT be used against a FIPS-configured ClickHouse server.
+* `clickhouse.port: 9440` (secure native [TLS]). Plain native TCP `9000` and plain HTTP `8123` SHALL NOT be used by [clickhouse-backup-fips] during FIPS-compatible operation.
 * `api.secure: true` plus a valid certificate and private key when running `clickhouse-backup-fips server`.
 * `s3.endpoint` left empty and `s3.region` set to a valid AWS region so the SDK targets the AWS FIPS hostname `s3-fips.<region>.amazonaws.com`.
+
+If a non-FIPS configuration uses `clickhouse.secure: false` against a FIPS ClickHouse TLS-only
+endpoint (`:9440`), `clickhouse-backup-fips tables` SHALL fail with a non-zero exit code and SHALL
+NOT produce a table-listing success marker.
 
 ### Server Listener
 
