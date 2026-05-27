@@ -331,6 +331,8 @@ def _check_outbound_tls_with_cipher(self, cluster, backup_fips, *, listen, comma
 
 @TestScenario
 @Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GoCryptographicModule("1.0"),
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Binary("1.0"),
     RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Version_Status("1.0")
 )
 def clickhouse_backup_fips_version_output(self):
@@ -356,7 +358,11 @@ def clickhouse_backup_fips_version_output(self):
 
 
 @TestScenario
-def clickhouse_backup_fips_version_output_negative_check(self): # Add requirement
+@Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Binary("1.0"),
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Version_Status("1.0"),
+)
+def clickhouse_backup_fips_version_output_negative_check(self):
     """Self-check for `clickhouse_backup_fips_version_output`.
 
     Run the same `--version` parser as in clickhouse_backup_fips_version_output 
@@ -383,6 +389,7 @@ def clickhouse_backup_fips_version_output_negative_check(self): # Add requiremen
 
 @TestScenario
 @Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Build_GOFIPS140("1.0"),
     RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Version_BuildSetting("1.0")
 )
 def gofips140_build_flags_present(self):
@@ -685,6 +692,9 @@ def fips_integrity_self_test_failure_on_tampered_binary(self):
 
 @TestScenario
 @Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Approved_TLSProtocolVersions("1.0"),
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Approved_CipherSuites_TLSv12_Approved("1.0"),
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Approved_CipherSuites_TLSv13_Approved("1.0"),
     RQ_SRS_013_ClickHouse_BackupUtility_FIPS_TLS_Inbound_RESTAPI_ApprovedCiphers("1.0"),
     RQ_SRS_013_ClickHouse_BackupUtility_FIPS_TLS_Inbound_RESTAPI_NonApprovedCiphers_Reject("1.0"),
     RQ_SRS_013_ClickHouse_BackupUtility_FIPS_TLS_Inbound_RESTAPI_LegacyProtocols_Reject("1.0"),
