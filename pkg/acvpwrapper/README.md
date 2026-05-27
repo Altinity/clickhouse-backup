@@ -86,8 +86,12 @@ docker run --rm \
   -v "$PWD:/work" \
   -w /work \
   golang:1.26-alpine \
-  sh -lc 'export PATH=$PATH:/usr/local/go/bin && CGO_ENABLED=0 go build -o clickhouse-backup ./cmd/clickhouse-backup && ln -sf clickhouse-backup clickhouse-backup-acvp'
+  sh -lc 'export PATH=$PATH:/usr/local/go/bin && mkdir -p /work/.acvp && CGO_ENABLED=0 go build -o /work/.acvp/clickhouse-backup-acvp ./cmd/clickhouse-backup'
 ```
+
+Note: the wrapper binary is built under `/work/.acvp/` to avoid collisions with
+repository-local paths named `clickhouse-backup`, while preserving the required
+basename `clickhouse-backup-acvp` that enables ACVP wrapper mode.
 
 ### 2) Fetch pinned upstream inputs
 
@@ -121,7 +125,7 @@ docker run --rm \
   -v /tmp/acvp-testdata:/tmp/acvp-testdata:rw \
   -w /tmp/acvp-testdata \
   golang:1.26-alpine \
-  sh -lc 'export PATH=$PATH:/usr/local/go/bin && go run /tmp/boringssl/util/fipstools/acvp/acvptool/test/check_expected.go -tool /tmp/boringssl/acvptool-pinned -module-wrappers go:/work/clickhouse-backup-acvp -tests /work/pkg/acvpwrapper/acvp_test_fips140v1.26.public.config.json'
+  sh -lc 'export PATH=$PATH:/usr/local/go/bin && go run /tmp/boringssl/util/fipstools/acvp/acvptool/test/check_expected.go -tool /tmp/boringssl/acvptool-pinned -module-wrappers go:/work/.acvp/clickhouse-backup-acvp -tests /work/pkg/acvpwrapper/acvp_test_fips140v1.26.public.config.json'
 ```
 
 Expected output includes:
