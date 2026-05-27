@@ -20,7 +20,7 @@ import (
 // system.parts always reports the underlying disk name, this mismatch caused
 // fetchHashOfAllFiles to fail with "part not found after FREEZE".
 //
-// The fix uses argMin(d.name, d.cache_path != '') to always prefer the
+// The fix uses argMin(d.name, d.cache_path != ”) to always prefer the
 // underlying disk (empty cache_path) over the cache wrapper (non-empty
 // cache_path).
 //
@@ -164,9 +164,9 @@ XML
 	log.Debug().Msg("Data integrity verified after restore")
 
 	// Step 8: Cleanup
-	env.DockerExecNoError(r, "clickhouse", "rm", "-f", "/etc/clickhouse-server/config.d/cache_disk_test.xml")
 	fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"},
-		[]string{dbName}, true, true, true, "config-s3.yml")
+		[]string{"test_cache_disk"}, true, true, true, "config-s3.yml")
+	env.DockerExecNoError(r, "clickhouse", "rm", "-f", "/etc/clickhouse-server/config.d/cache_disk_test.xml")
 	env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/cache_disk_test")
 	env.ch.Close()
 	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
