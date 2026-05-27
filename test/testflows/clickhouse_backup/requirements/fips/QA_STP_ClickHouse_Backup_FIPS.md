@@ -7,18 +7,6 @@
 
 **Date:** May 19, 2026
 
-## Execution Summary
-
-**Completed:**
-
-**Build Report:**
-
-*
-
-**Summary:**
-
-Started to execute test plan on TBD and ended on TBD.
-
 ## Table of Contents
 
 * 1 [Introduction](#introduction)
@@ -27,41 +15,63 @@ Started to execute test plan on TBD and ended on TBD.
 * 4 [Build Verification](#build-verification)
 * 5 [Human Resources And Assignments](#human-resources-and-assignments)
 * 6 [Release Notes](#release-notes)
-* 7 [FIPS Configuration](#fips-configuration)
+* 7 [FIPS Configurations](#fips-configurations)
 * 8 [FIPS-Compatible `clickhouse-backup-fips` Configuration](#fips-compatible-clickhouse-backup-fips-configuration)
-* 9 [Summary](#summary)
-* 10 [Test Environment](#test-environment)
-* 11 [Inputs and Outputs of `clickhouse-backup-fips`](#inputs-and-outputs-of-clickhouse-backup-fips)
-* 12 [Connectivity Against ClickHouse FIPS and Non-FIPS Servers](#connectivity-against-clickhouse-fips-and-non-fips-servers)
-* 13 [`clickhouse-backup-fips --version` Output](#clickhouse-backup-fips---version-output)
-* 14 [GODEBUG `fips140` Modes](#godebug-fips140-modes)
-* 15 [FIPS Integrity Self-test Failure on Tampered Binary](#fips-integrity-self-test-failure-on-tampered-binary)
-* 16 [Forced CAST Failures](#forced-cast-failures)
-* 17 [Inbound TLS — REST API With `openssl s_client`](#inbound-tls-rest-api-with-openssl-s_client)
-* 18 [Outbound TLS to ClickHouse Server With `openssl s_server`](#outbound-tls-to-clickhouse-server-with-openssl-s_server)
-* 19 [Outbound TLS to S3 Endpoint With `openssl s_server`](#outbound-tls-to-s3-endpoint-with-openssl-s_server)
-* 20 [ACVP Tests](#acvp-tests)
-* 21 [Server Listening-Port Assertion](#server-listening-port-assertion)
-* 22 [Connection to FIPS ClickHouse with Non-FIPS Configuration](#connection-to-fips-clickhouse-with-non-fips-configuration)
-* 23 [Outbound TLS to Non-FIPS ClickHouse with Cipher Profile](#outbound-tls-to-non-fips-clickhouse-with-cipher-profile)
+* 9 [Test Environment](#test-environment)
+* 10 [Inputs and Outputs of `clickhouse-backup-fips`](#inputs-and-outputs-of-clickhouse-backup-fips)
+* 11 [Connectivity Against ClickHouse FIPS and Non-FIPS Servers](#connectivity-against-clickhouse-fips-and-non-fips-servers)
+* 12 [`clickhouse-backup-fips --version` Output](#clickhouse-backup-fips---version-output)
+* 13 [GODEBUG `fips140` Modes](#godebug-fips140-modes)
+* 14 [FIPS Integrity Self-test Failure on Tampered Binary](#fips-integrity-self-test-failure-on-tampered-binary)
+* 15 [Forced CAST Failures](#forced-cast-failures)
+* 16 [Inbound TLS — REST API With `openssl s_client`](#inbound-tls-rest-api-with-openssl-s_client)
+* 17 [Outbound TLS to ClickHouse Server With `openssl s_server`](#outbound-tls-to-clickhouse-server-with-openssl-s_server)
+* 18 [Outbound TLS to S3 Endpoint With `openssl s_server`](#outbound-tls-to-s3-endpoint-with-openssl-s_server)
+* 19 [ACVP Tests](#acvp-tests)
+* 20 [Server Listening-Port Assertion](#server-listening-port-assertion)
+* 21 [Connection to FIPS ClickHouse with Non-FIPS Configuration](#connection-to-fips-clickhouse-with-non-fips-configuration)
+* 22 [Outbound TLS to Non-FIPS ClickHouse with Cipher Profile](#outbound-tls-to-non-fips-clickhouse-with-cipher-profile)
 
 ## Introduction
 
 This test plan covers FIPS 140-3 compatibility testing of the `clickhouse-backup` Altinity FIPS-compatible build (`clickhouse-backup-fips`).
 
-The main goal of this test plan is to validate that `clickhouse-backup` is FIPS 140-3 compatible. To validate this, the following items SHALL be checked:
+The main goal of this test plan is to validate that `clickhouse-backup` is FIPS 140-3 compatible.
+Test results ensure that `clickhouse-backup`:
+- Operates correctly under FIPS constraints
+- Properly enforces cryptographic restrictions
+- Uses FIPS-compliant TLS for all inbound and outbound connections.
+
+To validate this, the following items SHALL be checked:
 
 * The FIPS-built `clickhouse-backup` binary starts with the Go FIPS 140-3 cryptographic module enabled and reports it in `--version` output under all three Go FIPS runtime modes (`GODEBUG` unset, `GODEBUG=fips140=on`, `GODEBUG=fips140=only`).
 * The FIPS cipher policy is enforced for inbound and outbound TLS when running in strict mode (`GODEBUG=fips140=only`).
 * The binary aborts on startup if the FIPS integrity check or any startup cryptographic self-test fails.
 * The binary stays operational against both FIPS-compatible and non-FIPS-compatible ClickHouse server versions.
-* The ACVP (Automated Cryptographic Validation Protocol) test wrapper bundled with `clickhouse-backup` runs successfully against the FIPS-built binary.
+* The ACVP (Automated Cryptographic Validation Protocol) test wrapper bundled with `clickhouse-backup` runs successfully against the FIPS-built binary (when this optional check is enabled by tests).
+* The FIPS-built `clickhouse-backup` binary includes the Go build setting `GOFIPS140=v1.0.0` in its embedded build metadata.
+* The regular (non-FIPS) `clickhouse-backup` binary reports `FIPS 140-3: false` in `--version` output.
+* The `clickhouse-backup-fips server` process listens on the FIPS REST API TLS port (`7172`) when started in strict mode (`GODEBUG=fips140=only`).
+* A non-FIPS-correct backup configuration (`secure: false`) is rejected when connecting to the FIPS ClickHouse TLS endpoint (`:9440`).
+* The FIPS-built binary remains interoperable with a non-FIPS ClickHouse server over secure native TLS when the TLS connection is restricted to FIPS-approved cipher suites.
 
 ## Timeline
 
-The testing of `clickhouse-backup` FIPS builds SHALL be started on May 7, 2026 and be completed by May 25, 2026.
+The testing of `clickhouse-backup` FIPS builds SHALL be started on May 7, 2026 and be completed by May 27, 2026.
 
 ## Configuration Requirements
+
+Plain HTTP/TCP on any external connection is a configuration error for FIPS compliance.
+TLS must be enabled for all connections to:
+
+- ClickHouse Server
+- `clickhouse-backup` REST API
+- S3-compatible remote storage endpoint
+
+For TLS policy validation, the test suite also uses OpenSSL probe tools:
+
+- `openssl s_client` (acts as a TLS client to test inbound API listener policy)
+- `openssl s_server` (acts as a TLS server to test outbound client policy)
 
 ## Build Verification
 
@@ -70,6 +80,15 @@ The testing of `clickhouse-backup` FIPS builds SHALL be started on May 7, 2026 a
 **Certificates:**
 - [CMVP #5247](https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/5247)
 - [CAVP A6650](https://csrc.nist.gov/projects/cryptographic-algorithm-validation-program/details?product=19371)
+
+
+| Test Assertion | Description | Expected Result |
+| --- | --- | --- |
+| FIPS indicator in binary version output | Run `clickhouse-backup-fips --version` (`clickhouse_backup_fips_version_output`) and run control check on non-FIPS binary (`clickhouse_backup_fips_version_output_negative_check`) | FIPS binary reports `FIPS 140-3: true`; non-FIPS binary does not report `true` |
+| Build flag | Run `go version -m clickhouse-backup-fips` (`gofips140_build_flags_present`) | Output contains `build	GOFIPS140=v1.0.0` |
+| FIPS runtime behavior across Go modes | Run `godebug_fips140_modes` with `GODEBUG` unset, `fips140=on`, and `fips140=only` | For each mode, `--version` reports `FIPS 140-3: true`, and `tables` against the FIPS ClickHouse TLS endpoint succeeds (`exit 0`) |
+
+Direct checks of `crypto/fips140.Version()` and `crypto/fips140.Enabled()` are not called as standalone assertions in the current `clickhouse-backup` TestFlows scenarios; their behavior is validated through `--version` output and runtime connectivity checks above.
 
 
 ## Human Resources And Assignments
@@ -86,16 +105,30 @@ The following team members SHALL be dedicated to this release:
 * https://github.com/Altinity/clickhouse-backup/blob/master/ChangeLog.md
 * https://docs.altinity.com/altinitystablebuilds/fips-compatible-altinity-builds/
 
-## FIPS Configuration
+## FIPS Configurations
 
-For FIPS-compatible operation, users should:
+**Objective:** Verify `clickhouse-backup-fips` uses and enforces FIPS-compatible configuration for inbound and outbound network paths.
 
-* Use the FIPS-built `clickhouse-backup-fips` binary.
-* Configure TLS for FIPS-compatible ClickHouse server using TLSv1.2 and TLSv1.3 only, with the FIPS-approved cipher suites published in the Altinity FIPS documentation (<https://docs.altinity.com/altinitystablebuilds/fips-compatible-altinity-builds/#configuration-of-altinity-stable-builds-for-fips-compatible-operation>):
-    * TLSv1.2 `cipherList`: `ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:AES128-GCM-SHA256:AES256-GCM-SHA384`
-    * TLSv1.3 `cipherSuites`: `TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384`
+**`clickhouse-backup-fips` client and outbound configurations:**
 
-`clickhouse-backup-fips` can also be used against non-FIPS ClickHouse servers.
+| Test Assertion | Description | Expected Result |
+| --- | --- | --- |
+| FIPS binary in use | Run FIPS version checks (`clickhouse_backup_fips_version_output`, `gofips140_build_flags_present`) | `--version` reports `FIPS 140-3: true`; build metadata contains `GOFIPS140=v1.0.0` |
+| FIPS ClickHouse connectivity config | Run `connectivity_against_fips_clickhouse_server` with `clickhouse.secure: true` and `clickhouse.port: 9440` | `tables` succeeds (`exit 0`) against FIPS ClickHouse TLS endpoint |
+| Non-FIPS ClickHouse interoperability config | Run `connectivity_against_non_fips_clickhouse_server` with non-FIPS endpoint config (`:9000`, `GODEBUG=fips140=on`) | `tables` succeeds (`exit 0`) against non-FIPS ClickHouse |
+| Outbound TLS policy to ClickHouse endpoint | Run `outbound_tls_cipher_negotiation` against `openssl s_server` on `:9440` | FIPS-approved ciphers are accepted; non-approved ciphers are rejected |
+| Outbound TLS policy to S3 endpoint | Run `outbound_tls_to_s3_endpoint_with_openssl_s_server` using AWS FIPS hostname pattern (`s3-fips.<region>.amazonaws.com`) | FIPS-approved ciphers are accepted; non-approved ciphers are rejected |
+| Non-FIPS config rejected vs FIPS ClickHouse TLS port | Run `connection_to_fips_clickhouse_with_nonfips_config` with `secure: false` against `:9440` | Command fails (non-zero exit); no table-list success marker appears |
+| End-to-end TLS to non-FIPS ClickHouse with approved cipher profile | Run `outbound_tls_to_nonfips_clickhouse_with_cipher_profile` | `tables` succeeds (`exit 0`) and reports ClickHouse connection success |
+
+**`clickhouse-backup-fips server` inbound API TLS configuration:**
+
+| Test Assertion | Description | Expected Result |
+| --- | --- | --- |
+| API TLS listener enabled | Start server with `api.secure: true` (`inbound_tls_cipher_negotiation`, `server_listens_only_on_fips_api_port`) | Listener on `:7172` is active and accepts TLS handshake |
+| Approved inbound TLS ciphers accepted | Probe API listener with `openssl s_client` and approved TLSv1.2/TLSv1.3 ciphers (`inbound_tls_cipher_negotiation`) | Handshake succeeds |
+| Non-approved inbound TLS ciphers rejected | Probe API listener with non-approved ciphers (`inbound_tls_cipher_negotiation`) | Handshake is rejected |
+| Legacy inbound TLS protocols rejected | Probe API listener with TLSv1.0/TLSv1.1 (`inbound_tls_cipher_negotiation`) | Handshake is rejected |
 
 ## FIPS-Compatible `clickhouse-backup-fips` Configuration
 
@@ -106,28 +139,16 @@ A `clickhouse-backup-fips` configuration is FIPS-compatible only when:
 * `api.secure: true` plus a valid certificate / private key when running `clickhouse-backup-fips server`.
 * For S3-compatible remote storage, `s3.endpoint` is left empty and `s3.region` is set, so the SDK targets the AWS FIPS hostname `s3-fips.<region>.amazonaws.com`.
 
-The canonical FIPS client-side configurations used by the regression suite are:
+The canonical clickhouse-backup configurations used by the regression suite are:
 
 * `test/testflows/clickhouse_backup/configs/backup/fips/config-fips-connectivity-fips-server.yml` — secure native TCP `9440` against the FIPS ClickHouse server.
+* `test/testflows/clickhouse_backup/configs/backup/fips/config-fips-connectivity-nonfips-server.yml` — plain native TCP `9000` against the non-FIPS ClickHouse server (`GODEBUG=fips140=on` interoperability check).
 * `test/testflows/clickhouse_backup/configs/backup/fips/config-fips-api-tls.yml` — REST API listener on `7172` with `api.secure: true`.
+* `test/testflows/clickhouse_backup/configs/backup/fips/config-fips-outbound-clickhouse-tls.yml` — outbound TLS policy checks against a ClickHouse-style endpoint (`openssl s_server`).
+* `test/testflows/clickhouse_backup/configs/backup/fips/config-fips-outbound-s3-tls.yml` — outbound TLS policy checks against an S3-style HTTPS endpoint (`openssl s_server`).
+* `test/testflows/clickhouse_backup/configs/backup/fips/config-fips-connectivity-fips-server-misconfig.yml` — negative check with `secure: false` against FIPS ClickHouse TLS port `9440`.
+* `test/testflows/clickhouse_backup/configs/backup/fips/config-fips-nonfips-ch-tls-fipscipher.yml` — end-to-end positive TLS check against non-FIPS ClickHouse with FIPS-approved ciphers.
 
-
-## Summary
-
-> [!NOTE]
-> **Pass\*** — tests passed with known fails.
-
-| Test Suite | Result | Comments |
-| --- | --- | --- |
-| Connectivity vs FIPS and non-FIPS ClickHouse server | [_TBD_](#connectivity-against-clickhouse-fips-and-non-fips-server-versions) | FIPS `clickhouse-backup` vs FIPS ClickHouse server, and FIPS `clickhouse-backup` vs non-FIPS ClickHouse server |
-| `clickhouse-backup-fips --version` output | [_TBD_](#clickhouse-backup-fips---version-output) | |
-| Test with `GODEBUG=fips140=on`, `GODEBUG=fips140=only`, and when `GODEBUG` is not set at all | [_TBD_](#godebug-fips140-modes) | |
-| FIPS Integrity Self-test Failure on Tampered Binary | [_TBD_](#fips-integrity-self-test-failure-on-tampered-binary) | Tampered `.go.fipsinfo` checksum must abort startup |
-| Forced CAST Failures | [_TBD_](#forced-cast-failures) | |
-| Inbound TLS — REST API (`openssl s_client`) | [_TBD_](#inbound-tls--rest-api-with-openssl-s_client) | |
-| Outbound TLS to ClickHouse server (`openssl s_server`) | [_TBD_](#outbound-tls-to-clickhouse-server-with-openssl-s_server) | |
-| Outbound TLS to S3 (`openssl s_server`) | [_TBD_](#outbound-tls-to-s3-endpoint-with-openssl-s_server) | |
-| ACVP Tests | [_TBD_](#acvp-tests) | |
 
 
 ## Test Environment
@@ -163,7 +184,7 @@ Run the FIPS `clickhouse-backup` against:
 
 Expected result:
 
-* In both cases `clickhouse-backup-fips tables` returns the list of tables without TLS or authentication errors and exits with code `0`.
+* In both cases `clickhouse-backup-fips tables` exits with code `0` and returns the list of tables without connection or authentication errors.
 
 ## `clickhouse-backup-fips --version` Output
 
@@ -180,6 +201,7 @@ Expected result:
 
 * `--version` output contains the line `FIPS 140-3: true` (this corresponds to Go's `crypto/fips140.Enabled()` returning true at runtime).
 * `go version -m` output contains `build	GOFIPS140=v1.0.0`.
+* Control check: the regular (non-FIPS) `clickhouse-backup --version` output reports `FIPS 140-3: false`.
 
 ## GODEBUG `fips140` Modes
 
@@ -234,7 +256,7 @@ Run the FIPS binary with the `GODEBUG=failfipscast` hook, substituting one self-
 GODEBUG=failfipscast=SHA2-256,fips140=on clickhouse-backup-fips --version
 ```
 
-`SHA2-256` in the command above can be replaced with any name from the list below:
+`SHA2-256` in the command above can be replaced with any effective CAST name from the list below:
 
 ```
 AES-CBC
@@ -268,6 +290,7 @@ The list is taken directly from the Go FIPS test suite (file `crypto/internal/fi
 
 Expected result for every name in the list:
 
+* Baseline run with `GODEBUG=fips140=on clickhouse-backup-fips --version` succeeds.
 * The process exits with a non-zero code.
 * The output contains `fatal error: FIPS 140-3 self-test failed: <NAME>: simulated CAST failure`.
 
@@ -281,7 +304,7 @@ How to obtain and refresh this list:
 
 Check that the REST API listener of `clickhouse-backup-fips server` accepts only FIPS-approved TLS handshakes from clients.
 
-Start `clickhouse-backup-fips server` with `GODEBUG=fips140=only`, generate a local CA and server certificate, and connect with `openssl s_client`. 
+Start `clickhouse-backup-fips server` with `GODEBUG=fips140=only` and the FIPS TLS API config (`config-fips-api-tls.yml`, using regression TLS certificate fixtures), then connect with `openssl s_client`.
 
 Cipher names below are taken from the official Altinity FIPS configuration documentation (<https://docs.altinity.com/altinitystablebuilds/fips-compatible-altinity-builds/#configuration-of-altinity-stable-builds-for-fips-compatible-operation>).
 
@@ -290,6 +313,7 @@ FIPS-approved profiles (handshake MUST succeed):
 * `openssl s_client -tls1_3 -ciphersuites TLS_AES_128_GCM_SHA256` — expected result: handshake succeeds (`CONNECTION ESTABLISHED`).
 * `openssl s_client -tls1_3 -ciphersuites TLS_AES_256_GCM_SHA384` — expected result: handshake succeeds.
 * `openssl s_client -tls1_2 -cipher ECDHE-RSA-AES128-GCM-SHA256` — expected result: handshake succeeds.
+* `openssl s_client -tls1_2 -cipher ECDHE-RSA-AES256-GCM-SHA384` — expected result: handshake succeeds.
 
 Non-FIPS profiles (handshake MUST be rejected):
 
@@ -303,7 +327,7 @@ Non-FIPS profiles (handshake MUST be rejected):
 ## Outbound TLS to ClickHouse Server With `openssl s_server`
 
 
-Check that `clickhouse-backup-fips` refuses to connect to a ClickHouse-style TLS endpoint that offers only non-FIPS ciphers.
+Check that `clickhouse-backup-fips` enforces outbound TLS policy when connecting to a ClickHouse-style TLS endpoint with both approved and non-approved cipher profiles.
 
 Start a local `openssl s_server` on the secure native ClickHouse port `9440` with a chosen cipher profile, then run `clickhouse-backup-fips` with `GODEBUG=fips140=only` and a config that points at this endpoint. Cipher names below come from the official Altinity FIPS configuration documentation.
 
@@ -318,6 +342,9 @@ Non-FIPS profiles (handshake MUST be rejected):
 
 * `openssl s_server -tls1_2 -cipher ECDHE-RSA-CHACHA20-POLY1305` — expected result: `clickhouse-backup-fips` fails with `remote error: tls: handshake failure` and `openssl s_server` reports `no shared cipher`.
 * `openssl s_server -tls1_2 -cipher DHE-RSA-AES256-GCM-SHA384` — expected result: handshake is rejected as above.
+* `openssl s_server -tls1_2 -cipher DHE-RSA-AES128-GCM-SHA256` — expected result: handshake is rejected as above.
+* `openssl s_server -tls1_2 -cipher AES256-GCM-SHA384` — expected result: handshake is rejected as above.
+* `openssl s_server -tls1_2 -cipher AES128-GCM-SHA256` — expected result: handshake is rejected as above.
 * `openssl s_server -tls1_3 -ciphersuites TLS_CHACHA20_POLY1305_SHA256` — expected result: handshake is rejected as above.
 
 ## Outbound TLS to S3 Endpoint With `openssl s_server`
@@ -344,27 +371,31 @@ Non-FIPS profiles (handshake MUST be rejected):
 
 * `openssl s_server -tls1_2 -cipher ECDHE-RSA-CHACHA20-POLY1305` — expected result: `clickhouse-backup-fips` fails with `remote error: tls: handshake failure` / `no shared cipher`.
 * `openssl s_server -tls1_2 -cipher DHE-RSA-AES256-GCM-SHA384` — expected result: handshake is rejected as above.
+* `openssl s_server -tls1_2 -cipher DHE-RSA-AES128-GCM-SHA256` — expected result: handshake is rejected as above.
+* `openssl s_server -tls1_2 -cipher AES256-GCM-SHA384` — expected result: handshake is rejected as above.
+* `openssl s_server -tls1_2 -cipher AES128-GCM-SHA256` — expected result: handshake is rejected as above.
 * `openssl s_server -tls1_3 -ciphersuites TLS_CHACHA20_POLY1305_SHA256` — expected result: handshake is rejected as above.
 
 ## ACVP Tests
 
-Run the ACVP (Automated Cryptographic Validation Protocol) wrapper bundled with `clickhouse-backup`. This is a required part of every FIPS test run.
+Run the ACVP (Automated Cryptographic Validation Protocol) wrapper bundled with `clickhouse-backup`. This part is required for FIPS compatibity, but tests can be executed optionally.
 
 Invoke `pkg/acvpwrapper/run.sh` against the FIPS-built binary.
 
 Expected result:
 
 * The wrapper runs the algorithm test vectors and exits successfully with no failures across the run.
+* This check is optional in automation and runs only when `RUN_ACVP_TESTS=1` is set.
 
 ## Server Listening-Port Assertion
 
-Check that `clickhouse-backup-fips server`, when started with the FIPS-compatible REST API config (`api.secure: true`, no plain ports configured), opens only the FIPS-approved TLS listener.
+Check that `clickhouse-backup-fips server`, when started with the FIPS-compatible REST API config (`api.secure: true`, no plain ports configured), listens on the FIPS-approved TLS port.
 
 Steps:
 
 1. Start `clickhouse-backup-fips server` with `config-fips-api-tls.yml` and `GODEBUG=fips140=only` inside the FIPS backup container.
-2. Capture the server PID from the PID file written by the test harness.
-3. Read `/proc/<PID>/net/tcp` and `/proc/<PID>/net/tcp6` inside the container and extract every row whose state column equals `0A` (LISTEN). The FIPS regression container does not install `iproute2`, so `ss -ltnp` / `netstat -ltnp` are not available; `/proc/<PID>/net/tcp` is the network namespace view, but the container only runs `sleep infinity` plus the test-launched FIPS server, so any LISTEN socket in the namespace is necessarily one the FIPS server opened.
+2. Read `/proc/net/tcp` and `/proc/net/tcp6` inside the container and extract every row whose state column equals `0A` (LISTEN). 
+If the preferred host-style command `sudo ss -ltnp | grep "pid=<binary-pid>"` cannot be used in the FIPS regression container because `sudo` access is not available there (and process-owner socket inspection via `ss -p` requires elevated privileges, use `/proc/net/tcp{,6}` parsing, which is readable without `sudo` and still gives the container-network LISTEN set.
 
 Expected result:
 
@@ -394,5 +425,8 @@ Bring up a non-FIPS Altinity ClickHouse server (`altinity/clickhouse-server:25.8
 
 Expected result for each case:
 
-* FIPS-approved profile (`ECDHE-RSA-AES128-GCM-SHA256` / `TLS_AES_128_GCM_SHA256`): `tables` exits 0 and lists the server's tables (positive case).
-* Non-FIPS profile (`ECDHE-RSA-CHACHA20-POLY1305` / `TLS_CHACHA20_POLY1305_SHA256`): `clickhouse-backup-fips` fails with a TLS handshake-failure marker (`remote error: tls: handshake failure` / `no shared cipher` / `tls: protocol version not supported`).
+* FIPS-approved profile (`ECDHE-RSA-AES128-GCM-SHA256` / `TLS_AES_128_GCM_SHA256`): `tables` exits `0` and output includes a ClickHouse connection success marker (positive case).
+
+* Non-FIPS profile (`ECDHE-RSA-CHACHA20-POLY1305` / `TLS_CHACHA20_POLY1305_SHA256`): `clickhouse-backup-fips` fails with a 
+TLS handshake-failure marker (`remote error: tls: handshake failure` / `no shared cipher` / `tls: protocol version not 
+supported`).
