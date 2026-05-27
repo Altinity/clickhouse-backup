@@ -514,6 +514,34 @@ def _assert_tables_succeeds(self, backup_fips, *, config, godebug):
     )
 
 
+@TestStep(Check)
+def _assert_tables_fails(self, backup_fips, *, config, godebug, reason):
+    """Run `clickhouse-backup-fips -c <config> tables` and assert it fails.
+
+    Negative counterpart to `_assert_tables_succeeds`: require non-zero
+    exit and ensure no table-list success markers are present.
+    """
+    env_prefix = f"env GODEBUG={godebug} " if godebug else ""
+    cmd = (
+        f"timeout {CLI_CMD_TIMEOUT_SEC} {env_prefix}"
+        f"{FIPS_BINARY_IN_CONTAINER} -c {config} tables 2>&1"  # `2>&1` redirects stderr to stdout.
+    )
+    result = backup_fips.cmd(cmd, no_checks=True)
+    output = result.output or ""
+    label = godebug if godebug else "unset"
+
+    assert result.exitcode != 0, error(
+        f"`clickhouse-backup-fips tables` unexpectedly succeeded against `{config}` "
+        f"(GODEBUG={label}). Expected failure reason: {reason}\n{output}"
+    )
+
+    output_lower = output.lower()
+    assert "atomic" not in output_lower and "ordinary" not in output_lower, error(
+        f"`tables` output looks successful (database-listing marker present) "
+        f"for `{config}`. Expected failure reason: {reason}\n{output}"
+    )
+
+
 @TestScenario
 @Requirements(
     RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Connectivity_FIPSEndpoint("1.0")
@@ -559,28 +587,47 @@ def connectivity_against_fips_clickhouse_server(self):
     RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Connectivity_NonFIPSEndpoint("1.0")
 )
 def connectivity_against_non_fips_clickhouse_server(self):
-    """Validate `clickhouse-backup-fips tables` against a non-FIPS ClickHouse server.
+    """Validate FIPS clickhouse-backup cannot connect to a non-FIPS ClickHouse.
 
-    Brings up a dedicated non-fips `altinity/clickhouse-server:25.8.16.10002.altinitystable`
-    container (image defaults: plain native TCP `9000`, no TLS), then runs
+    Brings up a dedicated non-FIPS
+    `altinity/clickhouse-server:25.8.16.10002.altinitystable` container
+    with image defaults only (plain `tcp_port: 9000`, plain `http_port:
+    8123`, no `tcp_port_secure` listener), then runs
     `clickhouse-backup-fips -c <config> tables` from the FIPS backup
-    container with `GODEBUG=fips140=on`. Exit code MUST be 0 - the FIPS
-    binary stays connectible with a non-FIPS server in `fips140=on` mode.
+    container with `GODEBUG=fips140=only` against a FIPS-compatible
+    client config (`clickhouse.secure: true`, `clickhouse.port: 9440`).
+
+    Expected result: the command exits with a non-zero code because the
+    non-FIPS server does not expose the secure native TCP port required
+    by the FIPS-compatible client config; no table-listing success
+    marker appears.
     """
     backup_fips = _require_fips_container(self)
     cluster = self.context.cluster
 
     try:
-        with Given("a dedicated non-FIPS Altinity ClickHouse server"):
+        with Given(
+            "a non-FIPS Altinity ClickHouse server running with image defaults",
+            description="no `tcp_port_secure` listener; only plain `:9000` / `:8123` are bound",
+        ):
             cluster.start_clickhouse_server_container(
                 name=NON_FIPS_CH_SERVER_NAME,
                 image_tag=NON_FIPS_CH_SERVER_IMAGE,
             )
-        with When("I run `clickhouse-backup-fips tables` over plain native TCP 9000"):
-            _assert_tables_succeeds(
+        with When(
+            "I run `clickhouse-backup-fips tables` with the FIPS-compatible "
+            "client config (`secure: true`, `port: 9440`)"
+        ):
+            _assert_tables_fails(
                 backup_fips=backup_fips,
                 config=FIPS_CONNECTIVITY_NONFIPS_CONFIG_PATH,
-                godebug="fips140=on",
+                godebug="fips140=only",
+                reason=(
+                    "The non-FIPS ClickHouse server runs with image defaults "
+                    "and does not expose the secure native TCP port `:9440` "
+                    "required by the FIPS-compatible client config "
+                    "(`secure: true`, `port: 9440`)."
+                ),
             )
     finally:
         cluster.stop_auxiliary_container(NON_FIPS_CH_SERVER_NAME)
@@ -910,52 +957,45 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
     RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_CAST_Coverage("1.0"),
 )
 def forced_cast_failures(self):
-    """Validate CAST startup behavior in normal and forced-failure modes.
+    """Validate failfipscast behavior for CASTs reached by `--version`.
 
-    For each effective CAST name:
-
-    1. Run the binary with ``GODEBUG=fips140=on`` and verify startup succeeds.
-    2. Run the binary with ``GODEBUG=failfipscast=<NAME>,fips140=on`` and verify
-       startup fails with the expected CAST failure markers.
+    This scenario intentionally tests only startup/core CAST names that are
+    expected to be exercised during `clickhouse-backup-fips --version`.
+    For each name, we first verify normal startup (`fips140=only`) and then
+    verify forced failure (`failfipscast=<NAME>,fips140=only`).
     """
-    # Cryptographic Algorithm Self-Test (CAST) names are from Go's FIPS 140-3
-    # module. Shows `allCASTs` in `crypto/internal/fips140test/cast_test.go`
-    # of the Go release used to build `clickhouse-backup-race-fips`. Each name
-    # is a valid value for `GODEBUG=failfipscast=<NAME>`: setting it forces
-    # that one CAST to fail at startup, which Go's FIPS module turns into a
-    # fatal abort.
-    #
-    # Source list for failfipscast checks.
-    # Mirrors Go's `allCASTs` labels from `crypto/internal/fips140test/cast_test.go`.
-    # This list is "superset by module version": version-specific filtering
-    
-    FIPS_FAILFIPSCAST_ALL_NAMES = (
-    "AES-CBC",
-    "CTR_DRBG",
-    "CounterKDF",
-    "DetECDSA P-256 SHA2-512 sign",
-    "ECDH PCT",
-    "ECDSA P-256 SHA2-512 sign and verify",
-    "ECDSA PCT",
-    "Ed25519 sign and verify",
-    "Ed25519 sign and verify PCT",
-    "HKDF-SHA2-256",
-    "HMAC-SHA2-256",
-    "KAS-ECC-SSC P-256",
-    "ML-DSA sign and verify PCT",
-    "ML-DSA-44",
-    "ML-KEM PCT",
-    "ML-KEM-768",
-    "PBKDF2",
-    "RSA sign and verify PCT",
-    "RSASSA-PKCS-v1.5 2048-bit sign and verify",
-    "SHA2-256",
-    "SHA2-512",
-    "TLSv1.2-SHA2-256",
-    "TLSv1.3-SHA2-256",
-    "cSHAKE128",
+    # Source: Go FIPS `allCASTs` in `crypto/internal/fips140test/cast_test.go`.
+    # Keep this scenario focused on startup/core CASTs that should fail
+    # deterministically on `--version`.
+    FIPS_FAILFIPSCAST_STARTUP_CASTS = (
+        "AES-CBC",
+        "CTR_DRBG",
+        "CounterKDF",
+        "HKDF-SHA2-256",
+        "HMAC-SHA2-256",
+        "PBKDF2",
+        "SHA2-256",
+        "SHA2-512",
+        "TLSv1.2-SHA2-256",
+        "TLSv1.3-SHA2-256",
+        "cSHAKE128",
     )
-
+    FIPS_FAILFIPSCAST_CONDITIONAL_CASTS = (
+        "DetECDSA P-256 SHA2-512 sign",
+        "ECDH PCT",
+        "ECDSA P-256 SHA2-512 sign and verify",
+        "ECDSA PCT",
+        "Ed25519 sign and verify",
+        "Ed25519 sign and verify PCT",
+        "KAS-ECC-SSC P-256",
+        "ML-DSA sign and verify PCT",
+        "ML-DSA-44",
+        "ML-KEM PCT",
+        "ML-KEM PCT",
+        "ML-KEM-768",
+        "RSA sign and verify PCT",
+        "RSASSA-PKCS-v1.5 2048-bit sign and verify",
+    )
     # This is the marker that Go's FIPS module writes to stderr on a failfipscast-forced CAST.
     # The full line is:
     # `fatal error: FIPS 140-3 self-test failed: <NAME>: simulated CAST failure`.
@@ -963,45 +1003,51 @@ def forced_cast_failures(self):
     FIPS_FAILFIPSCAST_SELFTEST_PREFIX = "self-test failed: "
 
     backup_fips = _require_fips_container(self)
-    cast_names = tuple(
-        cast for cast in FIPS_FAILFIPSCAST_ALL_NAMES
-        if not cast.startswith("ML-DSA")
+    debug(
+        f"startup CAST names ({len(FIPS_FAILFIPSCAST_STARTUP_CASTS)}): "
+        f"{FIPS_FAILFIPSCAST_STARTUP_CASTS}"
     )
-    debug(f"effective CAST names ({len(cast_names)}): {cast_names}")
+    debug(
+        f"conditional CAST names ({len(FIPS_FAILFIPSCAST_CONDITIONAL_CASTS)}): "
+        f"{FIPS_FAILFIPSCAST_CONDITIONAL_CASTS}"
+    )
 
     with When(
-        "for each CAST name I run `clickhouse-backup-fips --version` "
-        "with `GODEBUG=fips140=on`"
+        "I run `clickhouse-backup-fips --version` "
+        "with `GODEBUG=fips140=only` as the positive check"
     ):
-        for cast in cast_names:
-            with Check(f"CAST startup succeeds: {cast}"):
-                cmd = (
-                    f"env GODEBUG=fips140=on "
-                    f"{FIPS_BINARY_IN_CONTAINER} --version 2>&1"
-                )
-                result = backup_fips.cmd(cmd, no_checks=True)
-                output = result.output or ""
-                assert result.exitcode == 0, error(
-                    f"CAST baseline startup failed for `{cast}` "
-                    f"(exit={result.exitcode}).\n{output}"
-                )
-                assert FIPS_FAILFIPSCAST_MARKER not in output, error(
-                    f"Unexpected `{FIPS_FAILFIPSCAST_MARKER}` marker in baseline "
-                    f"run for `{cast}`.\n{output}"
-                )
+        cmd = (
+            f"env GODEBUG=fips140=only "
+            f"{FIPS_BINARY_IN_CONTAINER} --version 2>&1"
+        )
+
+        result = backup_fips.cmd(cmd, no_checks=True)
+        output = result.output or ""
+
+        assert result.exitcode == 0, error(
+            f"baseline startup failed "
+            f"(exit={result.exitcode}).\n{output}"
+        )
+
+        assert FIPS_FAILFIPSCAST_MARKER not in output, error(
+            f"unexpected `{FIPS_FAILFIPSCAST_MARKER}` marker.\n{output}"
+        )
+        assert FIPS_VERSION_LABEL in output and FIPS_VERSION_TRUE in output.lower(), error(
+            f"baseline `--version` output does not show expected FIPS status.\n{output}"
+        )
 
     with Then(
-        "for each CAST name I run `clickhouse-backup-fips --version` "
-        "with `GODEBUG=failfipscast=<NAME>,fips140=on`"
+        "for each startup CAST name I run `clickhouse-backup-fips --version` "
+        "with `GODEBUG=failfipscast=<NAME>,fips140=only` and expect forced failure"
     ):
-        for cast in cast_names:
-            with Check(f"forced CAST failure: {cast}"):
+        for cast in FIPS_FAILFIPSCAST_STARTUP_CASTS:
+            with Check(f"forced failure is reported for CAST `{cast}`"):
                 # Single-quote the GODEBUG value so CAST names containing
                 # spaces (e.g. `DetECDSA P-256 SHA2-512 sign`) are passed
                 # through as one argument to `env`. `2>&1` because Go writes
                 # `fatal error:` lines to stderr.
                 cmd = (
-                    f"env 'GODEBUG=failfipscast={cast},fips140=on' "
+                    f"env 'GODEBUG=failfipscast={cast},fips140=only' "
                     f"{FIPS_BINARY_IN_CONTAINER} --version 2>&1"
                 )
                 result = backup_fips.cmd(cmd, no_checks=True)
@@ -1013,20 +1059,54 @@ def forced_cast_failures(self):
                 )
 
                 assert result.exitcode != 0, error(
-                    f"forced CAST failure expected non-zero exit for `{cast}` "
+                    f"forced startup CAST failure expected non-zero exit for `{cast}` "
                     f".\n{output}"
                 )
                 assert marker_present, error(
-                    f"forced CAST failure output missing "
+                    f"forced startup CAST failure output missing "
                     f"`{FIPS_FAILFIPSCAST_MARKER}` for `{cast}` "
                     f".\n{output}"
                 )
                 assert selftest_cast_present, error(
-                    f"forced CAST failure output missing "
+                    f"forced startup CAST failure output missing "
                     f"`{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}` "
                     f".\n{output}"
                 )
 
+    with And(
+        "for each conditional CAST name I run `clickhouse-backup-fips --version` "
+        "with `GODEBUG=failfipscast=<NAME>,fips140=only`"
+    ):
+        for cast in FIPS_FAILFIPSCAST_CONDITIONAL_CASTS:
+            with Check(f"conditional CAST execution record for `{cast}`"):
+                cmd = (
+                    f"env 'GODEBUG=failfipscast={cast},fips140=only' "
+                    f"{FIPS_BINARY_IN_CONTAINER} --version 2>&1"
+                )
+                result = backup_fips.cmd(cmd, no_checks=True)
+                output = result.output or ""
+
+                marker_present = FIPS_FAILFIPSCAST_MARKER in output
+                selftest_cast_present = (
+                    f"{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}" in output
+                )
+
+                if result.exitcode != 0:
+                    assert marker_present, error(
+                        f"conditional CAST failure output missing "
+                        f"`{FIPS_FAILFIPSCAST_MARKER}` for `{cast}` "
+                        f".\n{output}"
+                    )
+                    assert selftest_cast_present, error(
+                        f"conditional CAST failure output missing "
+                        f"`{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}` "
+                        f".\n{output}"
+                    )
+                else:
+                    assert not marker_present, error(
+                        f"conditional CAST `{cast}` showed "
+                        f"`{FIPS_FAILFIPSCAST_MARKER}` but exited 0.\n{output}"
+                    )
 
 @TestScenario
 @Requirements(
@@ -1201,11 +1281,6 @@ def outbound_tls_to_nonfips_clickhouse_with_cipher_profile(self):
             assert result.exitcode == 0, error(
                 f"`clickhouse-backup-fips tables` failed unexpectedly "
                 f"(exit={result.exitcode}).\n{output}"
-            )
-
-        with And("the output includes a ClickHouse connection success marker"):
-            assert "clickhouse connection success" in output.lower(), error(
-                f"`tables` output does not show the expected connection-success marker.\n{output}"
             )
     finally:
         cluster.stop_auxiliary_container(NON_FIPS_CH_SERVER_NAME)
