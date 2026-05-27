@@ -1099,7 +1099,9 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 // Called right after FREEZE so the active-set delta is essentially zero —
 // inactive parts also remain visible in system.parts for ~480s, which makes
 // the race window practically impossible to hit. If a frozen part is missing
-// from the result we surface a hard error rather than silently dropping it.
+// from the result we surface a hard error rather than silently dropping it,
+// unless the table itself was dropped/detached concurrently (the documented
+// IgnoreNotExistsErrorDuringFreeze race), in which case we skip the part.
 func (b *Backuper) fetchHashOfAllFiles(ctx context.Context, database, table, diskName string, partNames []string) (map[string]string, error) {
 	var rows []struct {
 		Name string `ch:"name"`
@@ -1115,6 +1117,21 @@ func (b *Backuper) fetchHashOfAllFiles(ctx context.Context, database, table, dis
 	}
 	for _, name := range partNames {
 		if _, ok := hashByName[name]; !ok {
+			// A part can legitimately vanish from system.parts when the table is
+			// dropped/detached concurrently right after FREEZE (the frozen files
+			// are already safe in shadow). Tolerate that race the same way the
+			// FREEZE path does; otherwise the part is genuinely missing while the
+			// table still exists, which is a real anomaly worth surfacing.
+			if b.cfg.ClickHouse.IgnoreNotExistsErrorDuringFreeze {
+				var exists []struct {
+					Cnt uint64 `ch:"cnt"`
+				}
+				existsErr := b.ch.SelectContext(ctx, &exists, "SELECT count() AS cnt FROM system.tables WHERE database=? AND name=?", database, table)
+				if existsErr == nil && (len(exists) == 0 || exists[0].Cnt == 0) {
+					log.Warn().Msgf("part %q not found in system.parts (database=%s, table=%s) after FREEZE, table no longer exists, skip hash_of_all_files", name, database, table)
+					continue
+				}
+			}
 			return nil, errors.Errorf("part %q not found in system.parts (database=%s, table=%s, disk_name=%s) after FREEZE", name, database, table, diskName)
 		}
 	}
