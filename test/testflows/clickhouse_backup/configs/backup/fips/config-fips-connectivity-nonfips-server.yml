@@ -6,19 +6,24 @@
 # `clickhouse.host: clickhouse_nonfips_server` resolves on the docker
 # network to the dedicated non-FIPS ClickHouse server brought up by the
 # scenario (`altinity/clickhouse-server:25.8.16.10002.altinitystable`).
-# `clickhouse.port: 9000` is the standard plain native TCP port (image
-# default).  `secure: false` is intentional: the test plan defines this
-# as a positive interoperability check between the FIPS-built binary and
-# a non-FIPS ClickHouse, not a TLS/cipher policy check (those live in the
-# inbound / outbound TLS scenarios).
+# That server runs with image defaults: only `tcp_port: 9000` and
+# `http_port: 8123` are bound; no `tcp_port_secure` listener.
+#
+# `clickhouse.port: 9440` and `secure: true` together match the
+# FIPS-compatible client requirement (TLS-only over the secure native
+# TCP port). With the non-FIPS server not exposing `:9440`, the FIPS
+# clickhouse-backup cannot establish a connection and the `tables`
+# command must fail. This proves a FIPS-built clickhouse-backup
+# configured for TLS-only cannot reach a default-config non-FIPS
+# ClickHouse server.
 general:
   log_level: warn
   remote_storage: none
 clickhouse:
   config_dir: /etc/clickhouse-server
   host: clickhouse_nonfips_server
-  port: 9000
+  port: 9440
   username: default
   password: ''
   timeout: 5s
-  secure: false
+  secure: true

@@ -115,7 +115,7 @@ The following team members SHALL be dedicated to this release:
 | --- | --- | --- |
 | FIPS binary in use | Run FIPS version checks (`clickhouse_backup_fips_version_output`, `gofips140_build_flags_present`) | `--version` reports `FIPS 140-3: true`; build metadata contains `GOFIPS140=v1.0.0` |
 | FIPS ClickHouse connectivity config | Run `connectivity_against_fips_clickhouse_server` with `clickhouse.secure: true` and `clickhouse.port: 9440` | `tables` succeeds (`exit 0`) against FIPS ClickHouse TLS endpoint |
-| Non-FIPS ClickHouse interoperability config | Run `connectivity_against_non_fips_clickhouse_server` with non-FIPS endpoint config (`:9000`, `GODEBUG=fips140=on`) | `tables` succeeds (`exit 0`) against non-FIPS ClickHouse |
+| FIPS clickhouse-backup cannot reach a non-FIPS ClickHouse | Run `connectivity_against_non_fips_clickhouse_server` with `GODEBUG=fips140=only`, `clickhouse.secure: true`, `clickhouse.port: 9440` against a default-config non-FIPS ClickHouse server (no `tcp_port_secure` listener) | Command fails (non-zero exit); no table-list success marker appears |
 | Outbound TLS policy to ClickHouse endpoint | Run `outbound_tls_cipher_negotiation` against `openssl s_server` on `:9440` | FIPS-approved ciphers are accepted; non-approved ciphers are rejected |
 | Outbound TLS policy to S3 endpoint | Run `outbound_tls_to_s3_endpoint_with_openssl_s_server` using AWS FIPS hostname pattern (`s3-fips.<region>.amazonaws.com`) | FIPS-approved ciphers are accepted; non-approved ciphers are rejected |
 | Non-FIPS config rejected vs FIPS ClickHouse TLS port | Run `connection_to_fips_clickhouse_with_nonfips_config` with `secure: false` against `:9440` | Command fails (non-zero exit); no table-list success marker appears |
@@ -142,13 +142,12 @@ A `clickhouse-backup-fips` configuration is FIPS-compatible only when:
 The canonical clickhouse-backup configurations used by the regression suite are:
 
 * `test/testflows/clickhouse_backup/configs/backup/fips/config-fips-connectivity-fips-server.yml` — secure native TCP `9440` against the FIPS ClickHouse server.
-* `test/testflows/clickhouse_backup/configs/backup/fips/config-fips-connectivity-nonfips-server.yml` — plain native TCP `9000` against the non-FIPS ClickHouse server (`GODEBUG=fips140=on` interoperability check).
+* `test/testflows/clickhouse_backup/configs/backup/fips/config-fips-connectivity-nonfips-server.yml` — negative check: FIPS-compatible client config (`secure: true`, `port: 9440`) against a default-config non-FIPS ClickHouse server (no `tcp_port_secure` listener); the connection must fail.
 * `test/testflows/clickhouse_backup/configs/backup/fips/config-fips-api-tls.yml` — REST API listener on `7172` with `api.secure: true`.
 * `test/testflows/clickhouse_backup/configs/backup/fips/config-fips-outbound-clickhouse-tls.yml` — outbound TLS policy checks against a ClickHouse-style endpoint (`openssl s_server`).
 * `test/testflows/clickhouse_backup/configs/backup/fips/config-fips-outbound-s3-tls.yml` — outbound TLS policy checks against an S3-style HTTPS endpoint (`openssl s_server`).
 * `test/testflows/clickhouse_backup/configs/backup/fips/config-fips-connectivity-fips-server-misconfig.yml` — negative check with `secure: false` against FIPS ClickHouse TLS port `9440`.
 * `test/testflows/clickhouse_backup/configs/backup/fips/config-fips-nonfips-ch-tls-fipscipher.yml` — end-to-end positive TLS check against non-FIPS ClickHouse with FIPS-approved ciphers.
-
 
 
 ## Test Environment
@@ -168,23 +167,24 @@ The following artifacts and tools will be used:
 `clickhouse-backup-fips` exposes the following network surface in the regression environment:
 
 * Inbound: REST API listener on TCP port `7172`. With `api.secure: true` (the FIPS regression default) the listener accepts only TLS handshakes; no plain HTTP listener is opened. No other ports are bound by the binary itself.
-* Outbound to ClickHouse: secure native TCP port `9440` (`clickhouse.secure: true`, `clickhouse.port: 9440`). Plain native TCP `9000` is only used by the explicit non-FIPS interoperability scenario.
+* Outbound to ClickHouse: secure native TCP port `9440` (`clickhouse.secure: true`, `clickhouse.port: 9440`). Plain native TCP `9000` and plain HTTP `8123` MUST NOT be used by `clickhouse-backup-fips`.
 * Outbound to S3-compatible storage: HTTPS to the AWS FIPS hostname `s3-fips.<region>.amazonaws.com:443` when `s3.endpoint` is empty and `s3.region` is set.
 
 The [Server Listening-Port Assertion](#server-listening-port-assertion) subsection below describes how the inbound surface is verified.
 
 ## Connectivity Against ClickHouse FIPS and Non-FIPS Servers
 
-Check that `clickhouse-backup-fips` connects to both versions of the ClickHouse server.
+Check that `clickhouse-backup-fips` connects to a FIPS-compatible ClickHouse server and cannot connect to a default-config non-FIPS one.
 
 Run the FIPS `clickhouse-backup` against:
 
-* FIPS-compatible Altinity ClickHouse server `altinity/clickhouse-server:25.3.8.30001.altinityfips` over the secure native TCP port `9440`.
-* Non-FIPS Altinity ClickHouse server `altinity/clickhouse-server:25.8.16.10002.altinitystable` over the standard native TCP port `9000`.
+* Positive: FIPS-compatible Altinity ClickHouse server `altinity/clickhouse-server:25.3.8.30001.altinityfips` over secure native TCP port `9440`.
+* Negative: non-FIPS Altinity ClickHouse server `altinity/clickhouse-server:25.8.16.10002.altinitystable` running with image defaults (no `tcp_port_secure` listener), with the FIPS-compatible client config (`secure: true`, `port: 9440`).
 
 Expected result:
 
-* In both cases `clickhouse-backup-fips tables` exits with code `0` and returns the list of tables without connection or authentication errors.
+* Positive case: `clickhouse-backup-fips tables` exits `0` and returns the list of tables.
+* Negative case: `clickhouse-backup-fips tables` exits with a non-zero code because the non-FIPS server does not expose the secure native TCP port required by the FIPS-compatible client config; no table-listing success marker appears.
 
 ## `clickhouse-backup-fips --version` Output
 
