@@ -246,10 +246,16 @@ func testAPIBackupClean(r *require.Assertions, env *TestEnvironment) {
 func testAPIBackupActionsSkipCommands(r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Check api.backup_actions_skip_commands excludes 'list' from system.backup_actions")
 
+	// Restart deterministically: kill the previous `server --watch`, wait until it
+	// actually exits (so it releases :7171 before the new process binds), then start
+	// the skip-enabled server and poll until it serves requests. Fixed sleeps here
+	// flaked in CI because the old server hadn't released the port / the new one
+	// wasn't ready before commands were issued.
 	env.DockerExecNoError(r, "clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
-	time.Sleep(2 * time.Second)
+	// `[c]lickhouse-backup` so pgrep does not match its own `bash -ce` command line.
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "for i in $(seq 1 30); do pgrep -f '[c]lickhouse-backup server' >/dev/null 2>&1 || exit 0; sleep 1; done; echo 'previous backup server did not exit'; exit 1")
 	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce", "API_BACKUP_ACTIONS_SKIP_COMMANDS=list clickhouse-backup server &>>/tmp/clickhouse-backup-server.log")
-	time.Sleep(3 * time.Second)
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "for i in $(seq 1 30); do curl -sfL 'http://localhost:7171/backup/list' >/dev/null 2>&1 && exit 0; sleep 1; done; echo 'restarted clickhouse-backup server is not ready'; exit 1")
 
 	// snapshot after restart — in-memory async status is cleared on restart
 	var listRowsBefore uint64
@@ -276,6 +282,17 @@ func testAPIBackupActionsSkipCommands(r *require.Assertions, env *TestEnvironmen
 	var createRows uint64
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{"create skip_commands_test"}, true)
 	r.NoError(env.ch.SelectSingleRowNoCtx(&createRows, "SELECT count() FROM system.backup_actions WHERE command='create skip_commands_test' AND status=?", status.SuccessStatus))
+	if createRows != 1 {
+		// The command was recorded but ended non-success (CI-only flake). Surface the
+		// actual status/error and the server log so the root cause is diagnosable.
+		createActions := make([]struct {
+			Status string `ch:"status"`
+			Error  string `ch:"error"`
+		}, 0)
+		r.NoError(env.ch.StructSelect(&createActions, "SELECT status, error FROM system.backup_actions WHERE command='create skip_commands_test'"))
+		logOut, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "tail -n 200 /tmp/clickhouse-backup-server.log")
+		log.Error().Msgf("create skip_commands_test did not succeed, actions=%+v\nclickhouse-backup server log tail:\n%s", createActions, logOut)
+	}
 	r.Equal(uint64(1), createRows, "non-skipped commands must still be recorded in system.backup_actions")
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{"delete local skip_commands_test"}, false)
 }

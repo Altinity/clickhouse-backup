@@ -27,8 +27,8 @@ import (
 // See: https://github.com/Altinity/clickhouse-backup/issues/1396
 func TestCacheDiskBackup(t *testing.T) {
 	version := os.Getenv("CLICKHOUSE_VERSION")
-	if compareVersion(version, "22.3") < 0 {
-		t.Skipf("Test requires ClickHouse >= 22.3 for cache disk support, current version %s", version)
+	if compareVersion(version, "22.8") < 0 {
+		t.Skipf("Test requires ClickHouse >= 22.8 for `type: cache` disk support, current version %s", version)
 	}
 
 	env, r := NewTestEnvironment(t)
