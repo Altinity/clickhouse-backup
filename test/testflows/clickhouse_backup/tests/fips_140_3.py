@@ -990,7 +990,7 @@ def forced_cast_failures(self):
         "TLSv1.3-SHA2-256",
         "cSHAKE128",
     )
-    FIPS_FAILFIPSCAST_CONDITIONAL_CASTS = (
+    FIPS_FAILFIPSCAST_CONDITIONAL_CASTS = (  # first use casts
         "DetECDSA P-256 SHA2-512 sign",
         "ECDH PCT",
         "ECDSA P-256 SHA2-512 sign and verify",
