@@ -13,7 +13,14 @@ else
   export CLICKHOUSE_IMAGE=${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}
 fi
 if [[ -z "${GITHUB_ACTIONS}" ]]; then
+  # Build both the regular race binary (used by all tests) and the FIPS race
+  # binary (used by the fips_140_3 suite via the dedicated clickhouse_backup_fips
+  # container in helpers/cluster.py). If FIPS build fails or is intentionally
+  # skipped, the FIPS container is omitted and FIPS scenarios skip cleanly.
   make clean build-race-docker
+  if [[ "${SKIP_FIPS_BUILD:-0}" != "1" ]]; then
+    make build-race-fips-docker || echo "WARNING: build-race-fips-docker failed; FIPS scenarios will skip"
+  fi
 fi
 
 # Flags passed through to regression.py

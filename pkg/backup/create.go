@@ -344,12 +344,13 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 			var realSize, objectDiskSize map[string]int64
 			var disksToPartsMap map[string][]metadata.Part
 			var checksums map[string]uint64
+			var hashOfAllFiles map[string]string
 			var addTableToBackupErr error
 			if doBackupData && table.BackupType == clickhouse.ShardBackupFull {
 				logger.Debug().Msg("begin data backup")
 				shadowBackupUUID := strings.ReplaceAll(uuid.New().String(), "-", "")
 				b.addShadowBackupUUID(shadowBackupUUID)
-				disksToPartsMap, realSize, objectDiskSize, checksums, addTableToBackupErr = b.AddTableToLocalBackup(createCtx, backupName, tablesDiffFromRemote, shadowBackupUUID, disks, &table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}], skipProjections, version)
+				disksToPartsMap, realSize, objectDiskSize, checksums, hashOfAllFiles, addTableToBackupErr = b.AddTableToLocalBackup(createCtx, backupName, tablesDiffFromRemote, shadowBackupUUID, disks, &table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}], skipProjections, version)
 				if addTableToBackupErr != nil {
 					logger.Error().Msgf("b.AddTableToLocalBackup error: %v", addTableToBackupErr)
 					return errors.WithMessage(addTableToBackupErr, "b.AddTableToLocalBackup")
@@ -376,16 +377,17 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 			logger.Debug().Msg("create metadata")
 			if schemaOnly || doBackupData {
 				metadataSize, createTableMetadataErr := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
-					Table:        table.Name,
-					Database:     table.Database,
-					UUID:         table.UUID,
-					Query:        table.CreateTableQuery,
-					TotalBytes:   table.TotalBytes,
-					Size:         realSize,
-					Parts:        disksToPartsMap,
-					Checksums:    checksums,
-					Mutations:    inProgressMutations,
-					MetadataOnly: schemaOnly || table.BackupType == clickhouse.ShardBackupSchema,
+					Table:          table.Name,
+					Database:       table.Database,
+					UUID:           table.UUID,
+					Query:          table.CreateTableQuery,
+					TotalBytes:     table.TotalBytes,
+					Size:           realSize,
+					Parts:          disksToPartsMap,
+					Checksums:      checksums,
+					HashOfAllFiles: hashOfAllFiles,
+					Mutations:      inProgressMutations,
+					MetadataOnly:   schemaOnly || table.BackupType == clickhouse.ShardBackupSchema,
 				}, disks)
 				if createTableMetadataErr != nil {
 					logger.Error().Msgf("b.createTableMetadata error: %v", createTableMetadataErr)
@@ -915,30 +917,31 @@ func (b *Backuper) createBackupRBACReplicated(ctx context.Context, rbacBackup st
 	return rbacDataSize, nil
 }
 
-func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string, tablesDiffFromRemote map[metadata.TableTitle]metadata.TableMetadata, shadowBackupUUID string, diskList []clickhouse.Disk, table *clickhouse.Table, partitionsIdsMap common.EmptyMap, skipProjections []string, version int) (map[string][]metadata.Part, map[string]int64, map[string]int64, map[string]uint64, error) {
+func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string, tablesDiffFromRemote map[metadata.TableTitle]metadata.TableMetadata, shadowBackupUUID string, diskList []clickhouse.Disk, table *clickhouse.Table, partitionsIdsMap common.EmptyMap, skipProjections []string, version int) (map[string][]metadata.Part, map[string]int64, map[string]int64, map[string]uint64, map[string]string, error) {
 	logger := log.With().Fields(map[string]interface{}{
 		"backup":    backupName,
 		"operation": "create",
 		"table":     fmt.Sprintf("%s.%s", table.Database, table.Name),
 	}).Logger()
 	if backupName == "" {
-		return nil, nil, nil, nil, errors.New("backupName is not defined")
+		return nil, nil, nil, nil, nil, errors.New("backupName is not defined")
 	}
 
 	if !strings.HasSuffix(table.Engine, "MergeTree") && table.Engine != "MaterializedMySQL" && table.Engine != "MaterializedPostgreSQL" {
 		if table.Engine != "MaterializedView" {
 			logger.Warn().Str("engine", table.Engine).Msg("supports only schema backup")
 		}
-		return nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil
 	}
 	if err := b.ch.FreezeTable(ctx, table, shadowBackupUUID); err != nil {
-		return nil, nil, nil, nil, errors.WithMessage(err, "b.ch.FreezeTable")
+		return nil, nil, nil, nil, nil, errors.WithMessage(err, "b.ch.FreezeTable")
 	}
 	log.Debug().Str("database", table.Database).Str("table", table.Name).Msg("frozen")
 	realSize := map[string]int64{}
 	objectDiskSize := map[string]int64{}
 	disksToPartsMap := map[string][]metadata.Part{}
 	checksums := make(map[string]uint64)
+	hashOfAllFiles := make(map[string]string)
 
 	for _, disk := range diskList {
 		if b.shouldSkipByDiskNameOrType(disk) {
@@ -947,7 +950,7 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		}
 		select {
 		case <-ctx.Done():
-			return nil, nil, nil, nil, ctx.Err()
+			return nil, nil, nil, nil, nil, ctx.Err()
 		default:
 			shadowPath := path.Join(disk.Path, "shadow", shadowBackupUUID)
 			if _, err := os.Stat(shadowPath); err != nil && os.IsNotExist(err) {
@@ -960,12 +963,12 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 				if dir, err := os.Lstat(backupShadowPath); err == nil && dir.IsDir() {
 					log.Warn().Msgf("%s will clean to properly handle resume parameter", backupShadowPath)
 					if err = os.RemoveAll(backupShadowPath); err != nil {
-						return nil, nil, nil, nil, errors.WithMessage(err, "os.RemoveAll backupShadowPath")
+						return nil, nil, nil, nil, nil, errors.WithMessage(err, "os.RemoveAll backupShadowPath")
 					}
 				}
 			}
 			if err := filesystemhelper.MkdirAll(backupShadowPath, b.ch, diskList); err != nil && !os.IsExist(err) {
-				return nil, nil, nil, nil, errors.WithMessage(err, "filesystemhelper.MkdirAll backupShadowPath")
+				return nil, nil, nil, nil, nil, errors.WithMessage(err, "filesystemhelper.MkdirAll backupShadowPath")
 			}
 			var diffTableMetadata metadata.TableMetadata
 			if tablesDiffFromRemote != nil {
@@ -973,15 +976,65 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 			}
 			// If partitionsIdsMap is not empty, only parts in this partition will back up.
 			start := time.Now()
-			parts, size, newChecksums, err := filesystemhelper.MoveShadowToBackup(shadowPath, backupShadowPath, partitionsIdsMap, table, diffTableMetadata, disk, skipProjections, version)
+			useHashOfAllFiles := version >= 19011000
+			// Old CH still gets the legacy CRC64-of-checksums.txt path. For modern
+			// CH we let MoveShadowToBackup skip CRC64 entirely and pull
+			// hash_of_all_files from system.parts after the shadow tree is walked
+			// (see post-loop SELECT below).
+			parts, size, newChecksums, err := filesystemhelper.MoveShadowToBackup(shadowPath, backupShadowPath, partitionsIdsMap, table, diffTableMetadata, disk, skipProjections, version, !useHashOfAllFiles)
 			if err != nil {
-				return nil, nil, nil, nil, errors.WithMessage(err, "filesystemhelper.MoveShadowToBackup")
+				return nil, nil, nil, nil, nil, errors.WithMessage(err, "filesystemhelper.MoveShadowToBackup")
 			}
 			realSize[disk.Name] = size
 
 			disksToPartsMap[disk.Name] = parts
 			for pName, c := range newChecksums {
 				checksums[pName] = c
+			}
+			if useHashOfAllFiles && len(parts) > 0 {
+				partNames := make([]string, 0, len(parts))
+				for _, p := range parts {
+					partNames = append(partNames, p.Name)
+				}
+				diskHashes, hashErr := b.fetchHashOfAllFiles(ctx, table.Database, table.Name, disk.Name, partNames)
+				if hashErr != nil {
+					return nil, nil, nil, nil, nil, errors.WithMessage(hashErr, "fetchHashOfAllFiles")
+				}
+				for pName, h := range diskHashes {
+					hashOfAllFiles[pName] = h
+				}
+			}
+
+			// Validate parts marked Required by name against the diff source's
+			// content fingerprint. If hash_of_all_files (or, when absent on
+			// either side, checksums) disagree, demote the part and link its
+			// files from shadow so it is backed up locally.
+			// See https://github.com/Altinity/clickhouse-backup/issues/1307
+			if diffTableMetadata.Database != "" && len(diffTableMetadata.Parts[disk.Name]) > 0 {
+				for idx := range parts {
+					if !parts[idx].Required {
+						continue
+					}
+					name := parts[idx].Name
+					matches := true
+					if diffHash, ok := diffTableMetadata.HashOfAllFiles[name]; ok {
+						liveHash := hashOfAllFiles[name]
+						matches = liveHash != "" && diffHash == liveHash
+					} else if diffCksum, ok := diffTableMetadata.Checksums[name]; ok {
+						liveCksum, liveOk := newChecksums[name]
+						matches = liveOk && diffCksum == liveCksum
+					}
+					if matches {
+						continue
+					}
+					logger.Info().Str("disk", disk.Name).Str("part", name).Msg("part name matched diff source but content fingerprint mismatch, backing up locally")
+					parts[idx].Required = false
+					linkedSize, linkErr := filesystemhelper.LinkPartFromShadow(shadowPath, backupShadowPath, name, table, skipProjections, version)
+					if linkErr != nil {
+						return nil, nil, nil, nil, nil, errors.Wrapf(linkErr, "LinkPartFromShadow part %s", name)
+					}
+					realSize[disk.Name] += linkedSize
+				}
 			}
 
 			logger.Debug().Str("disk", disk.Name).Str("duration", utils.HumanizeDuration(time.Since(start))).Msg("shadow moved")
@@ -991,8 +1044,8 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 					Str("database", table.Database).Str("table", table.Name).
 					Str("disk", disk.Name).Str("size", utils.FormatBytes(uint64(size))).
 					Msg("upload object_disk start")
-				if size, err = b.uploadObjectDiskParts(ctx, backupName, diffTableMetadata, backupShadowPath, disk); err != nil {
-					return nil, nil, nil, nil, errors.WithMessage(err, "b.uploadObjectDiskParts")
+				if size, err = b.uploadObjectDiskParts(ctx, backupName, parts, backupShadowPath, disk); err != nil {
+					return nil, nil, nil, nil, nil, errors.WithMessage(err, "b.uploadObjectDiskParts")
 				}
 				objectDiskSize[disk.Name] = size
 				if size > 0 {
@@ -1006,7 +1059,7 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 			// Clean all the files under the shadowPath, cause UNFREEZE unavailable
 			if version < 21004000 {
 				if err := os.RemoveAll(shadowPath); err != nil {
-					return nil, nil, nil, nil, errors.WithMessage(err, "os.RemoveAll shadowPath")
+					return nil, nil, nil, nil, nil, errors.WithMessage(err, "os.RemoveAll shadowPath")
 				}
 			}
 		}
@@ -1025,10 +1078,67 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		"table":     table.Name,
 		"database":  table.Database,
 	}).Msg("done")
-	return disksToPartsMap, realSize, objectDiskSize, checksums, nil
+	return disksToPartsMap, realSize, objectDiskSize, checksums, hashOfAllFiles, nil
 }
 
-func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string, tableDiffFromRemote metadata.TableMetadata, backupShadowPath string, disk clickhouse.Disk) (int64, error) {
+// fetchHashOfAllFiles returns name → hash_of_all_files for the given parts of
+// `database`.`table` (frozen from disk `diskName`). The value is whatever
+// ClickHouse prints in system.parts.hash_of_all_files (already lowercased); the
+// storage and compare paths are version-agnostic because both ends use the
+// server's formatting.
+//
+// We deliberately do NOT filter by disk_name: when a cache disk wraps an object
+// disk, both share the same metadata path, and system.parts reports the part
+// under the cache disk name (the disk named in the storage policy), not the
+// underlying disk that clickhouse-backup walks the shadow tree from. Filtering
+// by diskName would miss those parts (see issue #1396). Part names are unique
+// within a table's active set, and inactive copies left by a move carry
+// identical content (hence identical hash_of_all_files), so matching by
+// database+table+name is unambiguous.
+//
+// Called right after FREEZE so the active-set delta is essentially zero —
+// inactive parts also remain visible in system.parts for ~480s, which makes
+// the race window practically impossible to hit. If a frozen part is missing
+// from the result we surface a hard error rather than silently dropping it,
+// unless the table itself was dropped/detached concurrently (the documented
+// IgnoreNotExistsErrorDuringFreeze race), in which case we skip the part.
+func (b *Backuper) fetchHashOfAllFiles(ctx context.Context, database, table, diskName string, partNames []string) (map[string]string, error) {
+	var rows []struct {
+		Name string `ch:"name"`
+		Hash string `ch:"hash_of_all_files"`
+	}
+	q := "SELECT name, lower(hash_of_all_files) AS hash_of_all_files FROM system.parts WHERE database=? AND `table`=? AND has(?, name)"
+	if err := b.ch.SelectContext(ctx, &rows, q, database, table, partNames); err != nil {
+		return nil, errors.Wrap(err, "SELECT hash_of_all_files FROM system.parts")
+	}
+	hashByName := make(map[string]string, len(rows))
+	for _, r := range rows {
+		hashByName[r.Name] = r.Hash
+	}
+	for _, name := range partNames {
+		if _, ok := hashByName[name]; !ok {
+			// A part can legitimately vanish from system.parts when the table is
+			// dropped/detached concurrently right after FREEZE (the frozen files
+			// are already safe in shadow). Tolerate that race the same way the
+			// FREEZE path does; otherwise the part is genuinely missing while the
+			// table still exists, which is a real anomaly worth surfacing.
+			if b.cfg.ClickHouse.IgnoreNotExistsErrorDuringFreeze {
+				var exists []struct {
+					Cnt uint64 `ch:"cnt"`
+				}
+				existsErr := b.ch.SelectContext(ctx, &exists, "SELECT count() AS cnt FROM system.tables WHERE database=? AND name=?", database, table)
+				if existsErr == nil && (len(exists) == 0 || exists[0].Cnt == 0) {
+					log.Warn().Msgf("part %q not found in system.parts (database=%s, table=%s) after FREEZE, table no longer exists, skip hash_of_all_files", name, database, table)
+					continue
+				}
+			}
+			return nil, errors.Errorf("part %q not found in system.parts (database=%s, table=%s, disk_name=%s) after FREEZE", name, database, table, diskName)
+		}
+	}
+	return hashByName, nil
+}
+
+func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string, localParts []metadata.Part, backupShadowPath string, disk clickhouse.Disk) (int64, error) {
 	var size int64
 	var err error
 	if err = object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, disk.Name); err != nil {
@@ -1062,10 +1172,15 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 		}
 		var realSize, objSize int64
 		// upload only not required parts, https://github.com/Altinity/clickhouse-backup/issues/865
-		if tableDiffFromRemote.Database != "" && tableDiffFromRemote.Table != "" && len(tableDiffFromRemote.Parts[disk.Name]) > 0 {
+		// localParts already reflects the post-demotion Required flag from the
+		// hash_of_all_files / checksums comparison done in AddTableToLocalBackup
+		// (see https://github.com/Altinity/clickhouse-backup/issues/1307), so a
+		// Required=true entry here means the part's content also matched the
+		// diff source and the diff backup will provide the object-disk blobs.
+		if len(localParts) > 0 {
 			partPaths := strings.SplitN(strings.TrimPrefix(fPath, backupShadowPath), "/", 2)
-			for _, part := range tableDiffFromRemote.Parts[disk.Name] {
-				if part.Name == partPaths[0] {
+			for _, part := range localParts {
+				if part.Required && part.Name == partPaths[0] {
 					log.Debug().Msgf("%s exists in diff-from-remote backup", part.Name)
 					return nil
 				}

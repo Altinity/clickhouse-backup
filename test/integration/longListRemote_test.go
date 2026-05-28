@@ -22,7 +22,7 @@ func TestLongListRemote(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml ALLOW_EMPTY_BACKUPS=true RBAC_BACKUP_ALWAYS=false clickhouse-backup create_remote %s_%d", testBackupName, i))
 	}
 
-	r.NoError(env.tc.RestartContainer(t.Context(), "minio"))
+	r.NoError(env.tc.RestartContainer(t, "minio"))
 	time.Sleep(2 * time.Second)
 
 	var err error

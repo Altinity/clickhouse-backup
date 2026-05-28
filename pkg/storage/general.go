@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
@@ -52,7 +51,6 @@ type BackupDestination struct {
 	compressionLevel  int
 }
 
-var metadataCacheLock sync.RWMutex
 
 func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Backup, cfg *config.Config, retrierClassifier retrier.Classifier) error {
 	retry := retrier.New(retrier.ExponentialBackoff(cfg.General.RetriesOnFailure, common.AddRandomJitter(cfg.General.RetriesDuration, cfg.General.RetriesJitter)), retrierClassifier)
@@ -123,9 +121,9 @@ func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Back
 				return retry.RunCtx(ctx, func(ctx context.Context) error {
 					return bd.DeleteFile(ctx, path.Join(backup.BackupName, f.Name()))
 				})
-			} else {
-				return nil
 			}
+
+			return nil
 		}
 		return retry.RunCtx(ctx, func(ctx context.Context) error {
 			return bd.DeleteFile(ctx, path.Join(backup.BackupName, f.Name()))
@@ -168,18 +166,48 @@ func (bd *BackupDestination) loadMetadataCache(ctx context.Context) (map[string]
 	}
 }
 
-func (bd *BackupDestination) saveMetadataCache(ctx context.Context, listCache map[string]Backup, actualList []Backup) error {
+// writeMetadataCacheFile atomically writes the listCache map to the on-disk
+// metadata cache. Safe to call concurrently — writers can't observe a partial
+// file thanks to tempfile + rename. No pruning happens here.
+func (bd *BackupDestination) writeMetadataCacheFile(ctx context.Context, listCache map[string]Backup) error {
 	listCacheFile := path.Join(os.TempDir(), fmt.Sprintf(".clickhouse-backup-metadata.cache.%s", bd.Kind()))
-	f, err := os.OpenFile(listCacheFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	body, err := json.MarshalIndent(&listCache, "", "\t")
 	if err != nil {
-		log.Warn().Msgf("can't open %s return error %v", listCacheFile, err)
+		log.Warn().Msgf("can't json marshal %s return error %v", listCacheFile, err)
 		return nil
 	}
-	defer func() {
-		if err := f.Close(); err != nil {
-			log.Warn().Msgf("can't close %s return error %v", listCacheFile, err)
-		}
-	}()
+	tmp, err := os.CreateTemp(os.TempDir(), filepath.Base(listCacheFile)+".tmp.*")
+	if err != nil {
+		log.Warn().Msgf("can't create temp for %s return error %v", listCacheFile, err)
+		return nil
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(body); err != nil {
+		log.Warn().Msgf("can't write to %s return error %v", tmpName, err)
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return nil
+	}
+	if err := tmp.Close(); err != nil {
+		log.Warn().Msgf("can't close %s return error %v", tmpName, err)
+		_ = os.Remove(tmpName)
+		return nil
+	}
+	if err := os.Rename(tmpName, listCacheFile); err != nil {
+		log.Warn().Msgf("can't rename %s -> %s return error %v", tmpName, listCacheFile, err)
+		_ = os.Remove(tmpName)
+		return nil
+	}
+	log.Debug().Msgf("%s save %d elements", listCacheFile, len(listCache))
+	return nil
+}
+
+func (bd *BackupDestination) saveMetadataCache(ctx context.Context, listCache map[string]Backup, actualList []Backup) error {
 	for backupName := range listCache {
 		select {
 		case <-ctx.Done():
@@ -197,23 +225,54 @@ func (bd *BackupDestination) saveMetadataCache(ctx context.Context, listCache ma
 			}
 		}
 	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		body, err := json.MarshalIndent(&listCache, "", "\t")
-		if err != nil {
-			log.Warn().Msgf("can't json marshal %s return error %v", listCacheFile, err)
-			return nil
+	return bd.writeMetadataCacheFile(ctx, listCache)
+}
+
+// readBackupMetadataDirect fetches a single backup's metadata.json directly via
+// StatFile+GetFileReader, without listing the whole bucket. Returns nil if the
+// metadata.json does not exist. Returns a "broken" Backup entry on parse errors,
+// mirroring the slow-path semantics of BackupList.
+func (bd *BackupDestination) readBackupMetadataDirect(ctx context.Context, backupName string) (*Backup, error) {
+	metadataKey := path.Join(backupName, "metadata.json")
+	mf, err := bd.StatFile(ctx, metadataKey)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, nil
 		}
-		_, err = f.Write(body)
-		if err != nil {
-			log.Warn().Msgf("can't write to %s return error %v", listCacheFile, err)
-			return nil
-		}
-		log.Debug().Msgf("%s save %d elements", listCacheFile, len(listCache))
-		return nil
+		return &Backup{
+			BackupMetadata: metadata.BackupMetadata{BackupName: backupName},
+			Broken:         "broken (can't stat metadata.json)",
+		}, nil
 	}
+	r, err := bd.GetFileReader(ctx, metadataKey)
+	if err != nil {
+		return &Backup{
+			BackupMetadata: metadata.BackupMetadata{BackupName: backupName},
+			Broken:         "broken (can't open metadata.json)",
+			UploadDate:     mf.LastModified(),
+		}, nil
+	}
+	body, err := io.ReadAll(r)
+	closeErr := r.Close()
+	if err != nil {
+		return &Backup{
+			BackupMetadata: metadata.BackupMetadata{BackupName: backupName},
+			Broken:         "broken (can't read metadata.json)",
+			UploadDate:     mf.LastModified(),
+		}, nil
+	}
+	if closeErr != nil {
+		return nil, errors.WithMessage(closeErr, "BackupList close metadata reader")
+	}
+	var m metadata.BackupMetadata
+	if err := json.Unmarshal(body, &m); err != nil {
+		return &Backup{
+			BackupMetadata: metadata.BackupMetadata{BackupName: backupName},
+			Broken:         "broken (bad metadata.json)",
+			UploadDate:     mf.LastModified(),
+		}, nil
+	}
+	return &Backup{BackupMetadata: m, UploadDate: mf.LastModified()}, nil
 }
 
 func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool, parseMetadataOnly string) ([]Backup, error) {
@@ -221,9 +280,63 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 	defer func() {
 		log.Info().Dur("list_duration", time.Since(backupListStart)).Send()
 	}()
+
+	// Fast path: when the caller already knows which backup it wants, look it
+	// up in the on-disk metadata cache first; on miss, fetch metadata.json
+	// directly via StatFile+GetFileReader instead of listing the whole bucket
+	// root. This removes the per-table Walk("/") cost on incremental-chain
+	// restores (see https://github.com/Altinity/clickhouse-backup/pull/1361).
+	// Staleness on remote delete is healed by the next slow-path list (e.g.
+	// `clickhouse-backup list remote`), same as before.
+	if parseMetadata && parseMetadataOnly != "" {
+		listCache, loadErr := bd.loadMetadataCache(ctx)
+		if loadErr != nil && !os.IsNotExist(loadErr) {
+			return nil, errors.WithMessage(loadErr, "BackupList loadMetadataCache")
+		}
+		if cached, ok := listCache[parseMetadataOnly]; ok && cached.Broken == "" {
+			log.Debug().Str("backup", parseMetadataOnly).Msg("BackupList: using on-disk metadata cache")
+			return []Backup{cached}, nil
+		}
+		backup, err := bd.readBackupMetadataDirect(ctx, parseMetadataOnly)
+		if err != nil {
+			return nil, errors.WithMessage(err, "BackupList readBackupMetadataDirect")
+		}
+		if backup == nil {
+			// metadata.json not found — check if the backup prefix has any
+			// content at all. Walk with recursive=false returns top-level
+			// entries only; if we get at least one the folder exists and the
+			// backup is broken (missing metadata.json), otherwise the backup
+			// name doesn't exist on remote storage at all.
+			found := false
+			var lastModified time.Time
+			walkErr := bd.Walk(ctx, parseMetadataOnly+"/", false, func(_ context.Context, f RemoteFile) error {
+				found = true
+				lastModified = f.LastModified()
+				return io.EOF // stop after first entry
+			})
+			_ = walkErr // Walk returns io.EOF, that's fine
+			if !found {
+				return []Backup{}, nil
+			}
+			return []Backup{{
+				BackupMetadata: metadata.BackupMetadata{BackupName: parseMetadataOnly},
+				Broken:         "broken (can't stat metadata.json)",
+				UploadDate:     lastModified,
+			}}, nil
+		}
+		if backup.Broken == "" {
+			if listCache == nil {
+				listCache = map[string]Backup{}
+			}
+			listCache[parseMetadataOnly] = *backup
+			if writeErr := bd.writeMetadataCacheFile(ctx, listCache); writeErr != nil {
+				log.Warn().Err(writeErr).Msg("BackupList writeMetadataCacheFile (fast path)")
+			}
+		}
+		return []Backup{*backup}, nil
+	}
+
 	result := make([]Backup, 0)
-	metadataCacheLock.Lock()
-	defer metadataCacheLock.Unlock()
 	listCache, err := bd.loadMetadataCache(ctx)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, errors.WithMessage(err, "BackupList loadMetadataCache")

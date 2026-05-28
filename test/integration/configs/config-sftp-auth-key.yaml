@@ -20,8 +20,8 @@ sftp:
   username: "root"
   password: ""
   key: "/tmp/id_rsa"
-  path: "/root"
-  object_disk_path: "/object_disk"
+  path: "/root/{version}"
+  object_disk_path: "/object_disk/{version}"
   concurrency: 2
   compression_format: tar
   compression_level: 1

@@ -105,6 +105,8 @@ func prePullImages() {
 		fmt.Sprintf("docker.io/minio/minio:%s", getEnvDefault("MINIO_VERSION", "latest")),
 		"fsouza/fake-gcs-server:latest",
 		"mcr.microsoft.com/azure-storage/azurite:latest",
+		"mcr.microsoft.com/azure-cli:latest",
+		"gcr.io/google.com/cloudsdktool/google-cloud-cli:slim",
 		chImage,
 	}
 

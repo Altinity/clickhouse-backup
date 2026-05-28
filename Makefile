@@ -6,13 +6,7 @@ GIT_COMMIT = $(shell git rev-parse HEAD)
 DATE = $(shell date +%F)
 VENDOR = "Eugene Klimov <eklimov@altinity.com>"
 URL = https://github.com/Altinity/$(NAME)
-define DESC =
-'Tool for easy ClickHouse backup and restore with S3 and GCS support
- Easy creating and restoring backups of all or specific tables
- Efficient storing of multiple backups on the file system
- Most efficient AWS S3/GCS uploading and downloading with streaming compression
- Support of incremental backups on remote storages'
-endef
+DESC = 'Tool for easy ClickHouse backup and restore with S3 and GCS support. Easy creating and restoring backups of all or specific tables. Efficient storing of multiple backups on the file system. Most efficient AWS S3/GCS uploading and downloading with streaming compression. Support of incremental backups on remote storages.'
 HOST_OS = $(shell bash -c 'source <(go env) && echo $$GOHOSTOS')
 HOST_ARCH = $(shell bash -c 'source <(go env) && echo $$GOHOSTARCH')
 UNAME_S := $(shell uname -s)

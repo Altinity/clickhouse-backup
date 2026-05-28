@@ -47,17 +47,33 @@ func TestReplicatedCopyToDetached(t *testing.T) {
 	r.NoError(env.dropDatabase(dbName, false))
 
 	// Wait for ZK path cleanup - DROP DATABASE removes replica entry
-	// synchronously but table-level ZK path cleanup is async
+	// synchronously but table-level ZK path cleanup is async. On 22.8 the table-level
+	// znode can outlive the database drop long enough for restore's CREATE TABLE to
+	// reattach to it, which would replicate the original 100 rows into the
+	// freshly-created (and supposedly empty) table. To prevent that:
+	//   1. Explicitly DROP REPLICA by zk path (cheap if replica is already gone).
+	//   2. Poll system.zookeeper for both the table znode and its replicas/ subtree
+	//      until both are gone, with a generous timeout.
 	resolvedZkPath := fmt.Sprintf("/clickhouse/tables/0/%s/%s", dbName, tableName)
-	var zkCount uint64
-	for i := 0; i < 100; i++ {
-		zkCount = 0
-		if selectErr := env.ch.SelectSingleRowNoCtx(&zkCount,
-			"SELECT count() FROM system.zookeeper WHERE path=?", resolvedZkPath); selectErr != nil || zkCount == 0 {
+	_ = env.ch.QueryContext(t.Context(), fmt.Sprintf("SYSTEM DROP REPLICA '{replica}' FROM ZKPATH '%s'", resolvedZkPath))
+	zkCleared := false
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		var zkPathChildren, zkReplicasChildren uint64
+		errPath := env.ch.SelectSingleRowNoCtx(&zkPathChildren,
+			"SELECT count() FROM system.zookeeper WHERE path=?", resolvedZkPath)
+		errReplicas := env.ch.SelectSingleRowNoCtx(&zkReplicasChildren,
+			"SELECT count() FROM system.zookeeper WHERE path=?", resolvedZkPath+"/replicas")
+		// errPath != nil typically means the znode no longer exists, which is what we want.
+		pathGone := errPath != nil || zkPathChildren == 0
+		replicasGone := errReplicas != nil || zkReplicasChildren == 0
+		if pathGone && replicasGone {
+			zkCleared = true
 			break
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
+	r.True(zkCleared, "ZK path %s still has children after 60s; restore would reattach to stale state", resolvedZkPath)
 
 	// Restore with --replicated-copy-to-detached flag, shall restore schema without data
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--replicated-copy-to-detached", backupName)

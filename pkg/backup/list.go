@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/custom"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
@@ -525,61 +526,544 @@ func (b *Backuper) GetTables(ctx context.Context, tablePattern string) ([]clickh
 	return allTables, nil
 }
 
-// PrintTables - print all tables suitable for backup
-func (b *Backuper) PrintTables(printAll bool, tablePattern, remoteBackup string) error {
-	var err error
+// TableRow is the output projection used by the `tables` command for non-text formats.
+// Disks is exposed as a structured list in JSON/YAML and as a comma-joined string in CSV/TSV.
+type TableRow struct {
+	Database   string   `json:"database" yaml:"database" csv:"database"`
+	Table      string   `json:"table" yaml:"table" csv:"table"`
+	TotalBytes uint64   `json:"total_bytes" yaml:"total_bytes" csv:"total_bytes"`
+	Size       string   `json:"size" yaml:"size" csv:"size"`
+	Parts      int      `json:"parts" yaml:"parts" csv:"parts"`
+	Disks      []string `json:"disks" yaml:"disks" csv:"-"`
+	DisksStr   string   `json:"-" yaml:"-" csv:"disks"`
+	Skip       bool     `json:"skip" yaml:"skip" csv:"skip"`
+	BackupType string   `json:"backup_type,omitempty" yaml:"backup_type,omitempty" csv:"backup_type"`
+}
+
+// InfoResult wraps a per-backup result with aggregate fields for JSON/YAML output of
+// `tables --local-backup` / `tables --remote-backup`.
+type InfoResult struct {
+	BackupName   string     `json:"backup_name" yaml:"backup_name"`
+	BackupType   string     `json:"backup_type" yaml:"backup_type"`
+	TablePattern string     `json:"table_pattern,omitempty" yaml:"table_pattern,omitempty"`
+	TableCount   int        `json:"table_count" yaml:"table_count"`
+	TotalBytes   uint64     `json:"total_bytes" yaml:"total_bytes"`
+	TotalSize    string     `json:"total_size" yaml:"total_size"`
+	TotalParts   int        `json:"total_parts" yaml:"total_parts"`
+	Tables       []TableRow `json:"tables" yaml:"tables"`
+}
+
+// tableSection groups rows of a single backup location for layered text/JSON output.
+type tableSection struct {
+	BackupName   string
+	BackupType   string
+	TablePattern string
+	Rows         []TableRow
+}
+
+// PrintTables - print all tables suitable for backup.
+// When localBackup or remoteBackup is set, list tables from the corresponding backup
+// (per-table size and parts count are read from `metadata.TableMetadata`); both flags may
+// be set simultaneously to render `local` and `remote` sections in one go.
+// Otherwise tables are read from the live ClickHouse server.
+// `format` controls output: text (default), json, yaml, csv, tsv.
+func (b *Backuper) PrintTables(printAll bool, tablePattern, remoteBackup, localBackup, format string) error {
 	ctx, cancel, _ := status.Current.GetContextWithCancel(status.NotFromAPI)
 	defer cancel()
-	if err = b.ch.Connect(); err != nil {
+	if err := b.ch.Connect(); err != nil {
 		return errors.Wrap(err, "can't connect to clickhouse")
 	}
 	defer b.ch.Close()
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.DiscardEmptyColumns)
-	if remoteBackup == "" {
-		if err = b.printTablesLocal(ctx, tablePattern, printAll, w); err != nil {
-			return errors.WithMessage(err, "PrintTables printTablesLocal")
-		}
-	} else {
-		if err = b.printTablesRemote(ctx, remoteBackup, tablePattern, printAll, w); err != nil {
-			return errors.WithMessage(err, "PrintTables printTablesRemote")
-		}
 
+	if localBackup == "" && remoteBackup == "" {
+		rows, err := b.collectTablesFromLive(ctx, tablePattern)
+		if err != nil {
+			return err
+		}
+		if !printAll {
+			rows = filterSkippedRows(rows)
+		}
+		return printLiveTableRows(rows, format)
 	}
-	if err := w.Flush(); err != nil {
-		log.Error().Msgf("can't flush tabular writer error: %v", err)
+
+	var sections []tableSection
+	if localBackup != "" {
+		rows, err := b.collectTablesFromLocalBackup(ctx, localBackup, tablePattern)
+		if err != nil {
+			return err
+		}
+		if !printAll {
+			rows = filterSkippedRows(rows)
+		}
+		sections = append(sections, tableSection{
+			BackupName:   localBackup,
+			BackupType:   "local",
+			TablePattern: tablePattern,
+			Rows:         rows,
+		})
 	}
-	return nil
+	if remoteBackup != "" {
+		rows, err := b.collectTablesFromRemoteBackup(ctx, remoteBackup, tablePattern)
+		if err != nil {
+			return err
+		}
+		if !printAll {
+			rows = filterSkippedRows(rows)
+		}
+		sections = append(sections, tableSection{
+			BackupName:   remoteBackup,
+			BackupType:   "remote",
+			TablePattern: tablePattern,
+			Rows:         rows,
+		})
+	}
+	return printBackupSections(sections, format)
 }
 
-func (b *Backuper) printTablesLocal(ctx context.Context, tablePattern string, printAll bool, w *tabwriter.Writer) error {
-	logger := log.With().Str("logger", "PrintTablesLocal").Logger()
+// GetTableRowsForLocalBackup returns per-table rows (db, table, size, parts, disks, skip)
+// for a local backup, reading metadata from disk; intended for callers like the REST API.
+// When printAll is false, tables matching skip_tables are filtered out.
+func (b *Backuper) GetTableRowsForLocalBackup(ctx context.Context, backupName, tablePattern string, printAll bool) ([]TableRow, error) {
+	if err := b.ch.Connect(); err != nil {
+		return nil, errors.Wrap(err, "can't connect to clickhouse")
+	}
+	defer b.ch.Close()
+	rows, err := b.collectTablesFromLocalBackup(ctx, backupName, tablePattern)
+	if err != nil {
+		return nil, err
+	}
+	if printAll {
+		return rows, nil
+	}
+	return filterSkippedRows(rows), nil
+}
+
+// GetTableRowsForRemoteBackup returns per-table rows (db, table, size, parts, disks, skip)
+// for a remote backup, downloading per-table metadata; intended for callers like the REST API.
+// When printAll is false, tables matching skip_tables are filtered out.
+func (b *Backuper) GetTableRowsForRemoteBackup(ctx context.Context, backupName, tablePattern string, printAll bool) ([]TableRow, error) {
+	if err := b.ch.Connect(); err != nil {
+		return nil, errors.Wrap(err, "can't connect to clickhouse")
+	}
+	defer b.ch.Close()
+	rows, err := b.collectTablesFromRemoteBackup(ctx, backupName, tablePattern)
+	if err != nil {
+		return nil, err
+	}
+	if printAll {
+		return rows, nil
+	}
+	return filterSkippedRows(rows), nil
+}
+
+func filterSkippedRows(rows []TableRow) []TableRow {
+	out := rows[:0]
+	for _, r := range rows {
+		if !r.Skip {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func (b *Backuper) collectTablesFromLive(ctx context.Context, tablePattern string) ([]TableRow, error) {
 	allTables, err := b.GetTables(ctx, tablePattern)
 	if err != nil {
-		return errors.WithMessage(err, "printTablesLocal GetTables")
+		return nil, errors.WithMessage(err, "collectTablesFromLive GetTables")
 	}
 	disks, err := b.ch.GetDisks(ctx, false)
 	if err != nil {
-		return errors.WithMessage(err, "printTablesLocal GetDisks")
+		return nil, errors.WithMessage(err, "collectTablesFromLive GetDisks")
 	}
+	rows := make([]TableRow, 0, len(allTables))
 	for _, table := range allTables {
-		if table.Skip && !printAll {
-			continue
-		}
 		var tableDisks []string
 		for disk := range clickhouse.GetDisksByPaths(disks, table.DataPaths) {
 			tableDisks = append(tableDisks, disk)
 		}
-		if table.Skip {
-			if bytes, err := fmt.Fprintf(w, "%s.%s\t%s\t%v\tskip\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes), strings.Join(tableDisks, ",")); err != nil {
-				logger.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
-			}
+		sort.Strings(tableDisks)
+		rows = append(rows, TableRow{
+			Database:   table.Database,
+			Table:      table.Name,
+			TotalBytes: table.TotalBytes,
+			Size:       utils.FormatBytes(table.TotalBytes),
+			Disks:      tableDisks,
+			DisksStr:   strings.Join(tableDisks, ","),
+			Skip:       table.Skip,
+			BackupType: string(table.BackupType),
+		})
+	}
+	return rows, nil
+}
+
+func (b *Backuper) collectTablesFromLocalBackup(ctx context.Context, backupName, tablePattern string) ([]TableRow, error) {
+	localBackup, _, err := b.getLocalBackup(ctx, backupName, nil)
+	if err != nil {
+		return nil, errors.WithMessage(err, "collectTablesFromLocalBackup getLocalBackup")
+	}
+	filtered := filterBackupTablesByPattern(localBackup.Tables, tablePattern)
+	if len(filtered) == 0 && tablePattern != "" {
+		log.Warn().Msgf("no tables matching pattern '%s' found in local backup '%s'", tablePattern, backupName)
+	}
+	rows := make([]TableRow, 0, len(filtered))
+	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
+	for _, t := range filtered {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
+		tmFile := path.Join(metadataPath, common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table)))
+		var tm metadata.TableMetadata
+		if _, err := tm.Load(tmFile); err != nil {
+			log.Warn().Str("table", tableName).Err(err).Msg("can't load table metadata, skipping size/parts")
+			rows = append(rows, TableRow{Database: t.Database, Table: t.Table, Disks: []string{}, Skip: b.shouldSkipByTableName(tableName) || IsInformationSchema(t.Database)})
 			continue
 		}
-		if bytes, err := fmt.Fprintf(w, "%s.%s\t%s\t%v\t%v\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes), strings.Join(tableDisks, ","), table.BackupType); err != nil {
-			logger.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
+		rows = append(rows, b.tableRowFromMetadata(t, &tm))
+	}
+	return rows, nil
+}
+
+func (b *Backuper) collectTablesFromRemoteBackup(ctx context.Context, backupName, tablePattern string) ([]TableRow, error) {
+	if b.cfg.General.RemoteStorage == "none" || b.cfg.General.RemoteStorage == "custom" {
+		return nil, errors.New("`tables --remote-backup` does not support `none` and `custom` remote storage")
+	}
+	ownDst := false
+	if b.dst == nil {
+		bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
+		if err != nil {
+			return nil, errors.WithMessage(err, "collectTablesFromRemoteBackup NewBackupDestination")
+		}
+		if err := bd.Connect(ctx); err != nil {
+			return nil, errors.Wrap(err, "can't connect to remote storage")
+		}
+		b.dst = bd
+		ownDst = true
+	}
+	defer func() {
+		if ownDst {
+			if err := b.dst.Close(ctx); err != nil {
+				log.Warn().Msgf("can't close BackupDestination error: %v", err)
+			}
+			b.dst = nil
+		}
+	}()
+
+	backupList, err := b.dst.BackupList(ctx, true, backupName)
+	if err != nil {
+		return nil, errors.WithMessage(err, "collectTablesFromRemoteBackup BackupList")
+	}
+	var remoteBackupMeta *storage.Backup
+	for i := range backupList {
+		if backupList[i].BackupName == backupName {
+			remoteBackupMeta = &backupList[i]
+			break
 		}
 	}
-	return nil
+	if remoteBackupMeta == nil {
+		return nil, errors.Errorf("backup '%s' not found on remote storage", backupName)
+	}
+
+	filtered := filterBackupTablesByPattern(remoteBackupMeta.Tables, tablePattern)
+	if len(filtered) == 0 && tablePattern != "" {
+		log.Warn().Msgf("no tables matching pattern '%s' found in remote backup '%s'", tablePattern, backupName)
+	}
+	rows := make([]TableRow, 0, len(filtered))
+	for _, t := range filtered {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
+		tmPath := path.Join(backupName, "metadata", common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table)))
+		tmReader, err := b.dst.GetFileReader(ctx, tmPath)
+		if err != nil {
+			log.Warn().Str("table", tableName).Err(err).Msg("can't read remote table metadata, skipping size/parts")
+			rows = append(rows, TableRow{Database: t.Database, Table: t.Table, Disks: []string{}, Skip: b.shouldSkipByTableName(tableName) || IsInformationSchema(t.Database)})
+			continue
+		}
+		data, readErr := io.ReadAll(tmReader)
+		if closeErr := tmReader.Close(); closeErr != nil {
+			log.Warn().Err(closeErr).Str("path", tmPath).Msg("can't close reader")
+		}
+		if readErr != nil {
+			return nil, errors.Wrapf(readErr, "io.ReadAll(%s)", tmPath)
+		}
+		var tm metadata.TableMetadata
+		if jsonErr := json.Unmarshal(data, &tm); jsonErr != nil {
+			log.Warn().Str("table", tableName).Err(jsonErr).Msg("can't unmarshal remote table metadata, skipping size/parts")
+			rows = append(rows, TableRow{Database: t.Database, Table: t.Table, Disks: []string{}, Skip: b.shouldSkipByTableName(tableName) || IsInformationSchema(t.Database)})
+			continue
+		}
+		rows = append(rows, b.tableRowFromMetadata(t, &tm))
+	}
+	return rows, nil
+}
+
+func (b *Backuper) tableRowFromMetadata(t metadata.TableTitle, tm *metadata.TableMetadata) TableRow {
+	tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
+	disks := []string{}
+	for disk := range tm.Size {
+		disks = append(disks, disk)
+	}
+	sort.Strings(disks)
+	partCount := 0
+	for _, parts := range tm.Parts {
+		partCount += len(parts)
+	}
+	return TableRow{
+		Database:   t.Database,
+		Table:      t.Table,
+		TotalBytes: tm.TotalBytes,
+		Size:       utils.FormatBytes(tm.TotalBytes),
+		Parts:      partCount,
+		Disks:      disks,
+		DisksStr:   strings.Join(disks, ","),
+		Skip:       IsInformationSchema(t.Database) || b.shouldSkipByTableName(tableName),
+	}
+}
+
+// filterBackupTablesByPattern keeps only tables matching any comma-separated glob pattern.
+// Empty pattern returns the input unchanged.
+func filterBackupTablesByPattern(tables []metadata.TableTitle, tablePattern string) []metadata.TableTitle {
+	if tablePattern == "" {
+		return tables
+	}
+	patterns := strings.Split(tablePattern, ",")
+	// https://github.com/Altinity/clickhouse-backup/issues/1091
+	replacer := strings.NewReplacer("/", "_", `\`, "_")
+	result := make([]metadata.TableTitle, 0, len(tables))
+	for _, t := range tables {
+		tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
+		for _, p := range patterns {
+			p = strings.Trim(p, " \t\r\n")
+			if p == "*" {
+				result = append(result, t)
+				break
+			}
+			if matched, _ := filepath.Match(replacer.Replace(p), replacer.Replace(tableName)); matched {
+				result = append(result, t)
+				break
+			}
+		}
+	}
+	return result
+}
+
+// sortTableRows sorts rows by database.table for deterministic, human-friendly output.
+func sortTableRows(rows []TableRow) {
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Database != rows[j].Database {
+			return rows[i].Database < rows[j].Database
+		}
+		return rows[i].Table < rows[j].Table
+	})
+}
+
+// printLiveTableRows renders rows from the live ClickHouse server (no backup header / TOTAL).
+func printLiveTableRows(rows []TableRow, format string) error {
+	switch format {
+	case "json":
+		data, err := json.Marshal(rows)
+		if err != nil {
+			return errors.WithMessage(err, "printLiveTableRows json.Marshal")
+		}
+		fmt.Println(string(data))
+		return nil
+	case "yaml":
+		data, err := yaml.Marshal(rows)
+		if err != nil {
+			return errors.WithMessage(err, "printLiveTableRows yaml.Marshal")
+		}
+		fmt.Print(string(data))
+		return nil
+	case "csv":
+		s, err := gocsv.MarshalString(rows)
+		if err != nil {
+			return errors.WithMessage(err, "printLiveTableRows csv MarshalString")
+		}
+		fmt.Print(s)
+		return nil
+	case "tsv":
+		gocsv.SetCSVWriter(func(out io.Writer) *gocsv.SafeCSVWriter {
+			writer := gocsv.NewSafeCSVWriter(csv.NewWriter(out))
+			writer.Comma = '\t'
+			return writer
+		})
+		s, err := gocsv.MarshalString(rows)
+		if err != nil {
+			return errors.WithMessage(err, "printLiveTableRows tsv MarshalString")
+		}
+		fmt.Print(s)
+		return nil
+	case "text", "":
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.DiscardEmptyColumns)
+		for _, r := range rows {
+			marker := r.BackupType
+			if r.Skip {
+				marker = "skip"
+			}
+			if _, err := fmt.Fprintf(w, "%s.%s\t%s\t%d\t%s\t%s\n", r.Database, r.Table, r.Size, r.Parts, r.DisksStr, marker); err != nil {
+				log.Error().Msgf("printLiveTableRows Fprintf error: %v", err)
+			}
+		}
+		return w.Flush()
+	}
+	return errors.Errorf("unknown format '%s', use one of: text, json, yaml, csv, tsv", format)
+}
+
+// buildInfoResults transforms tableSections into the InfoResult projection (with totals
+// computed from rendered rows).
+func buildInfoResults(sections []tableSection) []InfoResult {
+	results := make([]InfoResult, 0, len(sections))
+	for _, s := range sections {
+		var totalBytes uint64
+		var totalParts int
+		for _, r := range s.Rows {
+			totalBytes += r.TotalBytes
+			totalParts += r.Parts
+		}
+		results = append(results, InfoResult{
+			BackupName:   s.BackupName,
+			BackupType:   s.BackupType,
+			TablePattern: s.TablePattern,
+			TableCount:   len(s.Rows),
+			TotalBytes:   totalBytes,
+			TotalSize:    utils.FormatBytes(totalBytes),
+			TotalParts:   totalParts,
+			Tables:       s.Rows,
+		})
+	}
+	return results
+}
+
+// printBackupSections renders one or more tableSection in the requested format.
+// JSON/YAML get an InfoResult wrapper (single object for one section, array for several).
+// CSV/TSV emit per-section blocks separated by a blank line.
+// Text gets `Backup: <name> (type)` header, optional `Filter:` line, sorted rows, and a TOTAL line.
+func printBackupSections(sections []tableSection, format string) error {
+	for i := range sections {
+		sortTableRows(sections[i].Rows)
+	}
+	switch format {
+	case "json":
+		results := buildInfoResults(sections)
+		var data []byte
+		var err error
+		if len(results) == 1 {
+			data, err = json.MarshalIndent(results[0], "", "  ")
+		} else {
+			data, err = json.MarshalIndent(results, "", "  ")
+		}
+		if err != nil {
+			return errors.WithMessage(err, "printBackupSections json.Marshal")
+		}
+		fmt.Println(string(data))
+		return nil
+	case "yaml":
+		results := buildInfoResults(sections)
+		var data []byte
+		var err error
+		if len(results) == 1 {
+			data, err = yaml.Marshal(results[0])
+		} else {
+			data, err = yaml.Marshal(results)
+		}
+		if err != nil {
+			return errors.WithMessage(err, "printBackupSections yaml.Marshal")
+		}
+		fmt.Print(string(data))
+		return nil
+	case "csv":
+		for i, s := range sections {
+			if i > 0 {
+				fmt.Println()
+			}
+			csvString, err := gocsv.MarshalString(s.Rows)
+			if err != nil {
+				return errors.WithMessage(err, "printBackupSections csv MarshalString")
+			}
+			fmt.Print(csvString)
+		}
+		return nil
+	case "tsv":
+		gocsv.SetCSVWriter(func(out io.Writer) *gocsv.SafeCSVWriter {
+			writer := gocsv.NewSafeCSVWriter(csv.NewWriter(out))
+			writer.Comma = '\t'
+			return writer
+		})
+		for i, s := range sections {
+			if i > 0 {
+				fmt.Println()
+			}
+			csvString, err := gocsv.MarshalString(s.Rows)
+			if err != nil {
+				return errors.WithMessage(err, "printBackupSections tsv MarshalString")
+			}
+			fmt.Print(csvString)
+		}
+		return nil
+	case "text", "":
+		for i, s := range sections {
+			if i > 0 {
+				fmt.Println()
+			}
+			if err := renderTextSection(s); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return errors.Errorf("unknown format '%s', use one of: text, json, yaml, csv, tsv", format)
+}
+
+func renderTextSection(s tableSection) error {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
+	if _, err := fmt.Fprintf(w, "Backup:\t%s (%s)\n", s.BackupName, s.BackupType); err != nil {
+		return err
+	}
+	if s.TablePattern != "" {
+		if _, err := fmt.Fprintf(w, "Filter:\t%s\n", s.TablePattern); err != nil {
+			return err
+		}
+	}
+	if len(s.Rows) == 0 {
+		fmt.Fprintln(w)
+		if _, err := fmt.Fprintln(w, "(no tables)"); err != nil {
+			return err
+		}
+		return w.Flush()
+	}
+	fmt.Fprintln(w)
+	if _, err := fmt.Fprintln(w, "TABLE\tSIZE\tPARTS\tDISKS\tFLAGS"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w, "-----\t----\t-----\t-----\t-----"); err != nil {
+		return err
+	}
+	var totalBytes uint64
+	var totalParts int
+	for _, r := range s.Rows {
+		marker := r.BackupType
+		if r.Skip {
+			marker = "skip"
+		}
+		if _, err := fmt.Fprintf(w, "%s.%s\t%s\t%d\t%s\t%s\n", r.Database, r.Table, r.Size, r.Parts, r.DisksStr, marker); err != nil {
+			return err
+		}
+		totalBytes += r.TotalBytes
+		totalParts += r.Parts
+	}
+	if _, err := fmt.Fprintln(w, "-----\t----\t-----\t-----\t-----"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "TOTAL (%d tables)\t%s\t%d\t\t\n", len(s.Rows), utils.FormatBytes(totalBytes), totalParts); err != nil {
+		return err
+	}
+	return w.Flush()
 }
 
 func (b *Backuper) GetTablesRemote(ctx context.Context, backupName string, tablePattern string) ([]clickhouse.Table, error) {
@@ -654,21 +1138,3 @@ func (b *Backuper) GetTablesRemote(ctx context.Context, backupName string, table
 	return tables, nil
 }
 
-// printTablesRemote https://github.com/Altinity/clickhouse-backup/issues/778
-func (b *Backuper) printTablesRemote(ctx context.Context, backupName string, tablePattern string, printAll bool, w *tabwriter.Writer) error {
-	tables, err := b.GetTablesRemote(ctx, backupName, tablePattern)
-	if err != nil {
-		return errors.WithMessage(err, "printTablesRemote GetTablesRemote")
-	}
-
-	for _, t := range tables {
-		if t.Skip && !printAll {
-			continue
-		}
-		if bytes, err := fmt.Fprintf(w, "%s.%s\tskip=%v\n", t.Database, t.Name, t.Skip); err != nil {
-			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
-		}
-	}
-
-	return nil
-}

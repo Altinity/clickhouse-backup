@@ -165,6 +165,6 @@ func TestNamedCollections(t *testing.T) {
 		})
 	}
 	env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/test_named_collection.csv")
-	env.checkObjectStorageIsEmpty(t, r, "S3")
+	env.checkObjectStorageIsEmpty(t, r, "S3", "config-s3.yml")
 	env.Cleanup(t, r)
 }
