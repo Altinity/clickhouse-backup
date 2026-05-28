@@ -110,20 +110,35 @@ XML
 	env.queryWithNoError(r, fmt.Sprintf(
 		"OPTIMIZE TABLE %s.%s FINAL", dbName, tableName,
 	))
-	// Wait for TTL moves to complete
-	time.Sleep(5 * time.Second)
 	env.queryWithNoError(r, fmt.Sprintf(
 		"ALTER TABLE %s.%s MATERIALIZE TTL", dbName, tableName,
 	))
-	time.Sleep(5 * time.Second)
 
-	// Verify data exists on both disks
+	// Poll system.parts until active parts appear on either disk.
+	// TTL moves are asynchronous; on slow CI runners a fixed 10s sleep is not
+	// always sufficient. Wait up to 60s for at least one active part to exist.
 	var localParts, s3Parts uint64
-	r.NoError(env.ch.SelectSingleRowNoCtx(&localParts,
-		fmt.Sprintf("SELECT count() FROM system.parts WHERE database='%s' AND `table`='%s' AND active AND disk_name='default'", dbName, tableName)))
-	r.NoError(env.ch.SelectSingleRowNoCtx(&s3Parts,
-		fmt.Sprintf("SELECT count() FROM system.parts WHERE database='%s' AND `table`='%s' AND active AND disk_name='s3_disk'", dbName, tableName)))
-	log.Debug().Msgf("Parts distribution: default=%d, s3_disk=%d", localParts, s3Parts)
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		r.NoError(env.ch.SelectSingleRowNoCtx(&localParts,
+			fmt.Sprintf("SELECT count() FROM system.parts WHERE database='%s' AND `table`='%s' AND active AND disk_name='default'", dbName, tableName)))
+		r.NoError(env.ch.SelectSingleRowNoCtx(&s3Parts,
+			fmt.Sprintf("SELECT count() FROM system.parts WHERE database='%s' AND `table`='%s' AND active AND disk_name LIKE 's3%%'", dbName, tableName)))
+		if s3Parts > 0 && localParts > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	log.Debug().Msgf("Parts distribution: local=%d, s3=%d", localParts, s3Parts)
+	if s3Parts == 0 || localParts == 0 {
+		var diag string
+		r.NoError(env.ch.SelectSingleRowNoCtx(&diag,
+			fmt.Sprintf("SELECT toString(groupArray((disk_name, name, active))) FROM system.parts WHERE database='%s' AND `table`='%s'", dbName, tableName)))
+		log.Warn().Msgf("Parts diagnostic: %s", diag)
+	}
 	r.True(s3Parts > 0 || localParts > 0, "expected at least some parts to exist")
 
 	totalRows := uint64(1500)

@@ -50,12 +50,22 @@ func TestHardlinksExistsFiles(t *testing.T) {
 			} `json:"parts"`
 		}
 		r.NoError(json.Unmarshal([]byte(out), &tableMeta))
-		r.Greater(len(tableMeta.Parts["default"]), 0)
+		// Parts are keyed by disk_name. With hot_and_cold storage policy a fresh
+		// INSERT usually lands on "default" (hot_volume), but the actual disk
+		// name may vary between ClickHouse versions and storage configurations.
+		// Collect parts from every disk rather than hard-coding "default".
+		allParts := make([]struct {
+			Name string `json:"name"`
+		}, 0)
+		for _, parts := range tableMeta.Parts {
+			allParts = append(allParts, parts...)
+		}
+		r.Greater(len(allParts), 0, "expected at least one part in metadata, got Parts=%v", tableMeta.Parts)
 		useHashOfAllFiles := compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.11") >= 0
 		if useHashOfAllFiles {
 			r.Empty(tableMeta.Checksums, "checksums should be empty for ClickHouse >= 19.11")
 			r.NotEmpty(tableMeta.HashOfAllFiles, "hash_of_all_files should not be empty for ClickHouse >= 19.11")
-			for _, part := range tableMeta.Parts["default"] {
+			for _, part := range allParts {
 				r.Contains(tableMeta.HashOfAllFiles, part.Name)
 				hexStr := tableMeta.HashOfAllFiles[part.Name]
 				r.Len(hexStr, 32, "hash_of_all_files must be 32 hex chars for part %s, got %q", part.Name, hexStr)
@@ -68,7 +78,7 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		} else {
 			r.NotEmpty(tableMeta.Checksums, "checksums should not be empty for ClickHouse < 19.11")
 			r.Empty(tableMeta.HashOfAllFiles, "hash_of_all_files should be empty for ClickHouse < 19.11")
-			for _, part := range tableMeta.Parts["default"] {
+			for _, part := range allParts {
 				r.Contains(tableMeta.Checksums, part.Name)
 			}
 		}
