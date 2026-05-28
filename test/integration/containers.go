@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -216,7 +217,7 @@ func (tc *TestContainers) StartAll(ctx context.Context) error {
 	healthCh := make(chan startResult, len(healthServices))
 	for _, svc := range healthServices {
 		go func(name string, timeout time.Duration) {
-			healthCh <- startResult{name: name, err: tc.waitHealthy(ctx, name, timeout)}
+			healthCh <- startResult{name: name, err: tc.waitHealthy(ctx, name, timeout, "")}
 		}(svc.name, svc.timeout)
 	}
 	for range healthServices {
@@ -230,7 +231,7 @@ func (tc *TestContainers) StartAll(ctx context.Context) error {
 	if err = tc.startClickHouse(ctx, curDir, configsDir); err != nil {
 		return err
 	}
-	if err = tc.waitHealthy(ctx, "clickhouse", 300*time.Second); err != nil {
+	if err = tc.waitHealthy(ctx, "clickhouse", 300*time.Second, ""); err != nil {
 		return fmt.Errorf("wait clickhouse: %w", err)
 	}
 
@@ -238,7 +239,7 @@ func (tc *TestContainers) StartAll(ctx context.Context) error {
 	if err = tc.startClickHouseBackup(ctx, curDir, configsDir); err != nil {
 		return err
 	}
-	if err = tc.waitHealthy(ctx, "clickhouse-backup", 60*time.Second); err != nil {
+	if err = tc.waitHealthy(ctx, "clickhouse-backup", 60*time.Second, ""); err != nil {
 		return fmt.Errorf("wait clickhouse-backup: %w", err)
 	}
 
@@ -309,17 +310,24 @@ func (tc *TestContainers) GetMappedPort(ctx context.Context, name string, contai
 	return host, port, nil
 }
 
-// RestartContainer restarts a container by name.
-func (tc *TestContainers) RestartContainer(ctx context.Context, name string) error {
+// RestartContainer restarts a container by name and waits for it to become healthy.
+// Waiting for healthy avoids racing with the entrypoint's init-time clickhouse-server,
+// which entrypoint.sh SIGTERMs before exec'ing the real server when
+// CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS=true.
+func (tc *TestContainers) RestartContainer(t *testing.T, name string) error {
+	ctx := t.Context()
 	info := tc.containers[name]
 	if info == nil {
 		return fmt.Errorf("no container %s", name)
 	}
 	timeout := 30
-	return tc.client.ContainerRestart(ctx, info.ID, container.StopOptions{Timeout: &timeout})
+	if err := tc.client.ContainerRestart(ctx, info.ID, container.StopOptions{Timeout: &timeout}); err != nil {
+		return err
+	}
+	return tc.waitHealthy(ctx, name, 10*time.Minute, t.Name())
 }
 
-func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout time.Duration) error {
+func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout time.Duration, testName string) error {
 	info := tc.containers[name]
 	if info == nil {
 		return fmt.Errorf("no container %s", name)
@@ -335,6 +343,11 @@ func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout 
 		time.Sleep(2 * time.Second)
 	}
 	tc.dumpContainerInfo(ctx, name)
+	if name == "clickhouse" && strings.HasPrefix(testName, "TestAzure") {
+		if _, ok := tc.containers["azure"]; ok {
+			tc.dumpContainerInfo(ctx, "azure")
+		}
+	}
 	return fmt.Errorf("container %s not healthy after %v", name, timeout)
 }
 
@@ -350,6 +363,65 @@ func (tc *TestContainers) DumpAllContainerLogs(ctx context.Context) {
 	for _, name := range names {
 		tc.dumpContainerInfo(ctx, name)
 	}
+}
+
+// DumpContainerLogsSince dumps state and logs for a single container limited to a time window.
+// Used to provide focused diagnostics when a query fails — we only want logs from the moment the
+// query started, not the entire test history. A small look-back buffer is added to catch
+// shutdown/restart messages that may precede the failure.
+func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name string, since time.Time) {
+	info := tc.containers[name]
+	if info == nil {
+		return
+	}
+	inspect, err := tc.client.ContainerInspect(ctx, info.ID)
+	if err != nil {
+		log.Error().Err(err).Msgf("can't inspect container %s (%s)", name, info.ID[:12])
+		return
+	}
+	state := "unknown"
+	if inspect.State != nil {
+		state = inspect.State.Status
+		if inspect.State.Health != nil {
+			state += ", health=" + inspect.State.Health.Status
+		}
+		if inspect.State.ExitCode != 0 {
+			state += fmt.Sprintf(", exitCode=%d", inspect.State.ExitCode)
+		}
+		if inspect.State.OOMKilled {
+			state += ", OOMKilled"
+		}
+		if inspect.State.StartedAt != "" {
+			state += ", startedAt=" + inspect.State.StartedAt
+		}
+		if inspect.State.FinishedAt != "" && inspect.State.FinishedAt != "0001-01-01T00:00:00Z" {
+			state += ", finishedAt=" + inspect.State.FinishedAt
+		}
+	}
+	if since.IsZero() {
+		since = time.Now()
+	}
+	since = since.Add(-30 * time.Second)
+	log.Error().Msgf("=== container %s (%s) state: %s ===", name, info.ID[:12], state)
+
+	logOpts := container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Timestamps: true,
+		Since:      fmt.Sprintf("%d", since.Unix()),
+	}
+	reader, logErr := tc.client.ContainerLogs(ctx, info.ID, logOpts)
+	if logErr != nil {
+		log.Error().Err(logErr).Msgf("can't get logs for %s", name)
+		return
+	}
+	defer func() {
+		if closeErr := reader.Close(); closeErr != nil {
+			log.Error().Err(closeErr).Msg("can't close DumpContainerLogsSince reader")
+		}
+	}()
+	logBytes, _ := io.ReadAll(reader)
+	log.Error().Msgf("=== %s logs since %s ===\n%s", name, since.Format(time.RFC3339), string(logBytes))
 }
 
 func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
@@ -377,7 +449,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 	}
 	log.Error().Msgf("=== container %s (%s) state: %s ===", name, info.ID[:12], state)
 
-	logOpts := container.LogsOptions{ShowStdout: true, ShowStderr: true, Tail: "500"}
+	logOpts := container.LogsOptions{ShowStdout: true, ShowStderr: true}
 	reader, logErr := tc.client.ContainerLogs(ctx, info.ID, logOpts)
 	if logErr != nil {
 		log.Error().Err(logErr).Msgf("can't get logs for %s", name)
@@ -389,7 +461,41 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 		}
 	}()
 	logBytes, _ := io.ReadAll(reader)
-	log.Error().Msgf("=== last 500 lines of %s logs ===\n%s", name, string(logBytes))
+	log.Error().Msgf("=== full %s logs ===\n%s", name, string(logBytes))
+
+	// For the clickhouse-server container, healthcheck failures may leave
+	// nothing in stdout/stderr because clickhouse-server writes auth/config
+	// errors only to clickhouse-server.err.log. Dump it so silent 3-minute
+	// "not healthy" failures are diagnosable.
+	if name == "clickhouse" {
+		for _, logPath := range []string{
+			"/var/log/clickhouse-server/clickhouse-server.err.log",
+			"/var/log/clickhouse-server/clickhouse-server.log",
+		} {
+			execCmd := osExec.CommandContext(ctx, "docker", "exec", info.ID, "cat", logPath)
+			errOut, execErr := execCmd.CombinedOutput()
+			if execErr != nil {
+				log.Error().Err(execErr).Msgf("can't cat %s in %s: %s", logPath, name, string(errOut))
+			} else {
+				log.Error().Msgf("=== full %s:%s ===\n%s", name, logPath, string(errOut))
+			}
+		}
+	}
+
+	// For the clickhouse-backup container, the server is launched as a
+	// background process from the entrypoint and its stdout/stderr is
+	// redirected to /tmp/clickhouse-backup-server.log. Dump it so we can see
+	// what the API server actually did on test failure.
+	if name == "clickhouse-backup" {
+		serverLogPath := "/tmp/clickhouse-backup-server.log"
+		execCmd := osExec.CommandContext(ctx, "docker", "exec", info.ID, "cat", serverLogPath)
+		serverOut, execErr := execCmd.CombinedOutput()
+		if execErr != nil {
+			log.Error().Err(execErr).Msgf("can't cat %s in %s: %s", serverLogPath, name, string(serverOut))
+		} else {
+			log.Error().Msgf("=== full %s:%s ===\n%s", name, serverLogPath, string(serverOut))
+		}
+	}
 }
 
 func (tc *TestContainers) startContainer(ctx context.Context, name string, cfg *container.Config, hostCfg *container.HostConfig, hostname string, extraAliases ...string) error {
@@ -589,7 +695,10 @@ func (tc *TestContainers) startAzure(ctx context.Context) error {
 	return tc.startContainer(ctx, "azure",
 		&container.Config{
 			Image: "mcr.microsoft.com/azure-storage/azurite:latest",
-			Cmd:   []string{"azurite", "--debug", "/dev/stderr", "-l", "/data", "--blobHost", "0.0.0.0", "--blobKeepAliveTimeout", "600", "--disableTelemetry"},
+			// --skipApiVersionCheck: azure-cli 2.84+ (w/ Azure SDK v12.27+) sends x-ms-version 2026-02-06
+			// which Azurite 3.35.0 does not recognise.  Tracked upstream:
+			// https://github.com/Azure/Azurite/issues/2623
+			Cmd: []string{"azurite", "--debug", "/dev/stderr", "-l", "/data", "--blobHost", "0.0.0.0", "--blobKeepAliveTimeout", "600", "--disableTelemetry", "--skipApiVersionCheck"},
 			Healthcheck: &container.HealthConfig{
 				Test:     []string{"CMD-SHELL", "nc 127.0.0.1 10000 -z"},
 				Interval: 1 * time.Second,
@@ -838,9 +947,9 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 		ExposedPorts: nat.PortSet{"8123/tcp": {}, "9000/tcp": {}},
 		Healthcheck: &container.HealthConfig{
 			Test:        []string{"CMD-SHELL", "clickhouse client -q 'SELECT 1'"},
-			Interval:    3 * time.Second,
-			Retries:     60,
-			StartPeriod: 120 * time.Second,
+			Interval:    10 * time.Second,
+			Retries:     6,
+			StartPeriod: 60 * time.Second,
 		},
 	}
 	if tc.isAdvanced {

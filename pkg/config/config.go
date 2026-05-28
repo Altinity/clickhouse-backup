@@ -276,7 +276,7 @@ type ClickHouseConfig struct {
 	Debug                            bool              `yaml:"debug" envconfig:"CLICKHOUSE_DEBUG"`
 	// ForceRebalance triggers disk rebalancing during download even when the backup's disk
 	// name exists on the target, allowing distribution across JBOD disks under the same storage policy
-	ForceRebalance                   bool              `yaml:"force_rebalance" envconfig:"CLICKHOUSE_FORCE_REBALANCE"`
+	ForceRebalance bool `yaml:"force_rebalance" envconfig:"CLICKHOUSE_FORCE_REBALANCE"`
 }
 
 type APIConfig struct {
@@ -295,6 +295,28 @@ type APIConfig struct {
 	AllowParallel                 bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
 	CompleteResumableAfterRestart bool   `yaml:"complete_resumable_after_restart" envconfig:"API_COMPLETE_RESUMABLE_AFTER_RESTART"`
 	WatchIsMainProcess            bool   `yaml:"watch_is_main_process" envconfig:"WATCH_IS_MAIN_PROCESS"`
+	// BackupActionsSkipCommands - commands that should not be tracked in system.backup_actions
+	// (the in-memory async status list). Useful to exclude high-frequency monitoring calls
+	// like "list" from growing the actions state. See https://github.com/Altinity/clickhouse-backup/issues/1359
+	BackupActionsSkipCommands []string `yaml:"backup_actions_skip_commands" envconfig:"API_BACKUP_ACTIONS_SKIP_COMMANDS"`
+	// CancelOperationTimeout bounds how long /backup/kill (and server stop/restart)
+	// wait for the underlying command goroutine to actually finish after the
+	// context is canceled. If the goroutine is stuck (e.g. on an IO without
+	// timeout), kill returns once this timeout elapses. See
+	// https://github.com/Altinity/clickhouse-backup/issues/1365
+	CancelOperationTimeout         string        `yaml:"cancel_operation_timeout" envconfig:"API_CANCEL_OPERATION_TIMEOUT"`
+	CancelOperationTimeoutDuration time.Duration `yaml:"-"`
+}
+
+// IsBackupActionsSkipCommand returns true if the given command must NOT be recorded
+// into the in-memory async status (system.backup_actions).
+func (cfg *APIConfig) IsBackupActionsSkipCommand(command string) bool {
+	for _, c := range cfg.BackupActionsSkipCommands {
+		if c == command {
+			return true
+		}
+	}
+	return false
 }
 
 // ArchiveExtensions - list of available compression formats and associated file extensions
@@ -521,6 +543,15 @@ func ValidateConfig(cfg *Config) error {
 			cfg.General.FullDuration = duration
 		}
 	}
+	if cfg.API.CancelOperationTimeout != "" {
+		duration, err := time.ParseDuration(cfg.API.CancelOperationTimeout)
+		if err != nil {
+			return errors.Wrap(err, "invalid api.cancel_operation_timeout")
+		}
+		cfg.API.CancelOperationTimeoutDuration = duration
+	} else {
+		cfg.API.CancelOperationTimeoutDuration = 1800 * time.Second
+	}
 	return nil
 }
 
@@ -681,9 +712,11 @@ func DefaultConfig() *Config {
 			DeleteConcurrency:      50,
 		},
 		API: APIConfig{
-			ListenAddr:                    "localhost:7171",
-			EnableMetrics:                 true,
-			CompleteResumableAfterRestart: true,
+			ListenAddr:                     "localhost:7171",
+			EnableMetrics:                  true,
+			CompleteResumableAfterRestart:  true,
+			CancelOperationTimeout:         "1800s",
+			CancelOperationTimeoutDuration: 1800 * time.Second,
 		},
 		FTP: FTPConfig{
 			Timeout:           "2m",

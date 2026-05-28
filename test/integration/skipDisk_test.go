@@ -117,12 +117,12 @@ func testSkipDiskByNameUpload(r *require.Assertions, env *TestEnvironment) {
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_DISKS=hdd1 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload skip_disk_upload_test")
 
 	// Check that tables on hdd1 disk are not uploaded to minio
-	out, err := env.DockerExecOut("minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/skip_disk_upload_test/shadow/test_skip_disks/table_hdd1/hdd1*")
+	out, err := env.DockerExecOut("minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "skip_disk_upload_test/shadow/test_skip_disks/table_hdd1/hdd1*"))
 	r.Error(err, out)
-	env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/skip_disk_upload_test/shadow/test_skip_disks/table_default/")
+	env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "skip_disk_upload_test/shadow/test_skip_disks/table_default/"))
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
-		env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/skip_disk_upload_test/shadow/test_skip_disks/table_s3/")
+		env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "skip_disk_upload_test/shadow/test_skip_disks/table_s3/"))
 	}
 
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local skip_disk_upload_test")
@@ -137,9 +137,9 @@ func testSkipDiskByTypeUpload(r *require.Assertions, env *TestEnvironment) {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_DISK_TYPES=s3 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload skip_disk_type_upload_test")
 
 		// Check that tables on s3 disk are not uploaded to minio
-		r.Error(env.DockerExec("minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/skip_disk_type_upload_test/shadow/test_skip_disks/table_s3/"))
-		env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/skip_disk_type_upload_test/shadow/test_skip_disks/table_default/")
-		env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/skip_disk_type_upload_test/shadow/test_skip_disks/table_hdd1/")
+		r.Error(env.DockerExec("minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "skip_disk_type_upload_test/shadow/test_skip_disks/table_s3/")))
+		env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "skip_disk_type_upload_test/shadow/test_skip_disks/table_default/"))
+		env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "skip_disk_type_upload_test/shadow/test_skip_disks/table_hdd1/"))
 
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local skip_disk_type_upload_test")
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote skip_disk_type_upload_test")
@@ -152,11 +152,11 @@ func testFullUpload(r *require.Assertions, env *TestEnvironment) {
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create_remote full_upload_test")
 
 	// Check that all tables are uploaded to minio
-	env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/full_upload_test/shadow/test_skip_disks/table_default/")
-	env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/full_upload_test/shadow/test_skip_disks/table_hdd1/")
+	env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "full_upload_test/shadow/test_skip_disks/table_default/"))
+	env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "full_upload_test/shadow/test_skip_disks/table_hdd1/"))
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
-		env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/full_upload_test/shadow/test_skip_disks/table_s3/")
+		env.DockerExecNoError(r, "minio", "ls", "-la", env.minioBackupFSPath(r, "config-s3.yml", "full_upload_test/shadow/test_skip_disks/table_s3/"))
 	}
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local full_upload_test")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote full_upload_test")

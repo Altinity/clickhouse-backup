@@ -21,8 +21,8 @@ clickhouse:
   timeout: 10m
 gcs:
   bucket: altinity-qa-test
-  path: backup/{cluster}/{shard}
-  object_disk_path: object_disks/{cluster}/{shard}
+  path: backup/{cluster}/{shard}/{version}
+  object_disk_path: object_disks/{cluster}/{shard}/{version}
   compression_format: tar
   endpoint: http://gcs:8080/storage/v1/
   skip_credentials: true

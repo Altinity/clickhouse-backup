@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/url"
@@ -469,6 +471,22 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 // S3VirtualHostBucketRE https://docs.aws.amazon.com/AmazonS3/latest/dev/VirtualHosting.html#virtual-hosted-style-access
 var S3VirtualHostBucketRE = regexp.MustCompile(`((.+)\.(s3express[\-a-z0-9]+|s3|cos|obs|oss-data-acc|oss|eos)([.\-][a-z0-9\-.:]+))`)
 
+// BuildS3SSECustomerHeaders derives the full SSE-C header triplet (algorithm,
+// key, key MD5) from a ClickHouse <server_side_encryption_customer_key_base64>
+// value. ClickHouse only supports AES256 for SSE-C and stores the customer key
+// base64-encoded; AWS S3 requires the MD5 of the raw key (also base64-encoded)
+// in addition to the key and algorithm on every HeadObject/GetObject request
+// against an SSE-C encrypted object, otherwise the server returns 400.
+// See https://github.com/Altinity/clickhouse-backup/issues/1374
+func BuildS3SSECustomerHeaders(b64Key string) (algorithm, key, keyMD5 string, err error) {
+	rawKey, decodeErr := base64.StdEncoding.DecodeString(b64Key)
+	if decodeErr != nil {
+		return "", "", "", errors.Wrap(decodeErr, "BuildS3SSECustomerHeaders base64 decode")
+	}
+	sum := md5.Sum(rawKey)
+	return "AES256", b64Key, base64.StdEncoding.EncodeToString(sum[:]), nil
+}
+
 func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName string) (*ObjectStorageConnection, error) {
 	creds, exists := DisksCredentials.Load(diskName)
 	if !exists {
@@ -533,7 +551,17 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 			s3cfg.SecretKey = creds.S3SecretKey
 		}
 		if creds.S3SSECustomerKey != "" {
-			s3cfg.SSECustomerKey = creds.S3SSECustomerKey
+			// https://github.com/Altinity/clickhouse-backup/issues/1374
+			// ClickHouse stores only the base64 customer key in storage.xml;
+			// AWS S3 (and MinIO) require the full SSE-C header triplet for
+			// HeadObject/GetObject/CopyObject against SSE-C objects.
+			algo, key, keyMD5, sseErr := BuildS3SSECustomerHeaders(creds.S3SSECustomerKey)
+			if sseErr != nil {
+				return nil, errors.Wrapf(sseErr, "invalid server_side_encryption_customer_key_base64 for disk %s", diskName)
+			}
+			s3cfg.SSECustomerAlgorithm = algo
+			s3cfg.SSECustomerKey = key
+			s3cfg.SSECustomerKeyMD5 = keyMD5
 		}
 		if creds.S3SSEKMSKeyId != "" {
 			s3cfg.SSEKMSKeyId = creds.S3SSEKMSKeyId

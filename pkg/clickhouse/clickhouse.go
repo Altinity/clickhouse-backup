@@ -314,20 +314,35 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 			ObjectStorageTypePresent uint64 `ch:"is_object_storage_type_present"`
 			FreeSpacePresent         uint64 `ch:"is_free_space_present"`
 			StoragePolicyPresent     uint64 `ch:"is_storage_policy_present"`
+			CachePathPresent         uint64 `ch:"is_cache_path_present"`
 		}
 		diskFields := make([]DiskFields, 0)
 		if err := ch.SelectContext(ctx, &diskFields,
 			"SELECT countIf(name='type') AS is_disk_type_present, "+
 				"countIf(name='object_storage_type') AS is_object_storage_type_present, "+
 				"countIf(name='free_space') AS is_free_space_present, "+
-				"countIf(name='disks') AS is_storage_policy_present "+
+				"countIf(name='disks') AS is_storage_policy_present, "+
+				"countIf(name='cache_path') AS is_cache_path_present "+
 				"FROM system.columns WHERE database='system' AND table IN ('disks','storage_policies') ",
 		); err != nil {
 			return nil, errors.WithMessage(err, "getDisksFromSystemDisks: query disk fields")
 		}
 		diskTypeSQL := "'local'"
+		// diskNameSQL: prefer the underlying (non-cache) disk name when cache
+		// disks are present. Cache disks share the same metadata_path as the
+		// disk they wrap, so GROUP BY d.path collapses them into one row.
+		// system.parts always reports the underlying disk name, not the cache
+		// wrapper, so picking the cache name here causes fetchHashOfAllFiles
+		// to fail with "part not found after FREEZE".
+		// We use the cache_path column (non-empty for cache disks) to detect
+		// cache wrappers, since both cache and underlying disks may report
+		// type='ObjectStorage' in modern ClickHouse versions.
+		diskNameSQL := "any(d.name)"
 		if len(diskFields) > 0 && diskFields[0].DiskTypePresent > 0 {
 			diskTypeSQL = "any(d.type)"
+		}
+		if len(diskFields) > 0 && diskFields[0].CachePathPresent > 0 {
+			diskNameSQL = "argMin(d.name, d.cache_path != '')"
 		}
 		if len(diskFields) > 0 && diskFields[0].ObjectStorageTypePresent > 0 {
 			diskTypeSQL = "any(lower(if(d.type='ObjectStorage',d.object_storage_type,d.type)))"
@@ -347,9 +362,9 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		}
 		var result []Disk
 		query := fmt.Sprintf(
-			"SELECT d.path AS path, any(d.name) AS name, %s AS type, %s AS free_space, %s AS storage_policies "+
+			"SELECT d.path AS path, %s AS name, %s AS type, %s AS free_space, %s AS storage_policies "+
 				"FROM system.disks AS d %s GROUP BY d.path",
-			diskTypeSQL, diskFreeSpaceSQL, storagePoliciesSQL, joinStoragePoliciesSQL,
+			diskNameSQL, diskTypeSQL, diskFreeSpaceSQL, storagePoliciesSQL, joinStoragePoliciesSQL,
 		)
 		if err := ch.SelectContext(ctx, &result, query); err != nil {
 			return nil, errors.WithMessage(err, "getDisksFromSystemDisks: select disks")
@@ -1435,7 +1450,7 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 		return nil
 	}
 
-	// Build the WHERE clause for all tables
+	// Build per-table conditions, filtering tables that need a parts_columns check
 	var conditions []string
 	for _, table := range tables {
 		if table.Skip {
@@ -1452,26 +1467,37 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 		return nil
 	}
 
-	partColumnsDataTypes := make([]ColumnDataTypesWithTable, 0)
-	partsColumnsSQL := "SELECT database, table, column, min(type) AS min_type, max(type) AS max_type " +
-		"FROM system.parts_columns " +
-		"WHERE active AND (" + strings.Join(conditions, " OR ") + ") " +
-		"AND type NOT LIKE 'Enum%(%' AND type NOT LIKE 'Tuple(%' AND type NOT LIKE 'Nullable(Enum%(%' " +
-		"AND type NOT LIKE 'Nullable(Tuple(%' AND type NOT LIKE 'Array(Tuple(%' AND type NOT LIKE 'Nullable(Array(Tuple(%' " +
-		"GROUP BY database, table, column HAVING min_type != max_type"
-
-	if err := ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL); err != nil {
-		return errors.WithMessage(err, "CheckSystemPartsColumnsForTables: select parts columns")
-	}
-
-	// Group results by table and check consistency
+	// https://github.com/Altinity/clickhouse-backup/issues/1360
+	// Batch the WHERE OR-list to keep per-query memory bounded on instances with thousands of tables.
+	const partsColumnsBatchSize = 100
 	tableDataTypes := make(map[string][]ColumnDataTypes)
-	for _, colData := range partColumnsDataTypes {
-		key := fmt.Sprintf("%s.%s", colData.Database, colData.Table)
-		tableDataTypes[key] = append(tableDataTypes[key], ColumnDataTypes{
-			Column: colData.Column,
-			Types:  []string{colData.MinType, colData.MaxType},
-		})
+	for start := 0; start < len(conditions); start += partsColumnsBatchSize {
+		end := start + partsColumnsBatchSize
+		if end > len(conditions) {
+			end = len(conditions)
+		}
+		batchConditions := conditions[start:end]
+
+		partColumnsDataTypes := make([]ColumnDataTypesWithTable, 0)
+		partsColumnsSQL := "SELECT database, table, column, min(type) AS min_type, max(type) AS max_type " +
+			"FROM system.parts_columns " +
+			"WHERE active AND (" + strings.Join(batchConditions, " OR ") + ") " +
+			"AND type NOT LIKE 'Enum%(%' AND type NOT LIKE 'Tuple(%' AND type NOT LIKE 'Nullable(Enum%(%' " +
+			"AND type NOT LIKE 'Nullable(Tuple(%' AND type NOT LIKE 'Array(Tuple(%' AND type NOT LIKE 'Nullable(Array(Tuple(%' " +
+			"GROUP BY database, table, column HAVING min_type != max_type " +
+			"SETTINGS max_bytes_before_external_group_by=100000000, max_memory_usage=200000000"
+
+		if err := ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL); err != nil {
+			return errors.WithMessage(err, "CheckSystemPartsColumnsForTables: select parts columns")
+		}
+
+		for _, colData := range partColumnsDataTypes {
+			key := fmt.Sprintf("%s.%s", colData.Database, colData.Table)
+			tableDataTypes[key] = append(tableDataTypes[key], ColumnDataTypes{
+				Column: colData.Column,
+				Types:  []string{colData.MinType, colData.MaxType},
+			})
+		}
 	}
 
 	// Check each table that has inconsistent types

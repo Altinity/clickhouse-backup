@@ -71,7 +71,7 @@ jobs:
         with:
           VAULT_PASSWORD: ${{ secrets.VAULT_PASSWORD }}
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: build-artifacts
           path: |
@@ -82,7 +82,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: build-test-artifacts
           path: |
@@ -110,8 +110,7 @@ jobs:
           - '24.3'
           - '24.8'
           - '25.3'
-# wait https://github.com/ClickHouse/ClickHouse/commit/393f47f4e1ed708d7dd48be09cc90f94e091359c, 25.8.24
-          - '25.8.21'
+          - '25.8'
           - '26.3'
     steps:
       - name: Checkout project
@@ -179,10 +178,102 @@ jobs:
           format: golang
           flag-name: testflows-${{ matrix.clickhouse }}
       # todo possible failures  https://github.com/actions/upload-artifact/issues/270
+      - name: Fix testflows _instances log permissions
+        if: always()
+        run: |
+          set -xe
+          if [ -d "test/testflows/clickhouse_backup/_instances" ]; then
+            sudo chown -R "$(id -u)":"$(id -g)" test/testflows/clickhouse_backup/_instances || true
+            chmod -R u+rwX test/testflows/clickhouse_backup/_instances || true
+          fi
       - name: Upload testflows logs
-        uses: actions/upload-artifact@v6
+        if: always()
+        uses: actions/upload-artifact@v7
         with:
           name: testflows-logs-and-reports-${{ matrix.clickhouse }}-${{ github.run_id }}
+          path: |
+            test/testflows/*.log
+            test/testflows/*.log.txt
+            test/testflows/_logs_/**/*.log
+            test/testflows/clickhouse_backup/_instances/**/*.log
+            test/testflows/*.html
+          retention-days: 7
+
+  testflows_fips:
+    needs:
+      - build
+    name: Testflows FIPS
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        golang-version:
+          - "1.26"
+        clickhouse:
+          - "fips"
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v6
+
+      - name: Setup golang
+        id: setup-go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '^${{ matrix.golang-version }}'
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: build-test-artifacts
+          path: ./clickhouse-backup/
+
+      - name: Install python venv
+        run: |
+          set -x
+          (dpkg -l | grep venv) || (apt-get update && apt-get install -y python3-venv)
+          python3 -m venv ~/venv/qa
+
+      - name: Cache python
+        uses: actions/cache@v5
+        id: cache-python
+        with:
+          path: ~/venv/qa
+          key: clickhouse-backup-python-${{ hashFiles('test/testflows/requirements.txt','.github/workflows/*.yaml') }}
+
+      - name: Install python dependencies
+        run: |
+          set -x
+          ~/venv/qa/bin/pip3 install -U -r ./test/testflows/requirements.txt
+        if: |
+          steps.cache-python.outputs.cache-hit != 'true'
+
+      - name: Running FIPS TestFlows tests
+        env:
+          CLICKHOUSE_IMAGE: altinity/clickhouse-server
+          CLICKHOUSE_VERSION: 25.3.8.30001.altinityfips
+          RUN_PARALLEL: 1
+          DEBUG: 1
+          NO_COLORS: 1
+          RUN_TESTS: "/clickhouse backup/fips 140 3*"
+          GOROOT: ${{ env.GOROOT_1_26_X64 }}
+        run: |
+          set -xe
+          chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
+          source ~/venv/qa/bin/activate
+          export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
+          ./test/testflows/run.sh
+
+      - name: Fix FIPS log permissions for artifact upload
+        if: always()
+        run: |
+          set -xe
+          if [ -d "test/testflows/clickhouse_backup/_instances" ]; then
+            sudo chown -R "$(id -u)":"$(id -g)" test/testflows/clickhouse_backup/_instances || true
+            chmod -R u+rwX test/testflows/clickhouse_backup/_instances || true
+          fi
+      - name: Upload FIPS testflows logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fips-testflows-logs-and-reports-${{ github.run_id }}
           path: |
             test/testflows/*.log
             test/testflows/*.log.txt
@@ -214,8 +305,7 @@ jobs:
           - '24.3'
           - '24.8'
           - '25.3'
-# wait https://github.com/ClickHouse/ClickHouse/commit/393f47f4e1ed708d7dd48be09cc90f94e091359c, 25.8.24
-          - '25.8.21'
+          - '25.8'
           - '26.3'
     steps:
       - name: Checkout project
@@ -335,6 +425,7 @@ jobs:
     needs:
       - test
       - testflows
+      - testflows_fips
     name: Docker
     runs-on: ubuntu-24.04
     steps:
@@ -354,9 +445,9 @@ jobs:
           echo "docker_tag=${DOCKER_TAG:-dev}" >> $GITHUB_OUTPUT
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Building docker image
         env:

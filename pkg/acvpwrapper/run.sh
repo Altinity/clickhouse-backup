@@ -10,13 +10,14 @@ ACVP_TESTDATA_DIR="${ACVP_TESTDATA_DIR:-/tmp/acvp-testdata}"
 BORINGSSL_COMMIT="${BORINGSSL_COMMIT:-baaf868e6e8f}"
 ACVP_TESTDATA_COMMIT="${ACVP_TESTDATA_COMMIT:-d893de8b8b1c}"
 CONFIG_PATH="${CONFIG_PATH:-/work/pkg/acvpwrapper/acvp_test_fips140v1.26.public.config.json}"
+WRAPPER_BIN_PATH="${WRAPPER_BIN_PATH:-/work/.acvp/clickhouse-backup-acvp}"
 
-echo "[1/4] Build clickhouse-backup and ACVP symlink"
+echo "[1/4] Build ACVP wrapper binary"
 docker run --rm \
   -v "${REPO_ROOT}:/work" \
   -w /work \
   "${GO_IMAGE}" \
-  sh -lc 'export PATH=$PATH:/usr/local/go/bin && CGO_ENABLED=0 go build -o clickhouse-backup ./cmd/clickhouse-backup && ln -sf clickhouse-backup clickhouse-backup-acvp'
+  sh -lc "export PATH=\$PATH:/usr/local/go/bin && mkdir -p \"$(dirname "${WRAPPER_BIN_PATH}")\" && CGO_ENABLED=0 go build -o ${WRAPPER_BIN_PATH} ./cmd/clickhouse-backup"
 
 echo "[2/4] Fetch pinned boringssl and acvp-testdata"
 if [[ ! -d "${BORINGSSL_DIR}/.git" ]]; then
@@ -49,4 +50,4 @@ docker run --rm \
   -v "${ACVP_TESTDATA_DIR}:/tmp/acvp-testdata:rw" \
   -w /tmp/acvp-testdata \
   "${GO_IMAGE}" \
-  sh -lc "export PATH=\$PATH:/usr/local/go/bin && go run /tmp/boringssl/util/fipstools/acvp/acvptool/test/check_expected.go -tool /tmp/boringssl/acvptool-pinned -module-wrappers go:/work/clickhouse-backup-acvp -tests ${CONFIG_PATH}"
+  sh -lc "export PATH=\$PATH:/usr/local/go/bin && go run /tmp/boringssl/util/fipstools/acvp/acvptool/test/check_expected.go -tool /tmp/boringssl/acvptool-pinned -module-wrappers go:${WRAPPER_BIN_PATH} -tests ${CONFIG_PATH}"

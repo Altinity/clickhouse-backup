@@ -19,7 +19,7 @@ func TestS3NoDeletePermission(t *testing.T) {
 	env.DockerExecNoError(r, "minio", "/bin/minio_nodelete.sh")
 	r.NoError(env.DockerCP("configs/config-s3-nodelete.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 
-	generateTestData(t, r, env, "S3", false, defaultTestData)
+	generateTestData(t, r, env, "S3", false, defaultTestData())
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create_remote", "no_delete_backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "no_delete_backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "restore_remote", "no_delete_backup")
@@ -30,6 +30,6 @@ func TestS3NoDeletePermission(t *testing.T) {
 	r.NoError(env.DockerCP("configs/config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "remote", "no_delete_backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "list", "remote")
-	env.checkObjectStorageIsEmpty(t, r, "S3")
+	env.checkObjectStorageIsEmpty(t, r, "S3", "config-s3.yml")
 	env.Cleanup(t, r)
 }
