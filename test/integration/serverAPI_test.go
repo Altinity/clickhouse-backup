@@ -314,29 +314,48 @@ func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {
 	r.Greater(longSchemaTotalBytes, uint64(0))
 	r.Greater(lastRemoteSize, longSchemaTotalBytes)
 
-	out, err := env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/metrics")
+	// UpdateBackupMetrics is now synchronous in the request handlers (before status=success / before HTTP response),
+	// but the background watch loop may still be refreshing metrics on its own cadence. Poll briefly so we
+	// don't race a transient snapshot taken between a watch iteration's create and its metrics refresh.
+	expectedNumberLocal := fmt.Sprintf("clickhouse_backup_number_backups_local %d", apiBackupNumber)
+	expectedNumberRemote := fmt.Sprintf("clickhouse_backup_number_backups_remote %d", apiBackupNumber+1) // +1 watch backup
+	expectedLastRemoteSize := fmt.Sprintf("clickhouse_backup_last_backup_size_remote %d", lastRemoteSize)
+
+	var out string
+	var err error
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		out, err = env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/metrics")
+		if err == nil &&
+			strings.Contains(out, expectedLastRemoteSize) &&
+			strings.Contains(out, expectedNumberLocal) &&
+			strings.Contains(out, expectedNumberRemote) {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
 	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
-	r.Contains(out, fmt.Sprintf("clickhouse_backup_last_backup_size_remote %d", lastRemoteSize))
+	r.Contains(out, expectedLastRemoteSize)
 
 	log.Debug().Msg("Check /metrics clickhouse_backup_number_backups_*")
-	if !strings.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_local %d", apiBackupNumber)) {
+	if !strings.Contains(out, expectedNumberLocal) {
 		listOut, listErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "local")
 		r.NoError(listErr)
 		log.Error().Msg(listOut)
 		env.tc.dumpContainerInfo(context.Background(), "clickhouse-backup")
 		env.tc.dumpContainerInfo(context.Background(), "clickhouse")
 	}
-	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_local %d", apiBackupNumber))
+	r.Contains(out, expectedNumberLocal)
 
-	// +1 watch backup
-	if !strings.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_remote %d", apiBackupNumber+1)) {
+	if !strings.Contains(out, expectedNumberRemote) {
 		listOut, listErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "remote")
 		r.NoError(listErr)
 		log.Error().Msg(listOut)
 		env.tc.dumpContainerInfo(context.Background(), "clickhouse-backup")
 		env.tc.dumpContainerInfo(context.Background(), "clickhouse")
 	}
-	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_remote %d", apiBackupNumber+1))
+	r.Contains(out, expectedNumberRemote)
 	r.Contains(out, "clickhouse_backup_number_backups_local_expected 0")
 	r.Contains(out, "clickhouse_backup_number_backups_remote_expected 0")
 	r.Regexp(`clickhouse_backup_local_data_size \d+`, out)

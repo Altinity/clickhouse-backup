@@ -417,15 +417,16 @@ func (api *APIServer) actionsDeleteHandler(row status.ActionRow, args []string, 
 	}
 	commandId, _ := status.Current.Start(row.Command)
 	err := api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
+	if err == nil {
+		// refresh metrics before marking the operation as completed so /metrics observers see consistent state
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), args[1] == "local"); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
+	}
 	status.Current.Stop(commandId, err)
 	if err != nil {
 		return actionsResults, err
 	}
-	go func() {
-		if metricsErr := api.UpdateBackupMetrics(context.Background(), args[1] == "local"); metricsErr != nil {
-			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
-		}
-	}()
 	actionsResults = append(actionsResults, actionsResultsRow{
 		Status:    "success",
 		Operation: row.Command,
@@ -448,6 +449,12 @@ func (api *APIServer) actionsAsyncCommandsHandler(command string, args []string,
 		err, _ := api.metrics.ExecuteWithMetrics(command, 0, func() error {
 			return api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
 		})
+		if err == nil {
+			// refresh metrics before marking the operation as completed so /metrics observers see consistent state
+			if metricsErr := api.UpdateBackupMetrics(context.Background(), command == "create" || strings.HasPrefix(command, "restore") || command == "download"); metricsErr != nil {
+				log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+			}
+		}
 		if !skipActions {
 			status.Current.Stop(commandId, err)
 		}
@@ -455,11 +462,6 @@ func (api *APIServer) actionsAsyncCommandsHandler(command string, args []string,
 			log.Error().Msgf("API /backup/actions error: %v", err)
 			return
 		}
-		go func() {
-			if metricsErr := api.UpdateBackupMetrics(context.Background(), command == "create" || strings.HasPrefix(command, "restore") || command == "download"); metricsErr != nil {
-				log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
-			}
-		}()
 	}()
 	actionsResults = append(actionsResults, actionsResultsRow{
 		Status:    "acknowledged",
@@ -506,11 +508,9 @@ func (api *APIServer) actionsCleanHandler(w http.ResponseWriter, row status.Acti
 		return actionsResults, err
 	}
 	log.Info().Msg("CLEANED")
-	go func() {
-		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
-			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
-		}
-	}()
+	if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+		log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+	}
 	status.Current.Stop(commandId, nil)
 	actionsResults = append(actionsResults, actionsResultsRow{
 		Status:    "success",
@@ -538,11 +538,9 @@ func (api *APIServer) actionsCleanLocalBrokenHandler(w http.ResponseWriter, row 
 		return actionsResults, err
 	}
 	log.Info().Msg("CLEANED")
-	go func() {
-		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
-			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
-		}
-	}()
+	if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+		log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+	}
 	status.Current.Stop(commandId, nil)
 	actionsResults = append(actionsResults, actionsResultsRow{
 		Status:    "success",
@@ -570,11 +568,9 @@ func (api *APIServer) actionsCleanRemoteBrokenHandler(w http.ResponseWriter, row
 		return actionsResults, err
 	}
 	log.Info().Msg("CLEANED")
-	go func() {
-		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
-			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
-		}
-	}()
+	if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+		log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+	}
 	status.Current.Stop(commandId, nil)
 	actionsResults = append(actionsResults, actionsResultsRow{
 		Status:    "success",
@@ -1101,11 +1097,9 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
-		go func() {
-			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
-				log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
-			}
-		}()
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
 
 		status.Current.Stop(commandId, nil)
 		api.successCallback(context.Background(), operationId.String(), callback)
@@ -1240,11 +1234,9 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
-		go func() {
-			if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
-				log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
-			}
-		}()
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
 
 		status.Current.Stop(commandId, nil)
 		api.successCallback(context.Background(), operationId.String(), callback)
@@ -1405,11 +1397,9 @@ func (api *APIServer) httpCleanLocalBrokenHandler(w http.ResponseWriter, _ *http
 		api.writeError(w, http.StatusInternalServerError, "clean_local_broken", err)
 		return
 	}
-	go func() {
-		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
-			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
-		}
-	}()
+	if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+		log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+	}
 
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status    string `json:"status"`
@@ -1435,11 +1425,9 @@ func (api *APIServer) httpCleanRemoteBrokenHandler(w http.ResponseWriter, _ *htt
 		api.writeError(w, http.StatusInternalServerError, "clean_remote_broken", err)
 		return
 	}
-	go func() {
-		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
-			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
-		}
-	}()
+	if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+		log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+	}
 
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status    string `json:"status"`
@@ -1550,11 +1538,9 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
-		go func() {
-			if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
-				log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
-			}
-		}()
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
 		status.Current.Stop(commandId, nil)
 		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
@@ -1780,11 +1766,9 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 			b := backup.NewBackuper(api.config)
 			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, api.cliApp.Version, commandId)
 		})
-		go func() {
-			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
-				log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
-			}
-		}()
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
 		status.Current.Stop(commandId, err)
 		if err != nil {
 			log.Error().Msgf("API /backup/restore error: %v", err)
@@ -2014,11 +1998,9 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 			b := backup.NewBackuper(cfg)
 			return b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, api.cliApp.Version, commandId)
 		})
-		go func() {
-			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
-				log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
-			}
-		}()
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
 		status.Current.Stop(commandId, err)
 		if err != nil {
 			log.Error().Msgf("API /backup/restore_remote error: %v", err)
@@ -2125,11 +2107,9 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
-		go func() {
-			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
-				log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
-			}
-		}()
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
 		status.Current.Stop(commandId, nil)
 		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
@@ -2175,11 +2155,9 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 		api.writeError(w, http.StatusInternalServerError, "delete", err)
 		return
 	}
-	go func() {
-		if metricsErr := api.UpdateBackupMetrics(context.Background(), vars["where"] == "local"); metricsErr != nil {
-			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
-		}
-	}()
+	if metricsErr := api.UpdateBackupMetrics(context.Background(), vars["where"] == "local"); metricsErr != nil {
+		log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+	}
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
 		Operation  string `json:"operation"`
