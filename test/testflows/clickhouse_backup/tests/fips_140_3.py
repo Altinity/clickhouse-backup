@@ -525,7 +525,7 @@ def _assert_tables_succeeds(self, backup_fips, *, config, godebug):
 def _assert_tables_fails(self, backup_fips, *, config, godebug, reason):
     """Run `clickhouse-backup-fips -c <config> tables` and assert it fails.
 
-    Negative counterpart to `_assert_tables_succeeds`: require non-zero
+    Negative option to `_assert_tables_succeeds`: require non-zero
     exit and ensure no table-list success markers are present.
     """
     env_prefix = f"env GODEBUG={godebug} " if godebug else ""
@@ -961,101 +961,79 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
                 )
 
 
+# Startup/core CASTs used during `clickhouse-backup-fips --version`. Forcing
+# any of these via `failfipscast` must abort startup deterministically.
+# Source: Go FIPS `allCASTs` in `crypto/internal/fips140test/cast_test.go`.
+FIPS_FAILFIPSCAST_STARTUP_CASTS = (
+    "AES-CBC",
+    "CTR_DRBG",
+    "CounterKDF",
+    "HKDF-SHA2-256",
+    "HMAC-SHA2-256",
+    "PBKDF2",
+    "SHA2-256",
+    "SHA2-512",
+    "TLSv1.2-SHA2-256",
+    "TLSv1.3-SHA2-256",
+    "cSHAKE128",
+)
+
+# First-use CASTs run lazily, the first time their algorithm is used. `clickhouse-backup-fips --version`
+# may or may not exercise them, so forcing one is only expected to fail when it
+# happens to be reached.
+FIPS_FAILFIPSCAST_FIRST_USE_CASTS = (
+    "DetECDSA P-256 SHA2-512 sign",
+    "ECDH PCT",
+    "ECDSA P-256 SHA2-512 sign and verify",
+    "ECDSA PCT",
+    "Ed25519 sign and verify",
+    "Ed25519 sign and verify PCT",
+    "KAS-ECC-SSC P-256",
+    "ML-DSA sign and verify PCT",
+    "ML-DSA-44",
+    "ML-KEM PCT",
+    "ML-KEM-768",
+    "RSA sign and verify PCT",
+    "RSASSA-PKCS-v1.5 2048-bit sign and verify",
+)
+
 @TestScenario
 @Requirements(
     RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_CAST_ForcedFailure("1.0"),
     RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_CAST_Coverage("1.0"),
 )
+@Examples(
+    "cast must_fail",
+    [(cast, True) for cast in FIPS_FAILFIPSCAST_STARTUP_CASTS]
+    + [(cast, False) for cast in FIPS_FAILFIPSCAST_FIRST_USE_CASTS],
+)
 def forced_cast_failures(self):
-    """Validate failfipscast behavior for CASTs reached by `--version`.
+    """Force each CAST via `failfipscast` and check `--version` behavior.
 
-    This scenario intentionally tests only startup/core CAST names that are
-    expected to be exercised during `clickhouse-backup-fips --version`.
-    For each name, we first verify normal startup (`fips140=only`) and then
-    verify forced failure (`failfipscast=<NAME>,fips140=only`).
+    Startup CASTs (`must_fail=True`) are always exercised by `--version`, so
+    forcing one must abort with `self-test failed: <NAME>: simulated CAST
+    failure` on stderr. First-use CASTs (`must_fail=False`) run lazily, so the
+    abort only happens when the CAST is actually reached; otherwise startup
+    stays clean without the marker.
     """
-    # Source: Go FIPS `allCASTs` in `crypto/internal/fips140test/cast_test.go`.
-    # Keep this scenario focused on startup/core CASTs that should fail
-    # deterministically on `--version`.
-    FIPS_FAILFIPSCAST_STARTUP_CASTS = (
-        "AES-CBC",
-        "CTR_DRBG",
-        "CounterKDF",
-        "HKDF-SHA2-256",
-        "HMAC-SHA2-256",
-        "PBKDF2",
-        "SHA2-256",
-        "SHA2-512",
-        "TLSv1.2-SHA2-256",
-        "TLSv1.3-SHA2-256",
-        "cSHAKE128",
-    )
-    FIPS_FAILFIPSCAST_CONDITIONAL_CASTS = (  # first use casts
-        "DetECDSA P-256 SHA2-512 sign",
-        "ECDH PCT",
-        "ECDSA P-256 SHA2-512 sign and verify",
-        "ECDSA PCT",
-        "Ed25519 sign and verify",
-        "Ed25519 sign and verify PCT",
-        "KAS-ECC-SSC P-256",
-        "ML-DSA sign and verify PCT",
-        "ML-DSA-44",
-        "ML-KEM PCT",
-        "ML-KEM PCT",
-        "ML-KEM-768",
-        "RSA sign and verify PCT",
-        "RSASSA-PKCS-v1.5 2048-bit sign and verify",
-    )
-    # This is the marker that Go's FIPS module writes to stderr on a failfipscast-forced CAST.
-    # The full line is:
+
+    # On a forced CAST, Go's FIPS module aborts with the stderr line:
     # `fatal error: FIPS 140-3 self-test failed: <NAME>: simulated CAST failure`.
     FIPS_FAILFIPSCAST_MARKER = "simulated CAST failure"
     FIPS_FAILFIPSCAST_SELFTEST_PREFIX = "self-test failed: "
+    
+    with Given("a FIPS backup container is available"):
+        backup_fips = _require_fips_container(self)
 
-    backup_fips = _require_fips_container(self)
-    debug(
-        f"startup CAST names ({len(FIPS_FAILFIPSCAST_STARTUP_CASTS)}): "
-        f"{FIPS_FAILFIPSCAST_STARTUP_CASTS}"
-    )
-    debug(
-        f"conditional CAST names ({len(FIPS_FAILFIPSCAST_CONDITIONAL_CASTS)}): "
-        f"{FIPS_FAILFIPSCAST_CONDITIONAL_CASTS}"
-    )
+    for cast, must_fail in self.examples:
+        # `must_fail` encodes the CAST group: startup CASTs are always exercised by
+        # `--version` (forcing one must abort), first-use CASTs run lazily.
+        kind = "startup" if must_fail else "first-use"
 
-    with When(
-        "I run `clickhouse-backup-fips --version` "
-        "with `GODEBUG=fips140=only` as the positive check"
-    ):
-        cmd = (
-            f"env GODEBUG=fips140=only "
-            f"{FIPS_BINARY_IN_CONTAINER} --version 2>&1"
-        )
-
-        result = backup_fips.cmd(cmd, no_checks=True)
-        output = result.output or ""
-
-        assert result.exitcode == 0, error(
-            f"baseline startup failed "
-            f"(exit={result.exitcode}).\n{output}"
-        )
-
-        assert FIPS_FAILFIPSCAST_MARKER not in output, error(
-            f"unexpected `{FIPS_FAILFIPSCAST_MARKER}` marker.\n{output}"
-        )
-        assert FIPS_VERSION_LABEL in output and FIPS_VERSION_TRUE in output.lower(), error(
-            f"baseline `--version` output does not show expected FIPS status.\n{output}"
-        )
-
-    with Then(
-        "for each startup CAST name I run `clickhouse-backup-fips --version` "
-        "with `GODEBUG=failfipscast=<NAME>,fips140=only` and expect forced failure"
-    ):
-        for cast in FIPS_FAILFIPSCAST_STARTUP_CASTS:
-            with Check(f"forced failure is reported for CAST `{cast}`"):
-                # Single-quote the GODEBUG value so CAST names containing
-                # spaces (e.g. `DetECDSA P-256 SHA2-512 sign`) are passed
-                # through as one argument to `env`. `2>&1` because Go writes
-                # `fatal error:` lines to stderr.
+        with Example(f"force {kind} CAST {cast}"):
+            with When(f"I force CAST `{cast}` and run `--version`"):
+                # Single-quote GODEBUG so names with spaces stay one arg; `2>&1`
+                # captures the `fatal error:` lines Go writes to stderr.
                 cmd = (
                     f"env 'GODEBUG=failfipscast={cast},fips140=only' "
                     f"{FIPS_BINARY_IN_CONTAINER} --version 2>&1"
@@ -1063,58 +1041,31 @@ def forced_cast_failures(self):
                 result = backup_fips.cmd(cmd, no_checks=True)
                 output = result.output or ""
 
+            with And("I parse CAST-failure markers from the command output"):
                 marker_present = FIPS_FAILFIPSCAST_MARKER in output
-                selftest_cast_present = (
-                    f"{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}" in output
-                )
+                selftest_present = f"{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}" in output
 
-                assert result.exitcode != 0, error(
-                    f"forced startup CAST failure expected non-zero exit for `{cast}` "
-                    f".\n{output}"
-                )
-                assert marker_present, error(
-                    f"forced startup CAST failure output missing "
-                    f"`{FIPS_FAILFIPSCAST_MARKER}` for `{cast}` "
-                    f".\n{output}"
-                )
-                assert selftest_cast_present, error(
-                    f"forced startup CAST failure output missing "
-                    f"`{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}` "
-                    f".\n{output}"
-                )
-
-    with And(
-        "for each conditional CAST name I run `clickhouse-backup-fips --version` "
-        "with `GODEBUG=failfipscast=<NAME>,fips140=only`"
-    ):
-        for cast in FIPS_FAILFIPSCAST_CONDITIONAL_CASTS:
-            with Check(f"conditional CAST execution record for `{cast}`"):
-                cmd = (
-                    f"env 'GODEBUG=failfipscast={cast},fips140=only' "
-                    f"{FIPS_BINARY_IN_CONTAINER} --version 2>&1"
-                )
-                result = backup_fips.cmd(cmd, no_checks=True)
-                output = result.output or ""
-
-                marker_present = FIPS_FAILFIPSCAST_MARKER in output
-                selftest_cast_present = (
-                    f"{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}" in output
-                )
-
-                if result.exitcode != 0:
+            # Startup CASTs must always abort; first-use CASTs abort only when
+            # `--version` happens to reach them. A forced failure is therefore
+            # expected when the CAST is a startup one or the process exited non-zero.
+            if must_fail or result.exitcode != 0:
+                with Then(f"the forced failure is reported for `{cast}`"):
+                    if must_fail:
+                        assert result.exitcode != 0, error(
+                            f"forced CAST failure expected non-zero exit for `{cast}`.\n{output}"
+                        )
                     assert marker_present, error(
-                        f"conditional CAST failure output missing "
-                        f"`{FIPS_FAILFIPSCAST_MARKER}` for `{cast}` "
-                        f".\n{output}"
+                        f"forced CAST failure output missing "
+                        f"`{FIPS_FAILFIPSCAST_MARKER}` for `{cast}`.\n{output}"
                     )
-                    assert selftest_cast_present, error(
-                        f"conditional CAST failure output missing "
-                        f"`{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}` "
-                        f".\n{output}"
+                    assert selftest_present, error(
+                        f"forced CAST failure output missing "
+                        f"`{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}`.\n{output}"
                     )
-                else:
+            else:
+                with Then(f"`{cast}` was not exercised and startup stayed clean"):
                     assert not marker_present, error(
-                        f"conditional CAST `{cast}` showed "
+                        f"first-use CAST `{cast}` showed "
                         f"`{FIPS_FAILFIPSCAST_MARKER}` but exited 0.\n{output}"
                     )
 
@@ -1377,9 +1328,9 @@ def fips_140_3(self):
     Scenario(run=inbound_tls_cipher_negotiation, flags=TE)
     Scenario(run=outbound_tls_cipher_negotiation, flags=TE)
     Scenario(run=outbound_tls_to_s3_endpoint_with_openssl_s_server, flags=TE)
-    Scenario(run=outbound_tls_to_nonfips_clickhouse_with_cipher_profile, flags=TE) # new
-    Scenario(run=connection_to_fips_clickhouse_with_nonfips_config, flags=TE) # new
-    Scenario(run=server_listens_only_on_fips_api_port, flags=TE) # new
+    Scenario(run=outbound_tls_to_nonfips_clickhouse_with_cipher_profile, flags=TE)
+    Scenario(run=connection_to_fips_clickhouse_with_nonfips_config, flags=TE)
+    Scenario(run=server_listens_only_on_fips_api_port, flags=TE)
     Scenario(run=forced_cast_failures, flags=TE)
     Scenario(run=acvp_tests, flags=TE) # optional, `RUN_ACVP_TESTS=1` (see `pkg/acvpwrapper/README.md`)
 
