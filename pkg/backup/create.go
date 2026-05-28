@@ -1081,23 +1081,34 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 	return disksToPartsMap, realSize, objectDiskSize, checksums, hashOfAllFiles, nil
 }
 
-// fetchHashOfAllFiles returns name → hash_of_all_files for the given parts on
-// disk `diskName`. The value is whatever ClickHouse prints in
-// system.parts.hash_of_all_files (already lowercased); the storage and
-// compare paths are version-agnostic because both ends use the server's
-// formatting.
+// fetchHashOfAllFiles returns name → hash_of_all_files for the given parts of
+// `database`.`table` (frozen from disk `diskName`). The value is whatever
+// ClickHouse prints in system.parts.hash_of_all_files (already lowercased); the
+// storage and compare paths are version-agnostic because both ends use the
+// server's formatting.
+//
+// We deliberately do NOT filter by disk_name: when a cache disk wraps an object
+// disk, both share the same metadata path, and system.parts reports the part
+// under the cache disk name (the disk named in the storage policy), not the
+// underlying disk that clickhouse-backup walks the shadow tree from. Filtering
+// by diskName would miss those parts (see issue #1396). Part names are unique
+// within a table's active set, and inactive copies left by a move carry
+// identical content (hence identical hash_of_all_files), so matching by
+// database+table+name is unambiguous.
 //
 // Called right after FREEZE so the active-set delta is essentially zero —
 // inactive parts also remain visible in system.parts for ~480s, which makes
 // the race window practically impossible to hit. If a frozen part is missing
-// from the result we surface a hard error rather than silently dropping it.
+// from the result we surface a hard error rather than silently dropping it,
+// unless the table itself was dropped/detached concurrently (the documented
+// IgnoreNotExistsErrorDuringFreeze race), in which case we skip the part.
 func (b *Backuper) fetchHashOfAllFiles(ctx context.Context, database, table, diskName string, partNames []string) (map[string]string, error) {
 	var rows []struct {
 		Name string `ch:"name"`
 		Hash string `ch:"hash_of_all_files"`
 	}
-	q := "SELECT name, lower(hash_of_all_files) AS hash_of_all_files FROM system.parts WHERE database=? AND `table`=? AND disk_name=? AND has(?, name)"
-	if err := b.ch.SelectContext(ctx, &rows, q, database, table, diskName, partNames); err != nil {
+	q := "SELECT name, lower(hash_of_all_files) AS hash_of_all_files FROM system.parts WHERE database=? AND `table`=? AND has(?, name)"
+	if err := b.ch.SelectContext(ctx, &rows, q, database, table, partNames); err != nil {
 		return nil, errors.Wrap(err, "SELECT hash_of_all_files FROM system.parts")
 	}
 	hashByName := make(map[string]string, len(rows))
@@ -1106,6 +1117,21 @@ func (b *Backuper) fetchHashOfAllFiles(ctx context.Context, database, table, dis
 	}
 	for _, name := range partNames {
 		if _, ok := hashByName[name]; !ok {
+			// A part can legitimately vanish from system.parts when the table is
+			// dropped/detached concurrently right after FREEZE (the frozen files
+			// are already safe in shadow). Tolerate that race the same way the
+			// FREEZE path does; otherwise the part is genuinely missing while the
+			// table still exists, which is a real anomaly worth surfacing.
+			if b.cfg.ClickHouse.IgnoreNotExistsErrorDuringFreeze {
+				var exists []struct {
+					Cnt uint64 `ch:"cnt"`
+				}
+				existsErr := b.ch.SelectContext(ctx, &exists, "SELECT count() AS cnt FROM system.tables WHERE database=? AND name=?", database, table)
+				if existsErr == nil && (len(exists) == 0 || exists[0].Cnt == 0) {
+					log.Warn().Msgf("part %q not found in system.parts (database=%s, table=%s) after FREEZE, table no longer exists, skip hash_of_all_files", name, database, table)
+					continue
+				}
+			}
 			return nil, errors.Errorf("part %q not found in system.parts (database=%s, table=%s, disk_name=%s) after FREEZE", name, database, table, diskName)
 		}
 	}
