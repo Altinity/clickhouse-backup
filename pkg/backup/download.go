@@ -41,6 +41,17 @@ var (
 	ErrBackupIsAlreadyExists = errors.New("backup is already exists")
 )
 
+func (b *Backuper) resumeExistingBackup(backupName string) error {
+	_, checkDownloadErr := os.Stat(path.Join(b.DefaultDataPath, "backup", backupName, "download.state2"))
+	if errors.Is(checkDownloadErr, os.ErrNotExist) {
+		// wrap ErrBackupIsAlreadyExists so RestoreFromRemote keeps reusing an already complete local backup (issue #625),
+		// while a standalone `download --resume` surfaces the guidance below instead of a bare "backup is already exists"
+		return fmt.Errorf("%w: local backup '%s' exists but resumable state 'download.state2' is missing, so it is unknown which parts are complete and resuming on top of partial data risks silent corruption; run `clickhouse-backup delete local %s` and retry the download, or investigate why the resumable state was lost", ErrBackupIsAlreadyExists, backupName, backupName)
+	}
+	log.Warn().Msgf("%s already exists will try to resume download", backupName)
+	return nil
+}
+
 func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume bool, hardlinkExistsFiles bool, backupVersion string, commandId int) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "download"); pidCheckErr != nil {
 		return errors.WithMessage(pidCheckErr, "CheckAndCreatePidFile")
@@ -88,14 +99,11 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			}
 			if !b.resume {
 				return ErrBackupIsAlreadyExists
-			} else {
-				_, checkDownloadErr := os.Stat(path.Join(b.DefaultDataPath, "backup", backupName, "download.state2"))
-				if errors.Is(checkDownloadErr, os.ErrNotExist) {
-					return ErrBackupIsAlreadyExists
-				}
-				isResumeExists = true
-				log.Warn().Msgf("%s already exists will try to resume download", backupName)
 			}
+			if resumeErr := b.resumeExistingBackup(backupName); resumeErr != nil {
+				return resumeErr
+			}
+			isResumeExists = true
 		}
 	}
 	startDownload := time.Now()
