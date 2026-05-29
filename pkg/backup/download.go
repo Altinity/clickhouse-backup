@@ -40,14 +40,13 @@ var (
 	ErrBackupIsAlreadyExists = errors.New("backup is already exists")
 )
 
-func (b *Backuper) resumeExistingBackup(backupName string) bool {
+func (b *Backuper) resumeExistingBackup(backupName string) error {
 	_, checkDownloadErr := os.Stat(path.Join(b.DefaultDataPath, "backup", backupName, "download.state2"))
 	if errors.Is(checkDownloadErr, os.ErrNotExist) {
-		log.Warn().Msgf("%s already exists but no download.state2 found, will resume download from scratch", backupName)
-	} else {
-		log.Warn().Msgf("%s already exists will try to resume download", backupName)
+		return fmt.Errorf("local backup '%s' exists but resumable state 'download.state2' is missing, so it is unknown which parts are complete and resuming on top of partial data risks silent corruption; run `clickhouse-backup delete local %s` and retry the download, or investigate why the resumable state was lost", backupName, backupName)
 	}
-	return true
+	log.Warn().Msgf("%s already exists will try to resume download", backupName)
+	return nil
 }
 
 func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume bool, hardlinkExistsFiles bool, backupVersion string, commandId int) error {
@@ -98,7 +97,10 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			if !b.resume {
 				return ErrBackupIsAlreadyExists
 			}
-			isResumeExists = b.resumeExistingBackup(backupName)
+			if resumeErr := b.resumeExistingBackup(backupName); resumeErr != nil {
+				return resumeErr
+			}
+			isResumeExists = true
 		}
 	}
 	startDownload := time.Now()

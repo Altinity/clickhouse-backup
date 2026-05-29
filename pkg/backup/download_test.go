@@ -12,6 +12,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var b = Backuper{
@@ -93,14 +94,21 @@ var remoteBackup = storage.Backup{
 	UploadDate: time.Now(),
 }
 
-func TestResumeExistingBackupAllowsMissingStateFile(t *testing.T) {
+func TestResumeExistingBackupMissingStateFileReturnsError(t *testing.T) {
 	backupName := "test_resume_crash"
 	defaultDataPath := t.TempDir()
-	assert.NoError(t, os.MkdirAll(path.Join(defaultDataPath, "backup", backupName), 0o750))
+	backupDir := path.Join(defaultDataPath, "backup", backupName)
+	assert.NoError(t, os.MkdirAll(backupDir, 0o750))
 
 	backuper := &Backuper{DefaultDataPath: defaultDataPath}
 
-	assert.True(t, backuper.resumeExistingBackup(backupName))
+	err := backuper.resumeExistingBackup(backupName)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "download.state2")
+	assert.Contains(t, err.Error(), "delete local "+backupName)
+
+	assert.NoError(t, os.WriteFile(path.Join(backupDir, "download.state2"), []byte("state"), 0o640))
+	assert.NoError(t, backuper.resumeExistingBackup(backupName))
 }
 
 func TestReBalanceTablesMetadataIfDiskNotExists_Files_NoErrors(t *testing.T) {
@@ -246,7 +254,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 		tableMetadataAfterDownloadRepacked[i] = tableMetadataAfterDownload[i]
 	}
 	err := b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(),
 		"disk: hdd2 not found in disk_types section map[string]string{\"default\":\"local\", \"s3\":\"s3\", \"s3_disk2\":\"s3\"} in Test/metadata.json",
 	)
@@ -258,7 +266,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 		tableMetadataAfterDownloadRepacked[i] = tableMetadataAfterDownload[i]
 	}
 	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "disk: hdd2, diskType: unknown not found in system.disks")
 
 	// invalid storage_policy
@@ -274,7 +282,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	invalidTable.Query = "CREATE TABLE default.test3(id UInt64) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy='invalid'"
 	tableMetadataAfterDownloadRepacked = ListOfTables{&invalidTable}
 	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup)
-	assert.Error(t, err)
+	require.Error(t, err)
 	matched, matchErr := regexp.MatchString(`storagePolicy: invalid with diskType: \w+ not found in system.disks`, err.Error())
 	assert.NoError(t, matchErr)
 	assert.True(t, matched)
@@ -290,7 +298,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	}
 	tableMetadataAfterDownloadRepacked = ListOfTables{&invalidTable}
 	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, invalidDisks, invalidRemoteBackup)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "250B free space, not found in system.disks with `local` type")
 
 }
