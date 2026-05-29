@@ -91,8 +91,6 @@ func runCleanBrokenRetentionCase(t *testing.T, tc cleanBrokenRetentionCase) {
 
 func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) {
 	chVer := strings.ReplaceAll(os.Getenv("CLICKHOUSE_VERSION"), ".", "_")
-	cleanBrokenRetentionExcludeGlob := "cbr_orphan_keep_" + chVer + "_*"
-	cleanBrokenRetentionIncludeGlob := "cbr_*_" + chVer + "_*"
 
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
@@ -129,6 +127,13 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 	brokenPath := fmt.Sprintf("cbr_broken_%s_%d", chVer, suffix)
 	orphanObj := fmt.Sprintf("cbr_orphan_obj_%s_%d", chVer, suffix)
 	orphanKept := fmt.Sprintf("cbr_orphan_keep_%s_%d", chVer, suffix)
+
+	// Scope include/exclude globs to this run's unique suffix (not just chVer).
+	// The bucket is shared across concurrent GitHub Actions runs; a glob scoped
+	// only by version would let a parallel same-version run's clean_broken_retention
+	// --commit / clean_remote_broken delete this run's planted objects mid-test.
+	cleanBrokenRetentionIncludeGlob := fmt.Sprintf("cbr_*_%s_%d", chVer, suffix)
+	cleanBrokenRetentionExcludeGlob := fmt.Sprintf("cbr_orphan_keep_%s_%d", chVer, suffix)
 
 	log.Debug().Str("backend", tc.name).Msg("Create a live backup that must survive the cleanup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create_remote", "--tables", tableName, keepBackup)
