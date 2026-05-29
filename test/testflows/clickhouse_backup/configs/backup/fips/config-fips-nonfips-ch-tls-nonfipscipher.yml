@@ -1,0 +1,29 @@
+# Static clickhouse-backup-fips config used by the non-FIPS-cipher arm of
+# `outbound_tls_to_nonfips_clickhouse_with_cipher_profile`.
+#
+# Mounted into the FIPS backup container via the per-PID copy of
+# `configs/backup/` performed by `regression.py`.
+#
+# Targets the non-FIPS Altinity ClickHouse server's secure native TLS
+# port `9440`. The server has been configured by
+# `configs/clickhouse_nonfips_server/config.d/listeners-nonfips-cipher.xml`
+# to offer only non-FIPS cipher profiles
+# (`ECDHE-RSA-CHACHA20-POLY1305` for TLSv1.2 and
+# `TLS_CHACHA20_POLY1305_SHA256` for TLSv1.3).
+#
+# `secure: true` so the FIPS-built binary uses TLS;
+# `skip_verify: true` so the assertion stays focused on cipher-policy
+# outcomes - the FIPS binary's `GODEBUG=fips140=only` runtime is
+# expected to refuse the handshake before any certificate validation.
+general:
+  log_level: warn
+  remote_storage: none
+clickhouse:
+  config_dir: /etc/clickhouse-server
+  host: clickhouse_nonfips_server
+  port: 9440
+  username: default
+  password: ''
+  timeout: 5s
+  secure: true
+  skip_verify: true
