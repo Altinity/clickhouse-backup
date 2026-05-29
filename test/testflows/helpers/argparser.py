@@ -20,3 +20,15 @@ def argparser(parser):
                             "future work will re-run the broad regression against the FIPS "
                             "backup container with GODEBUG=fips140=only at container level"
                         ))
+    parser.add_argument("--fips-godebug",
+                        type=str,
+                        choices=["unset", "on", "only", "off"],
+                        default="only",
+                        help=(
+                            "Select the GODEBUG fips140 mode for the FIPS suite "
+                            "(exported on the `clickhouse_backup_fips` container): "
+                            "'unset' (do not set GODEBUG; use build-time default), "
+                            "'on' (FIPS enabled, non-strict), "
+                            "'only' (FIPS enabled, strict; default), "
+                            "or 'off' (disable FIPS at runtime)."
+                        ))
