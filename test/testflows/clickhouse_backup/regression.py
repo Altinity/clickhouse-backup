@@ -23,6 +23,20 @@ from clickhouse_backup.requirements.fips.requirements import (
 )
 from clickhouse_backup.tests.common import simple_data_types_columns
 
+# `--fips-godebug` choices mapped to the `GODEBUG` value exported on
+# the `clickhouse_backup_fips` container, so the whole FIPS suite runs in the
+# selected mode. Default `only`:
+#   * `unset` - leave `GODEBUG` unset; FIPS active by build-time default.
+#   * `on`    - FIPS active without strict enforcement.
+#   * `only`  - FIPS active with strict enforcement (default).
+#   * `off`   - FIPS disabled at runtime.
+FIPS_GODEBUG_VALUES = {
+    "unset": None,
+    "on": "fips140=on",
+    "only": "fips140=only",
+    "off": "fips140=off",
+}
+
 testflows_settings.show_skipped = True # used for debug if a check is unintentionally skipped
 
 
@@ -44,8 +58,13 @@ xfails = {
     QA_SRS013_ClickHouse_Backup_Utility,
     QA_SRS013_ClickHouse_Backup_Utility_FIPS_Compatibility,
 )
-def regression(self, local, stress=False, fips=True):
+def regression(self, local, stress=False, fips=True, fips_godebug="only"):
     """ClickHouse Backup utility test regression suite.
+
+    :param fips_godebug: GODEBUG fips140 mode the whole FIPS suite runs in -
+        one of `unset`, `on`, `only` (default) or `off`. It is exported on the
+        `clickhouse_backup_fips` container so every `clickhouse-backup-fips`
+        command inherits it.
     """
     nodes = {
         "clickhouse": ("clickhouse1", "clickhouse2"),
@@ -75,8 +94,14 @@ def regression(self, local, stress=False, fips=True):
     with open(config_path, "w") as f:
         yaml.dump(cfg, f, default_flow_style=False)
 
+    # Resolve `--fips-godebug` choice to the `GODEBUG` value
+    # exported on the `clickhouse_backup_fips` container. This is FIPS-scoped:
+    # only affects the `fips_140_3` tests
+    fips_godebug_value = FIPS_GODEBUG_VALUES.get(fips_godebug, "fips140=only")
+
     try:
-        with Cluster(local, nodes=nodes, backup_config_dir=config_dir) as cluster:
+        with Cluster(local, nodes=nodes, backup_config_dir=config_dir,
+                     fips_godebug=fips_godebug_value) as cluster:
             self.context.backup_config_origin = origin_path
             self.context.backup_config_file = config_path
             self.context.cluster = cluster
