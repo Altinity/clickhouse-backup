@@ -117,6 +117,10 @@ general:
   # Throttling speed for upload and download, calculates on part level, not the socket level, it means short period for high traffic values and then time to sleep 
   download_max_bytes_per_second: 0  # DOWNLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling 
   upload_max_bytes_per_second: 0    # UPLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling
+
+  # Buffer tuning for high-bandwidth (10Gbit+) networks, see https://github.com/Altinity/clickhouse-backup/issues/1376 and Examples.md#tuning-for-high-bandwidth-10gbit-networks
+  pipe_buffer_size: 131072          # PIPE_BUFFER_SIZE, size in bytes of the in-memory ring buffer between the compression and the upload/download stream handlers, default 128KB; raise (e.g. 8388608 = 8MB) to let compression run ahead of uploads on fast networks
+  download_copy_buffer_size: 0      # DOWNLOAD_COPY_BUFFER_SIZE, explicit buffer size in bytes for io.CopyBuffer during download/extract, 0 means use the Go default (32KB); raise (e.g. 1048576 = 1MB) to reduce syscalls per file on fast networks
   
   # when table data contains in system.disks with type=ObjectStorage, then we need execute remote copy object in object storage service provider, this parameter can restrict how many files will copied in parallel  for each table 
   object_disk_server_side_copy_concurrency: 32
@@ -286,6 +290,15 @@ s3:
   retry_mode: standard             # S3_RETRY_MODE, AWS SDK retry mode, allowed values: standard, adaptive
   delete_concurrency: 10           # S3_DELETE_CONCURRENCY, how many parallel DeleteObjects requests during clean/delete operations
 
+  # HTTP transport and buffer tuning for high-bandwidth (10Gbit+) networks, see https://github.com/Altinity/clickhouse-backup/issues/1376 and Examples.md#tuning-for-high-bandwidth-10gbit-networks
+  buffer_size: 65536                  # S3_BUFFER_SIZE, per-part buffer in bytes for the s3manager up/downloader, default 64KB; raise (e.g. 1048576 = 1MB) on fast networks
+  http_max_idle_conns: 0              # S3_HTTP_MAX_IDLE_CONNS, http.Transport.MaxIdleConns, 0 keeps the AWS SDK default
+  http_max_idle_conns_per_host: 0     # S3_HTTP_MAX_IDLE_CONNS_PER_HOST, http.Transport.MaxIdleConnsPerHost, 0 keeps the Go default (2); raise (e.g. 128) to avoid serializing parallel up/downloads to the same endpoint when concurrency is high
+  http_max_conns_per_host: 0          # S3_HTTP_MAX_CONNS_PER_HOST, http.Transport.MaxConnsPerHost, 0 means unlimited
+  http_write_buffer_size: 0           # S3_HTTP_WRITE_BUFFER_SIZE, http.Transport.WriteBufferSize in bytes, 0 keeps the Go default (4KB); raise (e.g. 1048576 = 1MB) on fast networks
+  http_read_buffer_size: 0            # S3_HTTP_READ_BUFFER_SIZE, http.Transport.ReadBufferSize in bytes, 0 keeps the Go default (4KB); raise (e.g. 1048576 = 1MB) on fast networks
+  http_idle_conn_timeout: ""          # S3_HTTP_IDLE_CONN_TIMEOUT, http.Transport.IdleConnTimeout as a duration string, empty keeps the Go default (90s)
+
   # S3_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
   object_labels: {}
@@ -313,6 +326,7 @@ gcs:
   chunk_size: 0                # GCS_CHUNK_SIZE, default 16 * 1024 * 1024 (16MB)
   client_pool_size: 500        # GCS_CLIENT_POOL_SIZE, default max(upload_concurrency, download concurrency) * 3, should be at least 3 times bigger than `UPLOAD_CONCURRENCY` or `DOWNLOAD_CONCURRENCY` in each upload and download case to avoid stuck
   delete_concurrency: 50       # GCS_DELETE_CONCURRENCY, how many objects delete in parallel during clean/delete operations
+  upload_buffer_size: 131072   # GCS_UPLOAD_BUFFER_SIZE, io.CopyBuffer size in bytes feeding the GCS object writer, default 128KB; raise (e.g. 1048576 = 1MB) on high-bandwidth networks, see https://github.com/Altinity/clickhouse-backup/issues/1376
   # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
   object_labels: {}
@@ -359,6 +373,7 @@ sftp:
   path: ""                     # SFTP_PATH, `system.macros` values can be applied as {macro_name}
   object_disk_path: ""         # SFTP_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   concurrency: 1               # SFTP_CONCURRENCY, default: (download_concurrency * 3)
+  max_packet_size: 0           # SFTP_MAX_PACKET_SIZE, max SFTP payload in bytes per packet, 0 keeps the default 32KB; raise (e.g. 262144 = 256KB) to cut round-trips on high-bandwidth/high-latency links, only works with servers that accept packets larger than 32KB, see https://github.com/Altinity/clickhouse-backup/issues/1376
   compression_format: tar      # SFTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # SFTP_COMPRESSION_LEVEL
   debug: false                 # SFTP_DEBUG
@@ -403,6 +418,8 @@ A high value for `S3_CONCURRENCY` will allocate more memory for buffers inside t
 `concurrency` in the `sftp` section means how many concurrent request will be used for `upload` and `download` for each file.
 
 For `compression_format`, a good default is `tar`, which uses less CPU. In most cases the data in clickhouse is already compressed, so you may not get a lot of space savings when compressing already-compressed data.
+
+On high-bandwidth (10Gbit+) networks the default buffer sizes and HTTP transport settings limit throughput. See [Tuning for high-bandwidth (10Gbit) networks](Examples.md#tuning-for-high-bandwidth-10gbit-networks) for a config example.
 
 ## remote_storage: custom
 
