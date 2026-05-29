@@ -29,8 +29,8 @@ import (
 )
 
 const (
-	// PipeBufferSize - size of ring buffer between stream handlers
-	PipeBufferSize = 128 * 1024
+	// defaultPipeBufferSize - fallback size of ring buffer between stream handlers when general.pipe_buffer_size is unset
+	defaultPipeBufferSize = 128 * 1024
 )
 
 type readerWrapperForContext func(p []byte) (n int, err error)
@@ -47,10 +47,11 @@ type Backup struct {
 
 type BackupDestination struct {
 	RemoteStorage
-	compressionFormat string
-	compressionLevel  int
+	compressionFormat      string
+	compressionLevel       int
+	pipeBufferSize         int64
+	downloadCopyBufferSize int64
 }
-
 
 func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Backup, cfg *config.Config, retrierClassifier retrier.Classifier) error {
 	retry := retrier.New(retrier.ExponentialBackoff(cfg.General.RetriesOnFailure, common.AddRandomJitter(cfg.General.RetriesDuration, cfg.General.RetriesJitter)), retrierClassifier)
@@ -465,7 +466,7 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		}
 	}()
 
-	buf := buffer.New(PipeBufferSize)
+	buf := buffer.New(bd.pipeBufferSize)
 	bufReader := nio.NewReader(reader, buf)
 	compressionFormat := bd.compressionFormat
 	if !checkArchiveExtension(path.Ext(remotePath), compressionFormat) {
@@ -495,7 +496,7 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		if createErr != nil {
 			return errors.WithMessage(createErr, "DownloadCompressedStream Create")
 		}
-		if copyBytes, copyErr := io.Copy(dst, readerWrapperForContext(func(p []byte) (int, error) {
+		if copyBytes, copyErr := bd.copyWithBuffer(dst, readerWrapperForContext(func(p []byte) (int, error) {
 			select {
 			case <-ctx.Done():
 				return 0, ctx.Err()
@@ -533,7 +534,7 @@ func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLoc
 			totalBytes += fInfo.Size()
 		}
 	}
-	pipeBuffer := buffer.New(PipeBufferSize)
+	pipeBuffer := buffer.New(bd.pipeBufferSize)
 	body, w := nio.Pipe(pipeBuffer)
 	g, ctx := errgroup.WithContext(ctx)
 	startTime := time.Now()
@@ -627,7 +628,7 @@ func (bd *BackupDestination) DownloadPath(ctx context.Context, remotePath string
 				log.Error().Err(err).Send()
 				return errors.WithMessage(err, "DownloadPath Create")
 			}
-			if copyBytes, copyErr := io.Copy(dst, r); copyErr != nil {
+			if copyBytes, copyErr := bd.copyWithBuffer(dst, r); copyErr != nil {
 				log.Error().Err(copyErr).Send()
 				return errors.WithMessage(copyErr, "DownloadPath io.Copy")
 			} else {
@@ -693,6 +694,16 @@ func (bd *BackupDestination) UploadPath(ctx context.Context, baseLocalPath strin
 	return totalBytes, nil
 }
 
+// copyWithBuffer copies src to dst using io.CopyBuffer with a configurable buffer size
+// (general.download_copy_buffer_size). When the size is 0 it falls back to plain io.Copy
+// (Go's default 32KB internal buffer), preserving the previous behavior.
+func (bd *BackupDestination) copyWithBuffer(dst io.Writer, src io.Reader) (int64, error) {
+	if bd.downloadCopyBufferSize > 0 {
+		return io.CopyBuffer(dst, src, make([]byte, bd.downloadCopyBufferSize))
+	}
+	return io.Copy(dst, src)
+}
+
 func (bd *BackupDestination) throttleSpeed(startTime time.Time, size int64, maxSpeed uint64) {
 	if maxSpeed > 0 && size > 0 {
 		timeSince := time.Since(startTime).Nanoseconds()
@@ -714,6 +725,12 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 	cfg.Lock()
 	defer cfg.Unlock()
 
+	pipeBufferSize := cfg.General.PipeBufferSize
+	if pipeBufferSize <= 0 {
+		pipeBufferSize = defaultPipeBufferSize
+	}
+	downloadCopyBufferSize := cfg.General.DownloadCopyBufferSize
+
 	switch cfg.General.RemoteStorage {
 	case "azblob":
 		if cfg.AzureBlob.Path, err = ch.ApplyMacros(ctx, cfg.AzureBlob.Path); err != nil {
@@ -726,9 +743,11 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			Config: &cfg.AzureBlob,
 		}
 		return &BackupDestination{
-			azblobStorage,
-			cfg.AzureBlob.CompressionFormat,
-			cfg.AzureBlob.CompressionLevel,
+			RemoteStorage:          azblobStorage,
+			compressionFormat:      cfg.AzureBlob.CompressionFormat,
+			compressionLevel:       cfg.AzureBlob.CompressionLevel,
+			pipeBufferSize:         pipeBufferSize,
+			downloadCopyBufferSize: downloadCopyBufferSize,
 		}, nil
 	case "s3":
 		if cfg.S3.Path, err = ch.ApplyMacros(ctx, cfg.S3.Path); err != nil {
@@ -744,15 +763,21 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 				return nil, errors.WithMessage(err, "NewBackupDestination s3 ApplyMacrosToObjectLabels")
 			}
 		}
+		s3BufferSize := cfg.S3.BufferSize
+		if s3BufferSize <= 0 {
+			s3BufferSize = 64 * 1024
+		}
 		s3Storage := &S3{
 			Config:      &cfg.S3,
 			Concurrency: cfg.S3.Concurrency,
-			BufferSize:  64 * 1024,
+			BufferSize:  s3BufferSize,
 		}
 		return &BackupDestination{
-			s3Storage,
-			cfg.S3.CompressionFormat,
-			cfg.S3.CompressionLevel,
+			RemoteStorage:          s3Storage,
+			compressionFormat:      cfg.S3.CompressionFormat,
+			compressionLevel:       cfg.S3.CompressionLevel,
+			pipeBufferSize:         pipeBufferSize,
+			downloadCopyBufferSize: downloadCopyBufferSize,
 		}, nil
 	case "gcs":
 		if cfg.GCS.Path, err = ch.ApplyMacros(ctx, cfg.GCS.Path); err != nil {
@@ -770,9 +795,11 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		}
 		googleCloudStorage := &GCS{Config: &cfg.GCS}
 		return &BackupDestination{
-			googleCloudStorage,
-			cfg.GCS.CompressionFormat,
-			cfg.GCS.CompressionLevel,
+			RemoteStorage:          googleCloudStorage,
+			compressionFormat:      cfg.GCS.CompressionFormat,
+			compressionLevel:       cfg.GCS.CompressionLevel,
+			pipeBufferSize:         pipeBufferSize,
+			downloadCopyBufferSize: downloadCopyBufferSize,
 		}, nil
 	case "cos":
 		if cfg.COS.Path, err = ch.ApplyMacros(ctx, cfg.COS.Path); err != nil {
@@ -786,9 +813,11 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			BufferSize: 64 * 1024,
 		}
 		return &BackupDestination{
-			tencentStorage,
-			cfg.COS.CompressionFormat,
-			cfg.COS.CompressionLevel,
+			RemoteStorage:          tencentStorage,
+			compressionFormat:      cfg.COS.CompressionFormat,
+			compressionLevel:       cfg.COS.CompressionLevel,
+			pipeBufferSize:         pipeBufferSize,
+			downloadCopyBufferSize: downloadCopyBufferSize,
 		}, nil
 	case "ftp":
 		if cfg.FTP.Concurrency < cfg.General.ObjectDiskServerSideCopyConcurrency/4 {
@@ -804,9 +833,11 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			Config: &cfg.FTP,
 		}
 		return &BackupDestination{
-			ftpStorage,
-			cfg.FTP.CompressionFormat,
-			cfg.FTP.CompressionLevel,
+			RemoteStorage:          ftpStorage,
+			compressionFormat:      cfg.FTP.CompressionFormat,
+			compressionLevel:       cfg.FTP.CompressionLevel,
+			pipeBufferSize:         pipeBufferSize,
+			downloadCopyBufferSize: downloadCopyBufferSize,
 		}, nil
 	case "sftp":
 		if cfg.SFTP.Path, err = ch.ApplyMacros(ctx, cfg.SFTP.Path); err != nil {
@@ -819,9 +850,11 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			Config: &cfg.SFTP,
 		}
 		return &BackupDestination{
-			sftpStorage,
-			cfg.SFTP.CompressionFormat,
-			cfg.SFTP.CompressionLevel,
+			RemoteStorage:          sftpStorage,
+			compressionFormat:      cfg.SFTP.CompressionFormat,
+			compressionLevel:       cfg.SFTP.CompressionLevel,
+			pipeBufferSize:         pipeBufferSize,
+			downloadCopyBufferSize: downloadCopyBufferSize,
 		}, nil
 	default:
 		return nil, errors.Errorf("NewBackupDestination error: storage type '%s' is not supported", cfg.General.RemoteStorage)
