@@ -16,6 +16,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/acvpwrapper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/fips"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
@@ -877,6 +878,18 @@ func main() {
 					Usage:  "explicitly delete local backup during upload in watch",
 				}),
 		},
+	}
+	// app-level only flag, appended after Commands so it does not propagate into every sub-command
+	cliapp.Flags = append(cliapp.Flags, cli.BoolFlag{
+		Name:  "fips-info",
+		Usage: "Display FIPS build/runtime info and exit (no Go toolchain required).",
+	})
+	cliapp.Action = func(c *cli.Context) error {
+		if c.Bool("fips-info") {
+			fips.PrintInfo(os.Stdout, "clickhouse-backup", version, gitCommit, buildDate)
+			return nil
+		}
+		return cli.ShowAppHelp(c)
 	}
 	if err := cliapp.Run(os.Args); err != nil {
 		log.Fatal().Stack().Err(err).Send()
