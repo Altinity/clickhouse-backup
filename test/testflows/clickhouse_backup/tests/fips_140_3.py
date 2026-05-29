@@ -405,7 +405,7 @@ def gofips140_build_flags_present(self):
     backup_fips = _require_fips_container(self)
 
     with When("I run `go version -m` against the FIPS binary"):
-        result = backup_fips.cmd(f"go version -m {FIPS_BINARY_IN_CONTAINER}")
+        result = backup_fips.cmd(f"env -u GODEBUG go version -m {FIPS_BINARY_IN_CONTAINER}")
         debug(f"STDOUT:\n{result.output}")
         debug(f"EXIT CODE: {result.exitcode}")
         debug(f"FIPS_GO_BUILD_SETTING: {FIPS_GO_BUILD_SETTING!r}")
@@ -417,96 +417,15 @@ def gofips140_build_flags_present(self):
         )
 
 
-@TestScenario
-@Requirements(
-    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Unset("1.0"),
-    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_On("1.0"),
-    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Only("1.0"),
-)
-def godebug_fips140_modes(self):
-    """Validate the three Go FIPS runtime modes for `clickhouse-backup-fips`.
-
-    For each Go FIPS runtime mode listed in `FIPS_GODEBUG_MODES`:
-
-    * `GODEBUG` not set      - FIPS active by build-time default (`GOFIPS140=v1.0.0`).
-    * `GODEBUG=fips140=on`   - FIPS active without strict enforcement.
-    * `GODEBUG=fips140=only` - FIPS active with strict enforcement
-                               (expected error or panic).
-
-    Run two checks against the FIPS-compatible Altinity ClickHouse
-    server for each mode (for example `altinity/clickhouse-server:25.3.8.30001.altinityfips`) on
-    secure native TCP `9440`:
-
-    1. `clickhouse-backup-fips --version` reports `FIPS 140-3: true`.
-    2. `clickhouse-backup-fips -c <config> tables` exits `0`.
-    The CH server container is brought up once and reused across all three modes.
-    """
-
-    FIPS_GODEBUG_MODES = (None, "fips140=on", "fips140=only")
-    backup_fips = _require_fips_container(self)
-    cluster = self.context.cluster
-    
-    listeners_xml = os.path.join(
-        cluster.tests_dir,
-        "configs/clickhouse_fips_server/config.d/listeners.xml",
-    )
-
-    try:
-        with Given("a dedicated FIPS-compatible Altinity ClickHouse server"):
-            cluster.start_clickhouse_server_container(
-                name=FIPS_CH_SERVER_NAME,
-                image_tag=FIPS_CH_SERVER_IMAGE,
-                extra_volumes=[
-                    (cluster.ssl_certs_dir, "/etc/clickhouse-server/ssl"),
-                    (listeners_xml, "/etc/clickhouse-server/config.d/listeners.xml"),
-                ],
-            )
-
-        with When("for each Go FIPS runtime mode I check `--version` and `tables`"):
-            for godebug in FIPS_GODEBUG_MODES:
-                label = godebug if godebug else "unset"  # Show "unset" when GODEBUG is not set.
-
-                with Check(f"GODEBUG {label}"):
-                    status, output = _read_fips_status(
-                        backup_fips, FIPS_BINARY_IN_CONTAINER, godebug=godebug,
-                    )
-
-                    with Then(
-                        f"`clickhouse-backup-fips --version` reports "
-                        f"`{FIPS_VERSION_LABEL} {FIPS_VERSION_TRUE}` (GODEBUG={label})"
-                    ):
-                        assert status is not None, error(
-                            f"`{FIPS_VERSION_LABEL}` line missing from "
-                            f"`--version` (GODEBUG={label}):\n{output}"
-                        )
-                        assert status == FIPS_VERSION_TRUE, error(
-                            f"Expected `{FIPS_VERSION_LABEL} {FIPS_VERSION_TRUE}` "
-                            f"(GODEBUG={label}), got `{status}`.\n{output}"
-                        )
-
-                    with Then(
-                        f"`clickhouse-backup-fips tables` exits 0 against the "
-                        f"FIPS ClickHouse server (GODEBUG={label})"
-                    ):
-                        _assert_tables_succeeds(
-                            backup_fips=backup_fips,
-                            config=FIPS_CONNECTIVITY_FIPS_CONFIG_PATH,
-                            godebug=godebug,
-                        )
-    finally:
-        cluster.stop_auxiliary_container(FIPS_CH_SERVER_NAME)
-
-
 @TestStep(Check)
-def _assert_tables_succeeds(self, backup_fips, *, config, godebug):
+def _assert_tables_succeeds(self, backup_fips, *, config, godebug=None):
     """Run `clickhouse-backup-fips -c <config> tables` and assert it exits 0.
 
     Wrapped in `timeout` so a hung handshake or DNS failure does not
     block the tests for a long time; on success the command is fast.
 
     :param godebug: value for `GODEBUG` (e.g. `"fips140=only"`); pass
-        `None` to leave `GODEBUG` unset and rely on the FIPS binary's
-        build-time default.
+        `None` (default) to inherit the FIPS mode from the container.
     """
     env_prefix = f"env GODEBUG={godebug} " if godebug else ""
     cmd = (
@@ -514,7 +433,7 @@ def _assert_tables_succeeds(self, backup_fips, *, config, godebug):
         f"{FIPS_BINARY_IN_CONTAINER} -c {config} tables"
     )
     result = backup_fips.cmd(cmd, no_checks=True)
-    label = godebug if godebug else "unset"
+    label = godebug if godebug else "container-default"
     assert result.exitcode == 0, error(
         f"`clickhouse-backup-fips tables` against `{config}` failed "
         f"(exit={result.exitcode}, GODEBUG={label}):\n{result.output}"
@@ -522,11 +441,12 @@ def _assert_tables_succeeds(self, backup_fips, *, config, godebug):
 
 
 @TestStep(Check)
-def _assert_tables_fails(self, backup_fips, *, config, godebug, reason):
+def _assert_tables_fails(self, backup_fips, *, config, reason, godebug=None):
     """Run `clickhouse-backup-fips -c <config> tables` and assert it fails.
 
     Negative option to `_assert_tables_succeeds`: require non-zero
-    exit and ensure no table-list success markers are present.
+    exit and ensure no table-list success markers are present. Pass `godebug`
+    `None` (default) to inherit the FIPS mode from the container.
     """
     env_prefix = f"env GODEBUG={godebug} " if godebug else ""
     cmd = (
@@ -535,7 +455,7 @@ def _assert_tables_fails(self, backup_fips, *, config, godebug, reason):
     )
     result = backup_fips.cmd(cmd, no_checks=True)
     output = result.output or ""
-    label = godebug if godebug else "unset"
+    label = godebug if godebug else "container-default"
 
     assert result.exitcode != 0, error(
         f"`clickhouse-backup-fips tables` unexpectedly succeeded against `{config}` "
@@ -583,7 +503,6 @@ def connectivity_against_fips_clickhouse_server(self):
             _assert_tables_succeeds(
                 backup_fips=backup_fips,
                 config=FIPS_CONNECTIVITY_FIPS_CONFIG_PATH,
-                godebug="fips140=only",
             )
     finally:
         cluster.stop_auxiliary_container(FIPS_CH_SERVER_NAME)
@@ -628,7 +547,6 @@ def connectivity_against_non_fips_clickhouse_server(self):
             _assert_tables_fails(
                 backup_fips=backup_fips,
                 config=FIPS_CONNECTIVITY_NONFIPS_CONFIG_PATH,
-                godebug="fips140=only",
                 reason=(
                     "The non-FIPS ClickHouse server runs with image defaults "
                     "and does not expose the secure native TCP port `:9440` "
@@ -733,13 +651,12 @@ def inbound_tls_cipher_negotiation(self):
 
     try:
         with Given(
-            "I start clickhouse-backup-fips server with GODEBUG=fips140=only and the TLS API config",
+            "I start clickhouse-backup-fips server with the TLS API config",
             description=f"config={FIPS_TLS_CONFIG_PATH} listen=:{FIPS_TLS_LISTEN_PORT}",
         ):
             backup_fips.start_server(
                 binary=FIPS_BINARY_IN_CONTAINER,
                 config=FIPS_TLS_CONFIG_PATH,
-                extra_env={"GODEBUG": "fips140=only"},
                 listen_port=FIPS_TLS_LISTEN_PORT,
                 timeout=60,
             )
@@ -828,7 +745,7 @@ def outbound_tls_cipher_negotiation(self):
     cluster = self.context.cluster
 
     cmd = (
-        f"env GODEBUG=fips140=only {FIPS_BINARY_IN_CONTAINER} "
+        f"{FIPS_BINARY_IN_CONTAINER} "
         f"-c {FIPS_OUTBOUND_CH_CONFIG_PATH} tables 2>&1"  # `2>&1` redirects stderr to stdout.
     )
 
@@ -908,15 +825,13 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
     backup_fips = _require_fips_container(self)
     cluster = self.context.cluster
 
-    # `env GODEBUG=...` so the `timeout` prefix added inside
-    # `_check_outbound_tls_handshake` can exec a real program.
     # cmd - command to run inside the FIPS container
     cmd = (
-        f"env GODEBUG=fips140=only {FIPS_BINARY_IN_CONTAINER} "
+        f"{FIPS_BINARY_IN_CONTAINER} "
         f"-c {FIPS_OUTBOUND_S3_CONFIG_PATH} list remote 2>&1"  # `2>&1` redirects stderr to stdout.
     )
 
-    with When("I try each FIPS-approved TLSv1.3 cipher suite on the S3 endpoint"):
+    with Check("I try each FIPS-approved TLSv1.3 cipher suite on the S3 endpoint"):
         for ciphersuite in FIPS_TLS13_APPROVED:
             with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be accepted"):
                 _check_outbound_tls_with_cipher(
@@ -926,7 +841,7 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
                     ciphersuites=ciphersuite, command=cmd, expected_success=True,
                 )
 
-    with And("I try each FIPS-approved TLSv1.2 cipher on the S3 endpoint"):
+    with Check("I try each FIPS-approved TLSv1.2 cipher on the S3 endpoint"):
         for cipher in FIPS_TLS12_APPROVED:
             with Check(f"TLSv1.2 cipher {cipher} should be accepted"):
                 _check_outbound_tls_with_cipher(
@@ -1040,6 +955,11 @@ def forced_cast_failures(self):
                     )
             else:
                 with Then(f"`{cast}` was not exercised and startup stayed clean"):
+                    assert result.exitcode == 0, error(
+                    f"first-use CAST `{cast}` exited non-zero unexpectedly.\n{output}"
+                    )
+
+                    # first-use CASTs abort only when the CAST is actually reached; otherwise startup stays clean without the marker.
                     assert not marker_present, error(
                         f"first-use CAST `{cast}` showed "
                         f"`{FIPS_FAILFIPSCAST_MARKER}` but exited 0.\n{output}"
@@ -1096,7 +1016,6 @@ def connection_to_fips_clickhouse_with_nonfips_config(self):
         ):
             cmd = (
                 f"timeout {CLI_CMD_TIMEOUT_SEC} "
-                f"env GODEBUG=fips140=only "
                 f"{FIPS_BINARY_IN_CONTAINER} "
                 f"-c {FIPS_CONNECTIVITY_FIPS_MISCONFIG_PATH} tables 2>&1"  # `2>&1` redirects stderr to stdout.
             )
@@ -1138,11 +1057,10 @@ def server_listens_only_on_fips_api_port(self):
     backup_fips = _require_fips_container(self)
 
     try:
-        with Given("clickhouse-backup-fips server is started with GODEBUG=fips140=only"):
+        with Given("clickhouse-backup-fips server is started"):
             backup_fips.start_server(
                 binary=FIPS_BINARY_IN_CONTAINER,
                 config=FIPS_TLS_CONFIG_PATH,
-                extra_env={"GODEBUG": "fips140=only"},
                 listen_port=FIPS_TLS_LISTEN_PORT,
                 timeout=60,
             )
@@ -1207,7 +1125,6 @@ def outbound_tls_to_nonfips_clickhouse_with_cipher_profile(self):
         with When("I run `clickhouse-backup-fips tables` over secure native TCP 9440"):
             cmd = (
                 f"timeout {CLI_CMD_TIMEOUT_SEC} "
-                f"env GODEBUG=fips140=only "
                 f"{FIPS_BINARY_IN_CONTAINER} "
                 f"-c {FIPS_NONFIPS_CH_TLS_FIPSCIPHER_CONFIG_PATH} tables 2>&1"
             )
@@ -1297,7 +1214,6 @@ def fips_140_3(self):
     Scenario(run=clickhouse_backup_fips_version_output, flags=TE)
     Scenario(run=clickhouse_backup_fips_version_output_negative_check, flags=TE)
     Scenario(run=gofips140_build_flags_present, flags=TE)
-    Scenario(run=godebug_fips140_modes, flags=TE)  # move to regression.py
     Scenario(run=connectivity_against_non_fips_clickhouse_server, flags=TE)
     Scenario(run=connectivity_against_fips_clickhouse_server, flags=TE)
     Scenario(run=fips_integrity_self_test_failure_on_tampered_binary, flags=TE)
