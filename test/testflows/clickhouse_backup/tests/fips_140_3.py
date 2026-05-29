@@ -790,17 +790,16 @@ def outbound_tls_cipher_negotiation(self):
     RQ_SRS_013_ClickHouse_BackupUtility_FIPS_TLS_Outbound_S3_Ciphers_Approved("1.0"),
 )
 def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
-    """Validate `clickhouse-backup-fips` can connect to an S3 HTTPS endpoint over a FIPS-approved cipher.
+    """Validate outbound S3 TLS policy with approved and non-approved profiles.
 
     For each FIPS-approved cipher / cipher suite, start an `openssl s_server`
     that offers only that profile and run:
 
         GODEBUG=fips140=only clickhouse-backup-fips -c <config> list remote
 
-    inside the FIPS container, asserting the TLS handshake is NOT rejected by
-    the FIPS policy.
-
-    This scenario is a positive *compatibility* check only. 
+    inside the FIPS container, asserting:
+      * approved profiles are accepted by FIPS policy;
+      * non-approved profiles are rejected by FIPS policy.
 
     The `s_server` container reuses the cluster's static SSL fixtures and the
     `clickhouse-backup-fips` config is the static
@@ -849,6 +848,26 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
                     aux_name=OPENSSL_S3_FIPS_AUX_NAME,
                     listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_2",
                     cipher=cipher, command=cmd, expected_success=True,
+                )
+
+    with Check("I try each non-FIPS TLSv1.3 cipher suite on the S3 endpoint"):
+        for ciphersuite in NON_FIPS_TLS13:
+            with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
+                _check_outbound_tls_with_cipher(
+                    cluster=cluster, backup_fips=backup_fips,
+                    aux_name=OPENSSL_S3_FIPS_AUX_NAME,
+                    listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_3",
+                    ciphersuites=ciphersuite, command=cmd, expected_success=False,
+                )
+
+    with Check("I try each non-FIPS TLSv1.2 cipher on the S3 endpoint"):
+        for cipher in NON_FIPS_TLS12_OUTBOUND:
+            with Check(f"TLSv1.2 cipher {cipher} should be rejected"):
+                _check_outbound_tls_with_cipher(
+                    cluster=cluster, backup_fips=backup_fips,
+                    aux_name=OPENSSL_S3_FIPS_AUX_NAME,
+                    listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_2",
+                    cipher=cipher, command=cmd, expected_success=False,
                 )
 
 
