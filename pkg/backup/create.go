@@ -1117,22 +1117,16 @@ func (b *Backuper) fetchHashOfAllFiles(ctx context.Context, database, table, dis
 	}
 	for _, name := range partNames {
 		if _, ok := hashByName[name]; !ok {
-			// A part can legitimately vanish from system.parts when the table is
-			// dropped/detached concurrently right after FREEZE (the frozen files
-			// are already safe in shadow). Tolerate that race the same way the
-			// FREEZE path does; otherwise the part is genuinely missing while the
-			// table still exists, which is a real anomaly worth surfacing.
-			if b.cfg.ClickHouse.IgnoreNotExistsErrorDuringFreeze {
-				var exists []struct {
-					Cnt uint64 `ch:"cnt"`
-				}
-				existsErr := b.ch.SelectContext(ctx, &exists, "SELECT count() AS cnt FROM system.tables WHERE database=? AND name=?", database, table)
-				if existsErr == nil && (len(exists) == 0 || exists[0].Cnt == 0) {
-					log.Warn().Msgf("part %q not found in system.parts (database=%s, table=%s) after FREEZE, table no longer exists, skip hash_of_all_files", name, database, table)
-					continue
-				}
-			}
-			return nil, errors.Errorf("part %q not found in system.parts (database=%s, table=%s, disk_name=%s) after FREEZE", name, database, table, diskName)
+			// A part can vanish from system.parts after FREEZE for several reasons:
+			// the table was dropped/detached concurrently, or a background merge/move
+			// (common on object-storage tiers like s3_cold) replaced the part right
+			// after we froze it. In every case the frozen files are already safe in
+			// shadow, so this is not a backup failure — we just lack a
+			// hash_of_all_files fingerprint for this part. Skip it with a warning;
+			// download/restore fall back to checksums and then to name-only
+			// comparison when no fingerprint is available.
+			log.Warn().Msgf("part %q not found in system.parts (database=%s, table=%s, disk_name=%s) after FREEZE, skip hash_of_all_files (fall back to checksums/name comparison)", name, database, table, diskName)
+			continue
 		}
 	}
 	return hashByName, nil
