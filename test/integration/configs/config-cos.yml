@@ -24,8 +24,8 @@ cos:
   url: "https://clickhouse-backup-1336113806.cos.na-ashburn.myqcloud.com"
   secret_id: "${QA_TENCENT_SECRET_ID}"
   secret_key: "${QA_TENCENT_SECRET_KEY}"
-  path: backup/{cluster}/{shard}
-  object_disk_path: object_disk/{cluster}/{shard}
+  path: backup/{cluster}/{shard}/{version}
+  object_disk_path: object_disk/{cluster}/{shard}/{version}
 api:
   listen: :7171
   create_integration_tables: true

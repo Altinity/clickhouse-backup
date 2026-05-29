@@ -281,6 +281,14 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	}
 
 	if schemaOnly || dropExists || (schemaOnly == dataOnly) {
+		// Safety check: prevent accidental data loss when restore_schema_on_cluster is set
+		// via config but RESTORE_SCHEMA_ON_CLUSTER env var is empty, and --rm/--drop is not provided.
+		// https://github.com/Altinity/clickhouse-backup/issues/1325
+		if !dropExists && !b.resume && b.cfg.General.RestoreSchemaOnCluster != "" && os.Getenv("RESTORE_SCHEMA_ON_CLUSTER") == "" {
+			if err = b.checkClusterTablesHaveDataBeforeDrop(ctx, tablesForRestore, version); err != nil {
+				return errors.WithMessage(err, "checkClusterTablesHaveDataBeforeDrop")
+			}
+		}
 		if err = b.RestoreSchema(ctx, backupName, backupMetadata, disks, tablesForRestore, ignoreDependencies, version, schemaAsAttach); err != nil {
 			return errors.WithMessage(err, "RestoreSchema")
 		}
@@ -1815,8 +1823,22 @@ func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context
 		if err = b.ch.SelectSingleRow(ctx, &isReplicaPresent, "SELECT count() FROM system.zookeeper WHERE path=?", fullReplicaPath); err != nil {
 			log.Warn().Msgf("can't check replica %s in system.zookeeper error: %v", fullReplicaPath, err)
 		}
+		// Even if our specific replica entry is gone, the table-level znode may still
+		// hold leftover state (log, parts, replicas/<other>) from a recently dropped
+		// table — table-level ZK cleanup is asynchronous. Re-creating a Replicated
+		// table on top of that znode would inherit the stale data, e.g. silently
+		// re-fetching parts via replication. Detect that case and rename the znode
+		// to a fresh path too. https://github.com/Altinity/clickhouse-backup/issues/849
+		isTablePathStale := uint64(0)
 		if isReplicaPresent == 0 {
-			return
+			if err = b.ch.SelectSingleRow(ctx, &isTablePathStale, "SELECT count() FROM system.zookeeper WHERE path=?", resolvedReplicaPath); err != nil {
+				// path does not exist => clean state, nothing to do
+				return
+			}
+			if isTablePathStale == 0 {
+				return
+			}
+			log.Warn().Msgf("zookeeper path %s still has %d children after table drop, will rebind to fresh replica path", resolvedReplicaPath, isTablePathStale)
 		}
 		newReplicaPath := b.cfg.ClickHouse.DefaultReplicaPath
 		newReplicaName := b.cfg.ClickHouse.DefaultReplicaName
@@ -1851,6 +1873,66 @@ func (b *Backuper) replaceCreateToAttachForView(schema *metadata.TableMetadata) 
 	)
 	schema.Query = strings.Replace(
 		schema.Query, "CREATE LIVE VIEW", "ATTACH LIVE VIEW", 1,
+	)
+}
+
+// checkClusterTablesHaveDataBeforeDrop returns an error if any of the tables that restore
+// would drop ON CLUSTER currently contain rows on any replica. Triggered only when
+// restore_schema_on_cluster is set via config, RESTORE_SCHEMA_ON_CLUSTER env var is empty
+// and --rm/--drop is not provided. https://github.com/Altinity/clickhouse-backup/issues/1325
+func (b *Backuper) checkClusterTablesHaveDataBeforeDrop(ctx context.Context, tablesForRestore ListOfTables, version int) error {
+	if len(tablesForRestore) == 0 {
+		return nil
+	}
+	// system.tables.total_rows appeared in ClickHouse 20.4 (commit 2489481a46a, "Add total_rows to the system.tables").
+	if version < 20004000 {
+		log.Warn().Int("version", version).Msg("checkClusterTablesHaveDataBeforeDrop: skipped, system.tables.total_rows requires ClickHouse >= 20.4")
+		return nil
+	}
+	cluster, err := b.ch.ApplyMacros(ctx, b.cfg.General.RestoreSchemaOnCluster)
+	if err != nil {
+		return errors.Wrapf(err, "checkClusterTablesHaveDataBeforeDrop: can't apply macros to cluster name '%s'", b.cfg.General.RestoreSchemaOnCluster)
+	}
+	tableTuples := make([]string, 0, len(tablesForRestore))
+	for _, t := range tablesForRestore {
+		db := t.Database
+		if mapped, ok := b.cfg.General.RestoreDatabaseMapping[db]; ok {
+			db = mapped
+		}
+		tbl := t.Table
+		if mapped, ok := b.cfg.General.RestoreTableMapping[tbl]; ok {
+			tbl = mapped
+		}
+		tableTuples = append(tableTuples, fmt.Sprintf("('%s','%s')",
+			strings.ReplaceAll(db, "'", "\\'"), strings.ReplaceAll(tbl, "'", "\\'")))
+	}
+	var nonEmpty []struct {
+		Database  string `ch:"database"`
+		Name      string `ch:"name"`
+		TotalRows uint64 `ch:"total_rows"`
+	}
+	query := fmt.Sprintf(
+		"SELECT database, name, sum(total_rows) AS total_rows FROM clusterAllReplicas('%s', system.tables) "+
+			"WHERE (database, name) IN (%s) GROUP BY database, name HAVING total_rows > 0 ORDER BY total_rows DESC LIMIT 10",
+		cluster, strings.Join(tableTuples, ","),
+	)
+	log.Debug().Str("query", query).Msg("checkClusterTablesHaveDataBeforeDrop")
+	if err := b.ch.SelectContext(ctx, &nonEmpty, query); err != nil {
+		return errors.Wrapf(err, "checkClusterTablesHaveDataBeforeDrop: clusterAllReplicas('%s', system.parts) failed", cluster)
+	}
+	if len(nonEmpty) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(nonEmpty))
+	for _, r := range nonEmpty {
+		names = append(names, fmt.Sprintf("`%s`.`%s` (rows=%d)", r.Database, r.Name, r.TotalRows))
+	}
+	return errors.Errorf(
+		"restore_schema_on_cluster='%s' is set and the following tables contain data across the cluster: %s. "+
+			"Restore would drop these tables on every replica. Re-run with --rm (or --drop) to explicitly confirm dropping, "+
+			"or set RESTORE_SCHEMA_ON_CLUSTER env var to acknowledge the cluster scope. "+
+			"See https://github.com/Altinity/clickhouse-backup/issues/1325",
+		cluster, strings.Join(names, ", "),
 	)
 }
 
@@ -2318,7 +2400,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					if err != nil {
 						return errors.WithMessage(err, "ReadMetadataFromFile")
 					}
-					if objMeta.StorageObjectCount < 1 && objMeta.Version != object_disk.VersionInlineData {
+					if objMeta.StorageObjectCount < 1 && objMeta.Version != object_disk.VersionInlineData && objMeta.TotalSize > 0 {
 						return errors.Errorf("%s: invalid object_disk.Metadata: %#v", fPath, objMeta)
 					}
 					needObjMetaRewrite := false

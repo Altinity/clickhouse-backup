@@ -1,0 +1,36 @@
+<!--
+    Config.d override mounted only on the dedicated non-FIPS Altinity
+    ClickHouse server brought up by the non-FIPS-cipher arm of
+    `outbound_tls_to_nonfips_clickhouse_with_cipher_profile`.
+
+    Adds the secure native TCP listener on port 9440 with a single
+    non-FIPS TLSv1.2 cipher and a single non-FIPS TLSv1.3 suite.
+    Combined with `clickhouse-backup-fips` running with
+    `GODEBUG=fips140=only`, this lets the test prove that:
+
+      * the FIPS binary CANNOT complete the [TLS] handshake when the
+        non-FIPS ClickHouse server only offers non-FIPS cipher
+        profiles, even though the server itself accepts the
+        connection at the TCP layer.
+
+    The plain `tcp_port` (9000) and `http_port` (8123) are left as
+    image defaults so the container's healthcheck (`/ping` on 8123)
+    keeps working without depending on TLS.
+
+    Server certificate / key paths point at `/etc/clickhouse-server/ssl/`
+    which the test bind-mounts from `configs/clickhouse/ssl/`.
+-->
+<clickhouse>
+    <tcp_port_secure>9440</tcp_port_secure>
+    <openSSL>
+        <server>
+            <certificateFile>/etc/clickhouse-server/ssl/server.crt</certificateFile>
+            <privateKeyFile>/etc/clickhouse-server/ssl/server.key</privateKeyFile>
+            <cipherList>ECDHE-RSA-CHACHA20-POLY1305</cipherList>
+            <cipherSuites>TLS_CHACHA20_POLY1305_SHA256</cipherSuites>
+            <preferServerCiphers>true</preferServerCiphers>
+            <disableProtocols>sslv2,sslv3,tlsv1,tlsv1_1</disableProtocols>
+            <verificationMode>relaxed</verificationMode>
+        </server>
+    </openSSL>
+</clickhouse>

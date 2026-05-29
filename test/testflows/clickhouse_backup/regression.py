@@ -9,6 +9,7 @@ import os
 import shutil
 import sys
 import yaml
+import testflows.settings as testflows_settings
 from testflows.core import *
 
 append_path(sys.path, "..")
@@ -16,7 +17,27 @@ from helpers.cluster import Cluster
 from helpers.argparser import argparser
 
 from clickhouse_backup.requirements.requirements import *
+
+from clickhouse_backup.requirements.fips.requirements import (
+    QA_SRS013_ClickHouse_Backup_Utility_FIPS_Compatibility,
+)
 from clickhouse_backup.tests.common import simple_data_types_columns
+
+# `--fips-godebug` choices mapped to the `GODEBUG` value exported on
+# the `clickhouse_backup_fips` container, so the whole FIPS suite runs in the
+# selected mode. Default `only`:
+#   * `unset` - leave `GODEBUG` unset; FIPS active by build-time default.
+#   * `on`    - FIPS active without strict enforcement.
+#   * `only`  - FIPS active with strict enforcement (default).
+#   * `off`   - FIPS disabled at runtime.
+FIPS_GODEBUG_VALUES = {
+    "unset": None,
+    "on": "fips140=on",
+    "only": "fips140=only",
+    "off": "fips140=off",
+}
+
+testflows_settings.show_skipped = True # used for debug if a check is unintentionally skipped
 
 
 xfails = {
@@ -34,14 +55,21 @@ xfails = {
 @XFails(xfails)
 @ArgumentParser(argparser)
 @Specifications(
-    QA_SRS013_ClickHouse_Backup_Utility
+    QA_SRS013_ClickHouse_Backup_Utility,
+    QA_SRS013_ClickHouse_Backup_Utility_FIPS_Compatibility,
 )
-def regression(self, local):
+def regression(self, local, stress=False, fips=True, fips_godebug="only"):
     """ClickHouse Backup utility test regression suite.
+
+    :param fips_godebug: GODEBUG fips140 mode the whole FIPS suite runs in -
+        one of `unset`, `on`, `only` (default) or `off`. It is exported on the
+        `clickhouse_backup_fips` container so every `clickhouse-backup-fips`
+        command inherits it.
     """
     nodes = {
         "clickhouse": ("clickhouse1", "clickhouse2"),
         "clickhouse_backup": ("clickhouse_backup",),
+        "clickhouse_backup_fips": ("clickhouse_backup_fips",),
         "kafka": ("kafka",),
         "mysql": ("mysql",),
         "postgres": ("postgres",),
@@ -66,8 +94,14 @@ def regression(self, local):
     with open(config_path, "w") as f:
         yaml.dump(cfg, f, default_flow_style=False)
 
+    # Resolve `--fips-godebug` choice to the `GODEBUG` value
+    # exported on the `clickhouse_backup_fips` container. This is FIPS-scoped:
+    # only affects the `fips_140_3` tests
+    fips_godebug_value = FIPS_GODEBUG_VALUES.get(fips_godebug, "fips140=only")
+
     try:
-        with Cluster(local, nodes=nodes, backup_config_dir=config_dir) as cluster:
+        with Cluster(local, nodes=nodes, backup_config_dir=config_dir,
+                     fips_godebug=fips_godebug_value) as cluster:
             self.context.backup_config_origin = origin_path
             self.context.backup_config_file = config_path
             self.context.cluster = cluster
@@ -79,6 +113,16 @@ def regression(self, local):
 
             self.context.backup_api_port = cluster.get_mapped_port("clickhouse_backup", 7171)
 
+            # FIPS backup container is optional: only present when the FIPS-compatible
+            # binary was built (``make build-race-fips-docker``). FIPS scenarios skip
+            # gracefully when this is None (see tests/fips_140_3.py).
+            if cluster.has_node("clickhouse_backup_fips"):
+                self.context.backup_fips = self.context.cluster.node("clickhouse_backup_fips")
+                self.context.backup_fips_api_port = cluster.get_mapped_port("clickhouse_backup_fips", 7172)
+            else:
+                self.context.backup_fips = None
+                self.context.backup_fips_api_port = None
+
             self.context.database_engines_names = {"Atomic": "atmc", "Ordinary": "ordn"}
             self.context.table_engines = ["MergeTree", "ReplacingMergeTree", "SummingMergeTree", "CollapsingMergeTree",
                                           "VersionedCollapsingMergeTree"]
@@ -87,6 +131,7 @@ def regression(self, local):
 
             self.context.all_columns = simple_data_types_columns
 
+            Feature(run=load("clickhouse_backup.tests.fips_140_3", "fips_140_3"), flags=TE)
             Scenario(run=load("clickhouse_backup.tests.smoke", "smoke"), flags=TE)
 
             Scenario(run=load("clickhouse_backup.tests.cloud_storage", "cloud_storage"))

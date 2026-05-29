@@ -99,7 +99,7 @@ jobs:
 
       - name: Create release
         id: create_release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/')
         with:
           tag_name: v${{ steps.docker_tag.outputs.docker_tag }}
@@ -122,9 +122,9 @@ jobs:
             ${{ steps.make_packages.outputs.tgz_darwin_arm64_fips }}
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Building docker image
         env:

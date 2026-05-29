@@ -155,6 +155,12 @@ func TestFIPS(t *testing.T) {
 		r.Equal(0, len(inProgressActions), "inProgressActions=%+v", inProgressActions)
 		env.DockerExecNoError(r, "clickhouse", "pkill", "-n", "-f", "clickhouse-backup-fips")
 	}
+	// WTF =( why this works?
+	fipsOnlyBackupName := fmt.Sprintf("fips_only_backup_%d", rand.Int())
+	out, err := env.DockerExecOut("clickhouse", "bash", "-ce", "GODEBUG=fips140=only,x509debug=2,tls13=1 LOG_LEVEL=debug clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml create_remote --tables="+t.Name()+".fips_table "+fipsOnlyBackupName+" 2>&1")
+	r.NoError(err, "FIPS-compatible clickhouse-backup -> clickhouse-server connection return error: %v, output: %s", err, out)
+
+	// WTF =( WHY THIS IS STOP WORKS, it was work in https://github.com/Altinity/clickhouse-backup/actions/runs/25434757510 and https://github.com/Altinity/clickhouse-backup/commit/92db680d1bdbc34855949634c140e3a11f8b96be =(
 	// P1: Test create_remote shall doesn't work with clickhouse-server which not compatible with FIPS
 	// Diagnostic: dump what clickhouse-server offers on 9440 so we can see why
 	// the fips140=only client succeeds or fails to negotiate a handshake.
@@ -166,11 +172,6 @@ func TestFIPS(t *testing.T) {
 	//log.Debug().Msgf("[fips-diag] supported TLS1.3 groups on clickhouse:9440:\n%s", curves)
 	//tssl, _ := env.DockerExecOut("clickhouse", "bash", "-ce", "rm -rf /tmp/testssl-ch* && /opt/testssl/testssl.sh -p -e --color 0 --disable-rating --quiet -n min --mode parallel clickhouse:9440 2>&1 | tail -120")
 	//log.Debug().Msgf("[fips-diag] testssl.sh against clickhouse:9440:\n%s", tssl)
-
-	fipsOnlyBackupName := fmt.Sprintf("fips_only_backup_%d", rand.Int())
-	out, err := env.DockerExecOut("clickhouse", "bash", "-ce", "GODEBUG=fips140=only,x509debug=2,tls13=1 LOG_LEVEL=debug clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml create_remote --tables="+t.Name()+".fips_table "+fipsOnlyBackupName+" 2>&1")
-	r.NoError(err, "FIPS-compatible clickhouse-backup -> clickhouse-server connection return error: %v, output: %s", err, out)
-	// WTF =( WHY THIS IS STOP WORKS, it was work in https://github.com/Altinity/clickhouse-backup/actions/runs/25434757510 and https://github.com/Altinity/clickhouse-backup/commit/92db680d1bdbc34855949634c140e3a11f8b96be =(
 	// r.NoError(err, "FIPS-compatible clickhouse-backup -> FIPS-incompatible clickhouse-server connection shall return error: %s", out)
 	// r.Contains(out, "is not allowed in FIPS 140-only mode")
 	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete local "+fipsOnlyBackupName)

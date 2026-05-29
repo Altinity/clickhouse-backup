@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -326,6 +327,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		"object_disk_size": utils.FormatBytes(backupMetadata.ObjectDiskSize),
 		"version":          backupVersion,
 	}).Msg("done")
+
 	return nil
 }
 
@@ -873,6 +875,14 @@ func (b *Backuper) hardlinkIfLocalPartExistsAndChecksumEqual(backupName string, 
 	if diskType == "" {
 		return false, 0, errors.Errorf("can't find %s in disks=%v", diskName, disks)
 	}
+	if _, ok := table.HashOfAllFiles[part.Name]; ok {
+		found, size, err := b.hardlinkByHashOfAllFiles(context.Background(), backupName, table, part, disks, diskName, dbAndTableDir)
+		if err != nil {
+			log.Warn().Err(err).Msgf("hardlinkByHashOfAllFiles failed for %s.%s/%s, falling back to CRC64", table.Database, table.Table, part.Name)
+		} else if found {
+			return true, size, nil
+		}
+	}
 	if _, exists := table.Checksums[part.Name]; !exists {
 		return false, 0, nil
 	}
@@ -945,6 +955,108 @@ func (b *Backuper) hardlinkIfLocalPartExistsAndChecksumEqual(backupName string, 
 	return false, 0, nil
 }
 
+// hardlinkByHashOfAllFiles looks up an existing live part in system.parts whose
+// hash_of_all_files matches the expected value from backup metadata. If several
+// candidates exist (e.g. copies of the same data under different part names),
+// the one with the smallest Levenshtein distance to part.Name wins. On success
+// it hardlinks the resolved on-disk directory into the backup shadow path.
+func (b *Backuper) hardlinkByHashOfAllFiles(ctx context.Context, backupName string, table metadata.TableMetadata, part *metadata.Part, disks []clickhouse.Disk, diskName, dbAndTableDir string) (bool, int64, error) {
+	expected, ok := table.HashOfAllFiles[part.Name]
+	if !ok {
+		return false, 0, nil
+	}
+	var rows []struct {
+		Name string `ch:"name"`
+		Path string `ch:"path"`
+		Disk string `ch:"disk_name"`
+	}
+	q := "SELECT name, path, disk_name FROM system.parts WHERE database=? AND `table`=? AND lower(hash_of_all_files)=? AND active"
+	if err := b.ch.SelectContext(ctx, &rows, q, table.Database, table.Table, expected); err != nil {
+		return false, 0, errors.Wrap(err, "system.parts lookup by hash_of_all_files")
+	}
+	if len(rows) == 0 {
+		return false, 0, nil
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		di := levenshtein(rows[i].Name, part.Name)
+		dj := levenshtein(rows[j].Name, part.Name)
+		if di != dj {
+			return di < dj
+		}
+		return rows[i].Name < rows[j].Name
+	})
+
+	var localDisk *clickhouse.Disk
+	for i := range disks {
+		if disks[i].Name == rows[0].Disk {
+			localDisk = &disks[i]
+			break
+		}
+	}
+	if localDisk == nil {
+		return false, 0, errors.Errorf("disk %q from system.parts not found in disks=%v", rows[0].Disk, disks)
+	}
+	srcPath := strings.TrimRight(rows[0].Path, "/")
+	partLocalPath := path.Join(b.getLocalBackupDataPathForTable(backupName, localDisk.Name, dbAndTableDir), part.Name)
+	log.Info().Msgf("hash_of_all_files match: hardlink %s -> %s (live part %q)", srcPath, partLocalPath, rows[0].Name)
+	if err := b.makePartHardlinks(srcPath, partLocalPath); err != nil {
+		return false, 0, errors.Wrapf(err, "failed to create hardlinks for %s", srcPath)
+	}
+	if diskName != localDisk.Name {
+		part.RebalancedDisk = localDisk.Name
+	}
+	var partSize int64
+	walkErr := filepath.Walk(srcPath, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return errors.WithMessage(err, "walk srcPath")
+		}
+		if !info.IsDir() {
+			partSize += info.Size()
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return false, 0, errors.Wrapf(walkErr, "failed to calculate size of %s", srcPath)
+	}
+	return true, partSize, nil
+}
+
+// levenshtein computes the edit distance between two strings.
+func levenshtein(a, b string) int {
+	ar, br := []rune(a), []rune(b)
+	la, lb := len(ar), len(br)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+	prev := make([]int, lb+1)
+	curr := make([]int, lb+1)
+	for j := 0; j <= lb; j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= la; i++ {
+		curr[0] = i
+		for j := 1; j <= lb; j++ {
+			cost := 1
+			if ar[i-1] == br[j-1] {
+				cost = 0
+			}
+			d := prev[j] + 1
+			if curr[j-1]+1 < d {
+				d = curr[j-1] + 1
+			}
+			if prev[j-1]+cost < d {
+				d = prev[j-1] + cost
+			}
+			curr[j] = d
+		}
+		prev, curr = curr, prev
+	}
+	return prev[lb]
+}
+
 func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, dbAndTableDir string, disks []clickhouse.Disk, hardlinkExistsFiles bool) (int64, error) {
 	log.Debug().
 		Str("backup", remoteBackup.BackupName).
@@ -966,10 +1078,28 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 	if err != nil {
 		return 0, errors.WithMessage(err, "ReadBackupMetadataRemote")
 	}
-	requiredTable, err := b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: table.Database, Table: table.Table})
-	if err != nil {
-		log.Warn().Msgf("downloadTableMetadataIfNotExists %s / %s.%s return error", requiredBackup.BackupName, table.Database, table.Table)
-		return 0, errors.WithMessage(err, "downloadTableMetadataIfNotExists")
+	// https://github.com/Altinity/clickhouse-backup/issues/1373
+	// tables created after the full backup have no Required parts; skip the
+	// required-backup metadata fetch since it will fail with "not found".
+	hasRequiredParts := false
+	for _, diskParts := range table.Parts {
+		for _, part := range diskParts {
+			if part.Required {
+				hasRequiredParts = true
+				break
+			}
+		}
+		if hasRequiredParts {
+			break
+		}
+	}
+	var requiredTable *metadata.TableMetadata
+	if hasRequiredParts {
+		requiredTable, err = b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: table.Database, Table: table.Table})
+		if err != nil {
+			log.Warn().Msgf("downloadTableMetadataIfNotExists %s / %s.%s return error", requiredBackup.BackupName, table.Database, table.Table)
+			return 0, errors.WithMessage(err, "downloadTableMetadataIfNotExists")
+		}
 	}
 
 	for disk, parts := range table.Parts {

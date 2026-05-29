@@ -271,10 +271,21 @@ func IsFileInPartition(disk, fileName string, partitionsBackupMap common.EmptyMa
 	return false
 }
 
-func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap, table *clickhouse.Table, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk, skipProjections []string, version int) ([]metadata.Part, int64, map[string]uint64, error) {
+func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap, table *clickhouse.Table, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk, skipProjections []string, version int, computeChecksums bool) ([]metadata.Part, int64, map[string]uint64, error) {
 	size := int64(0)
 	parts := make([]metadata.Part, 0)
 	checksums := make(map[string]uint64)
+	calcChecksums := func(partName, partPath string) error {
+		if !computeChecksums {
+			return nil
+		}
+		c, err := common.CalculateChecksum(partPath, "checksums.txt")
+		if err != nil {
+			return errors.Wrapf(err, "common.CalculateChecksum")
+		}
+		checksums[partName] = c
+		return nil
+	}
 	walkErr := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
 		// fix https://github.com/Altinity/clickhouse-backup/issues/826
 		if strings.Contains(info.Name(), "frozen_metadata.txt") {
@@ -304,11 +315,9 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 		if tableDiffFromRemote.Database != "" && tableDiffFromRemote.Table != "" && len(tableDiffFromRemote.Parts) > 0 && len(tableDiffFromRemote.Parts[disk.Name]) > 0 {
 			parts, isRequiredPartFound, partExists = addRequiredPartIfNotExists(parts, pathParts[3], tableDiffFromRemote, disk)
 			if isRequiredPartFound && !partExists {
-				c, checksumErr := common.CalculateChecksum(filePath, "checksums.txt")
-				if checksumErr != nil {
-					return errors.Wrapf(checksumErr, "common.CalculateChecksum(isRequiredPartFound=true)")
+				if err := calcChecksums(pathParts[3], filePath); err != nil {
+					return errors.Wrap(err, "calcChecksums(isRequiredPartFound=true)")
 				}
-				checksums[pathParts[3]] = c
 			}
 			if isRequiredPartFound {
 				return nil
@@ -324,11 +333,9 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 				parts = append(parts, metadata.Part{
 					Name: pathParts[3],
 				})
-				c, checksumErr := common.CalculateChecksum(filePath, "checksums.txt")
-				if checksumErr != nil {
-					return errors.Wrapf(checksumErr, "common.CalculateChecksum")
+				if err := calcChecksums(pathParts[3], filePath); err != nil {
+					return errors.Wrap(err, "calcChecksums")
 				}
-				checksums[pathParts[3]] = c
 			}
 			return os.MkdirAll(dstFilePath, 0750)
 		}
@@ -349,6 +356,47 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 	// https://github.com/ClickHouse/ClickHouse/issues/71009
 	metadata.SortPartsByMinBlock(parts)
 	return parts, size, checksums, nil
+}
+
+// LinkPartFromShadow walks shadowPath and hard-links (or renames for older CH)
+// every file that belongs to partName into backupPartsPath. Used to back up a
+// part that was initially marked Required against --diff-from-remote by name
+// but whose content fingerprint (hash_of_all_files / checksums) later turned
+// out to differ from the diff source, so it must be uploaded locally instead.
+func LinkPartFromShadow(shadowPath, backupPartsPath, partName string, table *clickhouse.Table, skipProjections []string, version int) (int64, error) {
+	size := int64(0)
+	walkErr := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if strings.Contains(info.Name(), "frozen_metadata.txt") {
+			return nil
+		}
+		relativePath := strings.Trim(strings.TrimPrefix(filePath, shadowPath), "/")
+		pathParts := strings.SplitN(relativePath, "/", 4)
+		if len(pathParts) != 4 {
+			return nil
+		}
+		if pathParts[3] != partName && !strings.HasPrefix(pathParts[3], partName+"/") {
+			return nil
+		}
+		if IsSkipProjections(skipProjections, path.Join(table.Database, table.Name, path.Join(pathParts[3:]...))) {
+			return nil
+		}
+		dstFilePath := filepath.Join(backupPartsPath, pathParts[3])
+		if info.IsDir() {
+			return os.MkdirAll(dstFilePath, 0750)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		size += info.Size()
+		if version < 21004000 {
+			return os.Rename(filePath, dstFilePath)
+		}
+		return os.Link(filePath, dstFilePath)
+	})
+	return size, walkErr
 }
 
 func IsSkipProjections(skipProjections []string, relativePath string) bool {
@@ -481,4 +529,3 @@ func IsDuplicatedParts(part1, part2 string) error {
 	}
 	return nil
 }
-

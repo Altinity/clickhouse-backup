@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
@@ -30,8 +29,8 @@ import (
 )
 
 const (
-	// PipeBufferSize - size of ring buffer between stream handlers
-	PipeBufferSize = 128 * 1024
+	// defaultPipeBufferSize - fallback size of ring buffer between stream handlers when general.pipe_buffer_size is unset
+	defaultPipeBufferSize = 128 * 1024
 )
 
 type readerWrapperForContext func(p []byte) (n int, err error)
@@ -48,11 +47,11 @@ type Backup struct {
 
 type BackupDestination struct {
 	RemoteStorage
-	compressionFormat string
-	compressionLevel  int
+	compressionFormat      string
+	compressionLevel       int
+	pipeBufferSize         int64
+	downloadCopyBufferSize int64
 }
-
-var metadataCacheLock sync.RWMutex
 
 func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Backup, cfg *config.Config, retrierClassifier retrier.Classifier) error {
 	retry := retrier.New(retrier.ExponentialBackoff(cfg.General.RetriesOnFailure, common.AddRandomJitter(cfg.General.RetriesDuration, cfg.General.RetriesJitter)), retrierClassifier)
@@ -123,9 +122,9 @@ func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Back
 				return retry.RunCtx(ctx, func(ctx context.Context) error {
 					return bd.DeleteFile(ctx, path.Join(backup.BackupName, f.Name()))
 				})
-			} else {
-				return nil
 			}
+
+			return nil
 		}
 		return retry.RunCtx(ctx, func(ctx context.Context) error {
 			return bd.DeleteFile(ctx, path.Join(backup.BackupName, f.Name()))
@@ -168,18 +167,48 @@ func (bd *BackupDestination) loadMetadataCache(ctx context.Context) (map[string]
 	}
 }
 
-func (bd *BackupDestination) saveMetadataCache(ctx context.Context, listCache map[string]Backup, actualList []Backup) error {
+// writeMetadataCacheFile atomically writes the listCache map to the on-disk
+// metadata cache. Safe to call concurrently — writers can't observe a partial
+// file thanks to tempfile + rename. No pruning happens here.
+func (bd *BackupDestination) writeMetadataCacheFile(ctx context.Context, listCache map[string]Backup) error {
 	listCacheFile := path.Join(os.TempDir(), fmt.Sprintf(".clickhouse-backup-metadata.cache.%s", bd.Kind()))
-	f, err := os.OpenFile(listCacheFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	body, err := json.MarshalIndent(&listCache, "", "\t")
 	if err != nil {
-		log.Warn().Msgf("can't open %s return error %v", listCacheFile, err)
+		log.Warn().Msgf("can't json marshal %s return error %v", listCacheFile, err)
 		return nil
 	}
-	defer func() {
-		if err := f.Close(); err != nil {
-			log.Warn().Msgf("can't close %s return error %v", listCacheFile, err)
-		}
-	}()
+	tmp, err := os.CreateTemp(os.TempDir(), filepath.Base(listCacheFile)+".tmp.*")
+	if err != nil {
+		log.Warn().Msgf("can't create temp for %s return error %v", listCacheFile, err)
+		return nil
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(body); err != nil {
+		log.Warn().Msgf("can't write to %s return error %v", tmpName, err)
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return nil
+	}
+	if err := tmp.Close(); err != nil {
+		log.Warn().Msgf("can't close %s return error %v", tmpName, err)
+		_ = os.Remove(tmpName)
+		return nil
+	}
+	if err := os.Rename(tmpName, listCacheFile); err != nil {
+		log.Warn().Msgf("can't rename %s -> %s return error %v", tmpName, listCacheFile, err)
+		_ = os.Remove(tmpName)
+		return nil
+	}
+	log.Debug().Msgf("%s save %d elements", listCacheFile, len(listCache))
+	return nil
+}
+
+func (bd *BackupDestination) saveMetadataCache(ctx context.Context, listCache map[string]Backup, actualList []Backup) error {
 	for backupName := range listCache {
 		select {
 		case <-ctx.Done():
@@ -197,23 +226,54 @@ func (bd *BackupDestination) saveMetadataCache(ctx context.Context, listCache ma
 			}
 		}
 	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		body, err := json.MarshalIndent(&listCache, "", "\t")
-		if err != nil {
-			log.Warn().Msgf("can't json marshal %s return error %v", listCacheFile, err)
-			return nil
+	return bd.writeMetadataCacheFile(ctx, listCache)
+}
+
+// readBackupMetadataDirect fetches a single backup's metadata.json directly via
+// StatFile+GetFileReader, without listing the whole bucket. Returns nil if the
+// metadata.json does not exist. Returns a "broken" Backup entry on parse errors,
+// mirroring the slow-path semantics of BackupList.
+func (bd *BackupDestination) readBackupMetadataDirect(ctx context.Context, backupName string) (*Backup, error) {
+	metadataKey := path.Join(backupName, "metadata.json")
+	mf, err := bd.StatFile(ctx, metadataKey)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, nil
 		}
-		_, err = f.Write(body)
-		if err != nil {
-			log.Warn().Msgf("can't write to %s return error %v", listCacheFile, err)
-			return nil
-		}
-		log.Debug().Msgf("%s save %d elements", listCacheFile, len(listCache))
-		return nil
+		return &Backup{
+			BackupMetadata: metadata.BackupMetadata{BackupName: backupName},
+			Broken:         "broken (can't stat metadata.json)",
+		}, nil
 	}
+	r, err := bd.GetFileReader(ctx, metadataKey)
+	if err != nil {
+		return &Backup{
+			BackupMetadata: metadata.BackupMetadata{BackupName: backupName},
+			Broken:         "broken (can't open metadata.json)",
+			UploadDate:     mf.LastModified(),
+		}, nil
+	}
+	body, err := io.ReadAll(r)
+	closeErr := r.Close()
+	if err != nil {
+		return &Backup{
+			BackupMetadata: metadata.BackupMetadata{BackupName: backupName},
+			Broken:         "broken (can't read metadata.json)",
+			UploadDate:     mf.LastModified(),
+		}, nil
+	}
+	if closeErr != nil {
+		return nil, errors.WithMessage(closeErr, "BackupList close metadata reader")
+	}
+	var m metadata.BackupMetadata
+	if err := json.Unmarshal(body, &m); err != nil {
+		return &Backup{
+			BackupMetadata: metadata.BackupMetadata{BackupName: backupName},
+			Broken:         "broken (bad metadata.json)",
+			UploadDate:     mf.LastModified(),
+		}, nil
+	}
+	return &Backup{BackupMetadata: m, UploadDate: mf.LastModified()}, nil
 }
 
 func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool, parseMetadataOnly string) ([]Backup, error) {
@@ -221,9 +281,63 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 	defer func() {
 		log.Info().Dur("list_duration", time.Since(backupListStart)).Send()
 	}()
+
+	// Fast path: when the caller already knows which backup it wants, look it
+	// up in the on-disk metadata cache first; on miss, fetch metadata.json
+	// directly via StatFile+GetFileReader instead of listing the whole bucket
+	// root. This removes the per-table Walk("/") cost on incremental-chain
+	// restores (see https://github.com/Altinity/clickhouse-backup/pull/1361).
+	// Staleness on remote delete is healed by the next slow-path list (e.g.
+	// `clickhouse-backup list remote`), same as before.
+	if parseMetadata && parseMetadataOnly != "" {
+		listCache, loadErr := bd.loadMetadataCache(ctx)
+		if loadErr != nil && !os.IsNotExist(loadErr) {
+			return nil, errors.WithMessage(loadErr, "BackupList loadMetadataCache")
+		}
+		if cached, ok := listCache[parseMetadataOnly]; ok && cached.Broken == "" {
+			log.Debug().Str("backup", parseMetadataOnly).Msg("BackupList: using on-disk metadata cache")
+			return []Backup{cached}, nil
+		}
+		backup, err := bd.readBackupMetadataDirect(ctx, parseMetadataOnly)
+		if err != nil {
+			return nil, errors.WithMessage(err, "BackupList readBackupMetadataDirect")
+		}
+		if backup == nil {
+			// metadata.json not found — check if the backup prefix has any
+			// content at all. Walk with recursive=false returns top-level
+			// entries only; if we get at least one the folder exists and the
+			// backup is broken (missing metadata.json), otherwise the backup
+			// name doesn't exist on remote storage at all.
+			found := false
+			var lastModified time.Time
+			walkErr := bd.Walk(ctx, parseMetadataOnly+"/", false, func(_ context.Context, f RemoteFile) error {
+				found = true
+				lastModified = f.LastModified()
+				return io.EOF // stop after first entry
+			})
+			_ = walkErr // Walk returns io.EOF, that's fine
+			if !found {
+				return []Backup{}, nil
+			}
+			return []Backup{{
+				BackupMetadata: metadata.BackupMetadata{BackupName: parseMetadataOnly},
+				Broken:         "broken (can't stat metadata.json)",
+				UploadDate:     lastModified,
+			}}, nil
+		}
+		if backup.Broken == "" {
+			if listCache == nil {
+				listCache = map[string]Backup{}
+			}
+			listCache[parseMetadataOnly] = *backup
+			if writeErr := bd.writeMetadataCacheFile(ctx, listCache); writeErr != nil {
+				log.Warn().Err(writeErr).Msg("BackupList writeMetadataCacheFile (fast path)")
+			}
+		}
+		return []Backup{*backup}, nil
+	}
+
 	result := make([]Backup, 0)
-	metadataCacheLock.Lock()
-	defer metadataCacheLock.Unlock()
 	listCache, err := bd.loadMetadataCache(ctx)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, errors.WithMessage(err, "BackupList loadMetadataCache")
@@ -352,7 +466,7 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		}
 	}()
 
-	buf := buffer.New(PipeBufferSize)
+	buf := buffer.New(bd.pipeBufferSize)
 	bufReader := nio.NewReader(reader, buf)
 	compressionFormat := bd.compressionFormat
 	if !checkArchiveExtension(path.Ext(remotePath), compressionFormat) {
@@ -382,7 +496,7 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		if createErr != nil {
 			return errors.WithMessage(createErr, "DownloadCompressedStream Create")
 		}
-		if copyBytes, copyErr := io.Copy(dst, readerWrapperForContext(func(p []byte) (int, error) {
+		if copyBytes, copyErr := bd.copyWithBuffer(dst, readerWrapperForContext(func(p []byte) (int, error) {
 			select {
 			case <-ctx.Done():
 				return 0, ctx.Err()
@@ -420,7 +534,7 @@ func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLoc
 			totalBytes += fInfo.Size()
 		}
 	}
-	pipeBuffer := buffer.New(PipeBufferSize)
+	pipeBuffer := buffer.New(bd.pipeBufferSize)
 	body, w := nio.Pipe(pipeBuffer)
 	g, ctx := errgroup.WithContext(ctx)
 	startTime := time.Now()
@@ -514,7 +628,7 @@ func (bd *BackupDestination) DownloadPath(ctx context.Context, remotePath string
 				log.Error().Err(err).Send()
 				return errors.WithMessage(err, "DownloadPath Create")
 			}
-			if copyBytes, copyErr := io.Copy(dst, r); copyErr != nil {
+			if copyBytes, copyErr := bd.copyWithBuffer(dst, r); copyErr != nil {
 				log.Error().Err(copyErr).Send()
 				return errors.WithMessage(copyErr, "DownloadPath io.Copy")
 			} else {
@@ -580,6 +694,16 @@ func (bd *BackupDestination) UploadPath(ctx context.Context, baseLocalPath strin
 	return totalBytes, nil
 }
 
+// copyWithBuffer copies src to dst using io.CopyBuffer with a configurable buffer size
+// (general.download_copy_buffer_size). When the size is 0 it falls back to plain io.Copy
+// (Go's default 32KB internal buffer), preserving the previous behavior.
+func (bd *BackupDestination) copyWithBuffer(dst io.Writer, src io.Reader) (int64, error) {
+	if bd.downloadCopyBufferSize > 0 {
+		return io.CopyBuffer(dst, src, make([]byte, bd.downloadCopyBufferSize))
+	}
+	return io.Copy(dst, src)
+}
+
 func (bd *BackupDestination) throttleSpeed(startTime time.Time, size int64, maxSpeed uint64) {
 	if maxSpeed > 0 && size > 0 {
 		timeSince := time.Since(startTime).Nanoseconds()
@@ -601,6 +725,12 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 	cfg.Lock()
 	defer cfg.Unlock()
 
+	pipeBufferSize := cfg.General.PipeBufferSize
+	if pipeBufferSize <= 0 {
+		pipeBufferSize = defaultPipeBufferSize
+	}
+	downloadCopyBufferSize := cfg.General.DownloadCopyBufferSize
+
 	switch cfg.General.RemoteStorage {
 	case "azblob":
 		if cfg.AzureBlob.Path, err = ch.ApplyMacros(ctx, cfg.AzureBlob.Path); err != nil {
@@ -613,9 +743,11 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			Config: &cfg.AzureBlob,
 		}
 		return &BackupDestination{
-			azblobStorage,
-			cfg.AzureBlob.CompressionFormat,
-			cfg.AzureBlob.CompressionLevel,
+			RemoteStorage:          azblobStorage,
+			compressionFormat:      cfg.AzureBlob.CompressionFormat,
+			compressionLevel:       cfg.AzureBlob.CompressionLevel,
+			pipeBufferSize:         pipeBufferSize,
+			downloadCopyBufferSize: downloadCopyBufferSize,
 		}, nil
 	case "s3":
 		if cfg.S3.Path, err = ch.ApplyMacros(ctx, cfg.S3.Path); err != nil {
@@ -631,15 +763,21 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 				return nil, errors.WithMessage(err, "NewBackupDestination s3 ApplyMacrosToObjectLabels")
 			}
 		}
+		s3BufferSize := cfg.S3.BufferSize
+		if s3BufferSize <= 0 {
+			s3BufferSize = 64 * 1024
+		}
 		s3Storage := &S3{
 			Config:      &cfg.S3,
 			Concurrency: cfg.S3.Concurrency,
-			BufferSize:  64 * 1024,
+			BufferSize:  s3BufferSize,
 		}
 		return &BackupDestination{
-			s3Storage,
-			cfg.S3.CompressionFormat,
-			cfg.S3.CompressionLevel,
+			RemoteStorage:          s3Storage,
+			compressionFormat:      cfg.S3.CompressionFormat,
+			compressionLevel:       cfg.S3.CompressionLevel,
+			pipeBufferSize:         pipeBufferSize,
+			downloadCopyBufferSize: downloadCopyBufferSize,
 		}, nil
 	case "gcs":
 		if cfg.GCS.Path, err = ch.ApplyMacros(ctx, cfg.GCS.Path); err != nil {
@@ -657,9 +795,11 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		}
 		googleCloudStorage := &GCS{Config: &cfg.GCS}
 		return &BackupDestination{
-			googleCloudStorage,
-			cfg.GCS.CompressionFormat,
-			cfg.GCS.CompressionLevel,
+			RemoteStorage:          googleCloudStorage,
+			compressionFormat:      cfg.GCS.CompressionFormat,
+			compressionLevel:       cfg.GCS.CompressionLevel,
+			pipeBufferSize:         pipeBufferSize,
+			downloadCopyBufferSize: downloadCopyBufferSize,
 		}, nil
 	case "cos":
 		if cfg.COS.Path, err = ch.ApplyMacros(ctx, cfg.COS.Path); err != nil {
@@ -673,9 +813,11 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			BufferSize: 64 * 1024,
 		}
 		return &BackupDestination{
-			tencentStorage,
-			cfg.COS.CompressionFormat,
-			cfg.COS.CompressionLevel,
+			RemoteStorage:          tencentStorage,
+			compressionFormat:      cfg.COS.CompressionFormat,
+			compressionLevel:       cfg.COS.CompressionLevel,
+			pipeBufferSize:         pipeBufferSize,
+			downloadCopyBufferSize: downloadCopyBufferSize,
 		}, nil
 	case "ftp":
 		if cfg.FTP.Concurrency < cfg.General.ObjectDiskServerSideCopyConcurrency/4 {
@@ -691,9 +833,11 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			Config: &cfg.FTP,
 		}
 		return &BackupDestination{
-			ftpStorage,
-			cfg.FTP.CompressionFormat,
-			cfg.FTP.CompressionLevel,
+			RemoteStorage:          ftpStorage,
+			compressionFormat:      cfg.FTP.CompressionFormat,
+			compressionLevel:       cfg.FTP.CompressionLevel,
+			pipeBufferSize:         pipeBufferSize,
+			downloadCopyBufferSize: downloadCopyBufferSize,
 		}, nil
 	case "sftp":
 		if cfg.SFTP.Path, err = ch.ApplyMacros(ctx, cfg.SFTP.Path); err != nil {
@@ -706,9 +850,11 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			Config: &cfg.SFTP,
 		}
 		return &BackupDestination{
-			sftpStorage,
-			cfg.SFTP.CompressionFormat,
-			cfg.SFTP.CompressionLevel,
+			RemoteStorage:          sftpStorage,
+			compressionFormat:      cfg.SFTP.CompressionFormat,
+			compressionLevel:       cfg.SFTP.CompressionLevel,
+			pipeBufferSize:         pipeBufferSize,
+			downloadCopyBufferSize: downloadCopyBufferSize,
 		}, nil
 	default:
 		return nil, errors.Errorf("NewBackupDestination error: storage type '%s' is not supported", cfg.General.RemoteStorage)

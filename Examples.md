@@ -156,6 +156,50 @@ operations.
 In addition, you may create instance of ClickHouse on another DC and have it fresh by clickhouse-copier to protect you
 from hardware or DC failures.
 
+## Tuning for high-bandwidth (10Gbit) networks
+
+The default buffer sizes and HTTP transport settings are tuned for low-bandwidth environments. On 10Gbit+ links to
+S3/GCS-compatible object storage they limit throughput, see https://github.com/Altinity/clickhouse-backup/issues/1376.
+
+The config below shows **only the parameters that change** from their defaults; keep the rest of your config as is.
+Start from these values and adjust to your hardware and network. The single most impactful knob is
+`s3.http_max_idle_conns_per_host` — Go's default of 2 forces most parallel streams to open a fresh TCP+TLS connection
+per request when `upload_concurrency`/`download_concurrency` are high.
+
+```yaml
+general:
+  # let compression run ahead of uploads, and copy files in larger chunks
+  pipe_buffer_size: 8388608          # 8MB (default 128KB)
+  download_copy_buffer_size: 1048576 # 1MB (default 0 = Go's 32KB io.Copy buffer)
+  # raise concurrency to actually saturate a 10Gbit link (tune to CPU cores and storage)
+  upload_concurrency: 16
+  download_concurrency: 16
+s3:
+  buffer_size: 1048576               # 1MB per-part s3manager buffer (default 64KB)
+  http_max_idle_conns_per_host: 128  # default 2 (!), critical for parallel streams to the same endpoint
+  http_max_idle_conns: 512           # default AWS SDK value
+  http_write_buffer_size: 1048576    # 1MB (default 4KB)
+  http_read_buffer_size: 1048576     # 1MB (default 4KB)
+  http_idle_conn_timeout: 120s       # default 90s
+  chunk_size: 67108864               # 64MB multipart part size (default 0 = remoteSize / max_parts_count, min 5MB), fewer parts for large files
+# when remote_storage: gcs
+gcs:
+  upload_buffer_size: 1048576        # 1MB (default 128KB)
+# when remote_storage: sftp
+sftp:
+  concurrency: 16                    # parallel requests per file
+  max_packet_size: 262144            # 256KB SFTP payload per packet (default 32KB), only works with servers that accept >32KB packets
+# when remote_storage: azblob
+azblob:
+  buffer_count: 16                   # AZBLOB_MAX_BUFFERS, parallel block buffers per upload (default 3); the per-block size auto-scales from max_parts_count
+  max_parts_count: 1024              # default 256, larger backups need more blocks
+```
+
+Notes for the other backends:
+- **azblob**: there is no separate buffer-size knob — the upload block size auto-scales (2–10MB) from `max_parts_count`, and `buffer_count` controls how many blocks upload in parallel. Raise both for fast networks.
+- **cos**: the SDK uses `cos.DNSScatterTransport` for internal Tencent endpoints, which already spreads connections across IPs; raise `concurrency` rather than touching the HTTP pool.
+- **ftp**: the FTP library has no transfer-buffer knob; throughput is governed by `concurrency` (connection pool size).
+
 ## How to use clickhouse-backup in Kubernetes
 
 Install the [clickhouse kubernetes operator](https://github.com/Altinity/clickhouse-operator/) and use the following

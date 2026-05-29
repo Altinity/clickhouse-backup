@@ -24,8 +24,8 @@ ftp:
   username: "test_backup"
   password: "test_backup"
   tls: false
-  path: "/backup"
-  object_disk_path: "/object_disk"
+  path: "/backup/{version}"
+  object_disk_path: "/object_disk/{version}"
   compression_format: none
   compression_level: 1
   concurrency: 4

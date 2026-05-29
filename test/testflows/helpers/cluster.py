@@ -1,6 +1,11 @@
 import glob
 import inspect
+import io
 import os
+import shlex
+import shutil
+import stat
+import tarfile
 import tempfile
 import testflows.settings as settings
 import threading
@@ -12,6 +17,68 @@ from testflows.uexpect import ExpectTimeoutError
 
 import docker
 from testcontainers.core.container import DockerContainer
+
+
+def _materialize_binary_from_docker_image(docker_client, image_tag, path_in_image, host_path):
+    """Materialize a single file from a local Docker image to ``host_path``.
+
+    Used so that when an upstream Makefile target has already produced a binary
+    *inside* a Docker image (e.g. ``make build-race-fips-docker`` -> image
+    ``clickhouse-backup:build-race-fips`` with the FIPS race binary at
+    ``/src/clickhouse-backup/clickhouse-backup-race-fips``), but the host-side
+    copy has since been removed (``make clean``, a partial rebuild, etc.), the
+    test cluster can recover the binary directly from the local Docker
+    registry instead of forcing a fresh ``docker buildx build``. No
+    ``subprocess``, no ``make`` - this only talks to the Docker daemon via the
+    ``docker`` Python SDK that is already used everywhere else in this file.
+
+    Returns True if ``host_path`` exists and is executable on return,
+    False otherwise (e.g. the image isn't in the local registry, or the file
+    is missing inside it). Failures are intentionally non-fatal: the caller
+    is expected to fall back to its existing skip-FIPS-scenarios path.
+    """
+    if os.path.isfile(host_path):
+        return True
+    try:
+        docker_client.images.get(image_tag)
+    except docker.errors.ImageNotFound:
+        return False
+    except Exception:
+        return False
+
+    container = None
+    try:
+        container = docker_client.containers.create(image_tag)
+        bits, _ = container.get_archive(path_in_image)
+        buf = io.BytesIO(b"".join(bits))
+        with tarfile.open(fileobj=buf, mode="r") as tar:
+            member_name = os.path.basename(path_in_image)
+            try:
+                member = tar.getmember(member_name)
+            except KeyError:
+                return False
+            src = tar.extractfile(member)
+            if src is None:
+                return False
+            os.makedirs(os.path.dirname(host_path) or ".", exist_ok=True)
+            tmp_path = host_path + ".tmp"
+            with open(tmp_path, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            os.chmod(
+                tmp_path,
+                os.stat(tmp_path).st_mode
+                | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH,
+            )
+            os.replace(tmp_path, host_path)
+        return os.path.isfile(host_path)
+    except Exception:
+        return False
+    finally:
+        if container is not None:
+            try:
+                container.remove(force=True)
+            except Exception:
+                pass
 
 MESSAGES_TO_RETRY = [
     "DB::Exception: ZooKeeper session has been expired",
@@ -131,6 +198,162 @@ class Node(object):
                 assert expect_message in r.output, error(r.output)
 
         return r
+
+    def write_file(self, path, contents, mode=None, steps=False):
+        """Write text ``contents`` to ``path`` inside this node's container.
+
+        Uses base64 encoding so the data round-trips through the docker-exec
+        bash channel safely (no quote/newline escaping issues). Useful for
+        dropping ad-hoc YAML/PEM/XML test fixtures into a container without
+        committing them to ``configs/`` or generating them in test code.
+        """
+        import base64
+        data = contents if isinstance(contents, (bytes, bytearray)) else contents.encode("utf-8")
+        b64 = base64.b64encode(data).decode("ascii")
+        path_q = shlex.quote(path)
+        # Use here-string to avoid shell expansion of the encoded payload.
+        self.cmd(
+            f"bash -lc 'set -e; echo {b64} | base64 -d > {path_q}"
+            + (f"; chmod {mode} {path_q}" if mode else "")
+            + "'",
+            exitcode=0,
+            steps=steps,
+        )
+
+
+class BackupNode(Node):
+    """Node helpers for clickhouse-backup process control inside the container.
+
+    Used by the dedicated ``clickhouse_backup_fips`` container which is started
+    in non-autostart mode (``sleep infinity``) so tests can start, stop or
+    kill the ``clickhouse-backup-fips`` process explicitly. Also useful for the
+    regular ``clickhouse_backup`` container when a test needs to restart the
+    server with different environment variables (for example ``GODEBUG``).
+
+    All process state is kept on disk inside the container (PID + log files)
+    so callers can use it across separate ``cmd()`` invocations.
+    """
+
+    server_pid_file = "/tmp/clickhouse-backup-server.pid"
+    server_log_file = "/tmp/clickhouse-backup-server.log"
+
+    def _format_env(self, extra_env):
+        if not extra_env:
+            return ""
+        return " ".join(f"{k}={shlex.quote(str(v))}" for k, v in extra_env.items()) + " "
+
+    def start_server(self, binary="/bin/clickhouse-backup", config="/etc/clickhouse-backup/config.yml",
+                     extra_env=None, listen_port=7171, wait_ready=True, timeout=60):
+        """Start ``<binary> server`` in the background inside this container.
+
+        :param binary: absolute path to the binary inside the container (e.g.
+            ``/bin/clickhouse-backup`` or ``/bin/clickhouse-backup-fips``).
+        :param config: absolute path to the YAML config inside the container.
+        :param extra_env: optional dict of env vars (e.g. ``{"GODEBUG": "fips140=only"}``)
+            that will be exported in front of the binary invocation.
+        :param listen_port: REST API port to wait on (defaults to 7171).
+        :param wait_ready: poll the listen port over TCP until it accepts a
+            connection or ``timeout`` seconds elapse.
+        :param timeout: how long to wait for readiness, in seconds.
+
+        Process lifecycle is tracked exclusively through the PID file written
+        below. ``pkill -f <pattern>`` is deliberately not used to clean up
+        stragglers here: the wrapper ``bash -lc '…'`` that runs this command
+        has the binary invocation and the kill pattern in its own argv, so
+        ``pkill -f`` would match the wrapper itself, SIGTERM its own parent,
+        and exit 143 ("Terminated") before ever launching the server. Cleanup
+        of a prior server (if any) is handled by ``stop_server`` -> PID file.
+        """
+        env_prefix = self._format_env(extra_env)
+        binary_q = shlex.quote(binary)
+        config_q = shlex.quote(config)
+        log_q = shlex.quote(self.server_log_file)
+        pid_q = shlex.quote(self.server_pid_file)
+        # ``VAR=value cmd`` is *shell* env-prefix syntax; ``nohup VAR=value cmd``
+        # is NOT - nohup would try to ``execve`` "VAR=value" as a program and
+        # exit with "No such file or directory". Route the env vars through
+        # ``env`` so nohup's argv[1] is the literal ``env`` binary and the
+        # KEY=VALUE pairs become arguments to it. ``env`` is omitted entirely
+        # when ``extra_env`` is empty so we don't add a no-op fork.
+        env_via_env = f"env {env_prefix}" if env_prefix else ""
+        # Best-effort PID-file-based cleanup of a previous run, then launch.
+        # Split into two `cmd()` calls so the launching bash's argv contains
+        # *only* the launch command (no kill pattern that could re-trigger the
+        # pkill self-match bug if anyone reintroduces pkill -f here later).
+        self.cmd(
+            f"bash -lc 'if [ -f {pid_q} ]; then "
+            f"kill $(cat {pid_q}) >/dev/null 2>&1 || true; "
+            f"rm -f {pid_q}; fi'",
+            exitcode=0,
+        )
+        self.cmd(
+            f"bash -lc 'nohup {env_via_env}{binary_q} -c {config_q} server >{log_q} 2>&1 & "
+            f"echo $! > {pid_q}'",
+            exitcode=0,
+        )
+        if wait_ready:
+            # TCP-only connection check: works whether the listener is plain HTTP or
+            # TLS (api.secure: true). Avoids tying the readiness check to an
+            # HTTP method that may be wrapped in TLS.
+            self.cmd(
+                f"bash -lc 'for i in $(seq 1 {int(timeout)}); do "
+                f"timeout 1 bash -c \"</dev/tcp/localhost/{int(listen_port)}\" >/dev/null 2>&1 && exit 0; "
+                f"sleep 1; done; "
+                f"echo \"server did not become ready on :{int(listen_port)} in {int(timeout)}s\"; "
+                f"tail -n 50 {log_q} || true; exit 1'",
+                exitcode=0,
+                timeout=int(timeout) + 30,
+            )
+
+    def stop_server(self):
+        """Stop the server gracefully via SIGTERM addressed to the PID file.
+
+        ``pkill -f <pattern>`` is intentionally avoided here: the wrapping
+        ``bash -lc '…'`` command's own argv contains the kill pattern as a
+        literal substring, so ``pkill -f`` would also match (and SIGTERM)
+        its own parent bash, surfacing as exit 143 / "Terminated" through
+        ``Node.cmd``'s ``exitcode == 0`` assertion. The PID file written by
+        ``start_server`` is unambiguous; if it's missing we simply have
+        nothing to stop.
+        """
+        pid_q = shlex.quote(self.server_pid_file)
+        self.cmd(
+            f"bash -lc 'if [ -f {pid_q} ]; then "
+            f"kill $(cat {pid_q}) >/dev/null 2>&1 || true; "
+            f"rm -f {pid_q}; fi'",
+            exitcode=0,
+        )
+
+    def kill_server(self):
+        """Kill the server immediately (SIGKILL) via the PID file.
+
+        Same rationale as ``stop_server``: no ``pkill -f`` to avoid the
+        self-match SIGTERM that fires when the kill pattern is a substring
+        of the wrapping shell's argv (see ``start_server`` docstring).
+        """
+        pid_q = shlex.quote(self.server_pid_file)
+        self.cmd(
+            f"bash -lc 'if [ -f {pid_q} ]; then "
+            f"kill -9 $(cat {pid_q}) >/dev/null 2>&1 || true; "
+            f"rm -f {pid_q}; fi'",
+            exitcode=0,
+        )
+
+    def is_server_running(self):
+        """Return ``True`` if the PID recorded by ``start_server`` is alive.
+
+        Uses ``kill -0 $PID`` (no-op signal) rather than ``pgrep -f <pattern>``
+        for the same reason ``stop_server`` skips ``pkill -f``: the wrapping
+        bash's argv contains the pattern as a literal, so ``pgrep -f`` would
+        self-match its own parent and yield a misleading "running" answer.
+        """
+        pid_q = shlex.quote(self.server_pid_file)
+        r = self.cmd(
+            f"bash -lc 'if [ -f {pid_q} ] && kill -0 $(cat {pid_q}) >/dev/null 2>&1; "
+            f"then echo running; else echo stopped; fi'",
+            no_checks=True,
+        )
+        return "running" in (r.output or "")
 
 
 class ClickHouseNode(Node):
@@ -488,7 +711,8 @@ class Cluster(object):
                  nodes=None,
                  docker_dir=None,
                  backup_config_dir=None,
-                 environ=None):
+                 environ=None,
+                 fips_godebug="fips140=only"):
 
         self.shells = {}
         self._control_shell = None
@@ -503,6 +727,14 @@ class Cluster(object):
         self._docker_client = None
         self._shared_volumes = []  # named volume names for cleanup
         self._backup_config_dir = backup_config_dir
+        # GODEBUG fips140 value exported ONLY on the `clickhouse_backup_fips`
+        # container so every `clickhouse-backup-fips` invocation runs in the
+        # mode selected at `regression.py` level (e.g. `"fips140=only"`,
+        # `"fips140=off"`); `None` leaves `GODEBUG` unset (build-time default).
+        # This is FIPS-scoped: it affects only the `fips_140_3` tests (the only
+        # ones that use the FIPS container). The broad regression scenarios run
+        # against the non-FIPS `clickhouse_backup` container and are unaffected.
+        self._fips_godebug = fips_godebug
 
         frame = inspect.currentframe().f_back
         caller_dir = os.path.dirname(os.path.abspath(frame.f_globals["__file__"]))
@@ -761,9 +993,15 @@ class Cluster(object):
         """Get object with node bound methods
         :param node_name: name of service name
         """
+        if node_name in ("clickhouse_backup", "clickhouse_backup_fips"):
+            return BackupNode(self, node_name)
         if node_name.startswith("clickhouse"):
             return ClickHouseNode(self, node_name)
         return Node(self, node_name)
+
+    def has_node(self, node_name):
+        """Return True if a container with ``node_name`` is currently tracked."""
+        return node_name in self._container_ids
 
     def _create_network(self):
         """Create a Docker network for inter-container communication."""
@@ -877,6 +1115,213 @@ class Cluster(object):
                 pass
             self._container_ids.pop(name, None)
             self._containers.pop(name, None)
+
+    def start_auxiliary_container(self, name, image, hostname=None, env=None, volumes=None,
+                                  ports=None, entrypoint=None, command=None, cap_add=None,
+                                  healthcheck=None, volumes_from_name=None, wait_healthy=False,
+                                  timeout=60):
+        """Start a sidecar container on the cluster's network on demand.
+
+        Used by tests that need ad-hoc helper containers (for example an
+        ``openssl s_server`` cipher-policy probe at ``openssl_server:9443``).
+        The container is added to the cluster's bookkeeping so :py:meth:`down`
+        also cleans it up if the test forgets to.
+
+        :param name: unique container/service name on this cluster.
+        :param wait_healthy: wait for the docker HEALTHCHECK to report healthy
+            (only useful when ``healthcheck`` is provided).
+        """
+        if name in self._container_ids:
+            raise RuntimeError(f"auxiliary container '{name}' already exists")
+        cid = self._start_container(
+            name=name, image=image, hostname=hostname, env=env, volumes=volumes,
+            ports=ports, entrypoint=entrypoint, command=command, cap_add=cap_add,
+            healthcheck=healthcheck, volumes_from_name=volumes_from_name,
+        )
+        if wait_healthy and healthcheck is not None:
+            _wait_for_container_healthy(self._docker_client, cid, timeout=timeout)
+        return cid
+
+    def stop_auxiliary_container(self, name):
+        """Stop and remove a previously started auxiliary container."""
+        self._stop_container(name)
+
+    def container_logs(self, name, *, tail=None):
+        """Return stdout+stderr of the named container as a single string.
+
+        Useful for tests that need to corroborate an in-container event by
+        inspecting what the container itself printed - for example, the
+        FIPS outbound-TLS scenarios cross-check the client-side handshake
+        outcome against the ``openssl s_server`` aux-container's log
+        (``Cipher    : <name>`` line, ``no shared cipher`` error, etc.).
+
+        :param name: cluster service name passed to
+            :py:meth:`start_auxiliary_container` /
+            :py:meth:`start_clickhouse_server_container` /
+            :py:meth:`start_openssl_container`.
+        :param tail: optional integer; when set, return only the last
+            ``tail`` log lines (forwarded to the Docker API). ``None``
+            (default) returns the full log.
+        """
+        cid = self._container_ids.get(name)
+        if cid is None:
+            raise RuntimeError(
+                f"container '{name}' is not registered with this cluster; "
+                f"call start_auxiliary_container / start_openssl_container first."
+            )
+        kwargs = {}
+        if tail is not None:
+            kwargs["tail"] = int(tail)
+        raw = self._docker_client.api.logs(cid, **kwargs)
+        if isinstance(raw, bytes):
+            return raw.decode("utf-8", errors="replace")
+        return raw
+
+    @property
+    def tests_dir(self):
+        """Host-side root of the testflows tests for this cluster.
+
+        Resolves the same way as ``_do_up`` does internally: the
+        ``CLICKHOUSE_TESTS_DIR`` env var when set, otherwise the directory
+        that constructed this :class:`Cluster` (``clickhouse_backup/`` when
+        the cluster is brought up by ``regression.py``). Tests use this to
+        compute host paths of fixture files (config.d overrides, scripts,
+        certificates, ...) without duplicating the env-var fallback.
+        """
+        return os.environ.get("CLICKHOUSE_TESTS_DIR", self.configs_dir)
+
+    @property
+    def ssl_certs_dir(self):
+        """Host-side directory containing the cluster's static SSL fixtures.
+
+        Always points at ``configs/clickhouse/ssl/`` of the testflows project,
+        which holds ``server.crt``, ``server.key`` and ``dhparam.pem`` and is
+        the same source the cluster bind-mounts on every ClickHouse node.
+        Tests reuse these files so they never have to generate certificates.
+        """
+        return os.path.join(self.tests_dir, "configs/clickhouse/ssl")
+
+    def start_clickhouse_server_container(self, name, image_tag, *,
+                                          extra_volumes=None, env=None,
+                                          ports=None, hostname=None,
+                                          timeout=180):
+        """Start a dedicated ClickHouse server on the cluster network.
+
+        Used by FIPS connectivity scenarios to bring up a fixed-version
+        Altinity ClickHouse image next to the regression's default
+        ``clickhouse1`` / ``clickhouse2`` nodes - without altering the
+        cluster-wide image / version chosen via ``CLICKHOUSE_VERSION``.
+
+        :param name: cluster-unique container name (also used as docker
+            hostname / network alias by default; other cluster nodes can
+            reach the server at ``<name>:<port>``).
+        :param image_tag: full ``image:tag`` reference, e.g.
+            ``altinity/clickhouse-server:25.3.8.30001.altinityfips`` or
+            ``altinity/clickhouse-server:25.8.16.10002.altinitystable``.
+        :param extra_volumes: optional list of ``(host_path, container_path)``
+            bind-mount tuples (FIPS scenario uses this to drop a TLS
+            ``config.d`` override and the cluster's static SSL certs in).
+        :param env: optional dict of additional env vars; defaults already
+            include ``CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1`` so the image's
+            ``default`` user keeps no-password access from across the docker
+            network (matches the rest of the regression).
+        :param ports: optional list of container ports to publish on the
+            host. Inter-container communication uses the docker network so
+            this is normally not needed.
+        :param hostname: docker hostname / network alias; defaults to ``name``.
+        :param timeout: seconds to wait for the image's HEALTHCHECK to flip
+            to ``healthy`` (default 180s, generous for first-time pulls).
+        """
+        merged_env = {"CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT": "1"}
+        if env:
+            merged_env.update(env)
+        return self.start_auxiliary_container(
+            name=name,
+            image=image_tag,
+            hostname=hostname or name,
+            env=merged_env,
+            volumes=list(extra_volumes) if extra_volumes else [],
+            ports=ports,
+            cap_add=["SYS_PTRACE", "SYS_NICE"],
+            healthcheck={
+                "Test": ["CMD-SHELL", "wget -q -T 2 -O- http://localhost:8123/ping || exit 1"],
+                "Interval": 3 * 1_000_000_000,
+                "Timeout": 3 * 1_000_000_000,
+                "Retries": 30,
+                "StartPeriod": 5 * 1_000_000_000,
+            },
+            wait_healthy=True,
+            timeout=timeout,
+        )
+
+    def start_openssl_container(self, name, role, listen=9443, cert_path=None, key_path=None,
+                                dhparam_path=None,
+                                cipher=None, ciphersuites=None, tls_version="-tls1_2",
+                                extra_args=""):
+        """Convenience helper to start an ``openssl s_server`` container.
+
+        :param name: cluster-unique service name (also used as hostname / network alias).
+        :param role: ``"s_server"`` (only role implemented for now). ``"s_client"`` probes
+            should be issued via ``backup_fips.cmd("openssl s_client ...")`` since
+            the FIPS backup container already has ``openssl`` installed.
+        :param listen: port to listen on inside the container.
+        :param cert_path: absolute host path of the server certificate to bind-mount at
+            ``/certs/server.crt``. Reuse the static cluster certs in
+            ``configs/clickhouse/ssl/server.crt`` to avoid generating new ones.
+        :param key_path: absolute host path of the server key.
+        :param dhparam_path: optional host path of a DH-parameters file to bind-mount
+            at ``/certs/dhparam.pem``. Required for DHE-* ciphers on some OpenSSL
+            builds; reuse ``configs/clickhouse/ssl/dhparam.pem`` if present.
+        :param cipher: TLSv1.2 ``-cipher`` argument (OpenSSL name format).
+        :param ciphersuites: TLSv1.3 ``-ciphersuites`` argument.
+        :param tls_version: ``-tls1_2`` or ``-tls1_3``.
+        :param extra_args: any additional ``openssl s_server`` flags.
+        """
+        if role != "s_server":
+            raise ValueError("only role='s_server' is supported here; use backup_fips.cmd for s_client probes")
+        if not cert_path or not key_path:
+            raise ValueError("cert_path and key_path are required (reuse configs/clickhouse/ssl/*)")
+
+        volumes = [
+            (cert_path, "/certs/server.crt"),
+            (key_path, "/certs/server.key"),
+        ]
+        if dhparam_path:
+            volumes.append((dhparam_path, "/certs/dhparam.pem"))
+        flags = [
+            f"-accept {int(listen)}",
+            "-cert /certs/server.crt",
+            "-key /certs/server.key",
+            tls_version,
+            "-www",
+        ]
+        if dhparam_path:
+            flags.append("-dhparam /certs/dhparam.pem")
+        if cipher:
+            flags.append(f"-cipher '{cipher}'")
+        if ciphersuites:
+            flags.append(f"-ciphersuites {ciphersuites}")
+        if extra_args:
+            flags.append(extra_args)
+
+        return self.start_auxiliary_container(
+            name=name,
+            image="alpine/openssl:latest",
+            hostname=name,
+            volumes=volumes,
+            ports=[str(listen)],
+            entrypoint=["sh", "-c"],
+            command=["openssl s_server " + " ".join(flags)],
+            healthcheck={
+                "Test": ["CMD-SHELL", f"nc -z localhost {int(listen)} || exit 1"],
+                "Interval": 2 * 1_000_000_000,
+                "Timeout": 2 * 1_000_000_000,
+                "Retries": 15,
+                "StartPeriod": 3 * 1_000_000_000,
+            },
+            wait_healthy=True,
+            timeout=45,
+        )
 
     def up(self, timeout=120):
         if self.local:
@@ -1271,6 +1716,100 @@ class Cluster(object):
                 },
             )
             _wait_for_container_healthy(self._docker_client, self._container_ids["clickhouse_backup"], timeout=300)
+
+        # 6. clickhouse_backup_fips (optional; same volumes view as clickhouse1)
+        # This container hosts the FIPS-compatible binary built by ``make build-race-fips``.
+        # It does not auto-start clickhouse-backup so tests can start/stop/kill it
+        # explicitly via BackupNode.start_server/stop_server/kill_server.
+        # If the FIPS binary is missing on the host we silently skip the container. FIPS scenarios then ``skip()``.
+        backup_fips_binary = os.path.normpath(
+            os.path.join(tests_dir, "../../../clickhouse-backup/clickhouse-backup-race-fips")
+        )
+        # If the host-side binary is missing but the upstream Makefile target
+        # `build-race-fips-docker` has already left its image in the local
+        # Docker registry, recover the binary out of that image rather than
+        # silently skipping the whole FIPS suite. Pure Docker SDK - no
+        # subprocess, no make - so it works the same in dev shells and in CI.
+        if not os.path.isfile(backup_fips_binary):
+            _materialize_binary_from_docker_image(
+                self._docker_client,
+                image_tag="clickhouse-backup:build-race-fips",
+                path_in_image="/src/clickhouse-backup/clickhouse-backup-race-fips",
+                host_path=backup_fips_binary,
+            )
+        if os.path.isfile(backup_fips_binary):
+            with And("starting clickhouse_backup_fips"):
+                # The container picks up ``/etc/clickhouse-server/ssl/``
+                # via ``volumes_from_name="clickhouse1"`` below (the same static
+                # certs the cluster bind-mounts on every CH node), so FIPS scenarios
+                # never need to generate or relocate certificates.
+                # Helper scripts (e.g. ``tamper_go_fips_checksum.sh``) are
+                # bind-mounted read-only so FIPS scenarios can invoke the
+                # exact same script paths the test plan documents.
+                backup_fips_scripts_dir = os.path.join(tests_dir, "scripts")
+                backup_fips_volumes = [
+                    (backup_fips_binary, "/bin/clickhouse-backup-fips"),
+                    (backup_config_mount, "/etc/clickhouse-backup"),
+                    (backup_fips_scripts_dir, "/scripts"),
+                    (coverage_dir, "/tmp/_coverage_"),
+                ]
+                # Export the regression-selected FIPS GODEBUG mode so every
+                # `clickhouse-backup-fips` command in this container inherits it
+                # (default `fips140=only`). `None` leaves `GODEBUG` unset so the
+                # binary relies on its build-time FIPS default. A few scenarios
+                # set `GODEBUG` explicitly when they must override it (e.g.
+                # `forced_cast_failures`, or `env -u GODEBUG` for the `go` tool).
+                backup_fips_env = {
+                    "DEBIAN_FRONTEND": "noninteractive",
+                    "LOG_LEVEL": log_level,
+                    "GCS_CREDENTIALS_JSON": gcs_cred_json,
+                    "GCS_CREDENTIALS_JSON_ENCODED": gcs_cred_json_encoded,
+                    "TZ": "Europe/Moscow",
+                    "GOCOVERDIR": "/tmp/_coverage_/",
+                }
+                if self._fips_godebug:
+                    backup_fips_env["GODEBUG"] = self._fips_godebug
+                self._start_container(
+                    name="clickhouse_backup_fips",
+                    image="ubuntu:latest",
+                    hostname="backup_fips",
+                    env=backup_fips_env,
+                    volumes=backup_fips_volumes,
+                    volumes_from_name="clickhouse1",
+                    ports=["7172"],
+                    entrypoint=["/bin/bash"],
+                    command=[
+                        "-c",
+                        "set -x && "
+                        "apt-get update && "
+                        "apt-get install -y --no-install-recommends "
+                        # binutils -> readelf (.go.fipsinfo offset lookup),
+                        # python3  -> tamper_go_fips_checksum.sh byte editor,
+                        # golang-go -> `go version -m` for build-flag scenario.
+                        "ca-certificates tzdata bash curl openssl procps binutils python3 golang-go && "
+                        "update-ca-certificates && "
+                        # Do not start the binary; tests start/stop it explicitly.
+                        "exec sleep infinity"
+                    ],
+                    cap_add=["SYS_NICE"],
+                    healthcheck={
+                        # The container is "ready" as soon as the openssl install is done.
+                        "Test": ["CMD-SHELL", "command -v openssl >/dev/null && test -x /bin/clickhouse-backup-fips"],
+                        "Interval": 5 * 1_000_000_000,
+                        "Timeout": 5 * 1_000_000_000,
+                        "Retries": 60,
+                        "StartPeriod": 10 * 1_000_000_000,
+                    },
+                )
+                _wait_for_container_healthy(
+                    self._docker_client, self._container_ids["clickhouse_backup_fips"], timeout=300
+                )
+        else:
+            note(
+                f"clickhouse-backup-race-fips not found at {backup_fips_binary}; "
+                "skipping clickhouse_backup_fips container. Build with `make build-race-fips-docker` "
+                "to enable FIPS scenarios."
+            )
 
     def _do_down(self):
         """Internal: stop all containers and remove network."""

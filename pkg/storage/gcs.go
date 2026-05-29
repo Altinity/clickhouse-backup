@@ -365,7 +365,11 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 			log.Warn().Msgf("gcs.PutFile: gcs.clientPool.ReturnObject error: %+v", err)
 		}
 	}()
-	buffer := make([]byte, 128*1024)
+	uploadBufferSize := gcs.Config.UploadBufferSize
+	if uploadBufferSize <= 0 {
+		uploadBufferSize = 128 * 1024
+	}
+	buffer := make([]byte, uploadBufferSize)
 	_, err = io.CopyBuffer(writer, r, buffer)
 	if err != nil {
 		log.Warn().Msgf("gcs.PutFile: can't copy buffer: %+v", err)
@@ -401,7 +405,7 @@ func (gcs *GCS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, e
 		}
 		if err != nil {
 			if errors.Is(err, storage.ErrObjectNotExist) {
-				return nil, ErrNotFound
+				return nil, NewErrNotFound(key)
 			}
 			return nil, errors.WithMessage(err, "GCS StatFileAbsolute Attrs")
 		}
