@@ -252,7 +252,8 @@ jobs:
           RUN_PARALLEL: 1
           DEBUG: 1
           NO_COLORS: 1
-          RUN_TESTS: "/clickhouse backup/fips 140 3*"
+          # Keep in sync with @Name("FIPS 140-3 Compatibility") in tests/fips_140_3.py
+          RUN_TESTS: "/clickhouse backup/FIPS 140-3 Compatibility*"
           GOROOT: ${{ env.GOROOT_1_26_X64 }}
         run: |
           set -xe
