@@ -135,6 +135,29 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 	cleanBrokenRetentionIncludeGlob := fmt.Sprintf("cbr_*_%s_%d", chVer, suffix)
 	cleanBrokenRetentionExcludeGlob := fmt.Sprintf("cbr_orphan_keep_%s_%d", chVer, suffix)
 
+	// Best-effort teardown so a mid-test failure does not leak this run's objects
+	// into the shared bucket — orphans otherwise accumulate across concurrent and
+	// previous runs. Scoped to this run's suffix glob, so it never touches a
+	// parallel run's objects. Runs before defer env.Cleanup (LIFO) while the
+	// containers are still owned by this test. Only on failure: on the happy path
+	// the body already removed everything, so running it again would just emit
+	// "not found on local storage" noise.
+	defer func() {
+		if !t.Failed() {
+			return
+		}
+		for _, cmd := range [][]string{
+			{"clickhouse-backup", "delete", "remote", keepBackup},
+			{"clickhouse-backup", "delete", "local", keepBackup},
+			{"clickhouse-backup", "clean_broken_retention", "--commit", "--include=" + cleanBrokenRetentionIncludeGlob},
+			{"clickhouse-backup", "clean_remote_broken", "--include=" + cleanBrokenRetentionIncludeGlob},
+		} {
+			if out, err := env.DockerExecOut("clickhouse-backup", cmd...); err != nil {
+				log.Warn().Err(err).Str("cmd", strings.Join(cmd, " ")).Msgf("cleanBrokenRetention teardown: %s", out)
+			}
+		}
+	}()
+
 	log.Debug().Str("backend", tc.name).Msg("Create a live backup that must survive the cleanup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create_remote", "--tables", tableName, keepBackup)
 
