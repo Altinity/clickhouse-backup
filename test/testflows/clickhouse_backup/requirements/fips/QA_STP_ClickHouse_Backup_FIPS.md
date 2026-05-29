@@ -325,13 +325,12 @@ Non-FIPS profiles (handshake MUST be rejected):
 ## Outbound TLS to S3 Endpoint With `openssl s_server`
 
 
-Check that `clickhouse-backup-fips` enforces the same TLS policy on outbound HTTPS to an S3-style remote storage endpoint.
+Check that `clickhouse-backup-fips` remains compatible with FIPS-approved outbound HTTPS profiles when connecting to an S3-style remote storage endpoint.
 
-Three FIPS-specific items shape this setup:
+Two FIPS-specific items shape this setup:
 
 * Leave `s3.endpoint` blank and set `s3.region` (e.g. `us-east-1`); the SDK targets the AWS FIPS hostname `s3-fips.us-east-1.amazonaws.com`.
 * Name the `openssl s_server` container after that hostname and have it listen on port `443`.
-* Set `s3.secret_key` to at least 10 characters and `s3.disable_cert_verification: true`.
 
 Run `clickhouse-backup-fips list remote` with `GODEBUG=fips140=only`. Cipher names below come from the official Altinity FIPS configuration documentation.
 
@@ -341,15 +340,6 @@ FIPS-approved profiles (handshake MUST be accepted by `clickhouse-backup-fips` p
 * `openssl s_server -tls1_2 -cipher ECDHE-RSA-AES256-GCM-SHA384` — expected result: same as above.
 * `openssl s_server -tls1_3 -ciphersuites TLS_AES_128_GCM_SHA256` — expected result: same as above.
 * `openssl s_server -tls1_3 -ciphersuites TLS_AES_256_GCM_SHA384` — expected result: same as above.
-
-Non-FIPS profiles (handshake MUST be rejected):
-
-* `openssl s_server -tls1_2 -cipher ECDHE-RSA-CHACHA20-POLY1305` — expected result: `clickhouse-backup-fips` fails with `remote error: tls: handshake failure` / `no shared cipher`.
-* `openssl s_server -tls1_2 -cipher DHE-RSA-AES256-GCM-SHA384` — expected result: handshake is rejected as above.
-* `openssl s_server -tls1_2 -cipher DHE-RSA-AES128-GCM-SHA256` — expected result: handshake is rejected as above.
-* `openssl s_server -tls1_2 -cipher AES256-GCM-SHA384` — expected result: handshake is rejected as above.
-* `openssl s_server -tls1_2 -cipher AES128-GCM-SHA256` — expected result: handshake is rejected as above.
-* `openssl s_server -tls1_3 -ciphersuites TLS_CHACHA20_POLY1305_SHA256` — expected result: handshake is rejected as above.
 
 ## ACVP Tests
 

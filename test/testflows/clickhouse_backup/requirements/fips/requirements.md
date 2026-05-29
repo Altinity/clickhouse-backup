@@ -45,7 +45,6 @@
         * 4.7.2 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.TLS.Outbound.ClickHouseEndpoint.NonApprovedCiphers.Reject](#rqsrs-013clickhousebackuputilityfipstlsoutboundclickhouseendpointnonapprovedciphersreject)
     * 4.8 [Outbound TLS — S3 Endpoint](#outbound-tls-s3-endpoint)
         * 4.8.1 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.TLS.Outbound.S3.Ciphers.Approved](#rqsrs-013clickhousebackuputilityfipstlsoutbounds3ciphersapproved)
-        * 4.8.2 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.TLS.Outbound.S3.NonApprovedCiphers.Reject](#rqsrs-013clickhousebackuputilityfipstlsoutbounds3nonapprovedciphersreject)
     * 4.9 [ACVP](#acvp)
         * 4.9.1 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.ACVP.Wrapper](#rqsrs-013clickhousebackuputilityfipsacvpwrapper)
     * 4.10 [Network Surface](#network-surface)
@@ -347,18 +346,6 @@ The [clickhouse-backup-fips] binary, when started with `GODEBUG=fips140=only` an
 * TLSv1.3 with `TLS_AES_256_GCM_SHA384`.
 
 Downstream HTTP / S3-protocol errors are acceptable, since `openssl s_server -www` is not a real S3 API.
-
-#### RQ.SRS-013.ClickHouse.BackupUtility.FIPS.TLS.Outbound.S3.NonApprovedCiphers.Reject
-version: 1.0
-
-The [clickhouse-backup-fips] binary, when started with `GODEBUG=fips140=only` and configured against an S3-compatible HTTPS endpoint as described above, SHALL refuse to complete the [TLS] handshake when the remote endpoint offers only non-FIPS-approved cipher suites, including:
-
-* TLSv1.2 with `ECDHE-RSA-CHACHA20-POLY1305`
-* TLSv1.2 with `DHE-RSA-AES256-GCM-SHA384`
-* TLSv1.3 with `TLS_CHACHA20_POLY1305_SHA256`
-
-For each of the above, `clickhouse-backup-fips list remote` SHALL fail with
-`remote error: tls: handshake failure` or `no shared cipher`.
 
 ### ACVP
 

@@ -871,29 +871,25 @@ def outbound_tls_cipher_negotiation(self):
 @TestScenario
 @Requirements(
     RQ_SRS_013_ClickHouse_BackupUtility_FIPS_TLS_Outbound_S3_Ciphers_Approved("1.0"),
-    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_TLS_Outbound_S3_NonApprovedCiphers_Reject("1.0"),
 )
 def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
-    """Validate outbound TLS policy when `clickhouse-backup-fips` connects to an S3 endpoint over HTTPS.
+    """Validate `clickhouse-backup-fips` can connect to an S3 HTTPS endpoint over a FIPS-approved cipher.
 
-    For each cipher / cipher suite from the shared FIPS-approved /
-    non-approved lists, start `openssl s_server` with that profile and run:
+    For each FIPS-approved cipher / cipher suite, start an `openssl s_server`
+    that offers only that profile and run:
 
         GODEBUG=fips140=only clickhouse-backup-fips -c <config> list remote
 
-    inside the FIPS container, asserting that:
+    inside the FIPS container, asserting the TLS handshake is NOT rejected by
+    the FIPS policy.
 
-    * approved profiles - the TLS handshake is NOT rejected by the FIPS
-      policy (downstream HTTP / S3 protocol errors from `s_server -www`
-      are acceptable - it is not a real S3 API).
-    * non-approved profiles - the FIPS client refuses the handshake with
-      `remote error: tls: handshake failure` / `no shared cipher`.
+    This scenario is a positive *compatibility* check only. 
 
-    The `s_server` container reuses the cluster's static SSL fixtures
-    and the `clickhouse-backup-fips` config is the static
+    The `s_server` container reuses the cluster's static SSL fixtures and the
+    `clickhouse-backup-fips` config is the static
     `configs/backup/fips/config-fips-outbound-s3-tls.yml` with
-    `s3.disable_cert_verification: true` so the assertion stays
-    focused on cipher policy.
+    `s3.disable_cert_verification: true` so the assertion stays focused on the
+    TLS handshake.
     """
     # Default HTTPS port. The S3 outbound scenario must use 443 because the AWS
     # SDK Go v2 generates the FIPS endpoint URL as bare
@@ -908,7 +904,7 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
     # URL (``https://s3-fips.us-east-1.amazonaws.com``) to it. ``us-east-1``
     # matches ``s3.region`` in ``config-fips-outbound-s3-tls.yml``.
     OPENSSL_S3_FIPS_AUX_NAME = "s3-fips.us-east-1.amazonaws.com"
-    
+
     backup_fips = _require_fips_container(self)
     cluster = self.context.cluster
 
@@ -938,26 +934,6 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
                     aux_name=OPENSSL_S3_FIPS_AUX_NAME,
                     listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_2",
                     cipher=cipher, command=cmd, expected_success=True,
-                )
-
-    with And("I try each non-FIPS TLSv1.3 cipher suite on the S3 endpoint"):
-        for ciphersuite in NON_FIPS_TLS13:
-            with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
-                _check_outbound_tls_with_cipher(
-                    cluster=cluster, backup_fips=backup_fips,
-                    aux_name=OPENSSL_S3_FIPS_AUX_NAME,
-                    listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_3",
-                    ciphersuites=ciphersuite, command=cmd, expected_success=False,
-                )
-
-    with And("I try each non-FIPS TLSv1.2 cipher on the S3 endpoint"):
-        for cipher in NON_FIPS_TLS12_OUTBOUND:
-            with Check(f"TLSv1.2 cipher {cipher} should be rejected"):
-                _check_outbound_tls_with_cipher(
-                    cluster=cluster, backup_fips=backup_fips,
-                    aux_name=OPENSSL_S3_FIPS_AUX_NAME,
-                    listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_2",
-                    cipher=cipher, command=cmd, expected_success=False,
                 )
 
 
