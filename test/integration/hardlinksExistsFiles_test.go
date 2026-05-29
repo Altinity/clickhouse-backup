@@ -159,6 +159,30 @@ func TestHardlinksExistsFiles(t *testing.T) {
 			// Restore on top of the truncated+reinserted table to confirm the hardlinked parts are usable.
 			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables="+dbNameFull+"."+tableName, baseBackupName)
 			env.checkCount(r, 1, 100, "SELECT count() FROM "+dbNameFull+"."+tableName)
+
+			// Branch: the matching part lives under a DIFFERENT table name.
+			// https://github.com/Altinity/clickhouse-backup/issues/1398
+			// Empty the source table so it owns no candidate part, then put the
+			// byte-identical data into a clone table; download must hardlink the
+			// part across table names by hash_of_all_files.
+			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", baseBackupName)
+
+			cloneTableName := tableName + "_clone"
+			env.queryWithNoError(r, "TRUNCATE TABLE "+dbNameFull+"."+tableName)
+			env.queryWithNoError(r, "CREATE TABLE "+dbNameFull+"."+cloneTableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id"+settings)
+			env.queryWithNoError(r, "INSERT INTO "+dbNameFull+"."+cloneTableName+" SELECT number FROM numbers(100)")
+
+			downloadOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", "--hardlink-exists-files", baseBackupName)
+			log.Debug().Msg(downloadOut)
+			r.NoError(err, downloadOut)
+			r.Contains(downloadOut, "hash_of_all_files match", "expected hash_of_all_files match for part owned by another table")
+			r.Contains(downloadOut, "from "+dbNameFull+"."+cloneTableName, "expected hardlink source to be the clone table %q", cloneTableName)
+
+			// Restore confirms the cross-table hardlinked part is usable.
+			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables="+dbNameFull+"."+tableName, baseBackupName)
+			env.checkCount(r, 1, 100, "SELECT count() FROM "+dbNameFull+"."+tableName)
+
+			env.queryWithNoError(r, "DROP TABLE "+dbNameFull+"."+cloneTableName)
 		}
 
 		// Cleanup after test

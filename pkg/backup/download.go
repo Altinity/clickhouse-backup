@@ -960,18 +960,32 @@ func (b *Backuper) hardlinkByHashOfAllFiles(ctx context.Context, backupName stri
 		return false, 0, nil
 	}
 	var rows []struct {
-		Name string `ch:"name"`
-		Path string `ch:"path"`
-		Disk string `ch:"disk_name"`
+		Name     string `ch:"name"`
+		Path     string `ch:"path"`
+		Disk     string `ch:"disk_name"`
+		Database string `ch:"database"`
+		Table    string `ch:"table"`
 	}
-	q := "SELECT name, path, disk_name FROM system.parts WHERE database=? AND `table`=? AND lower(hash_of_all_files)=? AND active"
-	if err := b.ch.SelectContext(ctx, &rows, q, table.Database, table.Table, expected); err != nil {
+	// A part with an identical hash_of_all_files can live under a different
+	// table name (e.g. the table was renamed, or the same data was inserted
+	// into another table). A matching hash_of_all_files means the part files
+	// are byte-identical, so the directory is safe to hardlink regardless of
+	// which table currently owns it. See
+	// https://github.com/Altinity/clickhouse-backup/issues/1398
+	q := "SELECT name, path, disk_name, database, `table` FROM system.parts WHERE lower(hash_of_all_files)=? AND active"
+	if err := b.ch.SelectContext(ctx, &rows, q, expected); err != nil {
 		return false, 0, errors.Wrap(err, "system.parts lookup by hash_of_all_files")
 	}
 	if len(rows) == 0 {
 		return false, 0, nil
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
+		// Prefer a candidate from the same table, then the closest part name.
+		sameI := rows[i].Database == table.Database && rows[i].Table == table.Table
+		sameJ := rows[j].Database == table.Database && rows[j].Table == table.Table
+		if sameI != sameJ {
+			return sameI
+		}
 		di := levenshtein(rows[i].Name, part.Name)
 		dj := levenshtein(rows[j].Name, part.Name)
 		if di != dj {
@@ -992,7 +1006,7 @@ func (b *Backuper) hardlinkByHashOfAllFiles(ctx context.Context, backupName stri
 	}
 	srcPath := strings.TrimRight(rows[0].Path, "/")
 	partLocalPath := path.Join(b.getLocalBackupDataPathForTable(backupName, localDisk.Name, dbAndTableDir), part.Name)
-	log.Info().Msgf("hash_of_all_files match: hardlink %s -> %s (live part %q)", srcPath, partLocalPath, rows[0].Name)
+	log.Info().Msgf("hash_of_all_files match: hardlink %s -> %s (live part %q from %s.%s)", srcPath, partLocalPath, rows[0].Name, rows[0].Database, rows[0].Table)
 	if err := b.makePartHardlinks(srcPath, partLocalPath); err != nil {
 		return false, 0, errors.Wrapf(err, "failed to create hardlinks for %s", srcPath)
 	}
