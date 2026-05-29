@@ -106,6 +106,8 @@ func TestResumeExistingBackupMissingStateFileReturnsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "download.state2")
 	assert.Contains(t, err.Error(), "delete local "+backupName)
+	// must keep wrapping ErrBackupIsAlreadyExists so RestoreFromRemote reuses the local backup (issue #625)
+	assert.ErrorIs(t, err, ErrBackupIsAlreadyExists)
 
 	assert.NoError(t, os.WriteFile(path.Join(backupDir, "download.state2"), []byte("state"), 0o640))
 	assert.NoError(t, backuper.resumeExistingBackup(backupName))
