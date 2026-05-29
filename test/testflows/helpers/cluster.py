@@ -711,7 +711,8 @@ class Cluster(object):
                  nodes=None,
                  docker_dir=None,
                  backup_config_dir=None,
-                 environ=None):
+                 environ=None,
+                 fips_godebug="fips140=only"):
 
         self.shells = {}
         self._control_shell = None
@@ -726,6 +727,14 @@ class Cluster(object):
         self._docker_client = None
         self._shared_volumes = []  # named volume names for cleanup
         self._backup_config_dir = backup_config_dir
+        # GODEBUG fips140 value exported ONLY on the `clickhouse_backup_fips`
+        # container so every `clickhouse-backup-fips` invocation runs in the
+        # mode selected at `regression.py` level (e.g. `"fips140=only"`,
+        # `"fips140=off"`); `None` leaves `GODEBUG` unset (build-time default).
+        # This is FIPS-scoped: it affects only the `fips_140_3` tests (the only
+        # ones that use the FIPS container). The broad regression scenarios run
+        # against the non-FIPS `clickhouse_backup` container and are unaffected.
+        self._fips_godebug = fips_godebug
 
         frame = inspect.currentframe().f_back
         caller_dir = os.path.dirname(os.path.abspath(frame.f_globals["__file__"]))
@@ -1744,18 +1753,27 @@ class Cluster(object):
                     (backup_fips_scripts_dir, "/scripts"),
                     (coverage_dir, "/tmp/_coverage_"),
                 ]
+                # Export the regression-selected FIPS GODEBUG mode so every
+                # `clickhouse-backup-fips` command in this container inherits it
+                # (default `fips140=only`). `None` leaves `GODEBUG` unset so the
+                # binary relies on its build-time FIPS default. A few scenarios
+                # set `GODEBUG` explicitly when they must override it (e.g.
+                # `forced_cast_failures`, or `env -u GODEBUG` for the `go` tool).
+                backup_fips_env = {
+                    "DEBIAN_FRONTEND": "noninteractive",
+                    "LOG_LEVEL": log_level,
+                    "GCS_CREDENTIALS_JSON": gcs_cred_json,
+                    "GCS_CREDENTIALS_JSON_ENCODED": gcs_cred_json_encoded,
+                    "TZ": "Europe/Moscow",
+                    "GOCOVERDIR": "/tmp/_coverage_/",
+                }
+                if self._fips_godebug:
+                    backup_fips_env["GODEBUG"] = self._fips_godebug
                 self._start_container(
                     name="clickhouse_backup_fips",
                     image="ubuntu:latest",
                     hostname="backup_fips",
-                    env={
-                        "DEBIAN_FRONTEND": "noninteractive",
-                        "LOG_LEVEL": log_level,
-                        "GCS_CREDENTIALS_JSON": gcs_cred_json,
-                        "GCS_CREDENTIALS_JSON_ENCODED": gcs_cred_json_encoded,
-                        "TZ": "Europe/Moscow",
-                        "GOCOVERDIR": "/tmp/_coverage_/",
-                    },
+                    env=backup_fips_env,
                     volumes=backup_fips_volumes,
                     volumes_from_name="clickhouse1",
                     ports=["7172"],
