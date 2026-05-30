@@ -53,16 +53,20 @@ func (cfg *Config) Unlock() {
 
 // GeneralConfig - general setting section
 type GeneralConfig struct {
-	RemoteStorage                       string            `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
-	MaxFileSize                         int64             `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
-	BackupsToKeepLocal                  int               `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
-	BackupsToKeepRemote                 int               `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
-	LogLevel                            string            `yaml:"log_level" envconfig:"LOG_LEVEL"`
-	AllowEmptyBackups                   bool              `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
-	DownloadConcurrency                 uint8             `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
-	UploadConcurrency                   uint8             `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
-	UploadMaxBytesPerSecond             uint64            `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
-	DownloadMaxBytesPerSecond           uint64            `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
+	RemoteStorage             string `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
+	MaxFileSize               int64  `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
+	BackupsToKeepLocal        int    `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
+	BackupsToKeepRemote       int    `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
+	LogLevel                  string `yaml:"log_level" envconfig:"LOG_LEVEL"`
+	AllowEmptyBackups         bool   `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
+	DownloadConcurrency       uint8  `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
+	UploadConcurrency         uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	UploadMaxBytesPerSecond   uint64 `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
+	DownloadMaxBytesPerSecond uint64 `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
+	// PipeBufferSize - size of the in-memory ring buffer between the compression and the upload/download stream handlers, see https://github.com/Altinity/clickhouse-backup/issues/1376
+	PipeBufferSize int64 `yaml:"pipe_buffer_size" envconfig:"PIPE_BUFFER_SIZE"`
+	// DownloadCopyBufferSize - explicit buffer size for io.CopyBuffer during download/extract, 0 means use the Go default io.Copy buffer (32KB), see https://github.com/Altinity/clickhouse-backup/issues/1376
+	DownloadCopyBufferSize              int64             `yaml:"download_copy_buffer_size" envconfig:"DOWNLOAD_COPY_BUFFER_SIZE"`
 	ObjectDiskServerSideCopyConcurrency uint8             `yaml:"object_disk_server_side_copy_concurrency" envconfig:"OBJECT_DISK_SERVER_SIDE_COPY_CONCURRENCY"`
 	AllowObjectDiskStreaming            bool              `yaml:"allow_object_disk_streaming" envconfig:"ALLOW_OBJECT_DISK_STREAMING"`
 	UseResumableState                   bool              `yaml:"use_resumable_state" envconfig:"USE_RESUMABLE_STATE"`
@@ -118,6 +122,8 @@ type GCSConfig struct {
 	// EncryptionKey is a base64-encoded 256-bit customer-supplied encryption key (CSEK)
 	// for client-side encryption of objects. Use `openssl rand -base64 32` to generate.
 	EncryptionKey string `yaml:"encryption_key" envconfig:"GCS_ENCRYPTION_KEY"`
+	// UploadBufferSize - io.CopyBuffer size feeding the GCS object writer, see https://github.com/Altinity/clickhouse-backup/issues/1376
+	UploadBufferSize int `yaml:"upload_buffer_size" envconfig:"GCS_UPLOAD_BUFFER_SIZE"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
@@ -178,6 +184,21 @@ type S3Config struct {
 	ChunkSize               int64             `yaml:"chunk_size" envconfig:"S3_CHUNK_SIZE"`
 	DeleteConcurrency       int               `yaml:"delete_concurrency" envconfig:"S3_DELETE_CONCURRENCY"`
 	Debug                   bool              `yaml:"debug" envconfig:"S3_DEBUG"`
+	// HTTP transport and buffer tuning for high-bandwidth networks, see https://github.com/Altinity/clickhouse-backup/issues/1376
+	// BufferSize - per-part buffer for the s3manager up/downloader buffer providers
+	BufferSize int `yaml:"buffer_size" envconfig:"S3_BUFFER_SIZE"`
+	// HTTPMaxIdleConns - http.Transport.MaxIdleConns, 0 keeps the AWS SDK default
+	HTTPMaxIdleConns int `yaml:"http_max_idle_conns" envconfig:"S3_HTTP_MAX_IDLE_CONNS"`
+	// HTTPMaxIdleConnsPerHost - http.Transport.MaxIdleConnsPerHost, 0 keeps the Go default (2), raise it to avoid serializing parallel up/downloads to the same endpoint
+	HTTPMaxIdleConnsPerHost int `yaml:"http_max_idle_conns_per_host" envconfig:"S3_HTTP_MAX_IDLE_CONNS_PER_HOST"`
+	// HTTPMaxConnsPerHost - http.Transport.MaxConnsPerHost, 0 means unlimited
+	HTTPMaxConnsPerHost int `yaml:"http_max_conns_per_host" envconfig:"S3_HTTP_MAX_CONNS_PER_HOST"`
+	// HTTPWriteBufferSize - http.Transport.WriteBufferSize, 0 keeps the Go default (4KB)
+	HTTPWriteBufferSize int `yaml:"http_write_buffer_size" envconfig:"S3_HTTP_WRITE_BUFFER_SIZE"`
+	// HTTPReadBufferSize - http.Transport.ReadBufferSize, 0 keeps the Go default (4KB)
+	HTTPReadBufferSize int `yaml:"http_read_buffer_size" envconfig:"S3_HTTP_READ_BUFFER_SIZE"`
+	// HTTPIdleConnTimeout - http.Transport.IdleConnTimeout as a duration string, empty keeps the Go default (90s)
+	HTTPIdleConnTimeout string `yaml:"http_idle_conn_timeout" envconfig:"S3_HTTP_IDLE_CONN_TIMEOUT"`
 }
 
 // COSConfig - cos settings section
@@ -225,7 +246,9 @@ type SFTPConfig struct {
 	CompressionFormat string `yaml:"compression_format" envconfig:"SFTP_COMPRESSION_FORMAT"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"SFTP_COMPRESSION_LEVEL"`
 	Concurrency       int    `yaml:"concurrency" envconfig:"SFTP_CONCURRENCY"`
-	Debug             bool   `yaml:"debug" envconfig:"SFTP_DEBUG"`
+	// MaxPacketSize - max SFTP payload size in bytes per packet, 0 keeps the pkg/sftp default (32KB); values above 32KB only work with servers that support them, see https://github.com/Altinity/clickhouse-backup/issues/1376
+	MaxPacketSize int  `yaml:"max_packet_size" envconfig:"SFTP_MAX_PACKET_SIZE"`
+	Debug         bool `yaml:"debug" envconfig:"SFTP_DEBUG"`
 }
 
 // CustomConfig - custom CLI storage settings section
@@ -439,6 +462,11 @@ func ValidateConfig(cfg *Config) error {
 		if _, err := aws.ParseRetryMode(cfg.S3.RetryMode); err != nil {
 			return errors.WithMessage(err, "ValidateConfig ParseRetryMode")
 		}
+		if cfg.S3.HTTPIdleConnTimeout != "" {
+			if _, err := time.ParseDuration(cfg.S3.HTTPIdleConnTimeout); err != nil {
+				return errors.Wrap(err, "invalid s3 http_idle_conn_timeout")
+			}
+		}
 	}
 	if cfg.GetCompressionFormat() == "unknown" {
 		return errors.Errorf("'%s' is unknown remote storage", cfg.General.RemoteStorage)
@@ -636,6 +664,8 @@ func DefaultConfig() *Config {
 			RBACConflictResolution:              "recreate",
 			NamedCollectionsBackupAlways:        false,
 			DeleteBatchSize:                     1000,
+			PipeBufferSize:                      128 * 1024,
+			DownloadCopyBufferSize:              0,
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
@@ -688,6 +718,7 @@ func DefaultConfig() *Config {
 			RetryMode:               string(aws.RetryModeStandard),
 			ChunkSize:               5 * 1024 * 1024,
 			DeleteConcurrency:       10,
+			BufferSize:              64 * 1024,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
@@ -697,6 +728,7 @@ func DefaultConfig() *Config {
 			// 16Mb default chunk size, fix https://github.com/Altinity/clickhouse-backup/issues/1292
 			ChunkSize:         16 * 1024 * 1024,
 			DeleteConcurrency: 50,
+			UploadBufferSize:  128 * 1024,
 		},
 		COS: COSConfig{
 			RowURL:                 "",
