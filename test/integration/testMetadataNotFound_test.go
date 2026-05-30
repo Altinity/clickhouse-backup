@@ -70,7 +70,7 @@ func TestMetadataNotFoundFTP(t *testing.T) {
 func TestMetadataNotFoundGCSEmulator(t *testing.T) {
 	runMetadataNotFoundCase(t, gcsEmulatorMetadataNotFoundCase())
 }
-func TestMetadataNotFoundAZBLOB(t *testing.T) {
+func TestMetadataNotFoundAzure(t *testing.T) {
 	runMetadataNotFoundCase(t, azblobMetadataNotFoundCase())
 }
 func TestMetadataNotFoundGCS(t *testing.T) {

@@ -5,10 +5,9 @@ replace github.com/mholt/archiver/v4 => github.com/mholt/archiver/v4 v4.0.0-alph
 
 require (
 	cloud.google.com/go/storage v1.62.2
-	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.21.1
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
-	github.com/Azure/azure-storage-blob-go v0.15.0
+	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.7.0
 	github.com/ClickHouse/clickhouse-go/v2 v2.46.0
 	github.com/antchfx/xmlquery v1.5.1
 	github.com/aws/aws-sdk-go-v2 v1.39.0
@@ -37,7 +36,6 @@ require (
 	github.com/mattn/go-shellwords v1.0.13
 	github.com/mholt/archiver/v4 v4.0.0-alpha.9
 	github.com/otiai10/copy v1.14.1
-	github.com/pierrec/lz4/v4 v4.1.26
 	github.com/pkg/errors v0.9.1
 	github.com/pkg/sftp v1.13.10
 	github.com/prometheus/client_golang v1.23.2
@@ -68,7 +66,6 @@ require (
 	cloud.google.com/go/iam v1.11.0 // indirect
 	cloud.google.com/go/monitoring v1.29.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 // indirect
-	github.com/Azure/go-autorest/autorest/adal v0.9.24 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.7.2 // indirect
 	github.com/ClickHouse/ch-go v0.72.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.32.0 // indirect
@@ -111,7 +108,6 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
@@ -127,7 +123,6 @@ require (
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-ieproxy v0.0.12 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
@@ -139,6 +134,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/otiai10/mint v1.6.3 // indirect
 	github.com/paulmach/orb v0.13.0 // indirect
+	github.com/pierrec/lz4/v4 v4.1.26 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect

@@ -71,7 +71,7 @@ func TestCleanBrokenRetentionFTP(t *testing.T) {
 func TestCleanBrokenRetentionGCSEmulator(t *testing.T) {
 	runCleanBrokenRetentionCase(t, gcsEmulatorCleanBrokenRetentionCase())
 }
-func TestCleanBrokenRetentionAZBLOB(t *testing.T) {
+func TestCleanBrokenRetentionAzure(t *testing.T) {
 	runCleanBrokenRetentionCase(t, azblobCleanBrokenRetentionCase())
 }
 func TestCleanBrokenRetentionGCS(t *testing.T) {
