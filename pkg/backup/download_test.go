@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"errors"
 	"os"
 	"path"
 	"regexp"
@@ -92,6 +93,26 @@ var remoteBackup = storage.Backup{
 		RequiredBackup: "",
 	},
 	UploadDate: time.Now(),
+}
+
+func TestIsRemoteMetadataNotFound(t *testing.T) {
+	notFoundMessages := []string{
+		"object doesn't exist",
+		"key not found: metadata/default/test.json",
+		"NoSuchKey: The specified key does not exist",
+		"operation error S3: GetObject, https response error StatusCode: 404",
+		"StatusCode 404",
+		// real backend phrasings observed in test/integration TestMetadataNotFound*
+		"550 /backup/metadata/default/test.json: No such file or directory", // FTP
+		"file does not exist", // SFTP
+		"AzureBlob GetFileReaderAbsolute Download: RESPONSE ERROR (ServiceCode=BlobNotFound) RESPONSE Status: 404 The specified blob does not exist.", // Azure
+	}
+	for _, msg := range notFoundMessages {
+		assert.True(t, isRemoteMetadataNotFound(errors.New(msg)), msg)
+	}
+
+	assert.False(t, isRemoteMetadataNotFound(nil))
+	assert.False(t, isRemoteMetadataNotFound(errors.New("temporary network timeout")))
 }
 
 func TestResumeExistingBackupMissingStateFileReturnsError(t *testing.T) {

@@ -52,6 +52,31 @@ func (b *Backuper) resumeExistingBackup(backupName string) error {
 	return nil
 }
 
+func isRemoteMetadataNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	// Every remote storage backend phrases "object is missing" differently, so we
+	// match the known permanent-not-found markers across S3/GCS/Azure/FTP/SFTP/FS.
+	for _, marker := range []string{
+		"doesn't exist",              // GCS
+		"does not exist",             // SFTP ("file does not exist"), Azure ("the specified blob does not exist")
+		"no such file or directory", // FTP (550), local filesystem
+		"key not found",
+		"nosuchkey",      // S3
+		"blobnotfound",   // Azure Blob (x-ms-error-code)
+		"statuscode 404", // S3 SDK v2
+		"statuscode: 404",
+		"status: 404", // Azure ("RESPONSE Status: 404")
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume bool, hardlinkExistsFiles bool, backupVersion string, commandId int) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "download"); pidCheckErr != nil {
 		return errors.WithMessage(pidCheckErr, "CheckAndCreatePidFile")
@@ -497,10 +522,15 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			}
 		}
 		var tmBody []byte
+		metadataNotFound := false
 		retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 		err := retry.RunCtx(ctx, func(ctx context.Context) error {
 			tmReader, err := b.dst.GetFileReader(ctx, remoteMetadataFile)
 			if err != nil {
+				if isRemoteMetadataNotFound(err) {
+					metadataNotFound = true
+					return nil
+				}
 				return errors.Wrapf(err, "can't GetFileReader(%s) error", remoteMetadataFile)
 			}
 			tmBody, err = io.ReadAll(tmReader)
@@ -513,10 +543,25 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			}
 			return nil
 		})
+		// Missing metadata is permanent: a 404 will never become available, so we
+		// detect it inside the retry closure and break out without burning the
+		// exponential backoff. A missing table .json means the backup is broken,
+		// so fail fast with a clear error. The optional .sql (incremental/embedded
+		// metadata) may legitimately be absent, so it is still skipped.
+		if metadataNotFound {
+			if strings.HasSuffix(localMetadataFile, ".json") {
+				return nil, 0, errors.Errorf("remote metadata file %s not found on remote storage, backup is broken", remoteMetadataFile)
+			}
+			logger.Warn().Str("remoteMetadataFile", remoteMetadataFile).Msg("metadata file not found on remote, skipping")
+			continue
+		}
 		// sql file could be not present in incremental backup
 		if err != nil && strings.HasSuffix(localMetadataFile, ".sql") {
 			log.Warn().Str("localMetadataFile", localMetadataFile).Err(err).Send()
 			continue
+		}
+		if err != nil {
+			return nil, 0, err
 		}
 
 		if err = os.MkdirAll(path.Dir(localMetadataFile), 0755); err != nil {
