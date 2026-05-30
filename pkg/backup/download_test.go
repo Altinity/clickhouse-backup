@@ -102,6 +102,10 @@ func TestIsRemoteMetadataNotFound(t *testing.T) {
 		"NoSuchKey: The specified key does not exist",
 		"operation error S3: GetObject, https response error StatusCode: 404",
 		"StatusCode 404",
+		// real backend phrasings observed in test/integration TestMetadataNotFound*
+		"550 /backup/metadata/default/test.json: No such file or directory", // FTP
+		"file does not exist", // SFTP
+		"AzureBlob GetFileReaderAbsolute Download: RESPONSE ERROR (ServiceCode=BlobNotFound) RESPONSE Status: 404 The specified blob does not exist.", // Azure
 	}
 	for _, msg := range notFoundMessages {
 		assert.True(t, isRemoteMetadataNotFound(errors.New(msg)), msg)
