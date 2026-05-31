@@ -99,6 +99,11 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	if err != nil {
 		return errors.WithMessage(err, "ch.GetDisks")
 	}
+	if doRestoreData {
+		if err = b.checkDisksConsistency(disks); err != nil {
+			return err
+		}
+	}
 	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
 	if err != nil {
 		log.Warn().Msgf("%v", err)

@@ -72,6 +72,11 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	if _, disks, err = b.getLocalBackup(ctx, backupName, nil); err != nil {
 		return errors.Wrap(err, "can't find local backup")
 	}
+	if !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+		if err = b.checkDisksConsistency(disks); err != nil {
+			return err
+		}
+	}
 	if initErr := b.initDisksPathsAndBackupDestination(ctx, disks, backupName); initErr != nil {
 		return errors.WithMessage(initErr, "initDisksPathsAndBackupDestination")
 	}

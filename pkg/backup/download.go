@@ -60,8 +60,8 @@ func isRemoteMetadataNotFound(err error) bool {
 	// Every remote storage backend phrases "object is missing" differently, so we
 	// match the known permanent-not-found markers across S3/GCS/Azure/FTP/SFTP/FS.
 	for _, marker := range []string{
-		"doesn't exist",              // GCS
-		"does not exist",             // SFTP ("file does not exist"), Azure ("the specified blob does not exist")
+		"doesn't exist",             // GCS
+		"does not exist",            // SFTP ("file does not exist"), Azure ("the specified blob does not exist")
 		"no such file or directory", // FTP (550), local filesystem
 		"key not found",
 		"nosuchkey",      // S3
@@ -137,6 +137,11 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	}
 	if err := b.initDisksPathsAndBackupDestination(ctx, disks, ""); err != nil {
 		return errors.WithMessage(err, "initDisksPathsAndBackupDestination")
+	}
+	if !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+		if err := b.checkDisksConsistency(disks); err != nil {
+			return err
+		}
 	}
 	defer func() {
 		if err := b.dst.Close(ctx); err != nil {

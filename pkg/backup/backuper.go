@@ -242,6 +242,60 @@ func (b *Backuper) isDiskTypeEncryptedObject(disk clickhouse.Disk, disks []click
 	return underlyingIdx >= 0
 }
 
+// checkDisksConsistency verifies clickhouse-backup sees the same local disks as clickhouse-server.
+// It guards against silently producing schema-only backups / partial restores (issue #1037) when
+// clickhouse.host is remote or the server data volumes are not mounted into the clickhouse-backup
+// container. Disk paths already have disk_mapping applied by GetDisks.
+func (b *Backuper) checkDisksConsistency(disks []clickhouse.Disk) error {
+	var problems []string
+	for _, disk := range disks {
+		if disk.IsBackup || b.shouldSkipByDiskNameOrType(disk) {
+			continue
+		}
+		st, err := os.Stat(disk.Path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				problems = append(problems, fmt.Sprintf("disk %q (type %q) path %q is not exists locally", disk.Name, disk.Type, disk.Path))
+				continue
+			}
+			return errors.Wrapf(err, "checkDisksConsistency: os.Stat %s", disk.Path)
+		}
+		if !st.IsDir() {
+			problems = append(problems, fmt.Sprintf("disk %q (type %q) path %q is not a directory", disk.Name, disk.Type, disk.Path))
+			continue
+		}
+		// non-local (object storage) and non-default disks: existence of the path is enough.
+		// Secondary storage-policy disks legitimately stay empty until parts land on them, so we
+		// only require the well-known "default" disk to look like a real ClickHouse disk.
+		if disk.Name != "default" {
+			continue
+		}
+		if b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, disks) {
+			continue
+		}
+		if !hasClickHouseDiskMarker(disk.Path) {
+			problems = append(problems, fmt.Sprintf("disk %q (type %q) path %q exists but contains none of store/data/metadata", disk.Name, disk.Type, disk.Path))
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("clickhouse-backup can't access clickhouse-server data disks "+
+			"(check clickhouse.host, mount the same volumes, or set clickhouse.disk_mapping / clickhouse.skip_disks): %s",
+			strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+// hasClickHouseDiskMarker reports whether diskPath contains a directory created by clickhouse-server
+// on any version since 1.1.54394 (data+metadata since 18.x, store since 20.5).
+func hasClickHouseDiskMarker(diskPath string) bool {
+	for _, marker := range []string{"store", "data", "metadata"} {
+		if st, err := os.Stat(path.Join(diskPath, marker)); err == nil && st.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
 // getEmbeddedRestoreSettings - different with getEmbeddedBackupSettings, cause https://github.com/ClickHouse/ClickHouse/issues/69053
 func (b *Backuper) getEmbeddedRestoreSettings(version int) []string {
 	settings := make([]string, 0)

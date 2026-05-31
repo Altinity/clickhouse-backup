@@ -140,6 +140,11 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	}
 	partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, tables, nil, partitions)
 	doBackupData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
+	if doBackupData {
+		if err = b.checkDisksConsistency(disks); err != nil {
+			return err
+		}
+	}
 	backupRBACSize, backupConfigSize, backupNamedCollectionsSize, rbacConfigsNamedCollectionsErr := b.createConfigsNamedCollectionsAndRBACIfNecessary(ctx, backupName, createRBAC, rbacOnly, createConfigs, configsOnly, createNamedCollections, namedCollectionsOnly, disks, diskMap)
 	if rbacConfigsNamedCollectionsErr != nil {
 		return errors.WithMessage(rbacConfigsNamedCollectionsErr, "createConfigsNamedCollectionsAndRBACIfNecessary")
