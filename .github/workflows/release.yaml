@@ -126,6 +126,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      - name: Verify FIPS 140-3 compatibility before push
+        run: |
+          set -x
+          # Build the exact image_fips target locally for the runner arch and load
+          # it, so we inspect/run the same image that is pushed below. VERSION is
+          # intentionally omitted: it only sets an image label and does not affect
+          # the FIPS checks.
+          docker buildx build --progress=plain --platform=linux/amd64 --tag=clickhouse-backup-fips-verify:local --target=image_fips --pull --load .
+          bash .github/scripts/verify_fips_image.sh \
+            --image clickhouse-backup-fips-verify:local \
+            --binary build/linux/amd64/clickhouse-backup-fips
+
       - name: Building docker image
         env:
           DOCKER_REPO: ${{ secrets.DOCKER_REPO }}
