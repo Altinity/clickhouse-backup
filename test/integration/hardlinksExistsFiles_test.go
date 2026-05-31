@@ -50,12 +50,22 @@ func TestHardlinksExistsFiles(t *testing.T) {
 			} `json:"parts"`
 		}
 		r.NoError(json.Unmarshal([]byte(out), &tableMeta))
-		r.Greater(len(tableMeta.Parts["default"]), 0)
+		// Parts are keyed by disk_name. With hot_and_cold storage policy a fresh
+		// INSERT usually lands on "default" (hot_volume), but the actual disk
+		// name may vary between ClickHouse versions and storage configurations.
+		// Collect parts from every disk rather than hard-coding "default".
+		allParts := make([]struct {
+			Name string `json:"name"`
+		}, 0)
+		for _, parts := range tableMeta.Parts {
+			allParts = append(allParts, parts...)
+		}
+		r.Greater(len(allParts), 0, "expected at least one part in metadata, got Parts=%v", tableMeta.Parts)
 		useHashOfAllFiles := compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.11") >= 0
 		if useHashOfAllFiles {
 			r.Empty(tableMeta.Checksums, "checksums should be empty for ClickHouse >= 19.11")
 			r.NotEmpty(tableMeta.HashOfAllFiles, "hash_of_all_files should not be empty for ClickHouse >= 19.11")
-			for _, part := range tableMeta.Parts["default"] {
+			for _, part := range allParts {
 				r.Contains(tableMeta.HashOfAllFiles, part.Name)
 				hexStr := tableMeta.HashOfAllFiles[part.Name]
 				r.Len(hexStr, 32, "hash_of_all_files must be 32 hex chars for part %s, got %q", part.Name, hexStr)
@@ -68,7 +78,7 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		} else {
 			r.NotEmpty(tableMeta.Checksums, "checksums should not be empty for ClickHouse < 19.11")
 			r.Empty(tableMeta.HashOfAllFiles, "hash_of_all_files should be empty for ClickHouse < 19.11")
-			for _, part := range tableMeta.Parts["default"] {
+			for _, part := range allParts {
 				r.Contains(tableMeta.Checksums, part.Name)
 			}
 		}
@@ -149,6 +159,30 @@ func TestHardlinksExistsFiles(t *testing.T) {
 			// Restore on top of the truncated+reinserted table to confirm the hardlinked parts are usable.
 			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables="+dbNameFull+"."+tableName, baseBackupName)
 			env.checkCount(r, 1, 100, "SELECT count() FROM "+dbNameFull+"."+tableName)
+
+			// Branch: the matching part lives under a DIFFERENT table name.
+			// https://github.com/Altinity/clickhouse-backup/issues/1398
+			// Empty the source table so it owns no candidate part, then put the
+			// byte-identical data into a clone table; download must hardlink the
+			// part across table names by hash_of_all_files.
+			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", baseBackupName)
+
+			cloneTableName := tableName + "_clone"
+			env.queryWithNoError(r, "TRUNCATE TABLE "+dbNameFull+"."+tableName)
+			env.queryWithNoError(r, "CREATE TABLE "+dbNameFull+"."+cloneTableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id"+settings)
+			env.queryWithNoError(r, "INSERT INTO "+dbNameFull+"."+cloneTableName+" SELECT number FROM numbers(100)")
+
+			downloadOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", "--hardlink-exists-files", baseBackupName)
+			log.Debug().Msg(downloadOut)
+			r.NoError(err, downloadOut)
+			r.Contains(downloadOut, "hash_of_all_files match", "expected hash_of_all_files match for part owned by another table")
+			r.Contains(downloadOut, "from "+dbNameFull+"."+cloneTableName, "expected hardlink source to be the clone table %q", cloneTableName)
+
+			// Restore confirms the cross-table hardlinked part is usable.
+			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables="+dbNameFull+"."+tableName, baseBackupName)
+			env.checkCount(r, 1, 100, "SELECT count() FROM "+dbNameFull+"."+tableName)
+
+			env.queryWithNoError(r, "DROP TABLE "+dbNameFull+"."+cloneTableName)
 		}
 
 		// Cleanup after test

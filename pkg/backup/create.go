@@ -140,6 +140,11 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	}
 	partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, tables, nil, partitions)
 	doBackupData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
+	if doBackupData {
+		if err = b.checkDisksConsistency(disks); err != nil {
+			return err
+		}
+	}
 	backupRBACSize, backupConfigSize, backupNamedCollectionsSize, rbacConfigsNamedCollectionsErr := b.createConfigsNamedCollectionsAndRBACIfNecessary(ctx, backupName, createRBAC, rbacOnly, createConfigs, configsOnly, createNamedCollections, namedCollectionsOnly, disks, diskMap)
 	if rbacConfigsNamedCollectionsErr != nil {
 		return errors.WithMessage(rbacConfigsNamedCollectionsErr, "createConfigsNamedCollectionsAndRBACIfNecessary")
@@ -1081,23 +1086,34 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 	return disksToPartsMap, realSize, objectDiskSize, checksums, hashOfAllFiles, nil
 }
 
-// fetchHashOfAllFiles returns name → hash_of_all_files for the given parts on
-// disk `diskName`. The value is whatever ClickHouse prints in
-// system.parts.hash_of_all_files (already lowercased); the storage and
-// compare paths are version-agnostic because both ends use the server's
-// formatting.
+// fetchHashOfAllFiles returns name → hash_of_all_files for the given parts of
+// `database`.`table` (frozen from disk `diskName`). The value is whatever
+// ClickHouse prints in system.parts.hash_of_all_files (already lowercased); the
+// storage and compare paths are version-agnostic because both ends use the
+// server's formatting.
+//
+// We deliberately do NOT filter by disk_name: when a cache disk wraps an object
+// disk, both share the same metadata path, and system.parts reports the part
+// under the cache disk name (the disk named in the storage policy), not the
+// underlying disk that clickhouse-backup walks the shadow tree from. Filtering
+// by diskName would miss those parts (see issue #1396). Part names are unique
+// within a table's active set, and inactive copies left by a move carry
+// identical content (hence identical hash_of_all_files), so matching by
+// database+table+name is unambiguous.
 //
 // Called right after FREEZE so the active-set delta is essentially zero —
 // inactive parts also remain visible in system.parts for ~480s, which makes
 // the race window practically impossible to hit. If a frozen part is missing
-// from the result we surface a hard error rather than silently dropping it.
+// from the result we surface a hard error rather than silently dropping it,
+// unless the table itself was dropped/detached concurrently (the documented
+// IgnoreNotExistsErrorDuringFreeze race), in which case we skip the part.
 func (b *Backuper) fetchHashOfAllFiles(ctx context.Context, database, table, diskName string, partNames []string) (map[string]string, error) {
 	var rows []struct {
 		Name string `ch:"name"`
 		Hash string `ch:"hash_of_all_files"`
 	}
-	q := "SELECT name, lower(hash_of_all_files) AS hash_of_all_files FROM system.parts WHERE database=? AND `table`=? AND disk_name=? AND has(?, name)"
-	if err := b.ch.SelectContext(ctx, &rows, q, database, table, diskName, partNames); err != nil {
+	q := "SELECT name, lower(hash_of_all_files) AS hash_of_all_files FROM system.parts WHERE database=? AND `table`=? AND has(?, name)"
+	if err := b.ch.SelectContext(ctx, &rows, q, database, table, partNames); err != nil {
 		return nil, errors.Wrap(err, "SELECT hash_of_all_files FROM system.parts")
 	}
 	hashByName := make(map[string]string, len(rows))
@@ -1106,7 +1122,16 @@ func (b *Backuper) fetchHashOfAllFiles(ctx context.Context, database, table, dis
 	}
 	for _, name := range partNames {
 		if _, ok := hashByName[name]; !ok {
-			return nil, errors.Errorf("part %q not found in system.parts (database=%s, table=%s, disk_name=%s) after FREEZE", name, database, table, diskName)
+			// A part can vanish from system.parts after FREEZE for several reasons:
+			// the table was dropped/detached concurrently, or a background merge/move
+			// (common on object-storage tiers like s3_cold) replaced the part right
+			// after we froze it. In every case the frozen files are already safe in
+			// shadow, so this is not a backup failure — we just lack a
+			// hash_of_all_files fingerprint for this part. Skip it with a warning;
+			// download/restore fall back to checksums and then to name-only
+			// comparison when no fingerprint is available.
+			log.Warn().Msgf("part %q not found in system.parts (database=%s, table=%s, disk_name=%s) after FREEZE, skip hash_of_all_files (fall back to checksums/name comparison)", name, database, table, diskName)
+			continue
 		}
 	}
 	return hashByName, nil

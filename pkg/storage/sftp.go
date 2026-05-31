@@ -80,6 +80,10 @@ func (sftp *SFTP) Connect(ctx context.Context) error {
 			libSFTP.MaxConcurrentRequestsPerFile(sftp.Config.Concurrency),
 		)
 	}
+	// MaxPacketUnchecked allows payloads above the 32KB default for servers that support them, see https://github.com/Altinity/clickhouse-backup/issues/1376
+	if sftp.Config.MaxPacketSize > 0 {
+		clientOptions = append(clientOptions, libSFTP.MaxPacketUnchecked(sftp.Config.MaxPacketSize))
+	}
 	sftpConnection, err := libSFTP.NewClient(sshConnection, clientOptions...)
 	if err != nil {
 		return errors.WithMessage(err, "SFTP Connect NewClient")

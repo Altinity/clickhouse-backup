@@ -100,6 +100,11 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	if err != nil {
 		return errors.WithMessage(err, "ch.GetDisks")
 	}
+	if doRestoreData {
+		if err = b.checkDisksConsistency(disks); err != nil {
+			return err
+		}
+	}
 	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
 	if err != nil {
 		log.Warn().Msgf("%v", err)
@@ -1837,8 +1842,22 @@ func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context
 		if err = b.ch.SelectSingleRow(ctx, &isReplicaPresent, "SELECT count() FROM system.zookeeper WHERE path=?", fullReplicaPath); err != nil {
 			log.Warn().Msgf("can't check replica %s in system.zookeeper error: %v", fullReplicaPath, err)
 		}
+		// Even if our specific replica entry is gone, the table-level znode may still
+		// hold leftover state (log, parts, replicas/<other>) from a recently dropped
+		// table — table-level ZK cleanup is asynchronous. Re-creating a Replicated
+		// table on top of that znode would inherit the stale data, e.g. silently
+		// re-fetching parts via replication. Detect that case and rename the znode
+		// to a fresh path too. https://github.com/Altinity/clickhouse-backup/issues/849
+		isTablePathStale := uint64(0)
 		if isReplicaPresent == 0 {
-			return
+			if err = b.ch.SelectSingleRow(ctx, &isTablePathStale, "SELECT count() FROM system.zookeeper WHERE path=?", resolvedReplicaPath); err != nil {
+				// path does not exist => clean state, nothing to do
+				return
+			}
+			if isTablePathStale == 0 {
+				return
+			}
+			log.Warn().Msgf("zookeeper path %s still has %d children after table drop, will rebind to fresh replica path", resolvedReplicaPath, isTablePathStale)
 		}
 		newReplicaPath := b.cfg.ClickHouse.DefaultReplicaPath
 		newReplicaName := b.cfg.ClickHouse.DefaultReplicaName

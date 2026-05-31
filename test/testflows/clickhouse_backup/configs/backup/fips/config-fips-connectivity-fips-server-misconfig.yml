@@ -1,0 +1,25 @@
+# Static config used by `connection_to_fips_clickhouse_with_nonfips_config`.
+#
+# Mounted into the FIPS backup container via the per-PID copy of
+# ``configs/backup/`` performed by ``regression.py``.
+#
+# This config is INTENTIONALLY misconfigured for FIPS deployment: it
+# points at the FIPS-compatible ClickHouse server on the secure native
+# TLS port `9440` but with `secure: false`, so the FIPS binary tries
+# the plain native protocol against a TLS-only listener.  The scenario
+# uses this to assert that a non-FIPS client configuration (`secure:
+# false`) cannot reach a FIPS-deployed ClickHouse server's secure
+# port - matching `RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Configuration.SecureClickHouse`,
+# which forbids plain native TCP `9000` / plain HTTP `8123` against a
+# FIPS-configured ClickHouse server.
+general:
+  log_level: warn
+  remote_storage: none
+clickhouse:
+  config_dir: /etc/clickhouse-server
+  host: clickhouse_fips_server
+  port: 9440
+  username: default
+  password: ''
+  timeout: 5s
+  secure: false

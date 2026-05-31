@@ -246,10 +246,16 @@ func testAPIBackupClean(r *require.Assertions, env *TestEnvironment) {
 func testAPIBackupActionsSkipCommands(r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Check api.backup_actions_skip_commands excludes 'list' from system.backup_actions")
 
+	// Restart deterministically: kill the previous `server --watch`, wait until it
+	// actually exits (so it releases :7171 before the new process binds), then start
+	// the skip-enabled server and poll until it serves requests. Fixed sleeps here
+	// flaked in CI because the old server hadn't released the port / the new one
+	// wasn't ready before commands were issued.
 	env.DockerExecNoError(r, "clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
-	time.Sleep(2 * time.Second)
+	// `[c]lickhouse-backup` so pgrep does not match its own `bash -ce` command line.
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "for i in $(seq 1 30); do pgrep -f '[c]lickhouse-backup server' >/dev/null 2>&1 || exit 0; sleep 1; done; echo 'previous backup server did not exit'; exit 1")
 	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce", "API_BACKUP_ACTIONS_SKIP_COMMANDS=list clickhouse-backup server &>>/tmp/clickhouse-backup-server.log")
-	time.Sleep(3 * time.Second)
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "for i in $(seq 1 30); do curl -sfL 'http://localhost:7171/backup/list' >/dev/null 2>&1 && exit 0; sleep 1; done; echo 'restarted clickhouse-backup server is not ready'; exit 1")
 
 	// snapshot after restart — in-memory async status is cleared on restart
 	var listRowsBefore uint64
@@ -276,6 +282,17 @@ func testAPIBackupActionsSkipCommands(r *require.Assertions, env *TestEnvironmen
 	var createRows uint64
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{"create skip_commands_test"}, true)
 	r.NoError(env.ch.SelectSingleRowNoCtx(&createRows, "SELECT count() FROM system.backup_actions WHERE command='create skip_commands_test' AND status=?", status.SuccessStatus))
+	if createRows != 1 {
+		// The command was recorded but ended non-success (CI-only flake). Surface the
+		// actual status/error and the server log so the root cause is diagnosable.
+		createActions := make([]struct {
+			Status string `ch:"status"`
+			Error  string `ch:"error"`
+		}, 0)
+		r.NoError(env.ch.StructSelect(&createActions, "SELECT status, error FROM system.backup_actions WHERE command='create skip_commands_test'"))
+		logOut, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "tail -n 200 /tmp/clickhouse-backup-server.log")
+		log.Error().Msgf("create skip_commands_test did not succeed, actions=%+v\nclickhouse-backup server log tail:\n%s", createActions, logOut)
+	}
 	r.Equal(uint64(1), createRows, "non-skipped commands must still be recorded in system.backup_actions")
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{"delete local skip_commands_test"}, false)
 }
@@ -297,29 +314,48 @@ func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {
 	r.Greater(longSchemaTotalBytes, uint64(0))
 	r.Greater(lastRemoteSize, longSchemaTotalBytes)
 
-	out, err := env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/metrics")
+	// UpdateBackupMetrics is now synchronous in the request handlers (before status=success / before HTTP response),
+	// but the background watch loop may still be refreshing metrics on its own cadence. Poll briefly so we
+	// don't race a transient snapshot taken between a watch iteration's create and its metrics refresh.
+	expectedNumberLocal := fmt.Sprintf("clickhouse_backup_number_backups_local %d", apiBackupNumber)
+	expectedNumberRemote := fmt.Sprintf("clickhouse_backup_number_backups_remote %d", apiBackupNumber+1) // +1 watch backup
+	expectedLastRemoteSize := fmt.Sprintf("clickhouse_backup_last_backup_size_remote %d", lastRemoteSize)
+
+	var out string
+	var err error
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		out, err = env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/metrics")
+		if err == nil &&
+			strings.Contains(out, expectedLastRemoteSize) &&
+			strings.Contains(out, expectedNumberLocal) &&
+			strings.Contains(out, expectedNumberRemote) {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
 	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
-	r.Contains(out, fmt.Sprintf("clickhouse_backup_last_backup_size_remote %d", lastRemoteSize))
+	r.Contains(out, expectedLastRemoteSize)
 
 	log.Debug().Msg("Check /metrics clickhouse_backup_number_backups_*")
-	if !strings.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_local %d", apiBackupNumber)) {
+	if !strings.Contains(out, expectedNumberLocal) {
 		listOut, listErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "local")
 		r.NoError(listErr)
 		log.Error().Msg(listOut)
 		env.tc.dumpContainerInfo(context.Background(), "clickhouse-backup")
 		env.tc.dumpContainerInfo(context.Background(), "clickhouse")
 	}
-	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_local %d", apiBackupNumber))
+	r.Contains(out, expectedNumberLocal)
 
-	// +1 watch backup
-	if !strings.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_remote %d", apiBackupNumber+1)) {
+	if !strings.Contains(out, expectedNumberRemote) {
 		listOut, listErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "remote")
 		r.NoError(listErr)
 		log.Error().Msg(listOut)
 		env.tc.dumpContainerInfo(context.Background(), "clickhouse-backup")
 		env.tc.dumpContainerInfo(context.Background(), "clickhouse")
 	}
-	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_remote %d", apiBackupNumber+1))
+	r.Contains(out, expectedNumberRemote)
 	r.Contains(out, "clickhouse_backup_number_backups_local_expected 0")
 	r.Contains(out, "clickhouse_backup_number_backups_remote_expected 0")
 	r.Regexp(`clickhouse_backup_local_data_size \d+`, out)

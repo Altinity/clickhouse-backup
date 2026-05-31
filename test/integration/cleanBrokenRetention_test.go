@@ -71,7 +71,7 @@ func TestCleanBrokenRetentionFTP(t *testing.T) {
 func TestCleanBrokenRetentionGCSEmulator(t *testing.T) {
 	runCleanBrokenRetentionCase(t, gcsEmulatorCleanBrokenRetentionCase())
 }
-func TestCleanBrokenRetentionAZBLOB(t *testing.T) {
+func TestCleanBrokenRetentionAzure(t *testing.T) {
 	runCleanBrokenRetentionCase(t, azblobCleanBrokenRetentionCase())
 }
 func TestCleanBrokenRetentionGCS(t *testing.T) {
@@ -91,8 +91,6 @@ func runCleanBrokenRetentionCase(t *testing.T, tc cleanBrokenRetentionCase) {
 
 func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) {
 	chVer := strings.ReplaceAll(os.Getenv("CLICKHOUSE_VERSION"), ".", "_")
-	cleanBrokenRetentionExcludeGlob := "cbr_orphan_keep_" + chVer + "_*"
-	cleanBrokenRetentionIncludeGlob := "cbr_*_" + chVer + "_*"
 
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
@@ -129,6 +127,36 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 	brokenPath := fmt.Sprintf("cbr_broken_%s_%d", chVer, suffix)
 	orphanObj := fmt.Sprintf("cbr_orphan_obj_%s_%d", chVer, suffix)
 	orphanKept := fmt.Sprintf("cbr_orphan_keep_%s_%d", chVer, suffix)
+
+	// Scope include/exclude globs to this run's unique suffix (not just chVer).
+	// The bucket is shared across concurrent GitHub Actions runs; a glob scoped
+	// only by version would let a parallel same-version run's clean_broken_retention
+	// --commit / clean_remote_broken delete this run's planted objects mid-test.
+	cleanBrokenRetentionIncludeGlob := fmt.Sprintf("cbr_*_%s_%d", chVer, suffix)
+	cleanBrokenRetentionExcludeGlob := fmt.Sprintf("cbr_orphan_keep_%s_%d", chVer, suffix)
+
+	// Best-effort teardown so a mid-test failure does not leak this run's objects
+	// into the shared bucket — orphans otherwise accumulate across concurrent and
+	// previous runs. Scoped to this run's suffix glob, so it never touches a
+	// parallel run's objects. Runs before defer env.Cleanup (LIFO) while the
+	// containers are still owned by this test. Only on failure: on the happy path
+	// the body already removed everything, so running it again would just emit
+	// "not found on local storage" noise.
+	defer func() {
+		if !t.Failed() {
+			return
+		}
+		for _, cmd := range [][]string{
+			{"clickhouse-backup", "delete", "remote", keepBackup},
+			{"clickhouse-backup", "delete", "local", keepBackup},
+			{"clickhouse-backup", "clean_broken_retention", "--commit", "--include=" + cleanBrokenRetentionIncludeGlob},
+			{"clickhouse-backup", "clean_remote_broken", "--include=" + cleanBrokenRetentionIncludeGlob},
+		} {
+			if out, err := env.DockerExecOut("clickhouse-backup", cmd...); err != nil {
+				log.Warn().Err(err).Str("cmd", strings.Join(cmd, " ")).Msgf("cleanBrokenRetention teardown: %s", out)
+			}
+		}
+	}()
 
 	log.Debug().Str("backend", tc.name).Msg("Create a live backup that must survive the cleanup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create_remote", "--tables", tableName, keepBackup)

@@ -1,6 +1,9 @@
 package backup
 
 import (
+	"errors"
+	"os"
+	"path"
 	"regexp"
 	"testing"
 	"time"
@@ -10,6 +13,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var b = Backuper{
@@ -89,6 +93,45 @@ var remoteBackup = storage.Backup{
 		RequiredBackup: "",
 	},
 	UploadDate: time.Now(),
+}
+
+func TestIsRemoteMetadataNotFound(t *testing.T) {
+	notFoundMessages := []string{
+		"object doesn't exist",
+		"key not found: metadata/default/test.json",
+		"NoSuchKey: The specified key does not exist",
+		"operation error S3: GetObject, https response error StatusCode: 404",
+		"StatusCode 404",
+		// real backend phrasings observed in test/integration TestMetadataNotFound*
+		"550 /backup/metadata/default/test.json: No such file or directory", // FTP
+		"file does not exist", // SFTP
+		"AzureBlob GetFileReaderAbsolute Download: RESPONSE ERROR (ServiceCode=BlobNotFound) RESPONSE Status: 404 The specified blob does not exist.", // Azure
+	}
+	for _, msg := range notFoundMessages {
+		assert.True(t, isRemoteMetadataNotFound(errors.New(msg)), msg)
+	}
+
+	assert.False(t, isRemoteMetadataNotFound(nil))
+	assert.False(t, isRemoteMetadataNotFound(errors.New("temporary network timeout")))
+}
+
+func TestResumeExistingBackupMissingStateFileReturnsError(t *testing.T) {
+	backupName := "test_resume_crash"
+	defaultDataPath := t.TempDir()
+	backupDir := path.Join(defaultDataPath, "backup", backupName)
+	assert.NoError(t, os.MkdirAll(backupDir, 0o750))
+
+	backuper := &Backuper{DefaultDataPath: defaultDataPath}
+
+	err := backuper.resumeExistingBackup(backupName)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "download.state2")
+	assert.Contains(t, err.Error(), "delete local "+backupName)
+	// must keep wrapping ErrBackupIsAlreadyExists so RestoreFromRemote reuses the local backup (issue #625)
+	assert.ErrorIs(t, err, ErrBackupIsAlreadyExists)
+
+	assert.NoError(t, os.WriteFile(path.Join(backupDir, "download.state2"), []byte("state"), 0o640))
+	assert.NoError(t, backuper.resumeExistingBackup(backupName))
 }
 
 func TestReBalanceTablesMetadataIfDiskNotExists_Files_NoErrors(t *testing.T) {
@@ -234,7 +277,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 		tableMetadataAfterDownloadRepacked[i] = tableMetadataAfterDownload[i]
 	}
 	err := b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(),
 		"disk: hdd2 not found in disk_types section map[string]string{\"default\":\"local\", \"s3\":\"s3\", \"s3_disk2\":\"s3\"} in Test/metadata.json",
 	)
@@ -246,7 +289,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 		tableMetadataAfterDownloadRepacked[i] = tableMetadataAfterDownload[i]
 	}
 	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "disk: hdd2, diskType: unknown not found in system.disks")
 
 	// invalid storage_policy
@@ -262,7 +305,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	invalidTable.Query = "CREATE TABLE default.test3(id UInt64) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy='invalid'"
 	tableMetadataAfterDownloadRepacked = ListOfTables{&invalidTable}
 	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup)
-	assert.Error(t, err)
+	require.Error(t, err)
 	matched, matchErr := regexp.MatchString(`storagePolicy: invalid with diskType: \w+ not found in system.disks`, err.Error())
 	assert.NoError(t, matchErr)
 	assert.True(t, matched)
@@ -278,7 +321,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	}
 	tableMetadataAfterDownloadRepacked = ListOfTables{&invalidTable}
 	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, invalidDisks, invalidRemoteBackup)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "250B free space, not found in system.disks with `local` type")
 
 }

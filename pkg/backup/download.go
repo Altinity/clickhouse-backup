@@ -42,6 +42,42 @@ var (
 	ErrBackupIsAlreadyExists = errors.New("backup is already exists")
 )
 
+func (b *Backuper) resumeExistingBackup(backupName string) error {
+	_, checkDownloadErr := os.Stat(path.Join(b.DefaultDataPath, "backup", backupName, "download.state2"))
+	if errors.Is(checkDownloadErr, os.ErrNotExist) {
+		// wrap ErrBackupIsAlreadyExists so RestoreFromRemote keeps reusing an already complete local backup (issue #625),
+		// while a standalone `download --resume` surfaces the guidance below instead of a bare "backup is already exists"
+		return fmt.Errorf("%w: local backup '%s' exists but resumable state 'download.state2' is missing, so it is unknown which parts are complete and resuming on top of partial data risks silent corruption; run `clickhouse-backup delete local %s` and retry the download, or investigate why the resumable state was lost", ErrBackupIsAlreadyExists, backupName, backupName)
+	}
+	log.Warn().Msgf("%s already exists will try to resume download", backupName)
+	return nil
+}
+
+func isRemoteMetadataNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	// Every remote storage backend phrases "object is missing" differently, so we
+	// match the known permanent-not-found markers across S3/GCS/Azure/FTP/SFTP/FS.
+	for _, marker := range []string{
+		"doesn't exist",             // GCS
+		"does not exist",            // SFTP ("file does not exist"), Azure ("the specified blob does not exist")
+		"no such file or directory", // FTP (550), local filesystem
+		"key not found",
+		"nosuchkey",      // S3
+		"blobnotfound",   // Azure Blob (x-ms-error-code)
+		"statuscode 404", // S3 SDK v2
+		"statuscode: 404",
+		"status: 404", // Azure ("RESPONSE Status: 404")
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume bool, hardlinkExistsFiles bool, backupVersion string, commandId int) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "download"); pidCheckErr != nil {
 		return errors.WithMessage(pidCheckErr, "CheckAndCreatePidFile")
@@ -89,14 +125,11 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			}
 			if !b.resume {
 				return ErrBackupIsAlreadyExists
-			} else {
-				_, checkDownloadErr := os.Stat(path.Join(b.DefaultDataPath, "backup", backupName, "download.state2"))
-				if errors.Is(checkDownloadErr, os.ErrNotExist) {
-					return ErrBackupIsAlreadyExists
-				}
-				isResumeExists = true
-				log.Warn().Msgf("%s already exists will try to resume download", backupName)
 			}
+			if resumeErr := b.resumeExistingBackup(backupName); resumeErr != nil {
+				return resumeErr
+			}
+			isResumeExists = true
 		}
 	}
 	startDownload := time.Now()
@@ -105,6 +138,11 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	}
 	if err := b.initDisksPathsAndBackupDestination(ctx, disks, ""); err != nil {
 		return errors.WithMessage(err, "initDisksPathsAndBackupDestination")
+	}
+	if !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+		if err := b.checkDisksConsistency(disks); err != nil {
+			return err
+		}
 	}
 	defer func() {
 		if err := b.dst.Close(ctx); err != nil {
@@ -505,10 +543,15 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			}
 		}
 		var tmBody []byte
+		metadataNotFound := false
 		retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 		err := retry.RunCtx(ctx, func(ctx context.Context) error {
 			tmReader, err := b.dst.GetFileReader(ctx, remoteMetadataFile)
 			if err != nil {
+				if isRemoteMetadataNotFound(err) {
+					metadataNotFound = true
+					return nil
+				}
 				return errors.Wrapf(err, "can't GetFileReader(%s) error", remoteMetadataFile)
 			}
 			tmBody, err = io.ReadAll(tmReader)
@@ -521,10 +564,25 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			}
 			return nil
 		})
+		// Missing metadata is permanent: a 404 will never become available, so we
+		// detect it inside the retry closure and break out without burning the
+		// exponential backoff. A missing table .json means the backup is broken,
+		// so fail fast with a clear error. The optional .sql (incremental/embedded
+		// metadata) may legitimately be absent, so it is still skipped.
+		if metadataNotFound {
+			if strings.HasSuffix(localMetadataFile, ".json") {
+				return nil, 0, errors.Errorf("remote metadata file %s not found on remote storage, backup is broken", remoteMetadataFile)
+			}
+			logger.Warn().Str("remoteMetadataFile", remoteMetadataFile).Msg("metadata file not found on remote, skipping")
+			continue
+		}
 		// sql file could be not present in incremental backup
 		if err != nil && strings.HasSuffix(localMetadataFile, ".sql") {
 			log.Warn().Str("localMetadataFile", localMetadataFile).Err(err).Send()
 			continue
+		}
+		if err != nil {
+			return nil, 0, err
 		}
 
 		if err = os.MkdirAll(path.Dir(localMetadataFile), 0755); err != nil {
@@ -976,18 +1034,32 @@ func (b *Backuper) hardlinkByHashOfAllFiles(ctx context.Context, backupName stri
 		return false, 0, nil
 	}
 	var rows []struct {
-		Name string `ch:"name"`
-		Path string `ch:"path"`
-		Disk string `ch:"disk_name"`
+		Name     string `ch:"name"`
+		Path     string `ch:"path"`
+		Disk     string `ch:"disk_name"`
+		Database string `ch:"database"`
+		Table    string `ch:"table"`
 	}
-	q := "SELECT name, path, disk_name FROM system.parts WHERE database=? AND `table`=? AND lower(hash_of_all_files)=? AND active"
-	if err := b.ch.SelectContext(ctx, &rows, q, table.Database, table.Table, expected); err != nil {
+	// A part with an identical hash_of_all_files can live under a different
+	// table name (e.g. the table was renamed, or the same data was inserted
+	// into another table). A matching hash_of_all_files means the part files
+	// are byte-identical, so the directory is safe to hardlink regardless of
+	// which table currently owns it. See
+	// https://github.com/Altinity/clickhouse-backup/issues/1398
+	q := "SELECT name, path, disk_name, database, `table` FROM system.parts WHERE lower(hash_of_all_files)=? AND active"
+	if err := b.ch.SelectContext(ctx, &rows, q, expected); err != nil {
 		return false, 0, errors.Wrap(err, "system.parts lookup by hash_of_all_files")
 	}
 	if len(rows) == 0 {
 		return false, 0, nil
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
+		// Prefer a candidate from the same table, then the closest part name.
+		sameI := rows[i].Database == table.Database && rows[i].Table == table.Table
+		sameJ := rows[j].Database == table.Database && rows[j].Table == table.Table
+		if sameI != sameJ {
+			return sameI
+		}
 		di := levenshtein(rows[i].Name, part.Name)
 		dj := levenshtein(rows[j].Name, part.Name)
 		if di != dj {
@@ -1008,7 +1080,7 @@ func (b *Backuper) hardlinkByHashOfAllFiles(ctx context.Context, backupName stri
 	}
 	srcPath := strings.TrimRight(rows[0].Path, "/")
 	partLocalPath := path.Join(b.getLocalBackupDataPathForTable(backupName, localDisk.Name, dbAndTableDir), part.Name)
-	log.Info().Msgf("hash_of_all_files match: hardlink %s -> %s (live part %q)", srcPath, partLocalPath, rows[0].Name)
+	log.Info().Msgf("hash_of_all_files match: hardlink %s -> %s (live part %q from %s.%s)", srcPath, partLocalPath, rows[0].Name, rows[0].Database, rows[0].Table)
 	if err := b.makePartHardlinks(srcPath, partLocalPath); err != nil {
 		return false, 0, errors.Wrapf(err, "failed to create hardlinks for %s", srcPath)
 	}

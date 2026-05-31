@@ -252,7 +252,8 @@ jobs:
           RUN_PARALLEL: 1
           DEBUG: 1
           NO_COLORS: 1
-          RUN_TESTS: "/clickhouse backup/fips 140 3*"
+          # Keep in sync with @Name("FIPS 140-3 Compatibility") in tests/fips_140_3.py
+          RUN_TESTS: "/clickhouse backup/FIPS 140-3 Compatibility*"
           GOROOT: ${{ env.GOROOT_1_26_X64 }}
         run: |
           set -xe
@@ -432,6 +433,12 @@ jobs:
       - name: Checkout project
         uses: actions/checkout@v6
 
+      - name: Setup golang
+        id: setup-go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '^1.26'
+
       - uses: actions/download-artifact@v7
         with:
           name: build-artifacts
@@ -448,6 +455,18 @@ jobs:
         uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+
+      - name: Verify FIPS 140-3 compatibility before push
+        run: |
+          set -x
+          # Build the exact image_fips target locally for the runner arch and load
+          # it, so we inspect/run the same image that is pushed below. VERSION is
+          # intentionally omitted: it only sets an image label and does not affect
+          # the FIPS checks.
+          docker buildx build --progress=plain --platform=linux/amd64 --tag=clickhouse-backup-fips-verify:local --target=image_fips --pull --load .
+          bash .github/scripts/verify_fips_image.sh \
+            --image clickhouse-backup-fips-verify:local \
+            --binary build/linux/amd64/clickhouse-backup-fips
 
       - name: Building docker image
         env:
