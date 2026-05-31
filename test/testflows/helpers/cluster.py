@@ -1631,7 +1631,21 @@ class Cluster(object):
             )
 
         with And("starting clickhouse1"):
-            ch1_volumes = ch_base_volumes + [
+            # Custom storage-policy disks (fast/slow/simple, plus encrypted_disk which
+            # delegates to simple_disk) are created at runtime by
+            # configs/clickhouse1/storage_configuration.sh in clickhouse1's writable layer.
+            # The separate clickhouse_backup container only inherits clickhouse1's real
+            # Docker mounts via volumes_from, so these paths must live on shared named
+            # volumes; otherwise clickhouse-backup can't see them and the #1037
+            # disk-consistency check aborts every backup/restore. Paths must match
+            # storage_configuration.sh.
+            storage_disk_volumes = [
+                (f"testflows_{os.getpid()}_fast_disk", "/mnt/fast_disk"),
+                (f"testflows_{os.getpid()}_slow_disk", "/mnt/slow_disk"),
+                (f"testflows_{os.getpid()}_simple_disk", "/mnt/simple_disk"),
+            ]
+            self._shared_volumes.extend(name for name, _ in storage_disk_volumes)
+            ch1_volumes = ch_base_volumes + storage_disk_volumes + [
                 (os.path.join(tests_dir, "configs/clickhouse1/storage_configuration.sh"), "/docker-entrypoint-initdb.d/storage_configuration.sh"),
                 (os.path.join(tests_dir, "files"), "/var/lib/clickhouse/user_files"),
                 (os.path.join(tests_dir, "_instances/clickhouse1/logs"), "/var/log/clickhouse-server"),
