@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
@@ -51,6 +52,8 @@ type Backuper struct {
 	resumableState         *resumable.State
 	shadowBackupUUIDs      []string
 	shadowBackupUUIDsMutex sync.Mutex
+	fileManifest           *storage.BackupManifest
+	fileManifestMu         sync.Mutex
 }
 
 func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {
@@ -567,6 +570,39 @@ func (b *Backuper) addShadowBackupUUID(uuid string) {
 	b.shadowBackupUUIDsMutex.Lock()
 	b.shadowBackupUUIDs = append(b.shadowBackupUUIDs, uuid)
 	b.shadowBackupUUIDsMutex.Unlock()
+}
+
+// recordUploadedFile records a single file in the backup manifest (thread-safe).
+// remotePath should be the full remote path including the backupName prefix.
+func (b *Backuper) recordUploadedFile(backupName, remotePath string, size int64) {
+	if b.fileManifest == nil {
+		return
+	}
+	relPath := strings.TrimPrefix(remotePath, backupName+"/")
+	b.fileManifestMu.Lock()
+	b.fileManifest.AddFile(relPath, size, time.Now().UTC())
+	b.fileManifestMu.Unlock()
+}
+
+// recordUploadedLocalFiles records multiple files in the backup manifest by
+// stating the local source files to obtain their sizes (thread-safe).
+// remotePath is the remote directory (including backupName prefix), localBasePath
+// is the local directory the files are relative to.
+func (b *Backuper) recordUploadedLocalFiles(backupName, remotePath, localBasePath string, files []string) {
+	if b.fileManifest == nil {
+		return
+	}
+	b.fileManifestMu.Lock()
+	defer b.fileManifestMu.Unlock()
+	for _, f := range files {
+		fullLocal := path.Join(localBasePath, f)
+		info, err := os.Stat(fullLocal)
+		if err != nil {
+			continue
+		}
+		relPath := strings.TrimPrefix(path.Join(remotePath, f), backupName+"/")
+		b.fileManifest.AddFile(relPath, info.Size(), info.ModTime())
+	}
 }
 
 // CheckDisksUsage - https://github.com/Altinity/clickhouse-backup/issues/878

@@ -148,6 +148,9 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		defer b.resumableState.Close()
 	}
 
+	// Initialize file manifest to record all uploaded files for Walk-free restore
+	b.fileManifest = storage.NewBackupManifest(backupName)
+
 	compressedDataSize := int64(0)
 	metadataSize := int64(0)
 
@@ -270,6 +273,17 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		})
 		if err != nil {
 			return errors.Wrapf(err, "can't upload %s", remoteBackupMetaFile)
+		}
+	}
+	// Record metadata.json in the manifest, then upload the manifest itself
+	b.recordUploadedFile(backupName, remoteBackupMetaFile, int64(len(newBackupMetadataBody)))
+	if b.fileManifest != nil {
+		if manifestErr := b.dst.UploadManifest(ctx, backupName, b.fileManifest); manifestErr != nil {
+			log.Warn().Err(manifestErr).Msg("failed to upload manifest.json, restore will fall back to Walk")
+		} else {
+			log.Info().Int("total_files", b.fileManifest.TotalFiles).
+				Int64("total_size", b.fileManifest.TotalSize).
+				Msg("uploaded backup manifest")
 		}
 	}
 	log.Info().Fields(map[string]interface{}{
@@ -604,6 +618,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 					}
 
 					atomic.AddInt64(&uploadedBytes, uploadPathBytes)
+					b.recordUploadedLocalFiles(backupName, remotePath, backupPath, partFiles)
 					if b.resume {
 						b.resumableState.AppendToState(remotePathFull, uploadPathBytes)
 					}
@@ -649,6 +664,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 						return errors.Wrapf(err, "can't check uploaded remoteDataFile: %s, error", remoteDataFile)
 					}
 					atomic.AddInt64(&uploadedBytes, remoteFile.Size())
+					b.recordUploadedFile(backupName, remoteDataFile, remoteFile.Size())
 					if b.resume {
 						b.resumableState.AppendToState(remoteDataFile, remoteFile.Size())
 					}
@@ -707,6 +723,7 @@ func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName st
 	if err != nil {
 		return 0, errors.Wrap(err, "can't upload")
 	}
+	b.recordUploadedFile(backupName, remoteTableMetaFile, int64(len(content)))
 	if b.resume {
 		b.resumableState.AppendToState(remoteTableMetaFile, int64(len(content)))
 	}
