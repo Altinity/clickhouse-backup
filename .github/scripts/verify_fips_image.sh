@@ -142,7 +142,7 @@ verify_binary_metadata() {
   gofips_value="$(grep -oE 'GOFIPS140=[^[:space:]]+' <<<"${meta}" | head -n1 | cut -d= -f2)"
   case "${gofips_value}" in
     v1.0.0 | v1.0.0-*)
-      ok "binary build metadata contains GOFIPS140=${gofips_value}" ;;
+      ok "binary build metadata contains GOFIPS140=v1.0.0" ;;
     *)
       printf '%s\n' "${meta}" >&2
       fail "binary ${binary} has GOFIPS140=${gofips_value:-<missing>}; expected v1.0.0 or v1.0.0-<suffix>" ;;
