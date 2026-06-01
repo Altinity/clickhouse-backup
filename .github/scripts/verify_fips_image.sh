@@ -12,7 +12,8 @@
 #      * grep "FIPS 140-3: true"
 #   3. Verify the embedded Go binary was actually linked against the FIPS module
 #      * go version -m <binary>
-#      * check it shows GOFIPS140, the fips140 build tag, DefaultGODEBUG=fips140=on and CGO_ENABLED=0
+#      * check it shows GOFIPS140=v1.0.0 (certified version), the fips140v1.0 build
+#        tag, DefaultGODEBUG=fips140=on and CGO_ENABLED=0
 #
 # Usage:
 #   verify_fips_image.sh --image <docker-image-ref> [--binary <path-to-fips-binary>]
@@ -62,8 +63,10 @@ fail() { echo "FIPS VERIFY FAIL: $*" >&2; exit 1; }
 ok()   { echo "FIPS VERIFY OK:   $*"; }
 
 CLEANUP_BINARY=""
+CLEANUP_CONTAINER=""
 cleanup() {
   [[ -n "${CLEANUP_BINARY}" ]] && rm -f "${CLEANUP_BINARY}" || true
+  [[ -n "${CLEANUP_CONTAINER}" ]] && docker rm -f "${CLEANUP_CONTAINER}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -79,7 +82,7 @@ verify_image_runtime() {
   if ! env_json="$(docker image inspect --format '{{json .Config.Env}}' "${image}" 2>&1)"; then
     fail "unable to inspect image ${image}: ${env_json}"
   fi
-  grep -q "${godebug_marker}" <<<"${env_json}" \
+  grep -qF "${godebug_marker}" <<<"${env_json}" \
     || fail "image ${image} does not set ${godebug_marker} (Env: ${env_json})"
   ok "image env enforces ${godebug_marker}"
 
@@ -90,9 +93,9 @@ verify_image_runtime() {
   fi
   printf '%s\n' "${version_out}"
   local fips_line
-  fips_line="$(grep "${version_label}" <<<"${version_out}" || true)"
+  fips_line="$(grep -F "${version_label}" <<<"${version_out}" || true)"
   [[ -n "${fips_line}" ]] || fail "'${version_label}' not present in --version output"
-  grep -qi 'true' <<<"${fips_line}" \
+  grep -qiF 'true' <<<"${fips_line}" \
     || fail "image ${image} reports non-FIPS build: ${fips_line}"
   ok "image reports ${version_label} true"
 }
@@ -101,20 +104,24 @@ resolve_binary_from_image() {
   local image="$1"
   local tmp
   tmp="$(mktemp "${TMPDIR:-/tmp}/clickhouse-backup-fips.XXXXXX")"
+  # Register temp file and container for cleanup immediately, so the EXIT
+  # removes both even if `docker cp` fails (set -e aborts before later lines).
+  CLEANUP_BINARY="${tmp}"
   local cid
   cid="$(docker create "${image}")"
+  CLEANUP_CONTAINER="${cid}"
   docker cp "${cid}:/bin/clickhouse-backup" "${tmp}" >/dev/null
   docker rm -f "${cid}" >/dev/null
-  CLEANUP_BINARY="${tmp}"
+  CLEANUP_CONTAINER=""
   echo "${tmp}"
 }
 
 verify_binary_metadata() {
   local binary="$1"
-  # Markers emitted by `go version -m` for a binary linked against the Go FIPS module (GOFIPS140=...)
+  # Build settings that `go version -m` must report for a binary linked against
+  # the certified Go FIPS module.
   local required_markers=(
-    "GOFIPS140="
-    "fips140"
+    "fips140v1.0"
     "DefaultGODEBUG=fips140=on"
     "CGO_ENABLED=0"
   )
@@ -128,11 +135,24 @@ verify_binary_metadata() {
     fail "'go version -m ${binary}' failed: ${meta}"
   fi
 
+  # The certified FIPS module version must be v1.0.0. A pinned snapshot suffix is
+  # allowed (e.g. v1.0.0-c2097c7c), but any other version (v1.0.01, v1.1.0, ...)
+  # must be rejected, so we compare the exact value instead of a substring.
+  local gofips_value
+  gofips_value="$(grep -oE 'GOFIPS140=[^[:space:]]+' <<<"${meta}" | head -n1 | cut -d= -f2)"
+  case "${gofips_value}" in
+    v1.0.0 | v1.0.0-*)
+      ok "binary build metadata contains GOFIPS140=${gofips_value}" ;;
+    *)
+      printf '%s\n' "${meta}" >&2
+      fail "binary ${binary} has GOFIPS140=${gofips_value:-<missing>}; expected v1.0.0 or v1.0.0-<suffix>" ;;
+  esac
+
   local marker
   for marker in "${required_markers[@]}"; do
-    if ! grep -q "${marker}" <<<"${meta}"; then
+    if ! grep -qF "${marker}" <<<"${meta}"; then
       printf '%s\n' "${meta}" >&2
-      fail "binary ${binary} missing FIPS build marker: ${marker}"
+      fail "binary ${binary} missing required FIPS build marker: ${marker}"
     fi
     ok "binary build metadata contains: ${marker}"
   done
