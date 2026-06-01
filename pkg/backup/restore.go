@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -509,9 +510,9 @@ func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePatt
 				settings = "SETTINGS check_table_dependencies=0"
 			}
 		}
-		sync := ""
+		syncSQL := ""
 		if version > 20011000 {
-			sync = "SYNC"
+			syncSQL = "SYNC"
 		}
 		var f *os.File
 		var createErr error
@@ -519,7 +520,7 @@ func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePatt
 			return errors.WithMessage(createErr, "create force_drop_table flag")
 		}
 		_ = f.Close()
-		if err := b.ch.QueryContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s` %s %s %s", targetDB, onCluster, sync, settings)); err != nil {
+		if err := b.ch.QueryContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s` %s %s %s", targetDB, onCluster, syncSQL, settings)); err != nil {
 			return errors.WithMessage(err, "drop database")
 		}
 
@@ -2228,6 +2229,9 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 	backupTable.Database = origDatabase
 	backupTable.Table = origTable
 
+	if err := b.prepareRequiredPartsForRestore(ctx, backupName, backupMetadata, backupTable, diskMap, disks); err != nil {
+		return errors.Wrapf(err, "can't prepare required data parts '%s.%s'", backupTable.Database, backupTable.Table)
+	}
 	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, backupTable, disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, copyToDetached); err != nil {
 		if copyToDetached {
 			return errors.Wrapf(err, "can't copy data to detached '%s.%s'", backupTable.Database, backupTable.Table)
@@ -2283,6 +2287,9 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 	backupTable.Database = origDatabase
 	backupTable.Table = origTable
 
+	if err := b.prepareRequiredPartsForRestore(ctx, backupName, backupMetadata, backupTable, diskMap, disks); err != nil {
+		return errors.Wrapf(err, "can't prepare required data parts '%s.%s'", backupTable.Database, backupTable.Table)
+	}
 	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, backupTable, disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, true); err != nil {
 		return errors.Wrapf(err, "can't copy data to detached `%s`.`%s`", dstTable.Database, dstTable.Name)
 	}
@@ -2309,6 +2316,212 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 		logger.Info().Msg("skipping ATTACH PART for Replicated*MergeTree table due to --replicated-copy-to-detached flag")
 	}
 	return nil
+}
+
+func (b *Backuper) prepareRequiredPartsForRestore(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, backupTable metadata.TableMetadata, diskMap map[string]string, disks []clickhouse.Disk) error {
+	if backupMetadata.RequiredBackup == "" {
+		return nil
+	}
+	dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
+	for diskName, parts := range backupTable.Parts {
+		for _, part := range parts {
+			activeDisk := diskName
+			if part.RebalancedDisk != "" {
+				activeDisk = part.RebalancedDisk
+			}
+			diskPath, exists := diskMap[activeDisk]
+			if !exists {
+				return errors.Errorf("disk %s not found in diskMap", activeDisk)
+			}
+			dstPath := path.Join(diskPath, "backup", backupName, "shadow", dbAndTableDir, activeDisk, part.Name)
+			if _, err := os.Stat(dstPath); err == nil {
+				continue
+			} else if !os.IsNotExist(err) {
+				return errors.Wrapf(err, "%s stat return error", dstPath)
+			}
+			if !part.Required {
+				if err := b.downloadRequiredPartForRestore(ctx, backupMetadata, backupTable, backupTable, diskName, part, activeDisk, dstPath, dbAndTableDir, diskMap); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := b.restoreRequiredPart(ctx, backupMetadata, backupTable, diskName, part, activeDisk, dstPath, dbAndTableDir, diskMap, disks); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (b *Backuper) restoreRequiredPart(ctx context.Context, backupMetadata metadata.BackupMetadata, backupTable metadata.TableMetadata, diskName string, part metadata.Part, activeDisk, dstPath, dbAndTableDir string, diskMap map[string]string, disks []clickhouse.Disk) error {
+	srcPath, found, err := b.findRequiredPartLocal(ctx, backupMetadata.RequiredBackup, backupTable, diskName, part, activeDisk, dbAndTableDir, diskMap, disks)
+	if err != nil {
+		return errors.WithMessage(err, "findRequiredPartLocal")
+	}
+	if found {
+		log.Info().Msgf("restore required part via hardlink %s -> %s", srcPath, dstPath)
+		return b.makePartHardlinks(srcPath, dstPath)
+	}
+
+	requiredBackup, err := b.ReadBackupMetadataRemote(ctx, backupMetadata.RequiredBackup)
+	if err != nil {
+		return errors.WithMessage(err, "ReadBackupMetadataRemote")
+	}
+	requiredTable, err := b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: backupTable.Database, Table: backupTable.Table})
+	if err != nil {
+		return errors.WithMessage(err, "downloadTableMetadataIfNotExists")
+	}
+	for requiredDisk, requiredParts := range requiredTable.Parts {
+		for _, requiredPart := range requiredParts {
+			if requiredPart.Name != part.Name {
+				continue
+			}
+			if requiredPart.Required {
+				return b.restoreRequiredPart(ctx, *requiredBackup, *requiredTable, requiredDisk, requiredPart, activeDisk, dstPath, dbAndTableDir, diskMap, disks)
+			}
+			return b.downloadRequiredPartForRestore(ctx, *requiredBackup, *requiredTable, backupTable, requiredDisk, part, activeDisk, dstPath, dbAndTableDir, diskMap)
+		}
+	}
+	return errors.Errorf("part %s have required flag in %s, but not found in %s", part.Name, backupMetadata.BackupName, backupMetadata.RequiredBackup)
+}
+
+func (b *Backuper) findRequiredPartLocal(ctx context.Context, backupName string, backupTable metadata.TableMetadata, diskName string, part metadata.Part, activeDisk, dbAndTableDir string, diskMap map[string]string, disks []clickhouse.Disk) (string, bool, error) {
+	requiredBackup, err := b.ReadBackupMetadataLocal(ctx, backupName)
+	if err != nil {
+		log.Debug().Msgf("required backup %s not found locally: %v", backupName, err)
+		return "", false, nil
+	}
+	requiredTable, err := b.readLocalTableMetadata(backupName, backupTable.Database, backupTable.Table)
+	if err != nil {
+		return "", false, err
+	}
+	for requiredDisk, requiredParts := range requiredTable.Parts {
+		for _, requiredPart := range requiredParts {
+			if requiredPart.Name != part.Name {
+				continue
+			}
+			requiredActiveDisk := requiredDisk
+			if requiredPart.RebalancedDisk != "" {
+				requiredActiveDisk = requiredPart.RebalancedDisk
+			}
+			if requiredPart.Required {
+				return b.findRequiredPartLocal(ctx, requiredBackup.RequiredBackup, *requiredTable, requiredDisk, requiredPart, activeDisk, dbAndTableDir, diskMap, disks)
+			}
+			diskPath, exists := diskMap[requiredActiveDisk]
+			if !exists {
+				return "", false, errors.Errorf("disk %s not found in diskMap", requiredActiveDisk)
+			}
+			srcPath := path.Join(diskPath, "backup", backupName, "shadow", dbAndTableDir, requiredActiveDisk, part.Name)
+			if _, statErr := os.Stat(srcPath); statErr == nil {
+				return srcPath, true, nil
+			} else if !os.IsNotExist(statErr) {
+				return "", false, errors.Wrapf(statErr, "%s stat return error", srcPath)
+			}
+			return "", false, nil
+		}
+	}
+	_ = diskName
+	_ = disks
+	return "", false, nil
+}
+
+func (b *Backuper) readLocalTableMetadata(backupName, database, table string) (*metadata.TableMetadata, error) {
+	tm := &metadata.TableMetadata{}
+	localFile := path.Join(b.DefaultDataPath, "backup", backupName, "metadata", common.TablePathEncode(database), fmt.Sprintf("%s.json", common.TablePathEncode(table)))
+	if _, err := tm.Load(localFile); err != nil {
+		return nil, errors.Wrapf(err, "load %s", localFile)
+	}
+	tm.LocalFile = localFile
+	return tm, nil
+}
+
+func (b *Backuper) downloadRequiredPartForRestore(ctx context.Context, requiredBackup metadata.BackupMetadata, requiredTable metadata.TableMetadata, backupTable metadata.TableMetadata, remoteDisk string, part metadata.Part, activeDisk, dstPath, dbAndTableDir string, diskMap map[string]string) error {
+	requiredFiles, err, found := b.findRestoreRequiredPartRemote(ctx, requiredBackup, backupTable, activeDisk, remoteDisk, part, diskMap)
+	if !found {
+		requiredFiles, err, found = b.findRestoreRequiredPartRemote(ctx, requiredBackup, backupTable, activeDisk, activeDisk, part, diskMap)
+	}
+	if !found {
+		for requiredDisk := range requiredBackup.Disks {
+			if requiredDisk == remoteDisk || requiredDisk == activeDisk {
+				continue
+			}
+			requiredFiles, err, found = b.findRestoreRequiredPartRemote(ctx, requiredBackup, backupTable, activeDisk, requiredDisk, part, diskMap)
+			if found {
+				break
+			}
+		}
+	}
+	if err != nil {
+		return errors.WithMessage(err, "findDiffOnePart")
+	}
+	if !found {
+		requiredFiles = make(map[string]string)
+		for requiredDisk, requiredParts := range requiredTable.Parts {
+			for _, requiredPart := range requiredParts {
+				if part.Name != requiredPart.Name {
+					continue
+				}
+				diskPath, exists := diskMap[activeDisk]
+				if !exists {
+					return errors.Errorf("disk %s not found in diskMap", activeDisk)
+				}
+				localTableDir := path.Join(diskPath, "backup", requiredBackup.BackupName, "shadow", dbAndTableDir, activeDisk)
+				for _, remoteFile := range requiredTable.Files[requiredDisk] {
+					remoteFile = path.Join(requiredBackup.BackupName, "shadow", dbAndTableDir, remoteFile)
+					requiredFiles[remoteFile] = localTableDir
+				}
+			}
+		}
+		if len(requiredFiles) == 0 {
+			return errors.Errorf("%s.%s %s not found on %s", backupTable.Database, backupTable.Table, part.Name, requiredBackup.BackupName)
+		}
+	}
+	diffRemoteFilesCache := map[string]*sync.Mutex{}
+	diffRemoteFilesLock := &sync.Mutex{}
+	for remoteFile, localDir := range requiredFiles {
+		log.Info().Msgf("restore required part download %s -> %s", remoteFile, localDir)
+		if _, err = b.downloadDiffRemoteFile(ctx, diffRemoteFilesLock, diffRemoteFilesCache, remoteFile, localDir); err != nil {
+			return errors.WithMessage(err, "downloadDiffRemoteFile")
+		}
+	}
+	diskPath, exists := diskMap[activeDisk]
+	if !exists {
+		return errors.Errorf("disk %s not found in diskMap", activeDisk)
+	}
+	srcPath := path.Join(diskPath, "backup", requiredBackup.BackupName, "shadow", dbAndTableDir, activeDisk, part.Name)
+	if err := b.makePartHardlinks(srcPath, dstPath); err != nil {
+		return errors.Wrapf(err, "can't to add link to exists part %s -> %s error", dstPath, srcPath)
+	}
+	return nil
+}
+
+func (b *Backuper) findRestoreRequiredPartRemote(ctx context.Context, requiredBackup metadata.BackupMetadata, table metadata.TableMetadata, localDisk, remoteDisk string, part metadata.Part, diskMap map[string]string) (map[string]string, error, bool) {
+	dbAndTableDir := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
+	tableRemotePath := path.Join(requiredBackup.BackupName, "shadow", dbAndTableDir, remoteDisk, part.Name)
+	tableRemoteFile := path.Join(tableRemotePath, "checksums.txt")
+	if requiredBackup.DataFormat != DirectoryFormat {
+		remoteExt := config.ArchiveExtensions[requiredBackup.DataFormat]
+		tableRemotePath = path.Join(requiredBackup.BackupName, "shadow", dbAndTableDir, fmt.Sprintf("%s_%s.%s", remoteDisk, common.TablePathEncode(part.Name), remoteExt))
+		tableRemoteFile = tableRemotePath
+	}
+	if _, err := b.dst.StatFile(ctx, tableRemoteFile); err != nil {
+		log.Debug().Fields(map[string]interface{}{"tableRemoteFile": tableRemoteFile, "tableRemotePath": tableRemotePath, "part": part.Name}).Msg("findRestoreRequiredPartRemote not found")
+		return nil, nil, false
+	}
+
+	localDiskPath, diskExists := diskMap[localDisk]
+	if part.RebalancedDisk != "" {
+		localDiskPath, diskExists = diskMap[part.RebalancedDisk]
+		localDisk = part.RebalancedDisk
+	}
+	if !diskExists {
+		return nil, errors.Errorf("localDisk:%s, part.Name: %s is not found in system.disks and not rebalanced", localDisk, part.Name), false
+	}
+	tableLocalDir := path.Join(localDiskPath, "backup", requiredBackup.BackupName, "shadow", dbAndTableDir, localDisk)
+	if path.Ext(tableRemoteFile) == ".txt" {
+		tableLocalDir = path.Join(tableLocalDir, part.Name)
+	}
+	return map[string]string{tableRemotePath: tableLocalDir}, nil, true
 }
 
 func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, backupTable metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, needsKeyRewrite bool) (int64, error) {
