@@ -25,6 +25,7 @@ func TestKill(t *testing.T) {
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	r.NoError(env.DockerCP("configs/config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "curl", "jq")
+	defer env.Cleanup(t, r)
 
 	const dbName = "kill_test_db"
 	const backupName = "kill_test_backup"
@@ -45,6 +46,14 @@ func TestKill(t *testing.T) {
 		"UPLOAD_CONCURRENCY=1 clickhouse-backup server &>>/tmp/clickhouse-backup-server.log")
 	defer func() {
 		_ = env.DockerExec("clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
+	}()
+	defer func() {
+		if out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "delete", "remote", backupName); err != nil {
+			log.Warn().Err(err).Msgf("TestKill teardown: delete remote %s: %s", backupName, out)
+		}
+		if err := env.dropDatabase(dbName, true); err != nil {
+			log.Warn().Err(err).Msgf("TestKill teardown: drop database %s", dbName)
+		}
 	}()
 	time.Sleep(3 * time.Second)
 
@@ -117,11 +126,8 @@ func TestKill(t *testing.T) {
 		"delete must not see a stale pid lock: %s", deleteOut)
 	r.NotContains(deleteOut, "\"status\":\"error\"", "delete must succeed: %s", deleteOut)
 
-	// cleanup
-	_, _ = env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-		fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/remote/%s' || true", backupName))
-	r.NoError(env.dropDatabase(dbName, true))
-	env.Cleanup(t, r)
+	// Remote backup, database, and env-pool return are handled by the defers
+	// registered above so they run on both success and mid-test failure.
 }
 
 // readUploadFinishMetric scrapes /metrics and parses the value of
