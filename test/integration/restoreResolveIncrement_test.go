@@ -71,6 +71,10 @@ func runRestoreResolveIncrementScenario(t *testing.T, r *require.Assertions, env
 	increment2Backup := dbName + "_increment2"
 	backups := []string{fullBackup, increment1Backup, increment2Backup}
 
+	defer func() {
+		fullCleanup(t, r, env, backups, []string{"remote", "local"}, []string{dbName}, false, false, false, tc.configFile)
+	}()
+
 	for _, backupName := range backups {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+tc.configFile+" delete remote "+backupName+" 2>/dev/null || true")
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+tc.configFile+" delete local "+backupName+" 2>/dev/null || true")
@@ -118,7 +122,7 @@ func runRestoreResolveIncrementScenario(t *testing.T, r *require.Assertions, env
 	}
 	env.checkCount(r, 1, 300, "SELECT count() FROM "+dbName+"."+tableName)
 
-	fullCleanup(t, r, env, backups, []string{"remote", "local"}, []string{dbName}, true, false, true, tc.configFile)
+	fullCleanup(t, r, env, backups, []string{"remote", "local"}, []string{dbName}, false, false, true, tc.configFile)
 }
 
 func verifyRestoreResolveRequiredMetadata(r *require.Assertions, env *TestEnvironment, backupName, requiredBackup, dbName, tableName string) {
