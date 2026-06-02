@@ -207,7 +207,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 			}
 		}
 	}
-	if backupMetadata.RequiredBackup != "" || (b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.cfg.ClickHouse.EmbeddedBackupDisk == "") || isObjectDiskPresents {
+	if b.cfg.General.RemoteStorage != "custom" && (backupMetadata.RequiredBackup != "" || (b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.cfg.ClickHouse.EmbeddedBackupDisk == "") || isObjectDiskPresents) {
 		if b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName); err != nil {
 			return errors.WithMessage(err, "storage.NewBackupDestination")
 		}
