@@ -230,6 +230,7 @@ clickhouse:
   restore_as_attach: false # CLICKHOUSE_RESTORE_AS_ATTACH, allow restore tables which have inconsistent data parts structure and mutations in progress
   restore_distributed_cluster: "" # CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER, cluster name (can use macros) which will use during restore `engine=Distributed` tables, when cluster defined in backup table definition not exists in `system.clusters`
   check_parts_columns: true # CLICKHOUSE_CHECK_PARTS_COLUMNS, check data types from system.parts_columns during create backup to guarantee mutation is complete
+  parts_columns_batch_size: 25 # CLICKHOUSE_PARTS_COLUMNS_BATCH_SIZE, batch size for system.parts_columns checks
   max_connections: 0 # CLICKHOUSE_MAX_CONNECTIONS, how many parallel connections could be opened during operations
 azblob:
   endpoint_schema: "https"            # AZBLOB_ENDPOINT_SCHEMA, URL scheme used to build the AZBLOB endpoint (e.g. http for Azurite emulator)

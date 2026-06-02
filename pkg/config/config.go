@@ -282,6 +282,7 @@ type ClickHouseConfig struct {
 	RestoreAsAttach                  bool              `yaml:"restore_as_attach" envconfig:"CLICKHOUSE_RESTORE_AS_ATTACH"`
 	RestoreDistributedCluster        string            `yaml:"restore_distributed_cluster" envconfig:"CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER"`
 	CheckPartsColumns                bool              `yaml:"check_parts_columns" envconfig:"CLICKHOUSE_CHECK_PARTS_COLUMNS"`
+	PartsColumnsBatchSize            int               `yaml:"parts_columns_batch_size" envconfig:"CLICKHOUSE_PARTS_COLUMNS_BATCH_SIZE"`
 	Secure                           bool              `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
 	SkipVerify                       bool              `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`
 	SyncReplicatedTables             bool              `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES"`
@@ -689,6 +690,7 @@ func DefaultConfig() *Config {
 			BackupMutations:                  true,
 			RestoreAsAttach:                  false,
 			CheckPartsColumns:                true,
+			PartsColumnsBatchSize:            25,
 			DefaultReplicaPath:               "/clickhouse/tables/{cluster}/{shard}/{database}/{table}",
 			DefaultReplicaName:               "{replica}",
 			MaxConnections:                   int(downloadConcurrency),

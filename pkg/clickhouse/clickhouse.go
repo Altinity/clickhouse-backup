@@ -1469,7 +1469,10 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 
 	// https://github.com/Altinity/clickhouse-backup/issues/1360
 	// Batch the WHERE OR-list to keep per-query memory bounded on instances with thousands of tables.
-	const partsColumnsBatchSize = 100
+	partsColumnsBatchSize := 25
+	if ch.Config != nil && ch.Config.PartsColumnsBatchSize > 0 {
+		partsColumnsBatchSize = ch.Config.PartsColumnsBatchSize
+	}
 	tableDataTypes := make(map[string][]ColumnDataTypes)
 	for start := 0; start < len(conditions); start += partsColumnsBatchSize {
 		end := start + partsColumnsBatchSize
