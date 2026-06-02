@@ -199,6 +199,43 @@ fi
 
 fi
 
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[8-9]|^21\.[0-9]{2} || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
+
+if [[ "" != "${QA_TENCENT_SECRET_ID}" && "" != "${QA_TENCENT_SECRET_KEY}" ]]; then
+  COS_DISK_TYPE="<type>s3</type>"
+  if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[5-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
+    COS_DISK_TYPE="<type>object_storage</type><object_storage_type>s3</object_storage_type><metadata_type>local</metadata_type>"
+  fi
+
+cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_cos.xml
+<yandex>
+  <storage_configuration>
+    <disks>
+      <disk_cos>
+        ${COS_DISK_TYPE}
+        <endpoint>https://clickhouse-backup-1336113806.cos.na-ashburn.myqcloud.com/disk_cos/{cluster}/{shard}/</endpoint>
+        <access_key_id>${QA_TENCENT_SECRET_ID}</access_key_id>
+        <secret_access_key>${QA_TENCENT_SECRET_KEY}</secret_access_key>
+        <send_metadata>false</send_metadata>
+      </disk_cos>
+    </disks>
+    <policies>
+      <cos_only>
+        <volumes>
+          <cos_only>
+            <disk>disk_cos</disk>
+          </cos_only>
+        </volumes>
+      </cos_only>
+    </policies>
+  </storage_configuration>
+</yandex>
+EOT
+
+fi
+
+fi
+
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.12 || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 
 if [[ -f /var/lib/clickhouse/storage_configuration_encrypted_s3.xml ]]; then

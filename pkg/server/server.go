@@ -2426,65 +2426,158 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 			stateFiles = append(stateFiles, embeddedStateFiles...)
 			for _, stateFile := range stateFiles {
 				command := strings.TrimSuffix(filepath.Base(stateFile), ".state2")
+				if !api.GetConfig().API.IsCompleteResumableAfterRestartCommand(command) {
+					log.Warn().Str("operation", "ResumeOperationsAfterRestart").Msgf("skip %s: command %q is not allowed by api.complete_resumable_after_restart_commands", stateFile, command)
+					continue
+				}
 				state := resumable.NewState(strings.TrimSuffix(filepath.Dir(stateFile), filepath.Join("backup", backupName)), backupName, command, nil)
 				params := state.GetParams()
 				state.Close()
 				if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 					return errors.New("another commands in progress")
 				}
+				args := []string{command}
 				switch command {
-				case "download":
-				case "upload":
-					args := make([]string, 0)
-					args = append(args, command)
-					if diffFrom, ok := params["diffFrom"]; ok && diffFrom.(string) != "" {
-						args = append(args, fmt.Sprintf("--diff-from=\"%s\"", diffFrom))
-					}
-					if diffFromRemote, ok := params["diffFromRemote"]; ok && diffFromRemote.(string) != "" {
-						args = append(args, fmt.Sprintf("--diff-from-remote=\"%s\"", diffFromRemote))
+				case "create":
+					if diffFromRemote := resumableStringParam(params, "diffFromRemote"); diffFromRemote != "" {
+						args = append(args, fmt.Sprintf("--diff-from-remote=%s", diffFromRemote))
 					}
 
-					if tablePattern, ok := params["tablePattern"]; ok && tablePattern.(string) != "" {
-						args = append(args, fmt.Sprintf("--tables=\"%s\"", tablePattern))
+					if tablePattern := resumableStringParam(params, "tablePattern"); tablePattern != "" {
+						args = append(args, fmt.Sprintf("--tables=%s", tablePattern))
 					}
 
-					if schemaOnly, ok := params["schemaOnly"]; ok && schemaOnly.(bool) {
+					if resumableBoolParam(params, "schemaOnly") {
 						args = append(args, "--schema=1")
 					}
 
-					if partitions, ok := params["partitions"]; ok && len(partitions.([]interface{})) > 0 {
-						partitionsStr := make([]string, len(partitions.([]interface{})))
-						for j, v := range partitions.([]interface{}) {
-							partitionsStr[j] = fmt.Sprintf("--partitions=\"%s\"", v.(string))
+					if partitions := resumableStringSliceParam(params, "partitions"); len(partitions) > 0 {
+						partitionsStr := make([]string, len(partitions))
+						for j, v := range partitions {
+							partitionsStr[j] = fmt.Sprintf("--partitions=%s", v)
 						}
 						args = append(args, partitionsStr...)
 					}
-					args = append(args, "--resumable=1", backupName)
-					fullCommand := strings.Join(args, " ")
-					log.Info().Str("operation", "ResumeOperationsAfterRestart").Send()
-					commandId, _ := status.Current.Start(fullCommand)
-					err, _ = api.metrics.ExecuteWithMetrics(command, 0, func() error {
-						return api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
-					})
-					status.Current.Stop(commandId, err)
-					if err != nil {
-						return errors.WithStack(err)
+				case "download":
+				case "upload":
+					if diffFrom := resumableStringParam(params, "diffFrom"); diffFrom != "" {
+						args = append(args, fmt.Sprintf("--diff-from=%s", diffFrom))
+					}
+					if diffFromRemote := resumableStringParam(params, "diffFromRemote"); diffFromRemote != "" {
+						args = append(args, fmt.Sprintf("--diff-from-remote=%s", diffFromRemote))
 					}
 
-					if err = os.Remove(stateFile); err != nil {
-						if api.GetConfig().General.BackupsToKeepLocal >= 0 {
-							return errors.WithStack(err)
+					if tablePattern := resumableStringParam(params, "tablePattern"); tablePattern != "" {
+						args = append(args, fmt.Sprintf("--tables=%s", tablePattern))
+					}
+
+					if resumableBoolParam(params, "schemaOnly") {
+						args = append(args, "--schema=1")
+					}
+
+					if partitions := resumableStringSliceParam(params, "partitions"); len(partitions) > 0 {
+						partitionsStr := make([]string, len(partitions))
+						for j, v := range partitions {
+							partitionsStr[j] = fmt.Sprintf("--partitions=%s", v)
 						}
-						log.Warn().Str("operation", "ResumeOperationsAfterRestart").Msgf("remove %s return error: ", err)
+						args = append(args, partitionsStr...)
+					}
+				case "restore":
+					if tablePattern := resumableStringParam(params, "tablePattern"); tablePattern != "" {
+						args = append(args, fmt.Sprintf("--tables=%s", tablePattern))
+					}
+
+					if resumableBoolParam(params, "schemaOnly") {
+						args = append(args, "--schema=1")
+					}
+
+					if resumableBoolParam(params, "dataOnly") {
+						args = append(args, "--data=1")
+					}
+
+					if resumableBoolParam(params, "dropExists") {
+						args = append(args, "--drop=1")
+					}
+
+					if partitions := resumableStringSliceParam(params, "partitions"); len(partitions) > 0 {
+						partitionsStr := make([]string, len(partitions))
+						for j, v := range partitions {
+							partitionsStr[j] = fmt.Sprintf("--partitions=%s", v)
+						}
+						args = append(args, partitionsStr...)
 					}
 				default:
 					return errors.Errorf("unkown command for state file %s", stateFile)
+				}
+				args = append(args, "--resumable=1", backupName)
+				fullCommand := strings.Join(args, " ")
+				log.Info().Str("operation", "ResumeOperationsAfterRestart").Send()
+				commandId, _ := status.Current.Start(fullCommand)
+				err, _ = api.metrics.ExecuteWithMetrics(command, 0, func() error {
+					return api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
+				})
+				status.Current.Stop(commandId, err)
+				if err != nil {
+					return errors.WithStack(err)
+				}
+
+				if err = os.Remove(stateFile); err != nil {
+					if api.GetConfig().General.BackupsToKeepLocal >= 0 {
+						return errors.WithStack(err)
+					}
+					log.Warn().Str("operation", "ResumeOperationsAfterRestart").Msgf("remove %s return error: ", err)
 				}
 			}
 		}
 	}
 
 	return nil
+}
+
+func resumableStringParam(params map[string]interface{}, key string) string {
+	if params == nil {
+		return ""
+	}
+	v, ok := params[key]
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
+}
+
+func resumableBoolParam(params map[string]interface{}, key string) bool {
+	if params == nil {
+		return false
+	}
+	v, ok := params[key]
+	if !ok {
+		return false
+	}
+	b, _ := v.(bool)
+	return b
+}
+
+func resumableStringSliceParam(params map[string]interface{}, key string) []string {
+	if params == nil {
+		return nil
+	}
+	v, ok := params[key]
+	if !ok {
+		return nil
+	}
+	values, ok := v.([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		s, ok := value.(string)
+		if ok {
+			result = append(result, s)
+		}
+	}
+	return result
 }
 
 func (api *APIServer) getQueryParameter(q url.Values, paramName string) (string, bool) {

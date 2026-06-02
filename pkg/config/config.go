@@ -304,21 +304,22 @@ type ClickHouseConfig struct {
 }
 
 type APIConfig struct {
-	ListenAddr                    string `yaml:"listen" envconfig:"API_LISTEN"`
-	EnableMetrics                 bool   `yaml:"enable_metrics" envconfig:"API_ENABLE_METRICS"`
-	EnablePprof                   bool   `yaml:"enable_pprof" envconfig:"API_ENABLE_PPROF"`
-	Username                      string `yaml:"username" envconfig:"API_USERNAME"`
-	Password                      string `yaml:"password" envconfig:"API_PASSWORD"`
-	Secure                        bool   `yaml:"secure" envconfig:"API_SECURE"`
-	CertificateFile               string `yaml:"certificate_file" envconfig:"API_CERTIFICATE_FILE"`
-	PrivateKeyFile                string `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE"`
-	CAKeyFile                     string `yaml:"ca_cert_file" envconfig:"API_CA_KEY_FILE"`
-	CACertFile                    string `yaml:"ca_key_file" envconfig:"API_CA_CERT_FILE"`
-	CreateIntegrationTables       bool   `yaml:"create_integration_tables" envconfig:"API_CREATE_INTEGRATION_TABLES"`
-	IntegrationTablesHost         string `yaml:"integration_tables_host" envconfig:"API_INTEGRATION_TABLES_HOST"`
-	AllowParallel                 bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
-	CompleteResumableAfterRestart bool   `yaml:"complete_resumable_after_restart" envconfig:"API_COMPLETE_RESUMABLE_AFTER_RESTART"`
-	WatchIsMainProcess            bool   `yaml:"watch_is_main_process" envconfig:"WATCH_IS_MAIN_PROCESS"`
+	ListenAddr                            string   `yaml:"listen" envconfig:"API_LISTEN"`
+	EnableMetrics                         bool     `yaml:"enable_metrics" envconfig:"API_ENABLE_METRICS"`
+	EnablePprof                           bool     `yaml:"enable_pprof" envconfig:"API_ENABLE_PPROF"`
+	Username                              string   `yaml:"username" envconfig:"API_USERNAME"`
+	Password                              string   `yaml:"password" envconfig:"API_PASSWORD"`
+	Secure                                bool     `yaml:"secure" envconfig:"API_SECURE"`
+	CertificateFile                       string   `yaml:"certificate_file" envconfig:"API_CERTIFICATE_FILE"`
+	PrivateKeyFile                        string   `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE"`
+	CAKeyFile                             string   `yaml:"ca_cert_file" envconfig:"API_CA_KEY_FILE"`
+	CACertFile                            string   `yaml:"ca_key_file" envconfig:"API_CA_CERT_FILE"`
+	CreateIntegrationTables               bool     `yaml:"create_integration_tables" envconfig:"API_CREATE_INTEGRATION_TABLES"`
+	IntegrationTablesHost                 string   `yaml:"integration_tables_host" envconfig:"API_INTEGRATION_TABLES_HOST"`
+	AllowParallel                         bool     `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
+	CompleteResumableAfterRestart         bool     `yaml:"complete_resumable_after_restart" envconfig:"API_COMPLETE_RESUMABLE_AFTER_RESTART"`
+	CompleteResumableAfterRestartCommands []string `yaml:"complete_resumable_after_restart_commands" envconfig:"API_COMPLETE_RESUMABLE_AFTER_RESTART_COMMANDS"`
+	WatchIsMainProcess                    bool     `yaml:"watch_is_main_process" envconfig:"WATCH_IS_MAIN_PROCESS"`
 	// BackupActionsSkipCommands - commands that should not be tracked in system.backup_actions
 	// (the in-memory async status list). Useful to exclude high-frequency monitoring calls
 	// like "list" from growing the actions state. See https://github.com/Altinity/clickhouse-backup/issues/1359
@@ -336,6 +337,17 @@ type APIConfig struct {
 // into the in-memory async status (system.backup_actions).
 func (cfg *APIConfig) IsBackupActionsSkipCommand(command string) bool {
 	for _, c := range cfg.BackupActionsSkipCommands {
+		if c == command {
+			return true
+		}
+	}
+	return false
+}
+
+// IsCompleteResumableAfterRestartCommand returns true if the given command may
+// be resumed automatically after API server restart.
+func (cfg *APIConfig) IsCompleteResumableAfterRestartCommand(command string) bool {
+	for _, c := range cfg.CompleteResumableAfterRestartCommands {
 		if c == command {
 			return true
 		}
@@ -746,11 +758,12 @@ func DefaultConfig() *Config {
 			DeleteConcurrency:      50,
 		},
 		API: APIConfig{
-			ListenAddr:                     "localhost:7171",
-			EnableMetrics:                  true,
-			CompleteResumableAfterRestart:  true,
-			CancelOperationTimeout:         "1800s",
-			CancelOperationTimeoutDuration: 1800 * time.Second,
+			ListenAddr:                            "localhost:7171",
+			EnableMetrics:                         true,
+			CompleteResumableAfterRestart:         true,
+			CompleteResumableAfterRestartCommands: []string{"upload", "download"},
+			CancelOperationTimeout:                "1800s",
+			CancelOperationTimeoutDuration:        1800 * time.Second,
 		},
 		FTP: FTPConfig{
 			Timeout:           "2m",
