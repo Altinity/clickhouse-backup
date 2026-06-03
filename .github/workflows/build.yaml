@@ -373,6 +373,9 @@ jobs:
           if [[ "${RUN_PARALLEL}" -lt 1 ]]; then
             export RUN_PARALLEL=1
           fi
+          if [[ "${RUN_PARALLEL}" -gt 6 ]]; then
+            export RUN_PARALLEL=6
+          fi
           echo "RUN_PARALLEL=${RUN_PARALLEL}"
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
           echo "GCS_TESTS=${GCS_TESTS}"
