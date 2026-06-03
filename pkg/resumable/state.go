@@ -45,7 +45,7 @@ func (s *State) GetParams() map[string]interface{} {
 func (s *State) getBucket(tx *bolt.Tx) *bolt.Bucket {
 	bucket := tx.Bucket(bucketName)
 	if bucket == nil {
-		log.Fatal().Stack().Msgf("resumable state: can't open bucket %s in %s", bucketName, s.stateFile)
+		log.Warn().Msgf("resumable state: can't open bucket %s in %s", bucketName, s.stateFile)
 	}
 	return bucket
 }
@@ -56,6 +56,9 @@ func (s *State) loadParams() {
 	}
 	if err := s.db.View(func(tx *bolt.Tx) error {
 		bucket := s.getBucket(tx)
+		if bucket == nil {
+			return nil
+		}
 		params := bucket.Get([]byte("params"))
 		if params != nil {
 			s.params = make(map[string]interface{})
@@ -103,6 +106,9 @@ func (s *State) cleanupStateIfParamsChange(params map[string]interface{}) {
 		log.Info().Msgf("parameters changed old=%#v new=%#v, %s cleanup begin", s.params, params, s.stateFile)
 		err := s.db.Batch(func(tx *bolt.Tx) error {
 			b := s.getBucket(tx)
+			if b == nil {
+				return nil
+			}
 			c := b.Cursor()
 			for k, _ := c.First(); k != nil; k, _ = c.Next() {
 				if err := b.Delete(k); err != nil {
@@ -117,6 +123,9 @@ func (s *State) cleanupStateIfParamsChange(params map[string]interface{}) {
 	}
 	_ = s.db.Batch(func(tx *bolt.Tx) error {
 		b := s.getBucket(tx)
+		if b == nil {
+			return nil
+		}
 		s.saveParams(b, params)
 		return nil
 	})
@@ -146,12 +155,15 @@ func (s *State) AppendToState(path string, size int64) {
 	}
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		b := s.getBucket(tx)
+		if b == nil {
+			return nil
+		}
 		buf := make([]byte, binary.MaxVarintLen64)
 		n := binary.PutVarint(buf, size)
 		return b.Put([]byte(path), buf[:n])
 	})
 	if err != nil {
-		log.Fatal().Stack().Msgf("resumable state: can't write key %s to %s error: %v", path, s.stateFile, err)
+		log.Warn().Msgf("resumable state: can't write key %s to %s error: %v", path, s.stateFile, err)
 	}
 }
 
@@ -168,6 +180,9 @@ func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
 	found := false
 	err := s.db.View(func(tx *bolt.Tx) error {
 		b := s.getBucket(tx)
+		if b == nil {
+			return nil
+		}
 		buf := b.Get([]byte(path))
 		if buf != nil {
 			found = true
@@ -183,7 +198,7 @@ func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
 		return nil
 	})
 	if err != nil {
-		log.Fatal().Stack().Msgf("resumable state: can't read key %s to %s error: %v", path, s.stateFile, err)
+		log.Warn().Msgf("resumable state: can't read key %s to %s error: %v", path, s.stateFile, err)
 		return false, 0
 	}
 	return found, size
