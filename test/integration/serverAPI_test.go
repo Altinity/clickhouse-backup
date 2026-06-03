@@ -132,7 +132,7 @@ func testAPIBackupActions(r *require.Assertions, env *TestEnvironment) {
 	r.NoError(env.ch.SelectSingleRowNoCtx(&actionsBackups, "SELECT count() FROM system.backup_list WHERE name LIKE 'backup_action%'"))
 	r.Equal(uint64(0), actionsBackups)
 
-	out, err := env.DockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
+	out, err := env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/metrics")
 	r.NoError(err, "%s\nunexpected error: %v", out, err)
 	r.Contains(out, "clickhouse_backup_last_create_remote_status 1")
 	r.Contains(out, "clickhouse_backup_last_create_status 1")
@@ -193,7 +193,7 @@ func testAPIBackupDelete(r *require.Assertions, env *TestEnvironment) {
 		r.NotContains(out, "another operation is currently running")
 		r.NotContains(out, "\"status\":\"error\"")
 	}
-	out, err := env.DockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
+	out, err := env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/metrics")
 	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
 	r.Contains(out, "clickhouse_backup_last_delete_status 1")
 
@@ -401,11 +401,11 @@ func testAPIDeleteLocalDownloadRestore(r *require.Assertions, env *TestEnvironme
 	r.NoError(err, "%s\nunexpected GET /backup/actions?filter=download error: %v", outActions, err)
 	r.NotContains(outActions, "\"status\":\"error\"")
 
-	outMetrics, err := env.DockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
-	r.NoError(err, "%s\nunexpected GET /metrics error: %v", outMetrics, err)
-	r.Contains(outMetrics, "clickhouse_backup_last_delete_status 1")
-	r.Contains(outMetrics, "clickhouse_backup_last_download_status 1")
-	r.Contains(outMetrics, "clickhouse_backup_last_restore_status 1")
+	waitForAPIMetricsContains(r, env, 30*time.Second,
+		"clickhouse_backup_last_delete_status 1",
+		"clickhouse_backup_last_download_status 1",
+		"clickhouse_backup_last_restore_status 1",
+	)
 }
 
 // testAPISkipEmptyTables tests the skip-empty-tables query parameter for restore and restore_remote API endpoints
@@ -527,9 +527,7 @@ func testAPIBackupUpload(r *require.Assertions, env *TestEnvironment) {
 	r.NoError(err, "%s\nunexpected GET /backup/actions?filter=upload error: %v", outActions, err)
 	r.NotContains(outActions, "error")
 
-	outMetrics, err := env.DockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
-	r.NoError(err, "%s\nunexpected GET /metrics error: %v", outMetrics, err)
-	r.Contains(outMetrics, "clickhouse_backup_last_upload_status 1")
+	waitForAPIMetricsContains(r, env, 30*time.Second, "clickhouse_backup_last_upload_status 1")
 }
 
 func testAPIBackupTables(r *require.Assertions, env *TestEnvironment) {
@@ -664,9 +662,7 @@ func testAPIBackupCreate(r *require.Assertions, env *TestEnvironment) {
 	r.NotContains(outText, "Connection refused")
 	r.NotContains(outText, "another operation is currently running")
 	r.NotContains(outText, "\"status\":\"error\"")
-	outMetrics, err := env.DockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
-	r.NoError(err, "%s\nunexpected GET /metrics error: %v", outMetrics, err)
-	r.Contains(outMetrics, "clickhouse_backup_last_create_status 1")
+	waitForAPIMetricsContains(r, env, 30*time.Second, "clickhouse_backup_last_create_status 1")
 }
 
 func parseAPIOperationID(r *require.Assertions, out string) string {
@@ -695,6 +691,32 @@ func waitForAPIOperationStatus(r *require.Assertions, env *TestEnvironment, oper
 			return
 		}
 		time.Sleep(1 * time.Second)
+	}
+}
+
+func waitForAPIMetricsContains(r *require.Assertions, env *TestEnvironment, timeout time.Duration, expected ...string) {
+	deadline := time.Now().Add(timeout)
+	var out string
+	var err error
+	for time.Now().Before(deadline) {
+		out, err = env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/metrics")
+		if err == nil {
+			allFound := true
+			for _, item := range expected {
+				if !strings.Contains(out, item) {
+					allFound = false
+					break
+				}
+			}
+			if allFound {
+				return
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
+	for _, item := range expected {
+		r.Contains(out, item)
 	}
 }
 
@@ -731,9 +753,7 @@ func testAPIBackupCreateRemote(r *require.Assertions, env *TestEnvironment) {
 
 	waitForAPIOperationStatus(r, env, parseAPIOperationID(r, out), "create_remote", 60*time.Second)
 
-	out, err = env.DockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
-	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
-	r.Contains(out, "clickhouse_backup_last_create_remote_status 1")
+	waitForAPIMetricsContains(r, env, 30*time.Second, "clickhouse_backup_last_create_remote_status 1")
 }
 
 func testAPIBackupRestoreRemote(r *require.Assertions, env *TestEnvironment) {
@@ -756,9 +776,7 @@ func testAPIBackupRestoreRemote(r *require.Assertions, env *TestEnvironment) {
 	r.Contains(out, "success")
 	r.Contains(out, backupName)
 
-	out, err = env.DockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
-	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
-	r.Contains(out, "clickhouse_backup_last_restore_remote_status 1")
+	waitForAPIMetricsContains(r, env, 30*time.Second, "clickhouse_backup_last_restore_remote_status 1")
 
 	// cleanup
 	_, err = env.DockerExecOut(
