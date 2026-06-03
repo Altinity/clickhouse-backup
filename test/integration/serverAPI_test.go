@@ -482,7 +482,7 @@ func testAPIBackupList(t *testing.T, r *require.Assertions, env *TestEnvironment
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/list'")
 	r.NoError(err, "%s\nunexpected GET /backup/list error: %v", out, err)
 	localListFormat := "{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"data_size\":\\d+,\"metadata_size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"regular\"}"
-	remoteListFormat := "{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"data_size\":\\d+,\"metadata_size\":\\d+,\"compressed_size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar, regular\"}"
+	remoteListFormat := "{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"data_size\":\\d+,\"metadata_size\":\\d+,\"compressed_size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"(tar|directory), regular\"}"
 	for i := 1; i <= apiBackupNumber; i++ {
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf(localListFormat, i)), out))
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf(remoteListFormat, i)), out))
