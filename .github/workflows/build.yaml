@@ -340,7 +340,6 @@ jobs:
 
       - name: Running integration tests
         env:
-          RUN_PARALLEL: 4
           GOROOT: ${{ env.GOROOT_1_26_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # LOG_LEVEL: "info"
@@ -369,6 +368,12 @@ jobs:
           QA_GCS_OVER_S3_BUCKET: ${{ secrets.QA_GCS_OVER_S3_BUCKET }}
         run: |
           set -xe
+          mem_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+          export RUN_PARALLEL=$(( (mem_kb + 2 * 1024 * 1024 - 1) / (2 * 1024 * 1024) ))
+          if [[ "${RUN_PARALLEL}" -lt 1 ]]; then
+            export RUN_PARALLEL=1
+          fi
+          echo "RUN_PARALLEL=${RUN_PARALLEL}"
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
           echo "GCS_TESTS=${GCS_TESTS}"
           GCS_ENCRYPTION_KEY=$(openssl rand -base64 32)

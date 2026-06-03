@@ -483,6 +483,7 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 		env.ch = clickhouse.NewClickHouse(&config.ClickHouseConfig{})
 	}
 	t.Logf("%s acquired env %s", t.Name(), env.ProjectName)
+	envUsage.acquire(env.ProjectName, t.Name())
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") <= 0 {
 		r := require.New(&testing.T{})
@@ -518,6 +519,7 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	}
 
 	t.Logf("%s returning env %s to pool", t.Name(), env.ProjectName)
+	envUsage.release(env.ProjectName, t.Name())
 	envPool <- env
 }
 
