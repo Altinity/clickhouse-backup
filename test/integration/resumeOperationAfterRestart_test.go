@@ -290,6 +290,9 @@ func resumeStoragePolicy(t *testing.T, remoteStorageType string) string {
 	case "S3":
 		return "s3_only"
 	case "GCS":
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.6") < 0 {
+			t.Skip("Skipping GCS ObjectDisk resume test: gcs_only storage policy (GCS over S3) requires ClickHouse >= 22.6")
+		}
 		if os.Getenv("QA_GCS_OVER_S3_BUCKET") == "" {
 			t.Skip("Skipping GCS ObjectDisk resume test: QA_GCS_OVER_S3_BUCKET missing")
 		}

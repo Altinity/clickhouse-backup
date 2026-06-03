@@ -51,7 +51,12 @@ func TestBwLimitAzure(t *testing.T) {
 func TestBwLimitFTP(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	defer env.Cleanup(t, r)
-	env.runBwLimitScenario(t, r, "FTP", "config-ftp.yaml", false, "")
+	// 21.8 can't execute SYSTEM RESTORE REPLICA, so restore_as_attach must stay disabled (config-ftp-old.yaml)
+	backupConfig := "config-ftp.yaml"
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") < 1 {
+		backupConfig = "config-ftp-old.yaml"
+	}
+	env.runBwLimitScenario(t, r, "FTP", backupConfig, false, "")
 }
 
 func TestBwLimitSFTP(t *testing.T) {
