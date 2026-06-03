@@ -114,7 +114,10 @@ general:
   download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is floor(AVAILABLE_CPU_CORES / 2). If result is < 1, then 1.
   upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2)). If result is < 1, then 1.
   
-  # Throttling speed for upload and download, calculates on part level, not the socket level, it means short period for high traffic values and then time to sleep 
+  # Throttling speed for upload and download, enforced inline via a token-bucket rate limiter shared across all concurrent workers, so the value is an aggregate cap with smooth (non-bursty) throughput.
+  # Throttling does NOT apply to server-side object disk copy (`CopyObject`, e.g. S3 server-side copy / Azure copy-blob), because those bytes move inside the cloud provider and never pass through clickhouse-backup. When server-side copy is unavailable (incompatible src/dst `remote_storage`, or a failed `CopyObject` falling back to streaming through local memory), the streaming copy IS throttled.
+  # Throttling does NOT apply to `remote_storage: custom`, because data transfer happens inside your external upload/download command, not through clickhouse-backup.
+  # When `clickhouse->use_embedded_backup_restore: true`, throttling is delegated to the ClickHouse server via the `max_backup_bandwidth` query setting passed in the BACKUP/RESTORE SETTINGS clause (requires ClickHouse 25.1+); upload_max_bytes_per_second applies to BACKUP, download_max_bytes_per_second to RESTORE. On older ClickHouse versions embedded transfers are not throttled.
   download_max_bytes_per_second: 0  # DOWNLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling 
   upload_max_bytes_per_second: 0    # UPLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling
 

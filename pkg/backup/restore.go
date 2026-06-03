@@ -2270,6 +2270,10 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 			Database: dstTable.Database,
 			Table:    dstTable.Name,
 			Parts:    backupTable.Parts,
+			// Query is required for AttachTable to detect Replicated*MergeTree and run
+			// SYSTEM DROP REPLICA + SYSTEM RESTORE REPLICA; without it the regex never
+			// matches and replicated parts stay unregistered in ZooKeeper (empty table).
+			Query: backupTable.Query,
 		}
 		if err := b.ch.AttachTable(ctx, attachTable, dstTable); err != nil {
 			return errors.Wrapf(err, "can't attach table '%s.%s'", dstTable.Database, dstTable.Name)
@@ -2758,7 +2762,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 									dstKey := path.Join(dstConnection.GetRemoteObjectDiskPath(), dstObjectPath)
 									retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 									copyObjectErr = retry.RunCtx(downloadCtx, func(ctx context.Context) error {
-										return object_disk.CopyObjectStreaming(downloadCtx, srcStorage, dstStorage, srcKey, dstKey)
+										return object_disk.CopyObjectStreaming(downloadCtx, srcStorage, dstStorage, srcKey, dstKey, b.dst.DownloadLimiter(b.cfg.General.DownloadMaxBytesPerSecond))
 									})
 									if copyObjectErr != nil {
 										return errors.Wrap(copyObjectErr, "object_disk.CopyObjectStreaming error")

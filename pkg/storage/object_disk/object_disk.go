@@ -20,6 +20,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/bwlimit"
 	"github.com/antchfx/xmlquery"
 	"github.com/pkg/errors"
 	"github.com/puzpuzpuz/xsync"
@@ -777,7 +778,7 @@ func CopyObject(ctx context.Context, diskName string, srcSize int64, srcBucket, 
 	return remoteStorage.CopyObject(ctx, srcSize, srcBucket, srcKey, dstPath)
 }
 
-func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, dstStorage storage.RemoteStorage, srcKey, dstKey string) error {
+func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, dstStorage storage.RemoteStorage, srcKey, dstKey string, limiter *bwlimit.Limiter) error {
 	srcInfo, statErr := srcStorage.StatFileAbsolute(ctx, srcKey)
 	if statErr != nil {
 		return errors.Wrapf(statErr, "srcStorage.StatFileReaderAbsolute(%s) error", srcKey)
@@ -792,7 +793,10 @@ func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, 
 			log.Error().Msgf("srcReader.Close(%s) error: %v", srcKey, closeErr)
 		}
 	}()
-	if putErr := dstStorage.PutFileAbsolute(ctx, dstKey, srcReader, srcInfo.Size()); putErr != nil {
+	// streaming copy moves bytes through this process (unlike server-side CopyObject),
+	// so honor the configured upload throttle, fix https://github.com/Altinity/clickhouse-backup/issues/1377
+	body := bwlimit.ReadCloser(ctx, srcReader, limiter)
+	if putErr := dstStorage.PutFileAbsolute(ctx, dstKey, body, srcInfo.Size()); putErr != nil {
 		return errors.Wrapf(putErr, "dstStorage.PutFileAbsolute(%s) error", dstKey)
 	}
 	return nil

@@ -878,7 +878,18 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 	if ch.version <= 21003000 {
 		return errors.New("your clickhouse-server version doesn't support SYSTEM RESTORE REPLICA statement, use `restore_as_attach: false` in config")
 	}
+	// DETACH TABLE ... SYNC is rejected inside a Replicated database engine (error code 80);
+	// such databases require PERMANENTLY. We re-ATTACH the table right after, so PERMANENTLY
+	// has no lasting effect. PERMANENTLY exists since 20.13 and SYNC since 20.11; this path
+	// is already gated above to version > 21.3, so no extra version check is needed.
+	databaseEngine, dbEngineErr := ch.GetDatabaseEngine(table.Database)
+	if dbEngineErr != nil {
+		return errors.WithMessage(dbEngineErr, "AttachTable: GetDatabaseEngine")
+	}
 	query := fmt.Sprintf("DETACH TABLE `%s`.`%s` SYNC", table.Database, table.Table)
+	if strings.HasPrefix(databaseEngine, "Replicated") {
+		query = fmt.Sprintf("DETACH TABLE `%s`.`%s` PERMANENTLY SYNC", table.Database, table.Table)
+	}
 	if err := ch.Query(query); err != nil {
 		return errors.Wrapf(err, "%s error", query)
 	}

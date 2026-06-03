@@ -11,9 +11,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/bwlimit"
 	"github.com/pkg/errors"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
@@ -51,6 +53,9 @@ type BackupDestination struct {
 	compressionLevel       int
 	pipeBufferSize         int64
 	downloadCopyBufferSize int64
+	limiterMu              sync.Mutex
+	uploadRateLimiter      *bwlimit.Limiter
+	downloadRateLimiter    *bwlimit.Limiter
 }
 
 func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Backup, cfg *config.Config, retrierClassifier retrier.Classifier) error {
@@ -448,18 +453,30 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 	if statErr != nil {
 		return 0, errors.WithMessage(statErr, "DownloadCompressedStream StatFile")
 	}
-	startTime := time.Now()
-	reader, getReaderErr := bd.GetFileReaderWithLocalPath(ctx, remotePath, localPath, remoteFileInfo.Size())
-	if getReaderErr != nil {
-		return 0, errors.WithMessage(getReaderErr, "DownloadCompressedStream GetFileReaderWithLocalPath")
+	var reader io.ReadCloser
+	var getReaderErr error
+	if maxSpeed > 0 {
+		// multipart download buffers the whole object to a temp file at full network
+		// speed, which bypasses the rate limiter (it would only throttle the local
+		// disk read). Force the streaming path so downloadLimiter governs the actual
+		// network throughput, fix https://github.com/Altinity/clickhouse-backup/issues/1377
+		log.Debug().Msgf("DownloadCompressedStream %s: download rate limit active, using streaming reader (multipart bypassed)", remotePath)
+		reader, getReaderErr = bd.GetFileReader(ctx, remotePath)
+	} else {
+		reader, getReaderErr = bd.GetFileReaderWithLocalPath(ctx, remotePath, localPath, remoteFileInfo.Size())
 	}
+	if getReaderErr != nil {
+		return 0, errors.WithMessage(getReaderErr, "DownloadCompressedStream GetFileReader")
+	}
+	rawReader := reader
+	reader = bwlimit.ReadCloser(ctx, reader, bd.DownloadLimiter(maxSpeed))
 	defer func() {
 		if err := reader.Close(); err != nil {
 			log.Warn().Msgf("can't close GetFileReader descriptor %v", reader)
 		}
-		switch reader.(type) {
+		switch rawReader.(type) {
 		case *os.File:
-			fileName := reader.(*os.File).Name()
+			fileName := rawReader.(*os.File).Name()
 			if err := os.Remove(fileName); err != nil {
 				log.Warn().Msgf("can't remove %s", fileName)
 			}
@@ -519,7 +536,6 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 	}); extractErr != nil {
 		return 0, errors.WithMessage(extractErr, "DownloadCompressedStream Extract")
 	}
-	bd.throttleSpeed(startTime, remoteFileInfo.Size(), maxSpeed)
 	return downloadedBytes, nil
 }
 
@@ -537,8 +553,8 @@ func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLoc
 	pipeBuffer := buffer.New(bd.pipeBufferSize)
 	body, w := nio.Pipe(pipeBuffer)
 	g, ctx := errgroup.WithContext(ctx)
-	startTime := time.Now()
 	var writerErr, readerErr error
+	limiter := bd.UploadLimiter(maxSpeed)
 	g.Go(func() error {
 		defer func() {
 			if writerErr != nil {
@@ -593,30 +609,30 @@ func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLoc
 				}
 			}
 		}()
-		readerErr = bd.PutFile(ctx, remotePath, body, totalBytes)
+		readerErr = bd.PutFile(ctx, remotePath, bwlimit.ReadCloser(ctx, body, limiter), totalBytes)
 		return readerErr
 	})
 	if waitErr := g.Wait(); waitErr != nil {
 		return errors.WithMessage(waitErr, "UploadCompressedStream errgroup.Wait")
 	}
-	bd.throttleSpeed(startTime, totalBytes, maxSpeed)
 	return nil
 }
 
 func (bd *BackupDestination) DownloadPath(ctx context.Context, remotePath string, localPath string, RetriesOnFailure int, RetriesDuration time.Duration, RetriesJitter int8, RetrierClassifier retrier.Classifier, maxSpeed uint64) (int64, error) {
 	downloadedBytes := int64(0)
+	limiter := bd.DownloadLimiter(maxSpeed)
 	walkErr := bd.Walk(ctx, remotePath, true, func(ctx context.Context, f RemoteFile) error {
 		if bd.Kind() == "SFTP" && (f.Name() == "." || f.Name() == "..") {
 			return nil
 		}
 		retry := retrier.New(retrier.ExponentialBackoff(RetriesOnFailure, common.AddRandomJitter(RetriesDuration, RetriesJitter)), RetrierClassifier)
 		err := retry.RunCtx(ctx, func(ctx context.Context) error {
-			startTime := time.Now()
 			r, err := bd.GetFileReader(ctx, path.Join(remotePath, f.Name()))
 			if err != nil {
 				log.Error().Err(err).Send()
 				return errors.WithMessage(err, "DownloadPath GetFileReader")
 			}
+			r = bwlimit.ReadCloser(ctx, r, limiter)
 			dstFilePath := path.Join(localPath, f.Name())
 			dstDirPath, _ := path.Split(dstFilePath)
 			if err := os.MkdirAll(dstDirPath, 0750); err != nil {
@@ -643,12 +659,6 @@ func (bd *BackupDestination) DownloadPath(ctx context.Context, remotePath string
 				return errors.WithMessage(srcCloseErr, "DownloadPath r.Close")
 			}
 
-			if dstFileInfo, statErr := os.Stat(dstFilePath); statErr == nil {
-				bd.throttleSpeed(startTime, dstFileInfo.Size(), maxSpeed)
-			} else {
-				return errors.WithMessage(statErr, "DownloadPath Stat")
-			}
-
 			return nil
 		})
 		if err != nil {
@@ -661,8 +671,8 @@ func (bd *BackupDestination) DownloadPath(ctx context.Context, remotePath string
 
 func (bd *BackupDestination) UploadPath(ctx context.Context, baseLocalPath string, files []string, remotePath string, RetriesOnFailure int, RetriesDuration time.Duration, RetriesJitter int8, RertierClassifier retrier.Classifier, maxSpeed uint64) (int64, error) {
 	totalBytes := int64(0)
+	limiter := bd.UploadLimiter(maxSpeed)
 	for _, filename := range files {
-		startTime := time.Now()
 		fInfo, err := os.Stat(filepath.Clean(path.Join(baseLocalPath, filename)))
 		if err != nil {
 			return 0, errors.WithMessage(err, "UploadPath Stat")
@@ -681,14 +691,13 @@ func (bd *BackupDestination) UploadPath(ctx context.Context, baseLocalPath strin
 		}
 		retry := retrier.New(retrier.ExponentialBackoff(RetriesOnFailure, common.AddRandomJitter(RetriesDuration, RetriesJitter)), RertierClassifier)
 		err = retry.RunCtx(ctx, func(ctx context.Context) error {
-			return bd.PutFile(ctx, path.Join(remotePath, filename), f, 0)
+			return bd.PutFile(ctx, path.Join(remotePath, filename), bwlimit.ReadCloser(ctx, f, limiter), 0)
 		})
 		if err != nil {
 			closeFile()
 			return 0, errors.WithMessage(err, "UploadPath PutFile")
 		}
 		closeFile()
-		bd.throttleSpeed(startTime, fInfo.Size(), maxSpeed)
 	}
 
 	return totalBytes, nil
@@ -702,21 +711,6 @@ func (bd *BackupDestination) copyWithBuffer(dst io.Writer, src io.Reader) (int64
 		return io.CopyBuffer(dst, src, make([]byte, bd.downloadCopyBufferSize))
 	}
 	return io.Copy(dst, src)
-}
-
-func (bd *BackupDestination) throttleSpeed(startTime time.Time, size int64, maxSpeed uint64) {
-	if maxSpeed > 0 && size > 0 {
-		timeSince := time.Since(startTime).Nanoseconds()
-		currentSpeed := uint64(size*1000000000) / uint64(timeSince)
-		if currentSpeed > maxSpeed {
-
-			// Calculate how long to sleep to reduce the average speed to maxSpeed
-			excessSpeed := currentSpeed - maxSpeed
-			excessData := uint64(size) - (maxSpeed * uint64(timeSince) / 1000000000)
-			sleepTime := time.Duration((excessData*1000000000)/excessSpeed) * time.Nanosecond
-			time.Sleep(sleepTime)
-		}
-	}
 }
 
 func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, backupName string) (*BackupDestination, error) {

@@ -311,6 +311,14 @@ func (b *Backuper) getEmbeddedRestoreSettings(version int) []string {
 			log.Fatal().Stack().Msgf("SET s3_use_adaptive_timeouts=0 error: %v", err)
 		}
 	}
+	// embedded RESTORE moves data inside ClickHouse, so our io.Reader throttle can't apply.
+	// Pass download_max_bytes_per_second as the server-side max_backup_bandwidth query setting via the
+	// RESTORE ... SETTINGS clause (see getEmbeddedBackupSettings for why not `SET`).
+	// max_backup_bandwidth is honored there since ClickHouse 25.1 (PR #72665).
+	// fix https://github.com/Altinity/clickhouse-backup/issues/1377
+	if b.cfg.General.DownloadMaxBytesPerSecond > 0 && version >= 25001000 {
+		settings = append(settings, fmt.Sprintf("max_backup_bandwidth=%d", b.cfg.General.DownloadMaxBytesPerSecond))
+	}
 	return settings
 }
 
@@ -330,6 +338,16 @@ func (b *Backuper) getEmbeddedBackupSettings(version int) []string {
 	}
 	if b.cfg.General.RemoteStorage == "azblob" && version >= 24005000 && b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
 		settings = append(settings, "allow_azure_native_copy=1")
+	}
+	// embedded BACKUP moves data inside ClickHouse, so our io.Reader throttle can't apply.
+	// Pass upload_max_bytes_per_second as the server-side max_backup_bandwidth query setting via the
+	// BACKUP ... SETTINGS clause, NOT via `SET`: our clickhouse-go pool keeps no idle connections
+	// (MaxIdleConns=0), so a session-level SET may not reach the BACKUP query's connection. Settings in
+	// the BACKUP/RESTORE SETTINGS clause travel with the query and are applied to its context.
+	// max_backup_bandwidth is honored there since ClickHouse 25.1 (PR #72665).
+	// fix https://github.com/Altinity/clickhouse-backup/issues/1377
+	if b.cfg.General.UploadMaxBytesPerSecond > 0 && version >= 25001000 {
+		settings = append(settings, fmt.Sprintf("max_backup_bandwidth=%d", b.cfg.General.UploadMaxBytesPerSecond))
 	}
 	return settings
 }

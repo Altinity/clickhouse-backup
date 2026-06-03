@@ -1228,7 +1228,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 					if isCopyFailed.Load() {
 						retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 						copyObjectErr = retry.RunCtx(uploadCtx, func(ctx context.Context) error {
-							return object_disk.CopyObjectStreaming(uploadCtx, srcDiskConnection.GetRemoteStorage(), b.dst, srcKey, path.Join(objectDiskPath, dstKey))
+							return object_disk.CopyObjectStreaming(uploadCtx, srcDiskConnection.GetRemoteStorage(), b.dst, srcKey, path.Join(objectDiskPath, dstKey), b.dst.UploadLimiter(b.cfg.General.UploadMaxBytesPerSecond))
 						})
 						if copyObjectErr != nil {
 							return errors.Wrapf(copyObjectErr, "object_disk.CopyObjectStreaming in %s error", backupShadowPath)
