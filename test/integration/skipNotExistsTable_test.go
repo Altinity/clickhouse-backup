@@ -57,7 +57,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 		pause := int64(0)
 		stepUpNs := int64(5 * time.Millisecond)
 		stepDownNs := int64(2 * time.Millisecond)
-		for i := int64(0); i < 100; i++ {
+		for i := int64(0); i < 1000; i++ {
 			testBackupName := fmt.Sprintf("not_exists_%d", i)
 			err = env.ch.Query(ifNotExistsCreateSQL)
 			r.NoError(err)
