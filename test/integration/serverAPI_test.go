@@ -678,7 +678,11 @@ func testAPIBackupCreate(r *require.Assertions, env *TestEnvironment) {
 		"bash", "-xe", "-c",
 		fmt.Sprintf("sleep 3; for i in {1..%d}; do date; curl -sfL -XPOST \"http://localhost:7171/backup/create?table=long_schema.*&name=z_backup_$i\"; sleep 1.5; done", apiBackupNumber),
 	)
-	r.NoError(err, "%s\nunexpected POST /backup/create?table=long_schema.*&name=z_backup_$i error: %v", out, err)
+	serverLog := ""
+	if err != nil {
+		serverLog, _ = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "tail -n 200 /tmp/clickhouse-backup-server.log 2>&1 || true")
+	}
+	r.NoError(err, "%s\nunexpected POST /backup/create?table=long_schema.*&name=z_backup_$i error: %v\n/tmp/clickhouse-backup-server.log tail:\n%s", out, err, serverLog)
 	r.NotContains(out, "Connection refused")
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
