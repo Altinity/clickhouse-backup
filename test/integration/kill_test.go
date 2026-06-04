@@ -48,9 +48,15 @@ func TestKill(t *testing.T) {
 		_ = env.DockerExec("clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
 	}()
 	defer func() {
-		if out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "delete", "remote", backupName); err != nil && !strings.Contains(err.Error(), fmt.Sprintf("'%s' is not found on remote storage", backupName)) {
+		if out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "delete", "remote", backupName); err != nil && !strings.Contains(out, fmt.Sprintf("'%s' is not found on remote storage", backupName)) {
 			t.Errorf("TestKill teardown error=%+v: delete remote %s: %s", err, backupName, out)
 		}
+		// The killed mid-flight upload leaves an incomplete remote backup that
+		// `delete remote` reports as "not found" and never removes. Purge the
+		// residue directly so it does not pollute the next test that reuses this
+		// env from the pool (observed breaking TestS3NoDeletePermission, which
+		// asserts the remote backup path is empty).
+		_ = env.DockerExec("minio", "rm", "-rf", env.minioBackupFSPath(r, "config-s3.yml", backupName))
 		if err := env.dropDatabase(dbName, true); err != nil {
 			t.Errorf("TestKill teardown: drop database %s, error=%+v", dbName, err)
 		}
