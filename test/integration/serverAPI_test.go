@@ -115,7 +115,21 @@ func testAPIBackupStatus(r *require.Assertions, env *TestEnvironment) {
 
 func testAPIBackupActions(r *require.Assertions, env *TestEnvironment) {
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{"create_remote actions_backup1"}, true)
+	// create_remote must propagate success status to its create+upload sub-commands
+	waitForAPIMetricsContains(r, env, 30*time.Second,
+		"clickhouse_backup_last_create_remote_status 1",
+		"clickhouse_backup_last_create_status 1",
+		"clickhouse_backup_last_upload_status 1",
+	)
+
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{"delete local actions_backup1", "restore_remote --rm actions_backup1"}, true)
+	// restore_remote must propagate success status to its download+restore sub-commands
+	waitForAPIMetricsContains(r, env, 30*time.Second,
+		"clickhouse_backup_last_restore_remote_status 1",
+		"clickhouse_backup_last_download_status 1",
+		"clickhouse_backup_last_restore_status 1",
+	)
+
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{"delete local actions_backup1", "delete remote actions_backup1"}, false)
 
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{"create actions_backup2"}, true)
