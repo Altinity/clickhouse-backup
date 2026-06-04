@@ -16,6 +16,7 @@ func TestAzure(t *testing.T) {
 		return
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.tc.pullImageIfNeeded(t.Context(), "mcr.microsoft.com/azure-cli:latest")
 	sasCmd := []string{
 		"run", "--rm",
@@ -35,5 +36,4 @@ func TestAzure(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "export SAS_TOKEN='"+sasToken+"'; cat /etc/clickhouse-backup/config-azblob-sas.yml.template | envsubst > /etc/clickhouse-backup/config-azblob-sas.yml")
 	env.runMainIntegrationScenario(t, "AZBLOB", "config-azblob-sas.yml")
 	env.runMainIntegrationScenario(t, "AZBLOB", "config-azblob.yml")
-	env.Cleanup(t, r)
 }

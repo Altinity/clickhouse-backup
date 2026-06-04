@@ -13,6 +13,7 @@ import (
 
 func TestRestoreMapping(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 
 	testBackupName := "test_restore_database_mapping"
@@ -322,6 +323,4 @@ func TestRestoreMapping(t *testing.T) {
 		// Clean up
 		fullCleanup(t, r, env, []string{testBackupName7}, []string{"local", "remote"}, databaseList7, false, true, true, "config-s3.yml")
 	}
-
-	env.Cleanup(t, r)
 }

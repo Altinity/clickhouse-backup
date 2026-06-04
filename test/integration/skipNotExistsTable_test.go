@@ -20,6 +20,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 		t.Skip("TestSkipNotExistsTable too small time between `SELECT DISTINCT partition_id` and `ALTER TABLE ... FREEZE PARTITION`")
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
 	log.Debug().Msg("Check skip not exist errors")
@@ -140,7 +141,6 @@ func TestSkipNotExistsTable(t *testing.T) {
 	r.NoError(env.dropDatabase("test_skip_tables", true))
 	r.NoError(env.dropDatabase("freeze_not_exists", true))
 	t.Log("TestSkipNotExistsTable DONE, ALL OK")
-	env.Cleanup(t, r)
 }
 
 func tailString(s string, n int) string {

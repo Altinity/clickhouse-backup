@@ -56,6 +56,6 @@ func Upload(ctx context.Context, retrierClassifier retrier.Classifier, cfg *conf
 		log.Error().
 			Str("operation", "upload_custom").
 			Err(err).Send()
-		return errors.WithMessage(err, "Upload custom")
+		return errors.Wrap(err, "Upload custom")
 	}
 }

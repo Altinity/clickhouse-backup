@@ -76,8 +76,7 @@ func ExecCmdOut(ctx context.Context, timeout time.Duration, cmd string, args ...
 	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
 	cancel()
 	if err != nil {
-		log.Error().Err(err).Str("cmd", fmt.Sprintf("%s %s", cmd, strings.Join(args, " "))).Msg(string(out))
-		return string(out), errors.WithMessage(err, "ExecCmdOut")
+		return string(out), errors.Wrap(err, "ExecCmdOut")
 	}
 	return string(out), nil
 }

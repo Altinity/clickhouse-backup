@@ -14,6 +14,7 @@ func TestEmbeddedAzure(t *testing.T) {
 	}
 	t.Logf("@TODO RESTORE Ordinary with old syntax still not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971", os.Getenv("CLICKHOUSE_VERSION"))
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 
 	// === AZURE ===
 	// CUSTOM backup create folder in each disk
@@ -23,6 +24,4 @@ func TestEmbeddedAzure(t *testing.T) {
 	if compareVersion(version, "24.8") >= 0 {
 		env.runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
 	}
-
-	env.Cleanup(t, r)
 }

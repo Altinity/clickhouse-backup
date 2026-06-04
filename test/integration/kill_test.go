@@ -48,11 +48,11 @@ func TestKill(t *testing.T) {
 		_ = env.DockerExec("clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
 	}()
 	defer func() {
-		if out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "delete", "remote", backupName); err != nil {
-			log.Warn().Err(err).Msgf("TestKill teardown: delete remote %s: %s", backupName, out)
+		if out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "delete", "remote", backupName); err != nil && !strings.Contains(err.Error(), fmt.Sprintf("'%s' is not found on remote storage", backupName)) {
+			t.Errorf("TestKill teardown error=%+v: delete remote %s: %s", err, backupName, out)
 		}
 		if err := env.dropDatabase(dbName, true); err != nil {
-			log.Warn().Err(err).Msgf("TestKill teardown: drop database %s", dbName)
+			t.Errorf("TestKill teardown: drop database %s, error=%+v", dbName, err)
 		}
 	}()
 	time.Sleep(3 * time.Second)

@@ -17,6 +17,7 @@ func TestRBAC(t *testing.T) {
 		t.Skipf("Test skipped, RBAC not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 
 	testRBACScenario := func(config string) {
 		env.connectWithWait(t, r, 1*time.Second, 1*time.Second, 1*time.Minute)
@@ -158,5 +159,4 @@ func TestRBAC(t *testing.T) {
 		testRBACScenario("/etc/clickhouse-backup/config-azblob-embedded-url.yml")
 	}
 	testRBACScenario("/etc/clickhouse-backup/config-s3.yml")
-	env.Cleanup(t, r)
 }

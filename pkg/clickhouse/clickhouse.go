@@ -102,7 +102,7 @@ func (ch *ClickHouse) Connect() error {
 	ch.IsOpen = false
 	timeout, err := time.ParseDuration(ch.Config.Timeout)
 	if err != nil {
-		return errors.WithMessage(err, "Connect: parse timeout")
+		return errors.Wrap(err, "Connect: parse timeout")
 	}
 
 	//timeoutSeconds := fmt.Sprintf("%d", int(timeout.Seconds()))
@@ -133,7 +133,7 @@ func (ch *ClickHouse) Connect() error {
 	if ch.Config.Secure {
 		tlsConfig, err := utils.NewTLSConfig(ch.Config.TLSCa, ch.Config.TLSCert, ch.Config.TLSKey, ch.Config.SkipVerify, true)
 		if err != nil {
-			return errors.WithMessage(err, "Connect: create TLS config")
+			return errors.Wrap(err, "Connect: create TLS config")
 		}
 		opt.TLS = tlsConfig
 	}
@@ -180,7 +180,7 @@ func (ch *ClickHouse) Connect() error {
 func (ch *ClickHouse) GetDisks(ctx context.Context, enrich bool) ([]Disk, error) {
 	version, err := ch.GetVersion(ctx)
 	if err != nil {
-		return nil, errors.WithMessage(err, "GetDisks: get version")
+		return nil, errors.Wrap(err, "GetDisks: get version")
 	}
 	var disks []Disk
 	if version < 19015000 {
@@ -189,7 +189,7 @@ func (ch *ClickHouse) GetDisks(ctx context.Context, enrich bool) ([]Disk, error)
 		disks, err = ch.getDisksFromSystemDisks(ctx)
 	}
 	if err != nil {
-		return nil, errors.WithMessage(err, "GetDisks: query disks")
+		return nil, errors.Wrap(err, "GetDisks: query disks")
 	}
 	for i := range disks {
 		if disks[i].Name == ch.Config.EmbeddedBackupDisk {
@@ -261,7 +261,7 @@ func (ch *ClickHouse) getDisksFromSystemSettings(ctx context.Context) ([]Disk, e
 	default:
 		metadataPath, err := ch.getMetadataPath(ctx)
 		if err != nil {
-			return nil, errors.WithMessage(err, "getDisksFromSystemSettings: get metadata path")
+			return nil, errors.Wrap(err, "getDisksFromSystemSettings: get metadata path")
 		}
 		dataPathArray := strings.Split(metadataPath, "/")
 		clickhouseData := path.Join(dataPathArray[:len(dataPathArray)-1]...)
@@ -285,7 +285,7 @@ func (ch *ClickHouse) getMetadataPath(ctx context.Context) (string, error) {
 		query = "SELECT data_path AS metadata_path FROM system.databases WHERE name = 'system' LIMIT 1"
 	}
 	if err := ch.SelectContext(ctx, &result, query); err != nil {
-		return "", errors.WithMessage(err, "getMetadataPath: select metadata_path")
+		return "", errors.Wrap(err, "getMetadataPath: select metadata_path")
 	}
 	if len(result) == 0 {
 		return "", errors.New("can't get metadata_path from system.tables or system.databases")
@@ -325,7 +325,7 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 				"countIf(name='cache_path') AS is_cache_path_present "+
 				"FROM system.columns WHERE database='system' AND table IN ('disks','storage_policies') ",
 		); err != nil {
-			return nil, errors.WithMessage(err, "getDisksFromSystemDisks: query disk fields")
+			return nil, errors.Wrap(err, "getDisksFromSystemDisks: query disk fields")
 		}
 		diskTypeSQL := "'local'"
 		// diskNameSQL: prefer the underlying (non-cache) disk name when cache
@@ -367,7 +367,7 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 			diskNameSQL, diskTypeSQL, diskFreeSpaceSQL, storagePoliciesSQL, joinStoragePoliciesSQL,
 		)
 		if err := ch.SelectContext(ctx, &result, query); err != nil {
-			return nil, errors.WithMessage(err, "getDisksFromSystemDisks: select disks")
+			return nil, errors.Wrap(err, "getDisksFromSystemDisks: select disks")
 		}
 		return result, nil
 	}
@@ -396,14 +396,14 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 		"display_secrets_in_show_and_select":               false,
 	}
 	if settings, err = ch.CheckSettingsExists(ctx, settings); err != nil {
-		return nil, errors.WithMessage(err, "GetTables: check settings")
+		return nil, errors.Wrap(err, "GetTables: check settings")
 	}
 	skipDatabases := make([]struct {
 		Name string `ch:"name"`
 	}, 0)
 	// MaterializedPostgreSQL doesn't support FREEZE look https://github.com/Altinity/clickhouse-backup/issues/550 and https://github.com/ClickHouse/ClickHouse/issues/32902
 	if err = ch.SelectContext(ctx, &skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('MySQL','PostgreSQL','MaterializedPostgreSQL')"); err != nil {
-		return nil, errors.WithMessage(err, "GetTables: select skip databases")
+		return nil, errors.Wrap(err, "GetTables: select skip databases")
 	}
 	skipDatabaseNames := make([]string, len(skipDatabases))
 	for i, s := range skipDatabases {
@@ -420,13 +420,13 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 		FROM system.columns WHERE database='system' AND table='tables'
 	`
 	if err = ch.SelectContext(ctx, &isSystemTablesFieldPresent, isFieldPresentSQL); err != nil {
-		return nil, errors.WithMessage(err, "GetTables: check system.tables fields")
+		return nil, errors.Wrap(err, "GetTables: check system.tables fields")
 	}
 
 	allTablesSQL := ch.prepareGetTablesSQL(tablePattern, skipDatabaseNames, ch.Config.SkipTableEngines, settings, isSystemTablesFieldPresent)
 	tables := make([]Table, 0)
 	if err = ch.SelectContext(ctx, &tables, allTablesSQL); err != nil {
-		return nil, errors.WithMessage(err, "GetTables: select tables")
+		return nil, errors.Wrap(err, "GetTables: select tables")
 	}
 	for i := range tables {
 		// https://github.com/Altinity/clickhouse-backup/issues/1091, https://github.com/Altinity/clickhouse-backup/issues/1151
@@ -438,7 +438,7 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	}
 	metadataPath, err := ch.getMetadataPath(ctx)
 	if err != nil {
-		return nil, errors.WithMessage(err, "GetTables: get metadata path")
+		return nil, errors.Wrap(err, "GetTables: get metadata path")
 	}
 	for i, t := range tables {
 		for _, filter := range ch.Config.SkipTables {
@@ -473,7 +473,7 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	// https://github.com/Altinity/clickhouse-backup/issues/613
 	if !ch.Config.UseEmbeddedBackupRestore {
 		if tables, err = ch.enrichTablesByInnerDependencies(ctx, tables, metadataPath, settings, isSystemTablesFieldPresent); err != nil {
-			return nil, errors.WithMessage(err, "GetTables: enrich inner dependencies")
+			return nil, errors.Wrap(err, "GetTables: enrich inner dependencies")
 		}
 	}
 	return tables, nil
@@ -511,7 +511,7 @@ func (ch *ClickHouse) enrichTablesByInnerDependencies(ctx context.Context, table
 	missedTables := make([]Table, 0)
 	var err error
 	if err = ch.SelectContext(ctx, &missedTables, missedTablesSQL); err != nil {
-		return nil, errors.WithMessage(err, "enrichTablesByInnerDependencies: select missed tables")
+		return nil, errors.Wrap(err, "enrichTablesByInnerDependencies: select missed tables")
 	}
 	if len(missedTables) == 0 {
 		return tables, nil
@@ -616,7 +616,7 @@ func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tabl
 	bypassDatabases = processDbPatterns(bypassDatabases, bypassTablesPatterns)
 	metadataPath, err := ch.getMetadataPath(ctx)
 	if err != nil {
-		return nil, errors.WithMessage(err, "GetDatabases: get metadata path")
+		return nil, errors.Wrap(err, "GetDatabases: get metadata path")
 	}
 	select {
 	case <-ctx.Done():
@@ -629,7 +629,7 @@ func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tabl
 				fileMatchToRE.Replace(strings.Join(skipDatabases, "|")), fileMatchToRE.Replace(strings.Join(bypassDatabases, "|")),
 			)
 			if err := ch.StructSelect(&allDatabases, allDatabasesSQL); err != nil {
-				return nil, errors.WithMessage(err, "GetDatabases: select databases with bypass")
+				return nil, errors.Wrap(err, "GetDatabases: select databases with bypass")
 			}
 		} else {
 			allDatabasesSQL := fmt.Sprintf(
@@ -637,7 +637,7 @@ func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tabl
 				fileMatchToRE.Replace(strings.Join(skipDatabases, "|")),
 			)
 			if err := ch.StructSelect(&allDatabases, allDatabasesSQL); err != nil {
-				return nil, errors.WithMessage(err, "GetDatabases: select databases")
+				return nil, errors.Wrap(err, "GetDatabases: select databases")
 			}
 		}
 	}
@@ -732,7 +732,7 @@ func (ch *ClickHouse) GetVersion(ctx context.Context) (int, error) {
 	}
 	ch.version, err = strconv.Atoi(result)
 	if err != nil {
-		return ch.version, errors.WithMessage(err, "GetVersion: parse version integer")
+		return ch.version, errors.Wrap(err, "GetVersion: parse version integer")
 	}
 	return ch.version, nil
 }
@@ -793,7 +793,7 @@ func (ch *ClickHouse) FreezeTableByParts(ctx context.Context, table *Table, name
 func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string) error {
 	version, err := ch.GetVersion(ctx)
 	if err != nil {
-		return errors.WithMessage(err, "FreezeTable: get version")
+		return errors.Wrap(err, "FreezeTable: get version")
 	}
 	if strings.HasPrefix(table.Engine, "Replicated") && ch.Config.SyncReplicatedTables {
 		query := fmt.Sprintf("SYSTEM SYNC REPLICA `%s`.`%s`;", table.Database, table.Name)
@@ -831,7 +831,7 @@ func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, dstTable Tab
 	}
 	canContinue, err := ch.CheckReplicationInProgress(table)
 	if err != nil {
-		return errors.WithMessage(err, "AttachDataParts: check replication")
+		return errors.Wrap(err, "AttachDataParts: check replication")
 	}
 	if !canContinue {
 		return nil
@@ -843,7 +843,7 @@ func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, dstTable Tab
 			if !strings.HasSuffix(part.Name, ".proj") {
 				query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Table, part.Name)
 				if err := ch.Query(query); err != nil {
-					return errors.WithMessage(err, "AttachDataParts: attach part")
+					return errors.Wrap(err, "AttachDataParts: attach part")
 				}
 				log.Debug().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Str("disk", disk).Str("part", part.Name).Msg("attached")
 			}
@@ -884,7 +884,7 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 	// is already gated above to version > 21.3, so no extra version check is needed.
 	databaseEngine, dbEngineErr := ch.GetDatabaseEngine(table.Database)
 	if dbEngineErr != nil {
-		return errors.WithMessage(dbEngineErr, "AttachTable: GetDatabaseEngine")
+		return errors.Wrap(dbEngineErr, "AttachTable: GetDatabaseEngine")
 	}
 	query := fmt.Sprintf("DETACH TABLE `%s`.`%s` SYNC", table.Database, table.Table)
 	if strings.HasPrefix(databaseEngine, "Replicated") {
@@ -948,7 +948,7 @@ func (ch *ClickHouse) CreateDatabase(database string, cluster string) error {
 		query += fmt.Sprintf(" ON CLUSTER '%s'", cluster)
 	}
 	if err := ch.Query(query); err != nil {
-		return errors.WithMessage(err, "CreateDatabase")
+		return errors.Wrap(err, "CreateDatabase")
 	}
 	return nil
 }
@@ -960,7 +960,7 @@ func (ch *ClickHouse) CreateDatabaseWithEngine(database, engine, cluster string,
 	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` ENGINE=%s", database, engine)
 	query = ch.addOnClusterToCreateDatabase(cluster, query)
 	if err := ch.Query(query); err != nil {
-		return errors.WithMessage(err, "CreateDatabaseWithEngine")
+		return errors.Wrap(err, "CreateDatabaseWithEngine")
 	}
 	return nil
 }
@@ -971,7 +971,7 @@ func (ch *ClickHouse) CreateDatabaseFromQuery(ctx context.Context, query, cluste
 	}
 	query = ch.addOnClusterToCreateDatabase(cluster, query)
 	if err := ch.QueryContext(ctx, query, args); err != nil {
-		return errors.WithMessage(err, "CreateDatabaseFromQuery")
+		return errors.Wrap(err, "CreateDatabaseFromQuery")
 	}
 	return nil
 }
@@ -993,7 +993,7 @@ func (ch *ClickHouse) DropOrDetachTable(table Table, query, onCluster string, ig
 	var err error
 	if databaseEngine == "" {
 		if databaseEngine, err = ch.GetDatabaseEngine(table.Database); err != nil {
-			return errors.WithMessage(err, "DropOrDetachTable: get database engine")
+			return errors.Wrap(err, "DropOrDetachTable: get database engine")
 		}
 	}
 	isAtomicOrReplicated = strings.HasPrefix(databaseEngine, "Atomic") || strings.HasPrefix(databaseEngine, "Replicated")
@@ -1031,7 +1031,7 @@ func (ch *ClickHouse) DropOrDetachTable(table Table, query, onCluster string, ig
 		_ = f.Close()
 	}
 	if err = ch.Query(dropQuery); err != nil {
-		return errors.WithMessage(err, "DropOrDetachTable: execute drop query")
+		return errors.Wrap(err, "DropOrDetachTable: execute drop query")
 	}
 	return nil
 }
@@ -1058,7 +1058,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	}
 	if dropTable {
 		if err = ch.DropOrDetachTable(table, query, onCluster, ignoreDependencies, version, defaultDataPath, asAttach, databaseEngine); err != nil {
-			return errors.WithMessage(err, "CreateTable: drop or detach table")
+			return errors.Wrap(err, "CreateTable: drop or detach table")
 		}
 	}
 	// https://github.com/Altinity/clickhouse-backup/issues/868
@@ -1079,13 +1079,13 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	// https://github.com/Altinity/clickhouse-backup/issues/331
 	isOnlyTableWithQuotesPresent, err := regexp.Match(fmt.Sprintf("^CREATE [^(\\.]+ `%s`", table.Name), []byte(query))
 	if err != nil {
-		return errors.WithMessage(err, "CreateTable: match quoted table name")
+		return errors.Wrap(err, "CreateTable: match quoted table name")
 	}
 	isOnlyTableWithQuotesPresent = isOnlyTableWithQuotesPresent && !strings.Contains(query, fmt.Sprintf("`%s`.`%s`", table.Database, table.Name))
 
 	isOnlyTablePresent, err := regexp.Match(fmt.Sprintf("^CREATE [^(\\.]+ %s", table.Name), []byte(query))
 	if err != nil {
-		return errors.WithMessage(err, "CreateTable: match table name")
+		return errors.Wrap(err, "CreateTable: match table name")
 	}
 	isOnlyTablePresent = isOnlyTablePresent && !strings.Contains(query, fmt.Sprintf("%s.%s", table.Database, table.Name))
 	if isOnlyTableWithQuotesPresent && table.Database != "" {
@@ -1132,7 +1132,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	// Use per-query settings via clickhouse.Context to avoid connection pool race
 	ctx := ch.AnalyzerOffContextIfNecessary(version, query)
 	if err := ch.QueryContext(ctx, query); err != nil {
-		return errors.WithMessage(err, "CreateTable: execute create query")
+		return errors.Wrap(err, "CreateTable: execute create query")
 	}
 	return nil
 }
@@ -1144,7 +1144,7 @@ func (ch *ClickHouse) cleanUUIDForReplicatedDatabase(table Table, query string, 
 	if strings.HasPrefix(databaseEngine, "Replicated") && uuidRE.MatchString(query) {
 		uuidAllowExplicit := ""
 		if settingsErr := ch.SelectSingleRowNoCtx(&uuidAllowExplicit, "SELECT value FROM system.settings WHERE name='database_replicated_allow_explicit_uuid'"); settingsErr != nil {
-			return "", errors.WithMessage(settingsErr, "cleanUUIDForReplicatedDatabase: query uuid settings")
+			return "", errors.Wrap(settingsErr, "cleanUUIDForReplicatedDatabase: query uuid settings")
 		}
 		if uuidAllowExplicit == "0" || uuidAllowExplicit == "" {
 			uuidReplaced := false
@@ -1256,7 +1256,7 @@ func (ch *ClickHouse) LogQuery(query string, args ...interface{}) string {
 func (ch *ClickHouse) IsDbAtomicOrReplicated(database string) (bool, error) {
 	dbEngine, err := ch.GetDatabaseEngine(database)
 	if err != nil {
-		return false, errors.WithMessage(err, "IsDbAtomicOrReplicated")
+		return false, errors.Wrap(err, "IsDbAtomicOrReplicated")
 	}
 	return dbEngine == "Atomic" || dbEngine == "Replicated", nil
 }
@@ -1264,7 +1264,7 @@ func (ch *ClickHouse) IsDbAtomicOrReplicated(database string) (bool, error) {
 func (ch *ClickHouse) GetDatabaseEngine(database string) (string, error) {
 	var dbEngine string
 	if err := ch.SelectSingleRowNoCtx(&dbEngine, fmt.Sprintf("SELECT engine FROM system.databases WHERE name = '%s'", database)); err != nil {
-		return "", errors.WithMessage(err, "GetDatabaseEngine")
+		return "", errors.Wrap(err, "GetDatabaseEngine")
 	}
 	return dbEngine, nil
 }
@@ -1290,7 +1290,7 @@ func (ch *ClickHouse) GetAccessManagementPath(ctx context.Context, disks []Disk)
 		if disks == nil {
 			disks, err = ch.GetDisks(ctx, false)
 			if err != nil {
-				return "", errors.WithMessage(err, "GetAccessManagementPath: get disks")
+				return "", errors.Wrap(err, "GetAccessManagementPath: get disks")
 			}
 		}
 		for _, disk := range disks {
@@ -1311,14 +1311,14 @@ func (ch *ClickHouse) GetUserDefinedFunctions(ctx context.Context) ([]Function, 
 	var detectUDF uint64
 	detectUDFSQL := "SELECT count() as cnt FROM system.columns WHERE database='system' AND table='functions' AND name='create_query' SETTINGS empty_result_for_aggregation_by_empty_set=0"
 	if err := ch.SelectSingleRow(ctx, &detectUDF, detectUDFSQL); err != nil {
-		return nil, errors.WithMessage(err, "GetUserDefinedFunctions: detect UDF support")
+		return nil, errors.Wrap(err, "GetUserDefinedFunctions: detect UDF support")
 	}
 	if detectUDF == 0 {
 		return allFunctions, nil
 	}
 
 	if err := ch.SelectContext(ctx, &allFunctions, allFunctionsSQL); err != nil {
-		return nil, errors.WithMessage(err, "GetUserDefinedFunctions: select functions")
+		return nil, errors.Wrap(err, "GetUserDefinedFunctions: select functions")
 	}
 	for i := range allFunctions {
 		allFunctions[i].CreateQuery = strings.Replace(allFunctions[i].CreateQuery, "CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
@@ -1333,10 +1333,10 @@ func (ch *ClickHouse) CreateUserDefinedFunction(name string, query string, clust
 		query = strings.Replace(query, " AS ", fmt.Sprintf(" ON CLUSTER '%s' AS ", cluster), 1)
 	}
 	if err := ch.Query(dropQuery); err != nil {
-		return errors.WithMessage(err, "CreateUserDefinedFunction: drop existing")
+		return errors.Wrap(err, "CreateUserDefinedFunction: drop existing")
 	}
 	if err := ch.Query(query); err != nil {
-		return errors.WithMessage(err, "CreateUserDefinedFunction: create function")
+		return errors.Wrap(err, "CreateUserDefinedFunction: create function")
 	}
 	return nil
 }
@@ -1370,7 +1370,7 @@ func (ch *ClickHouse) ApplyMacros(ctx context.Context, s string) (string, error)
 	var macrosExists uint64
 	err := ch.SelectSingleRow(ctx, &macrosExists, "SELECT count() AS is_macros_exists FROM system.tables WHERE database='system' AND name='macros'  SETTINGS empty_result_for_aggregation_by_empty_set=0")
 	if err != nil {
-		return s, errors.WithMessage(err, "ApplyMacros: check macros table")
+		return s, errors.Wrap(err, "ApplyMacros: check macros table")
 	}
 	if macrosExists == 0 {
 		return s, nil
@@ -1379,7 +1379,7 @@ func (ch *ClickHouse) ApplyMacros(ctx context.Context, s string) (string, error)
 	macros := make([]Macro, 0)
 	err = ch.SelectContext(ctx, &macros, "SELECT macro, substitution FROM system.macros")
 	if err != nil {
-		return s, errors.WithMessage(err, "ApplyMacros: select macros")
+		return s, errors.Wrap(err, "ApplyMacros: select macros")
 	}
 	if len(macros) == 0 {
 		return s, nil
@@ -1400,7 +1400,7 @@ func (ch *ClickHouse) ApplyMacrosToObjectLabels(ctx context.Context, objectLabel
 	for k, v := range objectLabels {
 		v, err = ch.ApplyMacros(ctx, v)
 		if err != nil {
-			return nil, errors.WithMessage(err, "ApplyMacrosToObjectLabels")
+			return nil, errors.Wrap(err, "ApplyMacrosToObjectLabels")
 		}
 		r := strings.NewReplacer("{backup}", backupName, "{backupName}", backupName, "{backup_name}", backupName, "{BACKUP_NAME}", backupName)
 		objectLabels[k] = r.Replace(v)
@@ -1411,7 +1411,7 @@ func (ch *ClickHouse) ApplyMacrosToObjectLabels(ctx context.Context, objectLabel
 func (ch *ClickHouse) ApplyMutation(ctx context.Context, tableMetadata metadata.TableMetadata, mutation metadata.MutationMetadata) error {
 	applyMutationSQL := fmt.Sprintf("ALTER TABLE `%s`.`%s` %s", tableMetadata.Database, tableMetadata.Table, mutation.Command)
 	if err := ch.QueryContext(ctx, applyMutationSQL); err != nil {
-		return errors.WithMessage(err, "ApplyMutation")
+		return errors.Wrap(err, "ApplyMutation")
 	}
 	return nil
 }
@@ -1426,7 +1426,7 @@ func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (
 			QueueSize     uint32 `ch:"queue_size"`
 		}, 0)
 		if err := ch.Select(&existsReplicas, "SELECT log_pointer, log_max_index, absolute_delay, queue_size FROM system.replicas WHERE database=? and table=?", table.Database, table.Table); err != nil {
-			return false, errors.WithMessage(err, "CheckReplicationInProgress: select replicas")
+			return false, errors.Wrap(err, "CheckReplicationInProgress: select replicas")
 		}
 		if len(existsReplicas) == 0 {
 			return true, nil
@@ -1502,7 +1502,7 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 			"SETTINGS max_bytes_before_external_group_by=100000000, max_memory_usage=200000000"
 
 		if err := ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL); err != nil {
-			return errors.WithMessage(err, "CheckSystemPartsColumnsForTables: select parts columns")
+			return errors.Wrap(err, "CheckSystemPartsColumnsForTables: select parts columns")
 		}
 
 		for _, colData := range partColumnsDataTypes {
@@ -1522,7 +1522,7 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 		key := fmt.Sprintf("%s.%s", table.Database, table.Name)
 		if colTypes, exists := tableDataTypes[key]; exists {
 			if err := ch.CheckTypesConsistency(&table, colTypes); err != nil {
-				return errors.WithMessage(err, "CheckSystemPartsColumnsForTables: check types consistency")
+				return errors.Wrap(err, "CheckSystemPartsColumnsForTables: check types consistency")
 			}
 		}
 	}
@@ -1576,7 +1576,7 @@ func (ch *ClickHouse) GetSettingsValues(ctx context.Context, settings []interfac
 	queryStr = queryStr[:len(queryStr)-2]
 	queryStr += ")"
 	if err := ch.SelectContext(ctx, &settingsValues, queryStr, settings...); err != nil {
-		return nil, errors.WithMessage(err, "GetSettingsValues")
+		return nil, errors.Wrap(err, "GetSettingsValues")
 	}
 	settingsValuesMap := map[string]string{}
 	for _, v := range settingsValues {
@@ -1599,7 +1599,7 @@ func (ch *ClickHouse) CheckSettingsExists(ctx context.Context, settings map[stri
 	queryStr = queryStr[:len(queryStr)-2]
 	queryStr += ") GROUP BY name"
 	if err := ch.SelectContext(ctx, &isSettingsPresent, queryStr, args...); err != nil {
-		return nil, errors.WithMessage(err, "CheckSettingsExists")
+		return nil, errors.Wrap(err, "CheckSettingsExists")
 	}
 	for _, item := range isSettingsPresent {
 		settings[item.Name] = item.IsPresent > 0
@@ -1610,7 +1610,7 @@ func (ch *ClickHouse) CheckSettingsExists(ctx context.Context, settings map[stri
 func (ch *ClickHouse) GetPreprocessedConfigPath(ctx context.Context) (string, error) {
 	metadataPath, err := ch.getMetadataPath(ctx)
 	if err != nil {
-		return "/var/lib/clickhouse/preprocessed_configs", errors.WithMessage(err, "GetPreprocessedConfigPath: get metadata path")
+		return "/var/lib/clickhouse/preprocessed_configs", errors.Wrap(err, "GetPreprocessedConfigPath: get metadata path")
 	}
 	paths := strings.Split(metadataPath, "/")
 	return path.Join("/", path.Join(paths[:len(paths)-1]...), "preprocessed_configs"), nil
@@ -1643,7 +1643,7 @@ func (ch *ClickHouse) ParseXML(ctx context.Context, configName string) (string, 
 		xmlContent, readErr := os.ReadFile(configFile)
 		if readErr != nil {
 			log.Error().Err(readErr).Str("xmlContent", string(xmlContent)).Send()
-			return configFile, nil, errors.WithMessage(readErr, "ParseXML: read config file")
+			return configFile, nil, errors.Wrap(readErr, "ParseXML: read config file")
 		}
 		retryErr = errors.Wrapf(retryErr, "xmlquery.Parse(%s) error", configFile)
 		return configFile, nil, retryErr
@@ -1657,7 +1657,7 @@ var preprocessedXMLSettings = make(map[string]map[string]string)
 func (ch *ClickHouse) GetPreprocessedXMLSettings(ctx context.Context, settingsXPath map[string]string, fileName string) (map[string]string, error) {
 	preprocessedPath, err := ch.GetPreprocessedConfigPath(ctx)
 	if err != nil {
-		return nil, errors.WithMessage(err, "GetPreprocessedXMLSettings: get preprocessed config path")
+		return nil, errors.Wrap(err, "GetPreprocessedXMLSettings: get preprocessed config path")
 	}
 	resultSettings := make(map[string]string, len(settingsXPath))
 	if _, exists := preprocessedXMLSettings[fileName]; !exists {

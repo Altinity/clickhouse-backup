@@ -37,7 +37,7 @@ func DeleteRemote(ctx context.Context, cfg *config.Config, backupName string) er
 			"backup":    backupName,
 			"operation": "delete_custom",
 		}).Msg(err.Error())
-		return errors.WithMessage(err, "DeleteRemote custom")
+		return errors.Wrap(err, "DeleteRemote custom")
 	}
 
 }

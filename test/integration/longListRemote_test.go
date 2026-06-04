@@ -14,6 +14,7 @@ import (
 
 func TestLongListRemote(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	totalCacheCount := 20
 	testBackupName := "test_list_remote"
@@ -83,5 +84,4 @@ func TestLongListRemote(t *testing.T) {
 		testListRemoteAllBackups[i] = fmt.Sprintf("%s_%d", testBackupName, i)
 	}
 	fullCleanup(t, r, env, testListRemoteAllBackups, []string{"remote", "local"}, nil, false, true, true, "config-s3.yml")
-	env.Cleanup(t, r)
 }

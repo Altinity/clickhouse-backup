@@ -50,6 +50,6 @@ func Download(ctx context.Context, retrierClassifier retrier.Classifier, cfg *co
 		log.Error().
 			Str("operation", "download_custom").
 			Err(err).Send()
-		return errors.WithMessage(err, "Download custom")
+		return errors.Wrap(err, "Download custom")
 	}
 }

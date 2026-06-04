@@ -6,6 +6,7 @@ import "testing"
 
 func TestCustomKopia(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
 	env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL --retry 5 --retry-delay 5 --retry-connrefused \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq")
@@ -16,5 +17,4 @@ func TestCustomKopia(t *testing.T) {
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "kopia", "xxd", "bsdmainutils", "parallel")
 
 	env.runIntegrationCustom(t, r, "kopia")
-	env.Cleanup(t, r)
 }

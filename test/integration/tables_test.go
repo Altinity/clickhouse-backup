@@ -15,6 +15,7 @@ import (
 // and `--format` — verifying per-table size/parts breakdown for both local and remote backups.
 func TestTablesCommand(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 
 	testBackupName := "test_backup_tables_cmd"
@@ -142,5 +143,4 @@ func TestTablesCommand(t *testing.T) {
 
 	fullCleanup(t, r, env, []string{testBackupName}, []string{"remote", "local"}, databaseList, true, true, true, "config-s3.yml")
 	env.checkObjectStorageIsEmpty(t, r, "S3", "config-s3.yml")
-	env.Cleanup(t, r)
 }

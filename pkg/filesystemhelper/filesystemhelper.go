@@ -38,11 +38,11 @@ func Chown(fPath string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk, rec
 	chownLock.Lock()
 	if uid == nil {
 		if dataPath, err = ch.GetDefaultPath(disks); err != nil {
-			return errors.WithMessage(err, "Chown GetDefaultPath")
+			return errors.Wrap(err, "Chown GetDefaultPath")
 		}
 		info, err := os.Stat(dataPath)
 		if err != nil {
-			return errors.WithMessage(err, "Chown os.Stat")
+			return errors.Wrap(err, "Chown os.Stat")
 		}
 		stat := info.Sys().(*syscall.Stat_t)
 		intUid := int(stat.Uid)
@@ -64,10 +64,10 @@ func Chown(fPath string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk, rec
 
 func Mkdir(name string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) error {
 	if err := os.MkdirAll(name, 0750); err != nil && !os.IsExist(err) {
-		return errors.WithMessage(err, "Mkdir MkdirAll")
+		return errors.Wrap(err, "Mkdir MkdirAll")
 	}
 	if err := Chown(name, ch, disks, false); err != nil {
-		return errors.WithMessage(err, "Mkdir Chown")
+		return errors.Wrap(err, "Mkdir Chown")
 	}
 	return nil
 }
@@ -97,7 +97,7 @@ func MkdirAll(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) e
 		// Create parent.
 		err = MkdirAll(path[:j-1], ch, disks)
 		if err != nil {
-			return errors.WithMessage(err, "MkdirAll create parent")
+			return errors.Wrap(err, "MkdirAll create parent")
 		}
 	}
 
@@ -127,7 +127,7 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 				// avoid to restore to non-empty to avoid attach in already dropped partitions, corner case
 				existsFiles, err := os.ReadDir(dstParentDir)
 				if err != nil && !os.IsNotExist(err) {
-					return errors.WithMessage(err, "HardlinkBackupPartsToStorage ReadDir")
+					return errors.Wrap(err, "HardlinkBackupPartsToStorage ReadDir")
 				}
 				for _, f := range existsFiles {
 					if f.Name() != "detached" && !strings.HasSuffix(f.Name(), ".txt") {
@@ -487,7 +487,7 @@ func addRequiredPartIfNotExists(parts []metadata.Part, relativePath string, tabl
 func IsDuplicatedParts(part1, part2 string) error {
 	p1, err := os.Open(part1)
 	if err != nil {
-		return errors.WithMessage(err, "IsDuplicatedParts open part1")
+		return errors.Wrap(err, "IsDuplicatedParts open part1")
 	}
 	defer func() {
 		if err = p1.Close(); err != nil {
@@ -496,7 +496,7 @@ func IsDuplicatedParts(part1, part2 string) error {
 	}()
 	p2, err := os.Open(part2)
 	if err != nil {
-		return errors.WithMessage(err, "IsDuplicatedParts open part2")
+		return errors.Wrap(err, "IsDuplicatedParts open part2")
 	}
 	defer func() {
 		if err = p2.Close(); err != nil {
@@ -505,11 +505,11 @@ func IsDuplicatedParts(part1, part2 string) error {
 	}()
 	pf1, err := p1.Readdirnames(-1)
 	if err != nil {
-		return errors.WithMessage(err, "IsDuplicatedParts Readdirnames part1")
+		return errors.Wrap(err, "IsDuplicatedParts Readdirnames part1")
 	}
 	pf2, err := p2.Readdirnames(-1)
 	if err != nil {
-		return errors.WithMessage(err, "IsDuplicatedParts Readdirnames part2")
+		return errors.Wrap(err, "IsDuplicatedParts Readdirnames part2")
 	}
 	if len(pf1) != len(pf2) {
 		return errors.New("files count in parts is different")
@@ -517,11 +517,11 @@ func IsDuplicatedParts(part1, part2 string) error {
 	for _, f := range pf1 {
 		part1File, err := os.Stat(path.Join(part1, f))
 		if err != nil {
-			return errors.WithMessage(err, "IsDuplicatedParts stat part1 file")
+			return errors.Wrap(err, "IsDuplicatedParts stat part1 file")
 		}
 		part2File, err := os.Stat(path.Join(part2, f))
 		if err != nil {
-			return errors.WithMessage(err, "IsDuplicatedParts stat part2 file")
+			return errors.Wrap(err, "IsDuplicatedParts stat part2 file")
 		}
 		if !os.SameFile(part1File, part2File) {
 			return errors.Errorf("file '%s' is different", f)

@@ -111,7 +111,7 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 			}
 			var t metadata.TableMetadata
 			if err := json.Unmarshal(data, &t); err != nil {
-				return errors.WithMessage(err, "getTableListByPatternLocal json.Unmarshal")
+				return errors.Wrap(err, "getTableListByPatternLocal json.Unmarshal")
 			}
 			partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&t}, partitions)
 			filterPartsAndFilesByPartitionsFilter(t, partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}])
@@ -283,11 +283,11 @@ func (b *Backuper) enrichTablePatternsByInnerDependencies(metadataPath string, t
 			}
 			data, err := os.ReadFile(filePath)
 			if err != nil {
-				return errors.WithMessage(err, "enrichTablePatternsByInnerDependencies ReadFile")
+				return errors.Wrap(err, "enrichTablePatternsByInnerDependencies ReadFile")
 			}
 			var t metadata.TableMetadata
 			if err := json.Unmarshal(data, &t); err != nil {
-				return errors.WithMessage(err, "enrichTablePatternsByInnerDependencies json.Unmarshal")
+				return errors.Wrap(err, "enrichTablePatternsByInnerDependencies json.Unmarshal")
 			}
 			if strings.HasPrefix(t.Query, "ATTACH MATERIALIZED") || strings.HasPrefix(t.Query, "CREATE MATERIALIZED") {
 				if strings.Contains(t.Query, " TO ") && !strings.Contains(t.Query, " TO INNER UUID") {
@@ -304,7 +304,7 @@ func (b *Backuper) enrichTablePatternsByInnerDependencies(metadataPath string, t
 				}
 				// https://github.com/Altinity/clickhouse-backup/issues/765, .inner. table could be dropped manually, .inner. table is required for ATTACH
 				if _, err := os.Stat(path.Join(metadataPath, innerTableFile+".json")); err != nil {
-					return errors.WithMessage(err, "enrichTablePatternsByInnerDependencies stat inner table")
+					return errors.Wrap(err, "enrichTablePatternsByInnerDependencies stat inner table")
 				}
 				innerPatternExists := false
 				for _, existsP := range tablePatterns {

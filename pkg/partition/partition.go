@@ -210,7 +210,7 @@ func tryDirectPartitionId(ctx context.Context, ch *clickhouse.ClickHouse, partit
 	}
 
 	if err := ch.SelectContext(ctx, &result, sql, args...); err != nil {
-		return "", "", errors.WithMessage(err, "tryDirectPartitionId SelectContext")
+		return "", "", errors.Wrap(err, "tryDirectPartitionId SelectContext")
 	}
 
 	if len(result) != 1 {
@@ -361,7 +361,7 @@ func getPartitionIdWithTempTable(ctx context.Context, ch *clickhouse.ClickHouse,
 	partitionIdTable := "__partition_id_" + table
 	createQuery = dbAndTableNameRE.ReplaceAllString(createQuery, fmt.Sprintf("`%s`.`%s`", database, partitionIdTable))
 	if err := ch.Query(createQuery); err != nil {
-		return "", "", errors.WithMessage(err, "getPartitionIdWithTempTable ch.Query createQuery")
+		return "", "", errors.Wrap(err, "getPartitionIdWithTempTable ch.Query createQuery")
 	}
 	columns := make([]struct {
 		Name string `ch:"name"`
@@ -423,7 +423,7 @@ func getPartitionIdWithTempTable(ctx context.Context, ch *clickhouse.ClickHouse,
 		}
 	}
 	if err != nil {
-		return "", "", errors.WithMessage(err, "getPartitionIdWithTempTable insert partition")
+		return "", "", errors.Wrap(err, "getPartitionIdWithTempTable insert partition")
 	}
 	partitions := make([]struct {
 		Id   string `ch:"partition_id"`
@@ -445,10 +445,10 @@ func dropPartitionIdTable(ch *clickhouse.ClickHouse, database string, partitionI
 	if isAtomicOrReplicated, err := ch.IsDbAtomicOrReplicated(database); isAtomicOrReplicated {
 		sql += " SYNC"
 	} else if err != nil {
-		return errors.WithMessage(err, "dropPartitionIdTable IsDbAtomicOrReplicated")
+		return errors.Wrap(err, "dropPartitionIdTable IsDbAtomicOrReplicated")
 	}
 	if err := ch.Query(sql); err != nil {
-		return errors.WithMessage(err, "dropPartitionIdTable ch.Query")
+		return errors.Wrap(err, "dropPartitionIdTable ch.Query")
 	}
 	return nil
 }

@@ -25,6 +25,7 @@ const apiBackupNumber = 5
 
 func TestServerAPI(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	r.NoError(env.DockerCP("configs/config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 	fieldTypes := []string{"UInt64", "String", "Int"}
@@ -78,7 +79,6 @@ func TestServerAPI(t *testing.T) {
 
 	env.DockerExecNoError(r, "clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
 	r.NoError(env.dropDatabase("long_schema", false))
-	env.Cleanup(t, r)
 }
 
 func testAPIRestart(r *require.Assertions, env *TestEnvironment) {

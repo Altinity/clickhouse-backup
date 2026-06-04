@@ -23,6 +23,7 @@ import (
 
 	stdlog "log"
 
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/rs/zerolog/pkgerrors"
@@ -537,8 +538,10 @@ func (env *TestEnvironment) DockerExecNoError(r *require.Assertions, container s
 	out, err := env.DockerExecOut(container, cmd...)
 	if err == nil {
 		log.Debug().Msg(out)
+	} else {
+		err = errors.WithStack(err)
 	}
-	r.NoError(err, "%s\n\n%s\n[ERROR]\n%v", strings.Join(append(env.GetExecDockerCommand(container), cmd...), " "), out, err)
+	r.NoError(err, "%s\n\n%s\n[ERROR]\n%+v", strings.Join(append(env.GetExecDockerCommand(container), cmd...), " "), out, err)
 }
 
 func (env *TestEnvironment) DockerExec(container string, cmd ...string) error {
