@@ -1382,6 +1382,10 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	fullBackupName := fmt.Sprintf("full_backup_%d", rand.Int())
 	incrementBackupName := fmt.Sprintf("increment_backup_%d", rand.Int())
 	dbName := "test_partitions_" + t.Name()
+	// drop the test database even if an assertion below fails
+	defer func() {
+		_ = env.dropDatabase(dbName, true)
+	}()
 	fillTables := func(partitions []string) {
 		for _, dt := range partitions {
 			env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t1(dt, v) SELECT '%s', number FROM numbers(10)", dt))
@@ -1577,9 +1581,6 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", incrementBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName)
 
-	if err = env.dropDatabase(dbName, true); err != nil {
-		t.Fatal(err)
-	}
 	log.Debug().Msg("testBackupSpecifiedPartitions finish")
 }
 

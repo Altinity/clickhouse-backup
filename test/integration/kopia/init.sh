@@ -15,8 +15,11 @@ kopia policy set --global  --keep-latest=${KOPIA_KEEP_LAST}
 
 # kopia_diag dumps repository state when a kopia script fails, to diagnose the
 # flaky "content not found" inconsistency (which snapshot is broken, whether
-# maintenance/GC actually ran, full content/snapshot verification). All output
-# goes to stderr so it never corrupts the JSON that list.sh prints to stdout.
+# maintenance/GC actually ran, full content/snapshot verification). Output is
+# appended to /tmp/kopia_diag.log (persisted across the 4 download retries so it
+# survives even when the captured stderr stream is truncated) and mirrored to
+# stderr (never to stdout, so it can't corrupt the JSON that list.sh prints).
+# TestCustomKopia dumps /tmp/kopia_diag.log on failure.
 # Wire it up in callers with: trap kopia_diag ERR
 kopia_diag() {
   local rc=$?
@@ -41,6 +44,6 @@ kopia_diag() {
 
     kopia snapshot verify --verify-files-percent=0
     echo "===== END KOPIA DIAGNOSTICS ====="
-  } >&2
+  } 2>&1 | tee -a /tmp/kopia_diag.log >&2
   return "${rc}"
 }

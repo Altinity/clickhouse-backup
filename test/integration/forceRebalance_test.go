@@ -86,6 +86,17 @@ XML
 	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
 	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 
+	// Remove the storage-policy override and restart ClickHouse even if an
+	// assertion below fails. Otherwise the modified "default" policy (hdd1+hdd2,
+	// no real "default" disk) stays active in the pooled env and breaks the next
+	// test that inherits it (observed: TestBwLimitSFTP failing fast with UNKNOWN_DISK).
+	defer func() {
+		env.DockerExecNoError(r, "clickhouse", "rm", "-f", "/etc/clickhouse-server/config.d/force_rebalance_test.xml")
+		env.ch.Close()
+		r.NoError(env.tc.RestartContainer(t, "clickhouse"))
+		env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
+	}()
+
 	// Step 5: Download with force_rebalance — parts should be distributed across hdd1 and hdd2
 	downloadOut, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
 		"CLICKHOUSE_FORCE_REBALANCE=true clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml download "+backupName)
@@ -114,10 +125,8 @@ XML
 		"CLICKHOUSE_FORCE_REBALANCE=true clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --data "+backupName)
 	env.checkCount(r, 1, 4000, fmt.Sprintf("SELECT count() FROM %s.%s", dbName, tableName))
 
-	// Step 8: Cleanup — remove the test storage policy override and restart
-	env.DockerExecNoError(r, "clickhouse", "rm", "-f", "/etc/clickhouse-server/config.d/force_rebalance_test.xml")
+	// Step 8: Cleanup — backups and test databases. The storage-policy override
+	// removal + ClickHouse restart is handled by the deferred cleanup registered
+	// in Step 4, so it runs even if an assertion above fails.
 	fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{"test_force_rebalance"}, true, true, true, "config-s3.yml")
-	env.ch.Close()
-	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
-	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 }
