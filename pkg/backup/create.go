@@ -1112,8 +1112,9 @@ func (b *Backuper) fetchHashOfAllFiles(ctx context.Context, database, table, dis
 		Name string `ch:"name"`
 		Hash string `ch:"hash_of_all_files"`
 	}
-	q := "SELECT name, lower(hash_of_all_files) AS hash_of_all_files FROM system.parts WHERE database=? AND `table`=? AND has(?, name)"
-	if err := b.ch.SelectContext(ctx, &rows, q, database, table, partNames); err != nil {
+	// https://github.com/Altinity/clickhouse-backup/issues/1408
+	q := "SELECT name, lower(hash_of_all_files) AS hash_of_all_files FROM system.parts WHERE database=? AND `table`=?"
+	if err := b.ch.SelectContext(ctx, &rows, q, database, table); err != nil {
 		return nil, errors.Wrap(err, "SELECT hash_of_all_files FROM system.parts")
 	}
 	hashByName := make(map[string]string, len(rows))
