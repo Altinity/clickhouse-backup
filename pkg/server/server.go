@@ -2143,9 +2143,13 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 	b := backup.NewBackuper(cfg)
 	switch vars["where"] {
 	case "local":
-		err = b.RemoveBackupLocal(ctx, vars["name"], nil)
+		err, _ = api.metrics.ExecuteWithMetrics("delete", 0, func() error {
+			return b.RemoveBackupLocal(ctx, vars["name"], nil)
+		})
 	case "remote":
-		err = b.RemoveBackupRemote(ctx, vars["name"])
+		err, _ = api.metrics.ExecuteWithMetrics("delete", 0, func() error {
+			return b.RemoveBackupRemote(ctx, vars["name"])
+		})
 	default:
 		err = errors.New("backup location must be 'local' or 'remote'")
 	}
