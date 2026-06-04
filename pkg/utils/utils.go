@@ -66,8 +66,13 @@ func HumanizeDuration(d time.Duration) string {
 
 func ExecCmd(ctx context.Context, timeout time.Duration, cmd string, args ...string) error {
 	out, err := ExecCmdOut(ctx, timeout, cmd, args...)
+	if err != nil {
+		// surface the command output in the error so custom command failures
+		// (kopia/restic/rsync) are diagnosable without LOG_LEVEL=debug
+		return errors.Wrapf(err, "output: %s", out)
+	}
 	log.Debug().Msg(out)
-	return err
+	return nil
 }
 
 func ExecCmdOut(ctx context.Context, timeout time.Duration, cmd string, args ...string) (string, error) {

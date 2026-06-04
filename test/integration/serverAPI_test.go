@@ -34,6 +34,11 @@ func TestServerAPI(t *testing.T) {
 	minFields := 10
 	randFields := 10
 	fillDatabaseForAPIServer(maxTables, minFields, randFields, env, r, fieldTypes)
+	// drop long_schema even if the test fails midway, otherwise the leaked tables
+	// poison the pooled env for the next test (e.g. TestForceRebalance startup load)
+	defer func() {
+		_ = env.dropDatabase("long_schema", true)
+	}()
 
 	log.Debug().Msg("Run `clickhouse-backup server --watch` in background")
 	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup server --watch &>>/tmp/clickhouse-backup-server.log")
@@ -78,7 +83,6 @@ func TestServerAPI(t *testing.T) {
 	testAPIBackupActionsSkipCommands(r, env)
 
 	env.DockerExecNoError(r, "clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
-	r.NoError(env.dropDatabase("long_schema", false))
 }
 
 func testAPIRestart(r *require.Assertions, env *TestEnvironment) {
