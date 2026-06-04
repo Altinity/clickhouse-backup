@@ -2,9 +2,10 @@ package custom
 
 import (
 	"bytes"
+	"text/template"
+
 	"github.com/google/shlex"
 	"github.com/rs/zerolog/log"
-	"text/template"
 )
 
 func ApplyCommandTemplate(command string, templateData interface{}) []string {

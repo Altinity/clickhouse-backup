@@ -52,10 +52,10 @@ func Upload(ctx context.Context, retrierClassifier retrier.Classifier, cfg *conf
 			Str("duration", utils.HumanizeDuration(time.Since(startCustomUpload))).
 			Msg("done")
 		return nil
-	} else {
-		log.Error().
-			Str("operation", "upload_custom").
-			Err(err).Send()
-		return errors.Wrap(err, "Upload custom")
 	}
+
+	log.Error().
+		Str("operation", "upload_custom").
+		Err(err).Send()
+	return errors.Wrap(err, "Upload custom")
 }

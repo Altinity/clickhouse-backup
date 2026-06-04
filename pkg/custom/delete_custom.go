@@ -32,12 +32,12 @@ func DeleteRemote(ctx context.Context, cfg *config.Config, backupName string) er
 			"duration":  utils.HumanizeDuration(time.Since(startCustomDelete)),
 		}).Msg("done")
 		return nil
-	} else {
-		log.Error().Fields(map[string]interface{}{
-			"backup":    backupName,
-			"operation": "delete_custom",
-		}).Msg(err.Error())
-		return errors.Wrap(err, "DeleteRemote custom")
 	}
+
+	log.Error().Fields(map[string]interface{}{
+		"backup":    backupName,
+		"operation": "delete_custom",
+	}).Msg(err.Error())
+	return errors.Wrap(err, "DeleteRemote custom")
 
 }
