@@ -114,8 +114,6 @@ func runResumeOperationsAfterRestart(t *testing.T, tc resumeAfterRestartCase) {
 	removeResumeState(t, r, env, baseBackup, "create", "upload")
 	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-f", resumeAfterRestartServerLog)
 	startResumeAfterRestartServer(t, r, env, tc.configFile)
-	// stop the background `clickhouse-backup server` so it does not leak into the pooled env and collide on :7171 with the next test
-	defer env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "pkill -9 -f '[c]lickhouse-backup server' || true")
 
 	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO %s.%s SELECT number + %d, repeat('y', 1024) FROM numbers(%d)", dbName, tableName, rowsPerStep, rowsPerStep))
 

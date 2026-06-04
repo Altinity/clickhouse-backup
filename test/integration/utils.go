@@ -503,6 +503,10 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 
 	env.ch.Close()
 
+	// Kill any `clickhouse-backup server` left running by the test so it does not leak into the
+	// pooled env and collide on :7171 with the next test that acquires this environment.
+	_ = env.DockerExec("clickhouse-backup", "bash", "-ce", "pkill -9 -f '[c]lickhouse-backup server' || true")
+
 	// Clean shared state between test runs so the next test gets a fresh environment
 	_ = env.DockerExec("minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3")
 
