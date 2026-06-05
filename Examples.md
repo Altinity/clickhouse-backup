@@ -200,6 +200,36 @@ Notes for the other backends:
 - **cos**: the SDK uses `cos.DNSScatterTransport` for internal Tencent endpoints, which already spreads connections across IPs; raise `concurrency` rather than touching the HTTP pool.
 - **ftp**: the FTP library has no transfer-buffer knob; throughput is governed by `concurrency` (connection pool size).
 
+## Multi-threaded zstd/gzip compression
+
+By default `compression_use_multi_thread: false`, each compression stream is single-threaded. clickhouse-backup already
+parallelizes compression across tables via `upload_concurrency`/`download_concurrency`, so per-stream multi-threading
+mainly over-subscribes the CPU and reduces total throughput, see https://github.com/Altinity/clickhouse-backup/issues/1378.
+
+```yaml
+general:
+  remote_storage: s3
+  compression_use_multi_thread: true # COMPRESSION_USE_MULTI_THREAD, zstd WithEncoderConcurrency/WithDecoderConcurrency, gzip via pgzip
+  compression_threads: 8             # COMPRESSION_THREADS, per-stream threads (zstd concurrency / pgzip block workers); 0 = auto (GOMAXPROCS)
+  compression_buffer_size: 4194304   # COMPRESSION_BUFFER_SIZE, 4MB; zstd encoder window / pgzip block size (multi-threaded gzip)
+s3:
+  compression_format: zstd           # or gzip; the three settings above only affect zstd and gzip
+  compression_level: 3
+```
+
+Notes:
+- `compression_use_multi_thread` enables parallel zstd encode/decode (`WithEncoderConcurrency`/`WithDecoderConcurrency`)
+  and switches gzip to the parallel `pgzip` implementation.
+- `compression_threads` sets how many threads each stream uses when `compression_use_multi_thread` is enabled (zstd
+  concurrency / pgzip block workers); `0` means auto (`GOMAXPROCS`). It must be left at `0` when multi-thread is off.
+- `compression_buffer_size` meaning depends on the format and on `compression_use_multi_thread`:
+  - **zstd**: encoder window size (`WithWindowSize`), must be a power of two between 1024 and 536870912; larger windows
+    improve the compression ratio at the cost of more memory and CPU.
+  - **gzip, single-threaded**: DEFLATE window size (`gzip.NewWriterWindow`), 32..32768 — the gzip format caps the window
+    at 32KB, so values above that are rejected.
+  - **gzip, multi-threaded**: `pgzip` block size (`SetConcurrency`), must be greater than 16384 (e.g. 1–4MB).
+- The other formats (`lz4`, `bzip2`, `sz`, `xz`, `brotli`) ignore both settings.
+
 ## How to use clickhouse-backup in Kubernetes
 
 Install the [clickhouse kubernetes operator](https://github.com/Altinity/clickhouse-operator/) and use the following

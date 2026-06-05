@@ -2,6 +2,54 @@ package config
 
 import "testing"
 
+func TestValidateConfigCompressionTuning(t *testing.T) {
+	// validCompressionConfig returns a DefaultConfig wired to s3 with the given compression_format,
+	// so ValidateConfig only fails on the compression tuning options under test.
+	validCompressionConfig := func(format string) *Config {
+		cfg := DefaultConfig()
+		cfg.General.RemoteStorage = "s3"
+		cfg.S3.CompressionFormat = format
+		return cfg
+	}
+	cases := []struct {
+		name           string
+		format         string
+		useMultiThread bool
+		threads        int
+		bufferSize     int
+		wantErr        bool
+	}{
+		{"zstd defaults", "zstd", false, 0, 0, false},
+		{"zstd multi-thread 4 threads 4MB window", "zstd", true, 4, 4 << 20, false},
+		{"zstd window not power of two", "zstd", true, 0, 4<<20 - 1, true},
+		{"zstd window too small", "zstd", false, 0, 512, true},
+		{"zstd window too large", "zstd", false, 0, 1 << 30, true},
+		{"gzip multi-thread 1MB block", "gzip", true, 0, 1 << 20, false},
+		{"gzip multi-thread block too small", "gzip", true, 0, 16384, true},
+		{"gzip single-thread 32KB window", "gzip", false, 0, 32768, false},
+		{"gzip single-thread window too large", "gzip", false, 0, 65536, true},
+		{"multi_thread on unsupported format", "brotli", true, 0, 0, true},
+		{"buffer_size on unsupported format", "brotli", false, 0, 1024, true},
+		{"negative threads", "zstd", true, -1, 0, true},
+		{"threads set without multi_thread", "zstd", false, 4, 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validCompressionConfig(tc.format)
+			cfg.General.CompressionUseMultiThread = tc.useMultiThread
+			cfg.General.CompressionThreads = tc.threads
+			cfg.General.CompressionBufferSize = tc.bufferSize
+			err := ValidateConfig(cfg)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error for %s, got nil", tc.name)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error for %s: %v", tc.name, err)
+			}
+		})
+	}
+}
+
 func TestDefaultCompleteResumableAfterRestartCommands(t *testing.T) {
 	cfg := DefaultConfig()
 

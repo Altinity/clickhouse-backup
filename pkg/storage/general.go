@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -25,7 +27,7 @@ import (
 	"github.com/djherbis/buffer"
 	"github.com/djherbis/nio/v3"
 	"github.com/eapache/go-resiliency/retrier"
-	"github.com/mholt/archiver/v4"
+	"github.com/mholt/archives"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
 )
@@ -49,13 +51,16 @@ type Backup struct {
 
 type BackupDestination struct {
 	RemoteStorage
-	compressionFormat      string
-	compressionLevel       int
-	pipeBufferSize         int64
-	downloadCopyBufferSize int64
-	limiterMu              sync.Mutex
-	uploadRateLimiter      *bwlimit.Limiter
-	downloadRateLimiter    *bwlimit.Limiter
+	compressionFormat         string
+	compressionLevel          int
+	compressionUseMultiThread bool
+	compressionThreads        int
+	compressionBufferSize     int
+	pipeBufferSize            int64
+	downloadCopyBufferSize    int64
+	limiterMu                 sync.Mutex
+	uploadRateLimiter         *bwlimit.Limiter
+	downloadRateLimiter       *bwlimit.Limiter
 }
 
 func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Backup, cfg *config.Config, retrierClassifier retrier.Classifier) error {
@@ -491,11 +496,11 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		compressionFormat = strings.Replace(path.Ext(remotePath), ".", "", -1)
 	}
 	downloadedBytes := int64(0)
-	z, getArchiveReaderErr := getArchiveReader(compressionFormat)
+	z, getArchiveReaderErr := getArchiveReader(compressionFormat, bd.compressionUseMultiThread, bd.compressionThreads, bd.compressionBufferSize)
 	if getArchiveReaderErr != nil {
 		return 0, errors.Wrap(getArchiveReaderErr, "DownloadCompressedStream getArchiveReader")
 	}
-	if extractErr := z.Extract(ctx, bufReader, nil, func(ctx context.Context, file archiver.File) error {
+	if extractErr := z.Extract(ctx, bufReader, func(ctx context.Context, file archives.FileInfo) error {
 		src, openErr := file.Open()
 		if openErr != nil {
 			return errors.Errorf("can't open %s", file.NameInArchive)
@@ -567,11 +572,11 @@ func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLoc
 				}
 			}
 		}()
-		z, err := getArchiveWriter(bd.compressionFormat, bd.compressionLevel)
+		z, err := getArchiveWriter(bd.compressionFormat, bd.compressionLevel, bd.compressionUseMultiThread, bd.compressionThreads, bd.compressionBufferSize)
 		if err != nil {
 			return errors.Wrap(err, "UploadCompressedStream getArchiveWriter")
 		}
-		archiveFiles := make([]archiver.File, 0)
+		archiveFiles := make([]archives.FileInfo, 0)
 		for _, f := range files {
 			localPath := path.Join(baseLocalPath, f)
 			info, err := os.Stat(localPath)
@@ -582,10 +587,10 @@ func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLoc
 				continue
 			}
 
-			file := archiver.File{
+			file := archives.FileInfo{
 				FileInfo:      info,
 				NameInArchive: f,
-				Open: func() (io.ReadCloser, error) {
+				Open: func() (fs.File, error) {
 					return os.Open(localPath)
 				},
 			}
@@ -724,6 +729,17 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		pipeBufferSize = defaultPipeBufferSize
 	}
 	downloadCopyBufferSize := cfg.General.DownloadCopyBufferSize
+	compressionUseMultiThread := cfg.General.CompressionUseMultiThread
+	// resolve the per-stream thread count: single-threaded unless multi-thread is enabled,
+	// then use the configured value or fall back to GOMAXPROCS, see https://github.com/Altinity/clickhouse-backup/issues/1378
+	compressionThreads := 1
+	if compressionUseMultiThread {
+		compressionThreads = cfg.General.CompressionThreads
+		if compressionThreads <= 0 {
+			compressionThreads = runtime.GOMAXPROCS(0)
+		}
+	}
+	compressionBufferSize := cfg.General.CompressionBufferSize
 
 	switch cfg.General.RemoteStorage {
 	case "azblob":
@@ -737,11 +753,14 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			Config: &cfg.AzureBlob,
 		}
 		return &BackupDestination{
-			RemoteStorage:          azblobStorage,
-			compressionFormat:      cfg.AzureBlob.CompressionFormat,
-			compressionLevel:       cfg.AzureBlob.CompressionLevel,
-			pipeBufferSize:         pipeBufferSize,
-			downloadCopyBufferSize: downloadCopyBufferSize,
+			RemoteStorage:             azblobStorage,
+			compressionFormat:         cfg.AzureBlob.CompressionFormat,
+			compressionLevel:          cfg.AzureBlob.CompressionLevel,
+			compressionUseMultiThread: compressionUseMultiThread,
+			compressionThreads:        compressionThreads,
+			compressionBufferSize:     compressionBufferSize,
+			pipeBufferSize:            pipeBufferSize,
+			downloadCopyBufferSize:    downloadCopyBufferSize,
 		}, nil
 	case "s3":
 		if cfg.S3.Path, err = ch.ApplyMacros(ctx, cfg.S3.Path); err != nil {
@@ -767,11 +786,14 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			BufferSize:  s3BufferSize,
 		}
 		return &BackupDestination{
-			RemoteStorage:          s3Storage,
-			compressionFormat:      cfg.S3.CompressionFormat,
-			compressionLevel:       cfg.S3.CompressionLevel,
-			pipeBufferSize:         pipeBufferSize,
-			downloadCopyBufferSize: downloadCopyBufferSize,
+			RemoteStorage:             s3Storage,
+			compressionFormat:         cfg.S3.CompressionFormat,
+			compressionLevel:          cfg.S3.CompressionLevel,
+			compressionUseMultiThread: compressionUseMultiThread,
+			compressionThreads:        compressionThreads,
+			compressionBufferSize:     compressionBufferSize,
+			pipeBufferSize:            pipeBufferSize,
+			downloadCopyBufferSize:    downloadCopyBufferSize,
 		}, nil
 	case "gcs":
 		if cfg.GCS.Path, err = ch.ApplyMacros(ctx, cfg.GCS.Path); err != nil {
@@ -789,11 +811,14 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		}
 		googleCloudStorage := &GCS{Config: &cfg.GCS}
 		return &BackupDestination{
-			RemoteStorage:          googleCloudStorage,
-			compressionFormat:      cfg.GCS.CompressionFormat,
-			compressionLevel:       cfg.GCS.CompressionLevel,
-			pipeBufferSize:         pipeBufferSize,
-			downloadCopyBufferSize: downloadCopyBufferSize,
+			RemoteStorage:             googleCloudStorage,
+			compressionFormat:         cfg.GCS.CompressionFormat,
+			compressionLevel:          cfg.GCS.CompressionLevel,
+			compressionUseMultiThread: compressionUseMultiThread,
+			compressionThreads:        compressionThreads,
+			compressionBufferSize:     compressionBufferSize,
+			pipeBufferSize:            pipeBufferSize,
+			downloadCopyBufferSize:    downloadCopyBufferSize,
 		}, nil
 	case "cos":
 		if cfg.COS.Path, err = ch.ApplyMacros(ctx, cfg.COS.Path); err != nil {
@@ -807,11 +832,14 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			BufferSize: 64 * 1024,
 		}
 		return &BackupDestination{
-			RemoteStorage:          tencentStorage,
-			compressionFormat:      cfg.COS.CompressionFormat,
-			compressionLevel:       cfg.COS.CompressionLevel,
-			pipeBufferSize:         pipeBufferSize,
-			downloadCopyBufferSize: downloadCopyBufferSize,
+			RemoteStorage:             tencentStorage,
+			compressionFormat:         cfg.COS.CompressionFormat,
+			compressionLevel:          cfg.COS.CompressionLevel,
+			compressionUseMultiThread: compressionUseMultiThread,
+			compressionThreads:        compressionThreads,
+			compressionBufferSize:     compressionBufferSize,
+			pipeBufferSize:            pipeBufferSize,
+			downloadCopyBufferSize:    downloadCopyBufferSize,
 		}, nil
 	case "ftp":
 		if cfg.FTP.Concurrency < cfg.General.ObjectDiskServerSideCopyConcurrency/4 {
@@ -827,11 +855,14 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			Config: &cfg.FTP,
 		}
 		return &BackupDestination{
-			RemoteStorage:          ftpStorage,
-			compressionFormat:      cfg.FTP.CompressionFormat,
-			compressionLevel:       cfg.FTP.CompressionLevel,
-			pipeBufferSize:         pipeBufferSize,
-			downloadCopyBufferSize: downloadCopyBufferSize,
+			RemoteStorage:             ftpStorage,
+			compressionFormat:         cfg.FTP.CompressionFormat,
+			compressionLevel:          cfg.FTP.CompressionLevel,
+			compressionUseMultiThread: compressionUseMultiThread,
+			compressionThreads:        compressionThreads,
+			compressionBufferSize:     compressionBufferSize,
+			pipeBufferSize:            pipeBufferSize,
+			downloadCopyBufferSize:    downloadCopyBufferSize,
 		}, nil
 	case "sftp":
 		if cfg.SFTP.Path, err = ch.ApplyMacros(ctx, cfg.SFTP.Path); err != nil {
@@ -844,11 +875,14 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			Config: &cfg.SFTP,
 		}
 		return &BackupDestination{
-			RemoteStorage:          sftpStorage,
-			compressionFormat:      cfg.SFTP.CompressionFormat,
-			compressionLevel:       cfg.SFTP.CompressionLevel,
-			pipeBufferSize:         pipeBufferSize,
-			downloadCopyBufferSize: downloadCopyBufferSize,
+			RemoteStorage:             sftpStorage,
+			compressionFormat:         cfg.SFTP.CompressionFormat,
+			compressionLevel:          cfg.SFTP.CompressionLevel,
+			compressionUseMultiThread: compressionUseMultiThread,
+			compressionThreads:        compressionThreads,
+			compressionBufferSize:     compressionBufferSize,
+			pipeBufferSize:            pipeBufferSize,
+			downloadCopyBufferSize:    downloadCopyBufferSize,
 		}, nil
 	default:
 		return nil, errors.Errorf("NewBackupDestination error: storage type '%s' is not supported", cfg.General.RemoteStorage)

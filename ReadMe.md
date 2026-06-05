@@ -124,6 +124,11 @@ general:
   # Buffer tuning for high-bandwidth (10Gbit+) networks, see https://github.com/Altinity/clickhouse-backup/issues/1376 and Examples.md#tuning-for-high-bandwidth-10gbit-networks
   pipe_buffer_size: 131072          # PIPE_BUFFER_SIZE, size in bytes of the in-memory ring buffer between the compression and the upload/download stream handlers, default 128KB; raise (e.g. 8388608 = 8MB) to let compression run ahead of uploads on fast networks
   download_copy_buffer_size: 0      # DOWNLOAD_COPY_BUFFER_SIZE, explicit buffer size in bytes for io.CopyBuffer during download/extract, 0 means use the Go default (32KB); raise (e.g. 1048576 = 1MB) to reduce syscalls per file on fast networks
+
+  # zstd/gzip compression tuning, see https://github.com/Altinity/clickhouse-backup/issues/1378 and Examples.md#multi-threaded-zstdgzip-compression
+  compression_use_multi_thread: false # COMPRESSION_USE_MULTI_THREAD, enable per-stream multi-threaded zstd/gzip compression and decompression; default false because upload_concurrency/download_concurrency already parallelize across tables, so per-stream threading mainly over-subscribes CPU. Enable when backing up a single large table with low concurrency. Only affects compression_format: zstd and gzip
+  compression_threads: 0            # COMPRESSION_THREADS, number of per-stream compression threads when compression_use_multi_thread is enabled (zstd concurrency / pgzip block workers), 0 means auto (GOMAXPROCS); must be unset/0 when compression_use_multi_thread is false
+  compression_buffer_size: 0        # COMPRESSION_BUFFER_SIZE, compression buffer size in bytes, 0 keeps library defaults. Meaning and valid range depend on compression_format and compression_use_multi_thread: zstd = encoder window (power of two, 1024..536870912, e.g. 4194304 = 4MB); single-threaded gzip = DEFLATE window (32..32768); multi-threaded gzip = pgzip block size (>16384). Other formats reject it
   
   # when table data contains in system.disks with type=ObjectStorage, then we need execute remote copy object in object storage service provider, this parameter can restrict how many files will copied in parallel  for each table 
   object_disk_server_side_copy_concurrency: 32
