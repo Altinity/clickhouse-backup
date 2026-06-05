@@ -9,6 +9,7 @@ import (
 
 func TestInnerTablesMaterializedView(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 1*time.Second, 1*time.Second, 1*time.Minute)
 
 	env.queryWithNoError(r, "CREATE DATABASE test_mv")
@@ -42,5 +43,4 @@ func TestInnerTablesMaterializedView(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_mv")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", "test_mv")
 	r.NoError(env.dropDatabase("test_mv", true))
-	env.Cleanup(t, r)
 }

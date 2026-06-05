@@ -421,7 +421,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 		return nil, errors.Wrap(err, "can't parse config file")
 	}
 	if err := envconfig.Process("", cfg); err != nil {
-		return nil, errors.WithMessage(err, "LoadConfig envconfig.Process")
+		return nil, errors.Wrap(err, "LoadConfig envconfig.Process")
 	}
 
 	// auto-tuning upload_concurrency for storage types which not have SDK level concurrency, https://github.com/Altinity/clickhouse-backup/issues/658
@@ -430,7 +430,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 		return nil, errors.Wrap(err, "can't parse config file")
 	}
 	if err := envconfig.Process("", cfgWithoutDefault); err != nil {
-		return nil, errors.WithMessage(err, "LoadConfig envconfig.Process cfgWithoutDefault")
+		return nil, errors.Wrap(err, "LoadConfig envconfig.Process cfgWithoutDefault")
 	}
 	if (cfg.General.RemoteStorage == "gcs" || cfg.General.RemoteStorage == "azblob" || cfg.General.RemoteStorage == "cos") && cfgWithoutDefault.General.UploadConcurrency == 0 {
 		cfg.General.UploadConcurrency = uint8(runtime.NumCPU() / 2)
@@ -462,10 +462,10 @@ func LoadConfig(configLocation string) (*Config, error) {
 		cfg.S3.StorageClass = string(s3types.StorageClassStandard)
 	}
 	if err = ValidateConfig(cfg); err != nil {
-		return cfg, errors.WithMessage(err, "LoadConfig ValidateConfig")
+		return cfg, errors.Wrap(err, "LoadConfig ValidateConfig")
 	}
 	if err = cfg.SetPriority(); err != nil {
-		return cfg, errors.WithMessage(err, "LoadConfig SetPriority")
+		return cfg, errors.Wrap(err, "LoadConfig SetPriority")
 	}
 	return cfg, nil
 }
@@ -473,7 +473,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 func ValidateConfig(cfg *Config) error {
 	if cfg.General.RemoteStorage == "s3" {
 		if _, err := aws.ParseRetryMode(cfg.S3.RetryMode); err != nil {
-			return errors.WithMessage(err, "ValidateConfig ParseRetryMode")
+			return errors.Wrap(err, "ValidateConfig ParseRetryMode")
 		}
 		if cfg.S3.HTTPIdleConnTimeout != "" {
 			if _, err := time.ParseDuration(cfg.S3.HTTPIdleConnTimeout); err != nil {
@@ -549,7 +549,7 @@ func ValidateConfig(cfg *Config) error {
 		}
 		_, err := tls.LoadX509KeyPair(cfg.API.CertificateFile, cfg.API.PrivateKeyFile)
 		if err != nil {
-			return errors.WithMessage(err, "ValidateConfig LoadX509KeyPair")
+			return errors.Wrap(err, "ValidateConfig LoadX509KeyPair")
 		}
 	}
 	if cfg.Custom.CommandTimeout != "" {

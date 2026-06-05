@@ -15,6 +15,7 @@ import (
 
 func TestHardlinksExistsFiles(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	for _, compression := range []string{"tar", "none"} {
 		baseBackupName := "test_hardlinks_base_" + compression
@@ -188,5 +189,4 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		// Cleanup after test
 		fullCleanup(t, r, env, []string{baseBackupName, incrementBackupName}, []string{"remote", "local"}, []string{dbNameShort}, true, true, true, "config-s3.yml")
 	}
-	env.Cleanup(t, r)
 }

@@ -10,6 +10,7 @@ import (
 
 func TestTablePatterns(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 
 	testBackupName := "test_backup_patterns"
@@ -76,5 +77,4 @@ func TestTablePatterns(t *testing.T) {
 		}
 	}
 	env.checkObjectStorageIsEmpty(t, r, "S3", "config-s3.yml")
-	env.Cleanup(t, r)
 }

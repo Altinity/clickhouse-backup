@@ -23,6 +23,7 @@ import (
 
 	stdlog "log"
 
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/rs/zerolog/pkgerrors"
@@ -537,8 +538,10 @@ func (env *TestEnvironment) DockerExecNoError(r *require.Assertions, container s
 	out, err := env.DockerExecOut(container, cmd...)
 	if err == nil {
 		log.Debug().Msg(out)
+	} else {
+		err = errors.WithStack(err)
 	}
-	r.NoError(err, "%s\n\n%s\n[ERROR]\n%v", strings.Join(append(env.GetExecDockerCommand(container), cmd...), " "), out, err)
+	r.NoError(err, "%s\n\n%s\n[ERROR]\n%+v", strings.Join(append(env.GetExecDockerCommand(container), cmd...), " "), out, err)
 }
 
 func (env *TestEnvironment) DockerExec(container string, cmd ...string) error {
@@ -1379,6 +1382,10 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	fullBackupName := fmt.Sprintf("full_backup_%d", rand.Int())
 	incrementBackupName := fmt.Sprintf("increment_backup_%d", rand.Int())
 	dbName := "test_partitions_" + t.Name()
+	// drop the test database even if an assertion below fails
+	defer func() {
+		_ = env.dropDatabase(dbName, true)
+	}()
 	fillTables := func(partitions []string) {
 		for _, dt := range partitions {
 			env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t1(dt, v) SELECT '%s', number FROM numbers(10)", dt))
@@ -1574,9 +1581,6 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", incrementBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName)
 
-	if err = env.dropDatabase(dbName, true); err != nil {
-		t.Fatal(err)
-	}
 	log.Debug().Msg("testBackupSpecifiedPartitions finish")
 }
 

@@ -31,6 +31,7 @@ func TestS3SSEC(t *testing.T) {
 	}
 
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
 	backupName := fmt.Sprintf("test_s3_ssec_%d", rand.Int())
@@ -71,5 +72,4 @@ func TestS3SSEC(t *testing.T) {
 
 	fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{dbName}, false, true, true, "config-s3.yml")
 	env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3_ssec")
-	env.Cleanup(t, r)
 }

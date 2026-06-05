@@ -20,7 +20,7 @@ type stackTracer interface {
 // CustomStackMarshaler formats stack traces similar to panic output
 func CustomStackMarshaler(err error) interface{} {
 	// Traverse the error chain to find a stackTracer implementation.
-	// Outer wrappers like errors.WithMessage don't carry a stack trace,
+	// Outer wrappers like errors.Wrap don't carry a stack trace,
 	// but inner ones (errors.WithStack, errors.Wrapf) do.
 	var tracer stackTracer
 	for e := err; e != nil; e = errors.Unwrap(e) {

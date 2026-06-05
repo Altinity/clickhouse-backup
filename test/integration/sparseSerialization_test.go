@@ -25,6 +25,7 @@ func TestSparseSerialization(t *testing.T) {
 		t.Skipf("Test skipped: sparse serialization is default since 23.8, current %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
 	dbName := "test_sparse_serialization_" + t.Name()
@@ -85,5 +86,4 @@ func TestSparseSerialization(t *testing.T) {
 	r.Equal(uint64(0), zeroSum, "zero_col must still be all zeros after restore")
 
 	fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{dbName}, false, true, true, "config-s3.yml")
-	env.Cleanup(t, r)
 }

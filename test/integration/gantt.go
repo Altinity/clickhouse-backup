@@ -19,7 +19,7 @@ const (
 	ganttSlot        = 30 * time.Second
 	envUsageSymbols  = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 	envUsageOverflow = '?'
-	defaultTermWidth = 120
+	defaultTermWidth = 180
 )
 
 var envUsage = newEnvUsageRecorder()

@@ -17,6 +17,7 @@ import (
 
 func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	version, err := env.ch.GetVersion(t.Context())
 	r.NoError(err)
@@ -95,5 +96,4 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 	}
 
 	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_wrong_path"))
-	env.Cleanup(t, r)
 }

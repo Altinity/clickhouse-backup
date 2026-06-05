@@ -183,7 +183,7 @@ func (api *APIServer) Stop() error {
 func (api *APIServer) Restart() error {
 	_, err := api.ReloadConfig(nil, "restart")
 	if err != nil {
-		return errors.WithMessage(err, "Restart ReloadConfig")
+		return errors.Wrap(err, "Restart ReloadConfig")
 	}
 	if api.GetConfig().API.CreateIntegrationTables {
 		if createErr := api.CreateIntegrationTables(); createErr != nil {
@@ -264,7 +264,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	if err := r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		t, err := route.GetPathTemplate()
 		if err != nil {
-			return errors.WithMessage(err, "registerHTTPHandlers GetPathTemplate")
+			return errors.Wrap(err, "registerHTTPHandlers GetPathTemplate")
 		}
 		routes = append(routes, t)
 		return nil
@@ -2143,9 +2143,13 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 	b := backup.NewBackuper(cfg)
 	switch vars["where"] {
 	case "local":
-		err = b.RemoveBackupLocal(ctx, vars["name"], nil)
+		err, _ = api.metrics.ExecuteWithMetrics("delete", 0, func() error {
+			return b.RemoveBackupLocal(ctx, vars["name"], nil)
+		})
 	case "remote":
-		err = b.RemoveBackupRemote(ctx, vars["name"])
+		err, _ = api.metrics.ExecuteWithMetrics("delete", 0, func() error {
+			return b.RemoveBackupRemote(ctx, vars["name"])
+		})
 	default:
 		err = errors.New("backup location must be 'local' or 'remote'")
 	}
@@ -2197,7 +2201,7 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 
 	localBackups, _, err := b.GetLocalBackups(ctx, nil)
 	if err != nil {
-		return errors.WithMessage(err, "UpdateBackupMetrics GetLocalBackups")
+		return errors.Wrap(err, "UpdateBackupMetrics GetLocalBackups")
 	}
 	if len(localBackups) > 0 {
 		numberBackupsLocal = len(localBackups)
@@ -2211,7 +2215,7 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 		api.metrics.NumberBackupsLocal.Set(0)
 	}
 	if localDataSize, err = b.GetLocalDataSize(ctx); err != nil {
-		return errors.WithMessage(err, "UpdateBackupMetrics GetLocalDataSize")
+		return errors.Wrap(err, "UpdateBackupMetrics GetLocalDataSize")
 	}
 	if localDataSize > 0 {
 		api.metrics.LocalDataSize.Set(localDataSize)
@@ -2342,30 +2346,30 @@ func (api *APIServer) CreateIntegrationTables() error {
 	settings := ""
 	version, err := ch.GetVersion(context.Background())
 	if err != nil {
-		return errors.WithMessage(err, "CreateIntegrationTables GetVersion")
+		return errors.Wrap(err, "CreateIntegrationTables GetVersion")
 	}
 	if version >= 21001000 {
 		settings = "SETTINGS input_format_skip_unknown_fields=1"
 	}
 	disks, err := ch.GetDisks(context.Background(), true)
 	if err != nil {
-		return errors.WithMessage(err, "CreateIntegrationTables GetDisks")
+		return errors.Wrap(err, "CreateIntegrationTables GetDisks")
 	}
 	defaultDataPath, err := ch.GetDefaultPath(disks)
 	if err != nil {
-		return errors.WithMessage(err, "CreateIntegrationTables GetDefaultPath")
+		return errors.Wrap(err, "CreateIntegrationTables GetDefaultPath")
 	}
 	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String, operation_id String) ENGINE=URL('%s://%s:%s/backup/actions%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, false, "", 0, defaultDataPath, false, ""); err != nil {
-		return errors.WithMessage(err, "CreateIntegrationTables backup_actions")
+		return errors.Wrap(err, "CreateIntegrationTables backup_actions")
 	}
 	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size UInt64, data_size UInt64, object_disk_size UInt64,metadata_size UInt64,rbac_size UInt64,config_size UInt64, named_collection_size UInt64, compressed_size UInt64, location String, required String, desc String) ENGINE=URL('%s://%s:%s/backup/list%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, false, "", 0, defaultDataPath, false, ""); err != nil {
-		return errors.WithMessage(err, "CreateIntegrationTables backup_list")
+		return errors.Wrap(err, "CreateIntegrationTables backup_list")
 	}
 	query = fmt.Sprintf("CREATE TABLE system.backup_version (version String) ENGINE=URL('%s://%s:%s/backup/version%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_version"}, query, true, false, "", 0, defaultDataPath, false, ""); err != nil {
-		return errors.WithMessage(err, "CreateIntegrationTables backup_version")
+		return errors.Wrap(err, "CreateIntegrationTables backup_version")
 	}
 	return nil
 }

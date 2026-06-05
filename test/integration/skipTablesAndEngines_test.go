@@ -10,6 +10,7 @@ import (
 
 func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	version, err := env.ch.GetVersion(t.Context())
 	r.NoError(err)
@@ -214,5 +215,4 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.NoError(env.dropDatabase("test_skip_tables", false))
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local test_skip_full_backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup")
-	env.Cleanup(t, r)
 }

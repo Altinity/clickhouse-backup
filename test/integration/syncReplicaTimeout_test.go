@@ -13,6 +13,7 @@ func TestSyncReplicaTimeout(t *testing.T) {
 		t.Skipf("Test skipped, SYNC REPLICA ignore receive_timeout for %s version", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Millisecond, 1*time.Second, 1*time.Minute)
 
 	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+t.Name())
@@ -46,5 +47,4 @@ func TestSyncReplicaTimeout(t *testing.T) {
 
 	dropReplTables()
 	r.NoError(env.dropDatabase(t.Name(), false))
-	env.Cleanup(t, r)
 }
