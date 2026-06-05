@@ -263,7 +263,13 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		return errors.Wrap(err, "json.MarshalIndent")
 	}
 	remoteBackupMetaFile := path.Join(backupName, "metadata.json")
-	if !b.resume || (b.resume && !b.resumableState.IsAlreadyProcessedBool(remoteBackupMetaFile)) {
+	metaAlreadyProcessed := false
+	if b.resume {
+		if metaAlreadyProcessed, err = b.resumableState.IsAlreadyProcessedBool(remoteBackupMetaFile); err != nil {
+			return errors.Wrap(err, "resumableState.IsAlreadyProcessedBool")
+		}
+	}
+	if !b.resume || !metaAlreadyProcessed {
 		retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 		err = retry.RunCtx(ctx, func(ctx context.Context) error {
 			return b.dst.PutFile(ctx, remoteBackupMetaFile, io.NopCloser(bytes.NewReader(newBackupMetadataBody)), 0)
@@ -337,7 +343,11 @@ func (b *Backuper) RemoveOldBackupsRemote(ctx context.Context) error {
 
 func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remoteFile string) (int64, error) {
 	if b.resume {
-		if isProcessed, size := b.resumableState.IsAlreadyProcessed(remoteFile); isProcessed {
+		isProcessed, size, resumeErr := b.resumableState.IsAlreadyProcessed(remoteFile)
+		if resumeErr != nil {
+			return 0, errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+		}
+		if isProcessed {
 			return size, nil
 		}
 	}
@@ -362,7 +372,9 @@ func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remote
 		return 0, errors.Errorf("can't stat %s", localFile)
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteFile, info.Size())
+		if err = b.resumableState.AppendToState(remoteFile, info.Size()); err != nil {
+			return 0, errors.Wrap(err, "resumableState.AppendToState")
+		}
 	}
 	return info.Size(), nil
 }
@@ -479,7 +491,11 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 		return 0, nil
 	}
 	if b.resume {
-		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(destinationRemote); isProcessed {
+		isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(destinationRemote)
+		if resumeErr != nil {
+			return 0, errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+		}
+		if isProcessed {
 			return uint64(processedSize), nil
 		}
 	}
@@ -507,7 +523,9 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 			return 0, errors.Wrapf(err, "can't uploadBackupRelatedDir upload %s", destinationRemote)
 		}
 		if b.resume {
-			b.resumableState.AppendToState(destinationRemote, remoteUploadedBytes)
+			if err = b.resumableState.AppendToState(destinationRemote, remoteUploadedBytes); err != nil {
+				return 0, errors.Wrap(err, "resumableState.AppendToState")
+			}
 		}
 		log.Debug().Str("destinationRemote", destinationRemote).Str("operation", "uploadBackupRelatedDir").Msg("done")
 		return uint64(remoteUploadedBytes), nil
@@ -528,7 +546,9 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 		return 0, errors.Wrap(err, "uploadBackupRelatedDir")
 	}
 	if b.resume {
-		b.resumableState.AppendToState(destinationRemote, remoteUploaded.Size())
+		if err = b.resumableState.AppendToState(destinationRemote, remoteUploaded.Size()); err != nil {
+			return 0, errors.Wrap(err, "resumableState.AppendToState")
+		}
 	}
 	log.Debug().Str("destinationRemote", destinationRemote).Str("operation", "uploadBackupRelatedDir").Msg("done")
 	return uint64(remoteUploaded.Size()), nil
@@ -590,7 +610,11 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 				remotePathFull := path.Join(remotePath, partSuffix)
 				dataGroup.Go(func() error {
 					if b.resume {
-						if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remotePathFull); isProcessed {
+						isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(remotePathFull)
+						if resumeErr != nil {
+							return errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+						}
+						if isProcessed {
 							atomic.AddInt64(&uploadedBytes, processedSize)
 							return nil
 						}
@@ -605,7 +629,9 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 
 					atomic.AddInt64(&uploadedBytes, uploadPathBytes)
 					if b.resume {
-						b.resumableState.AppendToState(remotePathFull, uploadPathBytes)
+						if err = b.resumableState.AppendToState(remotePathFull, uploadPathBytes); err != nil {
+							return errors.Wrap(err, "resumableState.AppendToState")
+						}
 					}
 					// https://github.com/Altinity/clickhouse-backup/issues/777
 					if deleteSource {
@@ -624,7 +650,11 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 				localFiles := partFiles
 				dataGroup.Go(func() error {
 					if b.resume {
-						if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteDataFile); isProcessed {
+						isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(remoteDataFile)
+						if resumeErr != nil {
+							return errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+						}
+						if isProcessed {
 							atomic.AddInt64(&uploadedBytes, processedSize)
 							return nil
 						}
@@ -650,7 +680,9 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 					}
 					atomic.AddInt64(&uploadedBytes, remoteFile.Size())
 					if b.resume {
-						b.resumableState.AppendToState(remoteDataFile, remoteFile.Size())
+						if err = b.resumableState.AppendToState(remoteDataFile, remoteFile.Size()); err != nil {
+							return errors.Wrap(err, "resumableState.AppendToState")
+						}
 					}
 					// https://github.com/Altinity/clickhouse-backup/issues/777
 					if deleteSource {
@@ -696,7 +728,11 @@ func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName st
 	}
 	remoteTableMetaFile := path.Join(backupName, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableMetadata.Table)))
 	if b.resume {
-		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteTableMetaFile); isProcessed {
+		isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(remoteTableMetaFile)
+		if resumeErr != nil {
+			return 0, errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+		}
+		if isProcessed {
 			return processedSize, nil
 		}
 	}
@@ -708,7 +744,9 @@ func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName st
 		return 0, errors.Wrap(err, "can't upload")
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteTableMetaFile, int64(len(content)))
+		if err = b.resumableState.AppendToState(remoteTableMetaFile, int64(len(content))); err != nil {
+			return 0, errors.Wrap(err, "resumableState.AppendToState")
+		}
 	}
 	return int64(len(content)), nil
 }
@@ -719,7 +757,11 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 	}
 	remoteTableMetaFile := path.Join(backupName, b.embeddedClusterPrefix, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableMetadata.Table)))
 	if b.resume {
-		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteTableMetaFile); isProcessed {
+		isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(remoteTableMetaFile)
+		if resumeErr != nil {
+			return 0, errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+		}
+		if isProcessed {
 			return processedSize, nil
 		}
 	}
@@ -753,7 +795,9 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 		return 0, errors.Wrap(err, "can't embeeded upload metadata")
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteTableMetaFile, info.Size())
+		if err = b.resumableState.AppendToState(remoteTableMetaFile, info.Size()); err != nil {
+			return 0, errors.Wrap(err, "resumableState.AppendToState")
+		}
 	}
 	return info.Size(), nil
 }

@@ -508,7 +508,10 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 	var tableMetadata metadata.TableMetadata
 	for remoteMetadataFile, localMetadataFile := range metadataFiles {
 		if resume {
-			isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(localMetadataFile)
+			isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(localMetadataFile)
+			if resumeErr != nil {
+				return nil, 0, errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+			}
 			if isProcessed && strings.HasSuffix(localMetadataFile, ".json") {
 				tmBody, err := os.ReadFile(localMetadataFile)
 				if err != nil {
@@ -602,7 +605,9 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			tableMetadata.LocalFile = localMetadataFile
 		}
 		if resume {
-			b.resumableState.AppendToState(localMetadataFile, written)
+			if err = b.resumableState.AppendToState(localMetadataFile, written); err != nil {
+				return nil, 0, errors.Wrap(err, "resumableState.AppendToState")
+			}
 		}
 	}
 	logger.Info().Fields(map[string]string{
@@ -678,7 +683,11 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 	remoteSource := path.Join(remoteBackup.BackupName, prefix)
 
 	if b.resume {
-		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteSource); isProcessed {
+		isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(remoteSource)
+		if resumeErr != nil {
+			return 0, errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+		}
+		if isProcessed {
 			return uint64(processedSize), nil
 		}
 	}
@@ -695,7 +704,9 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 			return 0, nil
 		}
 		if b.resume {
-			b.resumableState.AppendToState(remoteSource, downloadedBytes)
+			if err := b.resumableState.AppendToState(remoteSource, downloadedBytes); err != nil {
+				return 0, errors.Wrap(err, "resumableState.AppendToState")
+			}
 		}
 		log.Debug().Str("remoteSource", remoteSource).Str("operation", "downloadBackupRelatedDir").Msg("done")
 		return uint64(downloadedBytes), nil
@@ -714,7 +725,9 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 		return 0, errors.Wrap(err, "DownloadCompressedStream")
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteSource, remoteFileInfo.Size())
+		if err := b.resumableState.AppendToState(remoteSource, remoteFileInfo.Size()); err != nil {
+			return 0, errors.Wrap(err, "resumableState.AppendToState")
+		}
 	}
 	log.Debug().Str("remoteSource", remoteSource).Str("operation", "downloadBackupRelatedDir").Msg("done")
 	return uint64(remoteFileInfo.Size()), nil
@@ -753,7 +766,11 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 				dataGroup.Go(func() error {
 					log.Debug().Msgf("start download %s", tableRemoteFile)
 					if b.resume {
-						if isProcessed, downloadedFileSize := b.resumableState.IsAlreadyProcessed(tableRemoteFile); isProcessed {
+						isProcessed, downloadedFileSize, resumeErr := b.resumableState.IsAlreadyProcessed(tableRemoteFile)
+						if resumeErr != nil {
+							return errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+						}
+						if isProcessed {
 							atomic.AddUint64(&downloadedSize, uint64(downloadedFileSize))
 							return nil
 						}
@@ -784,7 +801,9 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 								}
 								atomic.AddUint64(&downloadedSize, uint64(size))
 								if b.resume {
-									b.resumableState.AppendToState(tableRemoteFile, size)
+									if err := b.resumableState.AppendToState(tableRemoteFile, size); err != nil {
+										return errors.Wrap(err, "resumableState.AppendToState")
+									}
 								}
 								return nil
 							}
@@ -810,7 +829,9 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 					}
 					atomic.AddUint64(&downloadedSize, uint64(downloadedBytes))
 					if b.resume {
-						b.resumableState.AppendToState(tableRemoteFile, downloadedBytes)
+						if err := b.resumableState.AppendToState(tableRemoteFile, downloadedBytes); err != nil {
+							return errors.Wrap(err, "resumableState.AppendToState")
+						}
 					}
 					log.Debug().Msgf("finish download %s", tableRemoteFile)
 					return nil
@@ -858,7 +879,10 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 				dataGroup.Go(func() error {
 					log.Debug().Msgf("start %s -> %s", partRemotePath, partLocalPath)
 					if b.resume {
-						isProcesses, pathSize := b.resumableState.IsAlreadyProcessed(partRemotePath)
+						isProcesses, pathSize, resumeErr := b.resumableState.IsAlreadyProcessed(partRemotePath)
+						if resumeErr != nil {
+							return errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+						}
 						atomic.AddUint64(&downloadedSize, uint64(pathSize))
 						if isProcesses {
 							return nil
@@ -876,7 +900,9 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 							}
 							atomic.AddUint64(&downloadedSize, uint64(size))
 							if b.resume {
-								b.resumableState.AppendToState(partRemotePath, size)
+								if err := b.resumableState.AppendToState(partRemotePath, size); err != nil {
+									return errors.Wrap(err, "resumableState.AppendToState")
+								}
 							}
 							return nil
 						}
@@ -888,7 +914,9 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 					}
 					atomic.AddUint64(&downloadedSize, uint64(pathSize))
 					if b.resume {
-						b.resumableState.AppendToState(partRemotePath, pathSize)
+						if err := b.resumableState.AppendToState(partRemotePath, pathSize); err != nil {
+							return errors.Wrap(err, "resumableState.AppendToState")
+						}
 					}
 					log.Debug().Msgf("finish %s -> %s", partRemotePath, partLocalPath)
 					return nil
@@ -1207,7 +1235,10 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 			if statErr != nil && os.IsNotExist(statErr) {
 				//if existPath already processed then expect non-empty newPath
 				if b.resume {
-					isProcessed, pathDiffBytes := b.resumableState.IsAlreadyProcessed(existsPath)
+					isProcessed, pathDiffBytes, resumeErr := b.resumableState.IsAlreadyProcessed(existsPath)
+					if resumeErr != nil {
+						return 0, errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+					}
 					if isProcessed {
 						if newPathDirList, newPathDirErr := os.ReadDir(newPath); newPathDirErr != nil {
 							newPathDirErr = errors.Wrapf(newPathDirErr, "os.ReadDir(%s) error", newPath)
@@ -1244,7 +1275,9 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 							atomic.AddInt64(&downloadedDiffBytes, size)
 							atomic.AddUint32(&downloadedDiffParts, 1)
 							if b.resume {
-								b.resumableState.AppendToState(capturedExistsPath, size)
+								if err := b.resumableState.AppendToState(capturedExistsPath, size); err != nil {
+									return errors.Wrap(err, "resumableState.AppendToState")
+								}
 							}
 							return nil
 						}
@@ -1282,12 +1315,20 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 						return errors.Wrapf(err, "can't to add link to exists part %s -> %s error", capturedNewPath, capturedExistsPath)
 					}
 					if b.resume {
-						b.resumableState.AppendToState(capturedExistsPath, pathDiffBytes)
+						if err := b.resumableState.AppendToState(capturedExistsPath, pathDiffBytes); err != nil {
+							return errors.Wrap(err, "resumableState.AppendToState")
+						}
 					}
 					return nil
 				})
 			} else {
-				if !b.resume || (b.resume && !b.resumableState.IsAlreadyProcessedBool(existsPath)) {
+				existsAlreadyProcessed := false
+				if b.resume {
+					if existsAlreadyProcessed, statErr = b.resumableState.IsAlreadyProcessedBool(existsPath); statErr != nil {
+						return 0, errors.Wrap(statErr, "resumableState.IsAlreadyProcessedBool")
+					}
+				}
+				if !b.resume || !existsAlreadyProcessed {
 					if statErr = b.makePartHardlinks(existsPath, newPath); statErr != nil {
 						return 0, errors.Wrap(statErr, "can't to add exists part")
 					}
@@ -1317,7 +1358,11 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 
 func (b *Backuper) downloadDiffRemoteFile(ctx context.Context, diffRemoteFilesLock *sync.Mutex, diffRemoteFilesCache map[string]*sync.Mutex, tableRemoteFile string, tableLocalDir string) (int64, error) {
 	if b.resume {
-		if isProcessed, downloadedBytes := b.resumableState.IsAlreadyProcessed(tableRemoteFile); isProcessed {
+		isProcessed, downloadedBytes, resumeErr := b.resumableState.IsAlreadyProcessed(tableRemoteFile)
+		if resumeErr != nil {
+			return 0, errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+		}
+		if isProcessed {
 			return downloadedBytes, nil
 		}
 	}
@@ -1358,7 +1403,9 @@ func (b *Backuper) downloadDiffRemoteFile(ctx context.Context, diffRemoteFilesLo
 		}
 		namedLock.Unlock()
 		if b.resume {
-			b.resumableState.AppendToState(tableRemoteFile, downloadedBytes)
+			if err := b.resumableState.AppendToState(tableRemoteFile, downloadedBytes); err != nil {
+				return 0, errors.Wrap(err, "resumableState.AppendToState")
+			}
 		}
 		log.Debug().Str("tableRemoteFile", tableRemoteFile).Msgf("finish download")
 	}
@@ -1588,7 +1635,11 @@ func (b *Backuper) downloadSingleBackupFile(ctx context.Context, remoteFile stri
 	var size int64
 	var isProcessed bool
 	if b.resume {
-		if isProcessed, size = b.resumableState.IsAlreadyProcessed(remoteFile); isProcessed {
+		var resumeErr error
+		if isProcessed, size, resumeErr = b.resumableState.IsAlreadyProcessed(remoteFile); resumeErr != nil {
+			return 0, errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+		}
+		if isProcessed {
 			return size, nil
 		}
 	}
@@ -1630,7 +1681,9 @@ func (b *Backuper) downloadSingleBackupFile(ctx context.Context, remoteFile stri
 		return 0, errors.Wrap(err, "downloadSingleBackupFile")
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteFile, size)
+		if err = b.resumableState.AppendToState(remoteFile, size); err != nil {
+			return 0, errors.Wrap(err, "resumableState.AppendToState")
+		}
 	}
 	return size, nil
 }
