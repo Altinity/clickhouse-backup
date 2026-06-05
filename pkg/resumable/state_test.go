@@ -23,28 +23,35 @@ func newTestState(t *testing.T) *State {
 	return s
 }
 
-// TestAppendToStateSurvivesWriteError verifies that a failure to write the
-// resumable state (here forced by closing the underlying DB) is logged and
-// the process continues instead of aborting via log.Fatal, see issue #1172.
-func TestAppendToStateSurvivesWriteError(t *testing.T) {
+// TestAppendToStateReturnsWriteError verifies that a failure to write the
+// resumable state (here forced by closing the underlying DB) is returned to the
+// caller instead of aborting the whole process via log.Fatal/os.Exit, see issue
+// #1172. The running server can surface the error and the CLI exits non-zero,
+// but the process must still be alive after the call.
+func TestAppendToStateReturnsWriteError(t *testing.T) {
 	s := newTestState(t)
 	// Close the DB so subsequent writes return an error instead of succeeding.
 	if err := s.db.Close(); err != nil {
 		t.Fatalf("unexpected error closing db: %v", err)
 	}
 	// Must not call os.Exit; if it did, the test binary would die here.
-	s.AppendToState("shard1/part-0", 1024)
+	if err := s.AppendToState("shard1/part-0", 1024); err == nil {
+		t.Error("expected a write error after closing the DB, got nil")
+	}
 }
 
-// TestIsAlreadyProcessedSurvivesReadError verifies that a failure to read the
-// resumable state returns (false, 0) and continues rather than aborting via
-// log.Fatal, so the affected part is simply re-processed, see issue #1172.
-func TestIsAlreadyProcessedSurvivesReadError(t *testing.T) {
+// TestIsAlreadyProcessedReturnsReadError verifies that a failure to read the
+// resumable state is returned to the caller (with processed=false, size=0)
+// rather than aborting via log.Fatal/os.Exit, see issue #1172.
+func TestIsAlreadyProcessedReturnsReadError(t *testing.T) {
 	s := newTestState(t)
 	if err := s.db.Close(); err != nil {
 		t.Fatalf("unexpected error closing db: %v", err)
 	}
-	processed, size := s.IsAlreadyProcessed("shard1/part-0")
+	processed, size, err := s.IsAlreadyProcessed("shard1/part-0")
+	if err == nil {
+		t.Error("expected a read error after closing the DB, got nil")
+	}
 	if processed {
 		t.Errorf("expected processed=false on read error, got true")
 	}
@@ -60,11 +67,18 @@ func TestAppendThenIsAlreadyProcessed(t *testing.T) {
 	defer s.Close()
 
 	const p = "shard1/part-0"
-	if processed, _ := s.IsAlreadyProcessed(p); processed {
+	if processed, _, err := s.IsAlreadyProcessed(p); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	} else if processed {
 		t.Fatalf("part should not be processed before AppendToState")
 	}
-	s.AppendToState(p, 4096)
-	processed, size := s.IsAlreadyProcessed(p)
+	if err := s.AppendToState(p, 4096); err != nil {
+		t.Fatalf("unexpected error from AppendToState: %v", err)
+	}
+	processed, size, err := s.IsAlreadyProcessed(p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !processed {
 		t.Errorf("expected part to be processed after AppendToState")
 	}

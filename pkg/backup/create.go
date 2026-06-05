@@ -1201,7 +1201,11 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 
 				if b.resume {
 					isAlreadyProcesses := false
-					isAlreadyProcesses, objSize = b.resumableState.IsAlreadyProcessed(path.Join(srcBucket, srcKey))
+					var resumeErr error
+					isAlreadyProcesses, objSize, resumeErr = b.resumableState.IsAlreadyProcessed(path.Join(srcBucket, srcKey))
+					if resumeErr != nil {
+						return errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+					}
 					if isAlreadyProcesses {
 						continue
 					}
@@ -1237,7 +1241,9 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 					}
 					objSize = storageObject.ObjectSize
 					if b.resume {
-						b.resumableState.AppendToState(path.Join(srcBucket, srcKey), objSize)
+						if appendErr := b.resumableState.AppendToState(path.Join(srcBucket, srcKey), objSize); appendErr != nil {
+							return errors.Wrap(appendErr, "resumableState.AppendToState")
+						}
 					}
 				}
 				realSize += objSize

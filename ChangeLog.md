@@ -1,5 +1,5 @@
 # v2.7.1
-- don't abort backup/upload/download/restore when the resumable state DB can't be written or read (e.g. `no space left on device`); log a warning and continue, fix [#1172](https://github.com/Altinity/clickhouse-backup/issues/1172)
+- don't kill `clickhouse-backup server` with `Fatal`/`os.Exit` when the resumable state DB can't be written or read (e.g. `no space left on device`); the error now propagates so the server stays alive and returns it to the API client, while the CLI exits with a non-zero code, fix [#1172](https://github.com/Altinity/clickhouse-backup/issues/1172)
 
 # v2.7.0
 
