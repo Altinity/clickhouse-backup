@@ -776,14 +776,9 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 				return nil, errors.Wrap(err, "NewBackupDestination s3 ApplyMacrosToObjectLabels")
 			}
 		}
-		s3BufferSize := cfg.S3.BufferSize
-		if s3BufferSize <= 0 {
-			s3BufferSize = 64 * 1024
-		}
 		s3Storage := &S3{
 			Config:      &cfg.S3,
 			Concurrency: cfg.S3.Concurrency,
-			BufferSize:  s3BufferSize,
 		}
 		return &BackupDestination{
 			RemoteStorage:             s3Storage,
