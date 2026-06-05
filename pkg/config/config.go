@@ -191,8 +191,6 @@ type S3Config struct {
 	DeleteConcurrency       int               `yaml:"delete_concurrency" envconfig:"S3_DELETE_CONCURRENCY"`
 	Debug                   bool              `yaml:"debug" envconfig:"S3_DEBUG"`
 	// HTTP transport and buffer tuning for high-bandwidth networks, see https://github.com/Altinity/clickhouse-backup/issues/1376
-	// BufferSize - per-part buffer for the s3manager up/downloader buffer providers
-	BufferSize int `yaml:"buffer_size" envconfig:"S3_BUFFER_SIZE"`
 	// HTTPMaxIdleConns - http.Transport.MaxIdleConns, 0 keeps the AWS SDK default
 	HTTPMaxIdleConns int `yaml:"http_max_idle_conns" envconfig:"S3_HTTP_MAX_IDLE_CONNS"`
 	// HTTPMaxIdleConnsPerHost - http.Transport.MaxIdleConnsPerHost, 0 keeps the Go default (2), raise it to avoid serializing parallel up/downloads to the same endpoint
@@ -788,7 +786,6 @@ func DefaultConfig() *Config {
 			RetryMode:               string(aws.RetryModeStandard),
 			ChunkSize:               5 * 1024 * 1024,
 			DeleteConcurrency:       10,
-			BufferSize:              64 * 1024,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,

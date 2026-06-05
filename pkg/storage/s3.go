@@ -22,7 +22,8 @@ import (
 	awsV2Config "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
-	s3manager "github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
+	tmtypes "github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -91,11 +92,11 @@ func (lt *RecalculateV4Signature) RoundTrip(req *http.Request) (*http.Response, 
 
 // S3 - presents methods for manipulate data on s3
 type S3 struct {
-	client      *s3.Client
-	Config      *config.S3Config
-	Concurrency int
-	BufferSize  int
-	versioning  bool
+	client          *s3.Client
+	transferManager *transfermanager.Client
+	Config          *config.S3Config
+	Concurrency     int
+	versioning      bool
 }
 
 func (s *S3) Kind() string {
@@ -211,6 +212,12 @@ func (s *S3) Connect(ctx context.Context) error {
 		awsConfig.HTTPClient = &http.Client{Transport: httpTransport}
 	}
 
+	// The aws-sdk default (WhenSupported) adds an aws-chunked flexible-checksum trailer to streaming (unseekable) uploads.
+	// Non-AWS S3-compatible providers reject it ("aws-chunked encoding is not supported...", GCS SignatureDoesNotMatch via
+	// RecalculateV4Signature). Only emit a checksum when the user explicitly configures one via s3.CheckSumAlgorithm.
+	awsConfig.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+	awsConfig.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+
 	// allow GCS over S3, remove Accept-Encoding header from sign https://stackoverflow.com/a/74382598/1204665, https://github.com/aws/aws-sdk-go-v2/issues/1816
 	if strings.Contains(s.Config.Endpoint, "storage.googleapis.com") {
 		// Assign custom client with our own transport
@@ -222,6 +229,11 @@ func (s *S3) Connect(ctx context.Context) error {
 		o.UsePathStyle = s.Config.ForcePathStyle
 		o.EndpointOptions.DisableHTTPS = s.Config.DisableSSL
 		o.EndpointResolverV2 = s
+	})
+
+	// transferManager wraps the configured client, inheriting endpoint resolver, path-style and the GCS signature transport.
+	s.transferManager = transfermanager.New(s.client, func(o *transfermanager.Options) {
+		o.Concurrency = s.Concurrency
 	})
 
 	s.versioning = s.isVersioningEnabled(ctx)
@@ -296,9 +308,6 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 			return nil, errors.Wrap(err, "S3 GetFileReaderWithLocalPath CreateTemp")
 		}
 
-		downloader := s3manager.NewDownloader(s.client)
-		downloader.Concurrency = s.Concurrency
-		downloader.BufferProvider = s3manager.NewPooledBufferedWriterReadFromProvider(s.BufferSize)
 		var partSize int64
 		if s.Config.ChunkSize > 0 && (remoteSize+s.Config.ChunkSize-1)/s.Config.ChunkSize < s.Config.MaxPartsCount {
 			// Use configured chunk size
@@ -309,11 +318,15 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 				partSize += max(1, (remoteSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
 			}
 		}
-		downloader.PartSize = AdjustValueByRange(partSize, 5*1024*1024, 5*1024*1024*1024)
+		partSize = AdjustValueByRange(partSize, 5*1024*1024, 5*1024*1024*1024)
 
-		_, err = downloader.Download(ctx, writer, &s3.GetObjectInput{
-			Bucket: aws.String(s.Config.Bucket),
-			Key:    aws.String(path.Join(s.Config.Path, key)),
+		_, err = s.transferManager.DownloadObject(ctx, &transfermanager.DownloadObjectInput{
+			Bucket:   aws.String(s.Config.Bucket),
+			Key:      aws.String(path.Join(s.Config.Path, key)),
+			WriterAt: writer,
+		}, func(o *transfermanager.Options) {
+			o.Concurrency = s.Concurrency
+			o.PartSizeBytes = partSize
 		})
 		if err != nil {
 			return nil, errors.Wrap(err, "S3 GetFileReaderWithLocalPath Download")
@@ -383,17 +396,35 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 	}
 	partSize = AdjustValueByRange(partSize, 5*1024*1024, 5*1024*1024*1024)
 
-	// s3manager.Uploader sends the part checksum as a trailer, which S3 Object Lock rejects on UploadPart. Fall back to manual multipart with per-part x-amz-checksum-crc32 header, fix https://github.com/Altinity/clickhouse-backup/issues/829
+	// transfermanager.UploadObject sends the part checksum as a trailer, which S3 Object Lock rejects on UploadPart. Fall back to manual multipart with per-part x-amz-checksum-crc32 header, fix https://github.com/Altinity/clickhouse-backup/issues/829
 	if s.Config.CheckSumAlgorithm == string(s3types.ChecksumAlgorithmCrc32) && localSize > partSize {
 		return s.putFileMultipartCRC32(ctx, &params, r, localSize, partSize)
 	}
 
-	uploader := s3manager.NewUploader(s.client)
-	uploader.Concurrency = s.Concurrency
-	uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(s.BufferSize)
-	uploader.PartSize = partSize
-
-	if _, err := uploader.Upload(ctx, &params); err != nil {
+	uploadInput := &transfermanager.UploadObjectInput{
+		Bucket:                  params.Bucket,
+		Key:                     params.Key,
+		Body:                    r,
+		StorageClass:            tmtypes.StorageClass(params.StorageClass),
+		ACL:                     tmtypes.ObjectCannedACL(params.ACL),
+		Tagging:                 params.Tagging,
+		ServerSideEncryption:    tmtypes.ServerSideEncryption(params.ServerSideEncryption),
+		SSEKMSKeyID:             params.SSEKMSKeyId,
+		SSEKMSEncryptionContext: params.SSEKMSEncryptionContext,
+		SSECustomerAlgorithm:    params.SSECustomerAlgorithm,
+		SSECustomerKey:          params.SSECustomerKey,
+		SSECustomerKeyMD5:       params.SSECustomerKeyMD5,
+		ChecksumAlgorithm:       tmtypes.ChecksumAlgorithm(params.ChecksumAlgorithm),
+		RequestPayer:            tmtypes.RequestPayer(s.Config.RequestPayer),
+	}
+	if _, err := s.transferManager.UploadObject(ctx, uploadInput, func(o *transfermanager.Options) {
+		o.PartSizeBytes = partSize
+		o.MultipartUploadThreshold = partSize
+		// transfermanager forces ChecksumAlgorithm=CRC32 at New(); honor only the configured algorithm instead.
+		// Empty means no explicit checksum, leaving it to the client RequestChecksumCalculation policy (WhenRequired),
+		// which avoids the aws-chunked checksum trailer that non-AWS S3-compatible providers reject.
+		o.ChecksumAlgorithm = tmtypes.ChecksumAlgorithm(s.Config.CheckSumAlgorithm)
+	}); err != nil {
 		return errors.Wrap(err, "S3 PutFileAbsolute Upload")
 	}
 	return nil
@@ -443,7 +474,9 @@ func (s *S3) putFileMultipartCRC32(ctx context.Context, putParams *s3.PutObjectI
 			return abort(errors.Wrapf(readErr, "S3 putFileMultipartCRC32 read part=%d", partNumber))
 		}
 		h := crc32.NewIEEE()
-		h.Write(buf[:toRead])
+		if _, writeErr := h.Write(buf[:toRead]); writeErr != nil {
+			return errors.Wrapf(writeErr, "S3 putFileMultipartCRC32 write part=%d", partNumber)
+		}
 		uploadParams := &s3.UploadPartInput{
 			Bucket:            putParams.Bucket,
 			Key:               putParams.Key,

@@ -300,7 +300,6 @@ s3:
   delete_concurrency: 10           # S3_DELETE_CONCURRENCY, how many parallel DeleteObjects requests during clean/delete operations
 
   # HTTP transport and buffer tuning for high-bandwidth (10Gbit+) networks, see https://github.com/Altinity/clickhouse-backup/issues/1376 and Examples.md#tuning-for-high-bandwidth-10gbit-networks
-  buffer_size: 65536                  # S3_BUFFER_SIZE, per-part buffer in bytes for the s3manager up/downloader, default 64KB; raise (e.g. 1048576 = 1MB) on fast networks
   http_max_idle_conns: 0              # S3_HTTP_MAX_IDLE_CONNS, http.Transport.MaxIdleConns, 0 keeps the AWS SDK default
   http_max_idle_conns_per_host: 0     # S3_HTTP_MAX_IDLE_CONNS_PER_HOST, http.Transport.MaxIdleConnsPerHost, 0 keeps the Go default (2); raise (e.g. 128) to avoid serializing parallel up/downloads to the same endpoint when concurrency is high
   http_max_conns_per_host: 0          # S3_HTTP_MAX_CONNS_PER_HOST, http.Transport.MaxConnsPerHost, 0 means unlimited
