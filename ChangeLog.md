@@ -1,3 +1,6 @@
+# v2.7.1
+- don't abort backup/upload/download/restore when the resumable state DB can't be written or read (e.g. `no space left on device`); log a warning and continue, fix [#1172](https://github.com/Altinity/clickhouse-backup/issues/1172)
+
 # v2.7.0
 
 NEW FEATURES
@@ -21,7 +24,6 @@ IMPROVEMENTS
 - fix the `list_duration` log field formatting in `pkg/storage/general.go` (was emitting raw nanoseconds), fix [#1337](https://github.com/Altinity/clickhouse-backup/issues/1337)
 
 BUG FIXES
-- don't abort backup/upload/download/restore when the resumable state DB can't be written or read (e.g. `no space left on device`); log a warning and continue, fix [#1172](https://github.com/Altinity/clickhouse-backup/issues/1172)
 - fix `restore_remote` for tables using sparse-column serialization: accept empty sparse metadata files instead of treating `StorageObjectCount=0` as corruption, affects ClickHouse 23.8+, fix [#1372](https://github.com/Altinity/clickhouse-backup/issues/1372)
 - fix `restore_remote` aborting the entire restore when an incremental backup contains a table absent from the required full backup; the missing table is now skipped with a warning, fix [#1373](https://github.com/Altinity/clickhouse-backup/issues/1373)
 - fix `object_disk` backup on S3 sources with SSE-C: handle 404 from server-side `CopyObject` by falling back to streaming and stop issuing `HeadObject` (returns 400) on SSE-C source objects before `GetObject`, fix [#1374](https://github.com/Altinity/clickhouse-backup/issues/1374)
