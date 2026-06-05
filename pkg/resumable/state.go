@@ -26,12 +26,13 @@ func NewState(stateBackupDir, backupName, command string, params map[string]inte
 		stateFile: path.Join(stateBackupDir, "backup", backupName, fmt.Sprintf("%s.state2", command)),
 		db:        nil,
 	}
-	if db, err := bolt.Open(s.stateFile, 0600, nil); err == nil {
-		s.db = db
-	} else {
-		log.Warn().Msgf("resumable state: can't open %s error: %v", s.stateFile, err)
+	var db *bolt.DB
+	var openErr error
+	if db, openErr = bolt.Open(s.stateFile, 0600, nil); openErr != nil {
+		log.Warn().Msgf("resumable state: can't open %s error: %v", s.stateFile, openErr)
 		return &s
 	}
+	s.db = db
 	s.loadState()
 	s.loadParams()
 	s.cleanupStateIfParamsChange(params)
@@ -150,10 +151,7 @@ func (s *State) saveParams(b *bolt.Bucket, params map[string]interface{}) {
 }
 
 // AppendToState records that path (with the given size) has been processed.
-// A write failure (for example "no space left on device", see issue #1172) is
-// returned to the caller instead of aborting the whole process via log.Fatal:
-// the running clickhouse-backup server stays alive and surfaces the error,
-// while the CLI exits with a non-zero status.
+// see https://github.com/Altinity/clickhouse-backup/issues/1172
 func (s *State) AppendToState(path string, size int64) error {
 	if s.db == nil {
 		return nil
@@ -178,9 +176,8 @@ func (s *State) IsAlreadyProcessedBool(path string) (bool, error) {
 	return isProcesses, err
 }
 
-// IsAlreadyProcessed reports whether path was already processed and its recorded
-// size. A read failure is returned to the caller instead of aborting via
-// log.Fatal, see issue #1172.
+// IsAlreadyProcessed reports whether path was already processed and its recorded size.
+// see https://github.com/Altinity/clickhouse-backup/issues/1172
 func (s *State) IsAlreadyProcessed(path string) (bool, int64, error) {
 	if s.db == nil {
 		return false, 0, nil
