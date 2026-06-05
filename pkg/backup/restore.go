@@ -2613,7 +2613,11 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 						return nil
 					}
 					if b.resume {
-						if isAlreadyProcessed, copiedSize := b.resumableState.IsAlreadyProcessed(path.Join(fPath, fInfo.Name())); isAlreadyProcessed {
+						isAlreadyProcessed, copiedSize, resumeErr := b.resumableState.IsAlreadyProcessed(path.Join(fPath, fInfo.Name()))
+						if resumeErr != nil {
+							return errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+						}
+						if isAlreadyProcessed {
 							atomic.AddInt64(&size, copiedSize)
 							return nil
 						}
@@ -2794,7 +2798,9 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 						}
 
 						if b.resume {
-							b.resumableState.AppendToState(path.Join(capturedFPath, fInfo.Name()), capturedObjMeta.TotalSize)
+							if appendErr := b.resumableState.AppendToState(path.Join(capturedFPath, fInfo.Name()), capturedObjMeta.TotalSize); appendErr != nil {
+								return errors.Wrap(appendErr, "resumableState.AppendToState")
+							}
 						}
 						return nil
 					})

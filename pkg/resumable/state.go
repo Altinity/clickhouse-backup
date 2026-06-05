@@ -45,7 +45,7 @@ func (s *State) GetParams() map[string]interface{} {
 func (s *State) getBucket(tx *bolt.Tx) *bolt.Bucket {
 	bucket := tx.Bucket(bucketName)
 	if bucket == nil {
-		log.Fatal().Stack().Msgf("resumable state: can't open bucket %s in %s", bucketName, s.stateFile)
+		log.Warn().Msgf("resumable state: can't open bucket %s in %s", bucketName, s.stateFile)
 	}
 	return bucket
 }
@@ -56,6 +56,9 @@ func (s *State) loadParams() {
 	}
 	if err := s.db.View(func(tx *bolt.Tx) error {
 		bucket := s.getBucket(tx)
+		if bucket == nil {
+			return nil
+		}
 		params := bucket.Get([]byte("params"))
 		if params != nil {
 			s.params = make(map[string]interface{})
@@ -103,6 +106,9 @@ func (s *State) cleanupStateIfParamsChange(params map[string]interface{}) {
 		log.Info().Msgf("parameters changed old=%#v new=%#v, %s cleanup begin", s.params, params, s.stateFile)
 		err := s.db.Batch(func(tx *bolt.Tx) error {
 			b := s.getBucket(tx)
+			if b == nil {
+				return nil
+			}
 			c := b.Cursor()
 			for k, _ := c.First(); k != nil; k, _ = c.Next() {
 				if err := b.Delete(k); err != nil {
@@ -117,6 +123,9 @@ func (s *State) cleanupStateIfParamsChange(params map[string]interface{}) {
 	}
 	_ = s.db.Batch(func(tx *bolt.Tx) error {
 		b := s.getBucket(tx)
+		if b == nil {
+			return nil
+		}
 		s.saveParams(b, params)
 		return nil
 	})
@@ -140,34 +149,49 @@ func (s *State) saveParams(b *bolt.Bucket, params map[string]interface{}) {
 	}
 }
 
-func (s *State) AppendToState(path string, size int64) {
+// AppendToState records that path (with the given size) has been processed.
+// A write failure (for example "no space left on device", see issue #1172) is
+// returned to the caller instead of aborting the whole process via log.Fatal:
+// the running clickhouse-backup server stays alive and surfaces the error,
+// while the CLI exits with a non-zero status.
+func (s *State) AppendToState(path string, size int64) error {
 	if s.db == nil {
-		return
+		return nil
 	}
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		b := s.getBucket(tx)
+		if b == nil {
+			return nil
+		}
 		buf := make([]byte, binary.MaxVarintLen64)
 		n := binary.PutVarint(buf, size)
 		return b.Put([]byte(path), buf[:n])
 	})
 	if err != nil {
-		log.Fatal().Stack().Msgf("resumable state: can't write key %s to %s error: %v", path, s.stateFile, err)
+		return errors.Wrapf(err, "resumable state: can't write key %s to %s", path, s.stateFile)
 	}
+	return nil
 }
 
-func (s *State) IsAlreadyProcessedBool(path string) bool {
-	isProcesses, _ := s.IsAlreadyProcessed(path)
-	return isProcesses
+func (s *State) IsAlreadyProcessedBool(path string) (bool, error) {
+	isProcesses, _, err := s.IsAlreadyProcessed(path)
+	return isProcesses, err
 }
 
-func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
+// IsAlreadyProcessed reports whether path was already processed and its recorded
+// size. A read failure is returned to the caller instead of aborting via
+// log.Fatal, see issue #1172.
+func (s *State) IsAlreadyProcessed(path string) (bool, int64, error) {
 	if s.db == nil {
-		return false, 0
+		return false, 0, nil
 	}
 	size := int64(0)
 	found := false
 	err := s.db.View(func(tx *bolt.Tx) error {
 		b := s.getBucket(tx)
+		if b == nil {
+			return nil
+		}
 		buf := b.Get([]byte(path))
 		if buf != nil {
 			found = true
@@ -183,10 +207,9 @@ func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
 		return nil
 	})
 	if err != nil {
-		log.Fatal().Stack().Msgf("resumable state: can't read key %s to %s error: %v", path, s.stateFile, err)
-		return false, 0
+		return false, 0, errors.Wrapf(err, "resumable state: can't read key %s from %s", path, s.stateFile)
 	}
-	return found, size
+	return found, size, nil
 }
 
 func (s *State) Close() {
