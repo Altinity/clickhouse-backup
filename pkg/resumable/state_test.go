@@ -23,6 +23,32 @@ func newTestState(t *testing.T) *State {
 	return s
 }
 
+// TestNewStateReturnsNilDBOnOpenError verifies that when bolt.Open fails (here
+// because the intermediate <dir>/backup/<backupName> directory does not exist
+// and bolt does not create it), NewState logs a warning and returns a State
+// with a nil db instead of panicking. Every method then short-circuits on the
+// nil db guard, see issue #1172.
+func TestNewStateReturnsNilDBOnOpenError(t *testing.T) {
+	dir := t.TempDir()
+	const backupName = "test-backup"
+	// Deliberately do NOT create <dir>/backup/<backupName> so bolt.Open returns
+	// an error for <dir>/backup/<backupName>/upload.state2.
+	s := NewState(dir, backupName, "upload", nil)
+	if s == nil {
+		t.Fatal("NewState must never return a nil *State")
+	}
+	if s.db != nil {
+		t.Fatal("expected s.db to be nil after bolt.Open failed")
+	}
+	// Methods must be safe to call on a nil-db state.
+	if processed, size, err := s.IsAlreadyProcessed("shard1/part-0"); err != nil || processed || size != 0 {
+		t.Errorf("expected (false, 0, nil) on nil-db state, got (%v, %d, %v)", processed, size, err)
+	}
+	if err := s.AppendToState("shard1/part-0", 1024); err != nil {
+		t.Errorf("expected nil error on nil-db state AppendToState, got %v", err)
+	}
+}
+
 // TestAppendToStateReturnsWriteError verifies that a failure to write the
 // resumable state (here forced by closing the underlying DB) is returned to the
 // caller instead of aborting the whole process via log.Fatal/os.Exit, see issue
