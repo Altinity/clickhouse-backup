@@ -178,7 +178,14 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
 
 	if !schemaOnly && !b.cfg.General.DownloadByPart && remoteBackup.RequiredBackup != "" {
+		// The recursive Download reuses this *Backuper and its initDisksPathsAndBackupDestination
+		// overwrites b.dst, then closes it via the child's deferred Close on return. Save and
+		// restore our own BackupDestination so the parent keeps using its still-open b.dst for
+		// the rest of the download, otherwise GCS/FTP/SFTP fail with use-after-close while
+		// S3/Azure only mask it because their Close is a no-op. See issue #1384.
+		parentDst := b.dst
 		err := b.Download(remoteBackup.RequiredBackup, tablePattern, partitions, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, b.resume, hardlinkExistsFiles, backupVersion, commandId)
+		b.dst = parentDst
 		if err != nil && !errors.Is(err, ErrBackupIsAlreadyExists) {
 			return errors.Wrap(err, "download RequiredBackup")
 		}
