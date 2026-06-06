@@ -66,7 +66,13 @@ type GeneralConfig struct {
 	// PipeBufferSize - size of the in-memory ring buffer between the compression and the upload/download stream handlers, see https://github.com/Altinity/clickhouse-backup/issues/1376
 	PipeBufferSize int64 `yaml:"pipe_buffer_size" envconfig:"PIPE_BUFFER_SIZE"`
 	// DownloadCopyBufferSize - explicit buffer size for io.CopyBuffer during download/extract, 0 means use the Go default io.Copy buffer (32KB), see https://github.com/Altinity/clickhouse-backup/issues/1376
-	DownloadCopyBufferSize              int64             `yaml:"download_copy_buffer_size" envconfig:"DOWNLOAD_COPY_BUFFER_SIZE"`
+	DownloadCopyBufferSize int64 `yaml:"download_copy_buffer_size" envconfig:"DOWNLOAD_COPY_BUFFER_SIZE"`
+	// CompressionUseMultiThread - enable per-stream multi-threaded zstd/gzip compression and decompression (zstd encoder/decoder concurrency, gzip via pgzip). Default false because clickhouse-backup already parallelizes at table level via upload_concurrency/download_concurrency, so per-stream threading mainly over-subscribes CPU; enable it when backing up a single large table with low concurrency, see https://github.com/Altinity/clickhouse-backup/issues/1378
+	CompressionUseMultiThread bool `yaml:"compression_use_multi_thread" envconfig:"COMPRESSION_USE_MULTI_THREAD"`
+	// CompressionThreads - number of per-stream compression threads when compression_use_multi_thread is enabled (zstd concurrency / pgzip block workers); 0 means auto (GOMAXPROCS). Ignored when compression_use_multi_thread is false, see https://github.com/Altinity/clickhouse-backup/issues/1378
+	CompressionThreads int `yaml:"compression_threads" envconfig:"COMPRESSION_THREADS"`
+	// CompressionBufferSize - compression buffer size in bytes, 0 keeps the library defaults. Meaning and valid range depend on compression_format and compression_use_multi_thread: zstd uses it as the encoder window size (power of two, 1KB..512MB); single-threaded gzip uses it as the DEFLATE window (32..32768); multi-threaded gzip uses it as the pgzip block size (>16384). Other formats reject it. See https://github.com/Altinity/clickhouse-backup/issues/1378
+	CompressionBufferSize               int               `yaml:"compression_buffer_size" envconfig:"COMPRESSION_BUFFER_SIZE"`
 	ObjectDiskServerSideCopyConcurrency uint8             `yaml:"object_disk_server_side_copy_concurrency" envconfig:"OBJECT_DISK_SERVER_SIDE_COPY_CONCURRENCY"`
 	AllowObjectDiskStreaming            bool              `yaml:"allow_object_disk_streaming" envconfig:"ALLOW_OBJECT_DISK_STREAMING"`
 	UseResumableState                   bool              `yaml:"use_resumable_state" envconfig:"USE_RESUMABLE_STATE"`
@@ -185,8 +191,6 @@ type S3Config struct {
 	DeleteConcurrency       int               `yaml:"delete_concurrency" envconfig:"S3_DELETE_CONCURRENCY"`
 	Debug                   bool              `yaml:"debug" envconfig:"S3_DEBUG"`
 	// HTTP transport and buffer tuning for high-bandwidth networks, see https://github.com/Altinity/clickhouse-backup/issues/1376
-	// BufferSize - per-part buffer for the s3manager up/downloader buffer providers
-	BufferSize int `yaml:"buffer_size" envconfig:"S3_BUFFER_SIZE"`
 	// HTTPMaxIdleConns - http.Transport.MaxIdleConns, 0 keeps the AWS SDK default
 	HTTPMaxIdleConns int `yaml:"http_max_idle_conns" envconfig:"S3_HTTP_MAX_IDLE_CONNS"`
 	// HTTPMaxIdleConnsPerHost - http.Transport.MaxIdleConnsPerHost, 0 keeps the Go default (2), raise it to avoid serializing parallel up/downloads to the same endpoint
@@ -282,6 +286,7 @@ type ClickHouseConfig struct {
 	RestoreAsAttach                  bool              `yaml:"restore_as_attach" envconfig:"CLICKHOUSE_RESTORE_AS_ATTACH"`
 	RestoreDistributedCluster        string            `yaml:"restore_distributed_cluster" envconfig:"CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER"`
 	CheckPartsColumns                bool              `yaml:"check_parts_columns" envconfig:"CLICKHOUSE_CHECK_PARTS_COLUMNS"`
+	PartsColumnsBatchSize            int               `yaml:"parts_columns_batch_size" envconfig:"CLICKHOUSE_PARTS_COLUMNS_BATCH_SIZE"`
 	Secure                           bool              `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
 	SkipVerify                       bool              `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`
 	SyncReplicatedTables             bool              `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES"`
@@ -303,21 +308,22 @@ type ClickHouseConfig struct {
 }
 
 type APIConfig struct {
-	ListenAddr                    string `yaml:"listen" envconfig:"API_LISTEN"`
-	EnableMetrics                 bool   `yaml:"enable_metrics" envconfig:"API_ENABLE_METRICS"`
-	EnablePprof                   bool   `yaml:"enable_pprof" envconfig:"API_ENABLE_PPROF"`
-	Username                      string `yaml:"username" envconfig:"API_USERNAME"`
-	Password                      string `yaml:"password" envconfig:"API_PASSWORD"`
-	Secure                        bool   `yaml:"secure" envconfig:"API_SECURE"`
-	CertificateFile               string `yaml:"certificate_file" envconfig:"API_CERTIFICATE_FILE"`
-	PrivateKeyFile                string `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE"`
-	CAKeyFile                     string `yaml:"ca_cert_file" envconfig:"API_CA_KEY_FILE"`
-	CACertFile                    string `yaml:"ca_key_file" envconfig:"API_CA_CERT_FILE"`
-	CreateIntegrationTables       bool   `yaml:"create_integration_tables" envconfig:"API_CREATE_INTEGRATION_TABLES"`
-	IntegrationTablesHost         string `yaml:"integration_tables_host" envconfig:"API_INTEGRATION_TABLES_HOST"`
-	AllowParallel                 bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
-	CompleteResumableAfterRestart bool   `yaml:"complete_resumable_after_restart" envconfig:"API_COMPLETE_RESUMABLE_AFTER_RESTART"`
-	WatchIsMainProcess            bool   `yaml:"watch_is_main_process" envconfig:"WATCH_IS_MAIN_PROCESS"`
+	ListenAddr                            string   `yaml:"listen" envconfig:"API_LISTEN"`
+	EnableMetrics                         bool     `yaml:"enable_metrics" envconfig:"API_ENABLE_METRICS"`
+	EnablePprof                           bool     `yaml:"enable_pprof" envconfig:"API_ENABLE_PPROF"`
+	Username                              string   `yaml:"username" envconfig:"API_USERNAME"`
+	Password                              string   `yaml:"password" envconfig:"API_PASSWORD"`
+	Secure                                bool     `yaml:"secure" envconfig:"API_SECURE"`
+	CertificateFile                       string   `yaml:"certificate_file" envconfig:"API_CERTIFICATE_FILE"`
+	PrivateKeyFile                        string   `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE"`
+	CAKeyFile                             string   `yaml:"ca_cert_file" envconfig:"API_CA_KEY_FILE"`
+	CACertFile                            string   `yaml:"ca_key_file" envconfig:"API_CA_CERT_FILE"`
+	CreateIntegrationTables               bool     `yaml:"create_integration_tables" envconfig:"API_CREATE_INTEGRATION_TABLES"`
+	IntegrationTablesHost                 string   `yaml:"integration_tables_host" envconfig:"API_INTEGRATION_TABLES_HOST"`
+	AllowParallel                         bool     `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
+	CompleteResumableAfterRestart         bool     `yaml:"complete_resumable_after_restart" envconfig:"API_COMPLETE_RESUMABLE_AFTER_RESTART"`
+	CompleteResumableAfterRestartCommands []string `yaml:"complete_resumable_after_restart_commands" envconfig:"API_COMPLETE_RESUMABLE_AFTER_RESTART_COMMANDS"`
+	WatchIsMainProcess                    bool     `yaml:"watch_is_main_process" envconfig:"WATCH_IS_MAIN_PROCESS"`
 	// BackupActionsSkipCommands - commands that should not be tracked in system.backup_actions
 	// (the in-memory async status list). Useful to exclude high-frequency monitoring calls
 	// like "list" from growing the actions state. See https://github.com/Altinity/clickhouse-backup/issues/1359
@@ -335,6 +341,17 @@ type APIConfig struct {
 // into the in-memory async status (system.backup_actions).
 func (cfg *APIConfig) IsBackupActionsSkipCommand(command string) bool {
 	for _, c := range cfg.BackupActionsSkipCommands {
+		if c == command {
+			return true
+		}
+	}
+	return false
+}
+
+// IsCompleteResumableAfterRestartCommand returns true if the given command may
+// be resumed automatically after API server restart.
+func (cfg *APIConfig) IsCompleteResumableAfterRestartCommand(command string) bool {
+	for _, c := range cfg.CompleteResumableAfterRestartCommands {
 		if c == command {
 			return true
 		}
@@ -395,6 +412,51 @@ func (cfg *Config) GetCompressionFormat() string {
 	}
 }
 
+// validateCompressionTuning checks the general.compression_use_multi_thread, compression_threads and
+// compression_buffer_size options against the configured compression_format. Multi-threading and the
+// buffer size only apply to zstd and gzip; the buffer size additionally has format- and mode-specific
+// ranges, see https://github.com/Altinity/clickhouse-backup/issues/1378
+func validateCompressionTuning(cfg *Config) error {
+	format := cfg.GetCompressionFormat()
+	multiThreadSupported := format == "zstd" || format == "gzip" || format == "gz"
+
+	if cfg.General.CompressionUseMultiThread && !multiThreadSupported {
+		return errors.Errorf("compression_use_multi_thread is only supported for 'zstd' and 'gzip' compression_format, not '%s'", format)
+	}
+	if cfg.General.CompressionThreads < 0 {
+		return errors.Errorf("compression_threads=%d is invalid, it must be >= 0 (0 means auto/GOMAXPROCS)", cfg.General.CompressionThreads)
+	}
+	if cfg.General.CompressionThreads > 0 && !cfg.General.CompressionUseMultiThread {
+		return errors.New("compression_threads is set but compression_use_multi_thread is false; enable compression_use_multi_thread or unset compression_threads")
+	}
+	size := cfg.General.CompressionBufferSize
+	if size == 0 {
+		return nil
+	}
+	switch format {
+	case "zstd":
+		// zstd encoder window size must be a power of two between 1KB and 512MB
+		if size < 1024 || size > 512*1024*1024 || (size&(size-1)) != 0 {
+			return errors.Errorf("compression_buffer_size=%d is invalid for zstd, it must be a power of two between 1024 and 536870912", size)
+		}
+	case "gzip", "gz":
+		if cfg.General.CompressionUseMultiThread {
+			// pgzip block size must be greater than its 16KB tail size
+			if size <= 16384 {
+				return errors.Errorf("compression_buffer_size=%d is invalid for multi-threaded gzip, it must be greater than 16384", size)
+			}
+		} else {
+			// single-threaded gzip uses a DEFLATE window, capped at 32KB by the format
+			if size < 32 || size > 32768 {
+				return errors.Errorf("compression_buffer_size=%d is invalid for single-threaded gzip, it must be between 32 and 32768", size)
+			}
+		}
+	default:
+		return errors.Errorf("compression_buffer_size is only supported for 'zstd' and 'gzip' compression_format, not '%s'", format)
+	}
+	return nil
+}
+
 var freezeByPartBeginAndRE = regexp.MustCompile(`(?im)^\s*AND\s+`)
 
 // LoadConfig - load config from file + environment variables
@@ -408,7 +470,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 		return nil, errors.Wrap(err, "can't parse config file")
 	}
 	if err := envconfig.Process("", cfg); err != nil {
-		return nil, errors.WithMessage(err, "LoadConfig envconfig.Process")
+		return nil, errors.Wrap(err, "LoadConfig envconfig.Process")
 	}
 
 	// auto-tuning upload_concurrency for storage types which not have SDK level concurrency, https://github.com/Altinity/clickhouse-backup/issues/658
@@ -417,7 +479,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 		return nil, errors.Wrap(err, "can't parse config file")
 	}
 	if err := envconfig.Process("", cfgWithoutDefault); err != nil {
-		return nil, errors.WithMessage(err, "LoadConfig envconfig.Process cfgWithoutDefault")
+		return nil, errors.Wrap(err, "LoadConfig envconfig.Process cfgWithoutDefault")
 	}
 	if (cfg.General.RemoteStorage == "gcs" || cfg.General.RemoteStorage == "azblob" || cfg.General.RemoteStorage == "cos") && cfgWithoutDefault.General.UploadConcurrency == 0 {
 		cfg.General.UploadConcurrency = uint8(runtime.NumCPU() / 2)
@@ -449,10 +511,10 @@ func LoadConfig(configLocation string) (*Config, error) {
 		cfg.S3.StorageClass = string(s3types.StorageClassStandard)
 	}
 	if err = ValidateConfig(cfg); err != nil {
-		return cfg, errors.WithMessage(err, "LoadConfig ValidateConfig")
+		return cfg, errors.Wrap(err, "LoadConfig ValidateConfig")
 	}
 	if err = cfg.SetPriority(); err != nil {
-		return cfg, errors.WithMessage(err, "LoadConfig SetPriority")
+		return cfg, errors.Wrap(err, "LoadConfig SetPriority")
 	}
 	return cfg, nil
 }
@@ -460,7 +522,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 func ValidateConfig(cfg *Config) error {
 	if cfg.General.RemoteStorage == "s3" {
 		if _, err := aws.ParseRetryMode(cfg.S3.RetryMode); err != nil {
-			return errors.WithMessage(err, "ValidateConfig ParseRetryMode")
+			return errors.Wrap(err, "ValidateConfig ParseRetryMode")
 		}
 		if cfg.S3.HTTPIdleConnTimeout != "" {
 			if _, err := time.ParseDuration(cfg.S3.HTTPIdleConnTimeout); err != nil {
@@ -482,6 +544,11 @@ func ValidateConfig(cfg *Config) error {
 	}
 	if _, ok := ArchiveExtensions[cfg.GetCompressionFormat()]; !ok && cfg.GetCompressionFormat() != "none" {
 		return errors.Errorf("'%s' is unsupported compression format", cfg.GetCompressionFormat())
+	}
+	// compression_use_multi_thread / compression_threads / compression_buffer_size only apply to
+	// zstd and gzip, and the buffer size has format- and mode-specific valid ranges, see https://github.com/Altinity/clickhouse-backup/issues/1378
+	if err := validateCompressionTuning(cfg); err != nil {
+		return err
 	}
 	if timeout, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
 		return errors.Wrap(err, "invalid clickhouse timeout")
@@ -536,7 +603,7 @@ func ValidateConfig(cfg *Config) error {
 		}
 		_, err := tls.LoadX509KeyPair(cfg.API.CertificateFile, cfg.API.PrivateKeyFile)
 		if err != nil {
-			return errors.WithMessage(err, "ValidateConfig LoadX509KeyPair")
+			return errors.Wrap(err, "ValidateConfig LoadX509KeyPair")
 		}
 	}
 	if cfg.Custom.CommandTimeout != "" {
@@ -689,6 +756,7 @@ func DefaultConfig() *Config {
 			BackupMutations:                  true,
 			RestoreAsAttach:                  false,
 			CheckPartsColumns:                true,
+			PartsColumnsBatchSize:            25,
 			DefaultReplicaPath:               "/clickhouse/tables/{cluster}/{shard}/{database}/{table}",
 			DefaultReplicaName:               "{replica}",
 			MaxConnections:                   int(downloadConcurrency),
@@ -718,7 +786,6 @@ func DefaultConfig() *Config {
 			RetryMode:               string(aws.RetryModeStandard),
 			ChunkSize:               5 * 1024 * 1024,
 			DeleteConcurrency:       10,
-			BufferSize:              64 * 1024,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
@@ -744,11 +811,12 @@ func DefaultConfig() *Config {
 			DeleteConcurrency:      50,
 		},
 		API: APIConfig{
-			ListenAddr:                     "localhost:7171",
-			EnableMetrics:                  true,
-			CompleteResumableAfterRestart:  true,
-			CancelOperationTimeout:         "1800s",
-			CancelOperationTimeoutDuration: 1800 * time.Second,
+			ListenAddr:                            "localhost:7171",
+			EnableMetrics:                         true,
+			CompleteResumableAfterRestart:         true,
+			CompleteResumableAfterRestartCommands: []string{"upload", "download"},
+			CancelOperationTimeout:                "1800s",
+			CancelOperationTimeoutDuration:        1800 * time.Second,
 		},
 		FTP: FTPConfig{
 			Timeout:           "2m",

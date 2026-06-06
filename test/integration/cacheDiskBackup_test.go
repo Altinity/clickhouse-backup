@@ -32,6 +32,7 @@ func TestCacheDiskBackup(t *testing.T) {
 	}
 
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
 	backupName := fmt.Sprintf("test_cache_disk_%d", rand.Int())
@@ -186,5 +187,4 @@ XML
 	env.ch.Close()
 	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
 	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
-	env.Cleanup(t, r)
 }

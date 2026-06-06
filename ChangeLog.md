@@ -1,3 +1,8 @@
+# v2.7.1
+- add `general.compression_use_multi_thread` (env `COMPRESSION_USE_MULTI_THREAD`, default `false`), `general.compression_threads` (env `COMPRESSION_THREADS`, default `0` = auto/GOMAXPROCS) and `general.compression_buffer_size` (env `COMPRESSION_BUFFER_SIZE`, default `0`) config options to tune per-stream zstd/gzip threading and the compression buffer (zstd encoder window / gzip DEFLATE window / pgzip block size); per-stream compression is now single-threaded by default to avoid CPU over-subscription, since `upload_concurrency`/`download_concurrency` already parallelize across tables, fix [#1378](https://github.com/Altinity/clickhouse-backup/issues/1378)
+- migrate compression from the archived, frozen `github.com/mholt/archiver/v4 v4.0.0-alpha.8` to its maintained successor `github.com/mholt/archives v0.1.5`, removing the `replace` directive pinned in [archiver#428](https://github.com/mholt/archiver/issues/428)
+- don't kill `clickhouse-backup server` with `Fatal`/`os.Exit` when the resumable state DB can't be written or read (e.g. `no space left on device`); the error now propagates so the server stays alive and returns it to the API client, while the CLI exits with a non-zero code, fix [#1172](https://github.com/Altinity/clickhouse-backup/issues/1172)
+
 # v2.7.0
 
 NEW FEATURES

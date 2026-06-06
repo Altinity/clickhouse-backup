@@ -24,6 +24,7 @@ func TestFIPS(t *testing.T) {
 		t.Skip("QA_AWS_ACCESS_KEY is empty, TestFIPS will skip")
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 1*time.Second, 1*time.Second, 1*time.Minute)
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
 	env.DockerExecNoError(r, "clickhouse", "rm", "-fv", "/etc/apt/sources.list.d/clickhouse.list")
@@ -182,5 +183,4 @@ func TestFIPS(t *testing.T) {
 	testTLSCerts("ecdsa", "", "prime256v1", "ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-AES256-GCM-SHA384")
 	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "fips_table"}, createSQL, "", false, 0, "", false, ""))
 	r.NoError(env.dropDatabase(t.Name(), true))
-	env.Cleanup(t, r)
 }

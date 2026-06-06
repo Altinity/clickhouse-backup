@@ -20,6 +20,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/bwlimit"
 	"github.com/antchfx/xmlquery"
 	"github.com/pkg/errors"
 	"github.com/puzpuzpuz/xsync"
@@ -69,7 +70,7 @@ func ReadIntText(scanner *bufio.Scanner) (int, error) {
 	value := scanner.Text()
 	intValue, err := strconv.Atoi(value)
 	if err != nil {
-		return -1, errors.WithMessage(err, "ReadIntText strconv.Atoi")
+		return -1, errors.Wrap(err, "ReadIntText strconv.Atoi")
 	}
 	return intValue, nil
 }
@@ -79,7 +80,7 @@ func ReadInt64Text(scanner *bufio.Scanner) (int64, error) {
 	value := scanner.Text()
 	intValue, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
-		return -1, errors.WithMessage(err, "ReadInt64Text strconv.ParseInt")
+		return -1, errors.Wrap(err, "ReadInt64Text strconv.ParseInt")
 	}
 	return intValue, nil
 }
@@ -90,7 +91,7 @@ func ReadBoolText(scanner *bufio.Scanner) (bool, error) {
 	value := scanner.Text()
 	intValue, err := strconv.Atoi(value)
 	if err != nil {
-		return false, errors.WithMessage(err, "ReadBoolText strconv.Atoi")
+		return false, errors.Wrap(err, "ReadBoolText strconv.Atoi")
 	}
 	return intValue > 0, nil
 }
@@ -104,7 +105,7 @@ func (m *Metadata) readFromFile(file io.Reader) error {
 	version, err := ReadIntText(scanner)
 
 	if err != nil {
-		return errors.WithMessage(err, "readFromFile ReadIntText version")
+		return errors.Wrap(err, "readFromFile ReadIntText version")
 	}
 
 	if version < int(VersionAbsolutePaths) || version > int(VersionFullObjectKey) {
@@ -167,32 +168,32 @@ func (m *Metadata) writeToFile(file *os.File) error {
 	var err error
 
 	if _, err = file.WriteString(strconv.FormatInt(int64(m.Version), 10) + "\n"); err != nil {
-		return errors.WithMessage(err, "writeToFile write version")
+		return errors.Wrap(err, "writeToFile write version")
 	}
 
 	if _, err = file.WriteString(strconv.FormatInt(int64(m.StorageObjectCount), 10) + "\t" + strconv.FormatInt(m.TotalSize, 10) + "\n"); err != nil {
-		return errors.WithMessage(err, "writeToFile write object count")
+		return errors.Wrap(err, "writeToFile write object count")
 	}
 
 	for i := 0; i < m.StorageObjectCount; i++ {
 		if _, err = file.WriteString(strconv.FormatInt(m.StorageObjects[i].ObjectSize, 10) + "\t" + m.StorageObjects[i].ObjectPath + "\n"); err != nil {
-			return errors.WithMessage(err, "writeToFile write storage object")
+			return errors.Wrap(err, "writeToFile write storage object")
 		}
 	}
 
 	if _, err = file.WriteString(strconv.FormatInt(int64(m.RefCount), 10) + "\n"); err != nil {
-		return errors.WithMessage(err, "writeToFile write ref count")
+		return errors.Wrap(err, "writeToFile write ref count")
 	}
 
 	if m.Version >= VersionReadOnlyFlag {
 		if _, err = file.WriteString(b2i[m.ReadOnly] + "\n"); err != nil {
-			return errors.WithMessage(err, "writeToFile write read only flag")
+			return errors.Wrap(err, "writeToFile write read only flag")
 		}
 	}
 
 	if m.Version >= VersionInlineData {
 		if _, err = file.WriteString(m.InlineData + "\n"); err != nil {
-			return errors.WithMessage(err, "writeToFile write inline data")
+			return errors.Wrap(err, "writeToFile write inline data")
 		}
 	}
 	return nil
@@ -279,13 +280,13 @@ func InitCredentialsAndConnections(ctx context.Context, ch *clickhouse.ClickHous
 	defer InitCredentialsAndConnectionsMutex.Unlock()
 	if _, exists := DisksCredentials.Load(diskName); !exists {
 		if err = getObjectDisksCredentials(ctx, ch); err != nil {
-			return errors.WithMessage(err, "InitCredentialsAndConnections getObjectDisksCredentials")
+			return errors.Wrap(err, "InitCredentialsAndConnections getObjectDisksCredentials")
 		}
 	}
 	if _, exists := DisksConnections.Load(diskName); !exists {
 		connection, err := makeObjectDiskConnection(ctx, ch, cfg, diskName)
 		if err != nil {
-			return errors.WithMessage(err, "InitCredentialsAndConnections makeObjectDiskConnection")
+			return errors.Wrap(err, "InitCredentialsAndConnections makeObjectDiskConnection")
 		}
 		DisksConnections.Store(diskName, connection)
 	}
@@ -295,7 +296,7 @@ func InitCredentialsAndConnections(ctx context.Context, ch *clickhouse.ClickHous
 func ReadMetadataFromFile(path string) (*Metadata, error) {
 	metadataFile, err := os.Open(path)
 	if err != nil {
-		return nil, errors.WithMessage(err, "ReadMetadataFromFile os.Open")
+		return nil, errors.Wrap(err, "ReadMetadataFromFile os.Open")
 	}
 	return ReadMetadataFromReader(metadataFile, path)
 }
@@ -310,7 +311,7 @@ func ReadMetadataFromReader(metadataFile io.ReadCloser, path string) (*Metadata,
 	var metadata Metadata
 	metadata.Path = path
 	if err := metadata.readFromFile(metadataFile); err != nil {
-		return nil, errors.WithMessage(err, "ReadMetadataFromReader readFromFile")
+		return nil, errors.Wrap(err, "ReadMetadataFromReader readFromFile")
 	}
 	return &metadata, nil
 }
@@ -318,7 +319,7 @@ func ReadMetadataFromReader(metadataFile io.ReadCloser, path string) (*Metadata,
 func WriteMetadataToFile(metadata *Metadata, path string) error {
 	metadataFile, err := os.Create(path)
 	if err != nil {
-		return errors.WithMessage(err, "WriteMetadataToFile os.Create")
+		return errors.Wrap(err, "WriteMetadataToFile os.Create")
 	}
 	defer func() {
 		if err = metadataFile.Close(); err != nil {
@@ -332,13 +333,13 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 	var version int
 	var err error
 	if version, err = ch.GetVersion(ctx); err != nil {
-		return errors.WithMessage(err, "getObjectDisksCredentials GetVersion")
+		return errors.Wrap(err, "getObjectDisksCredentials GetVersion")
 	} else if version <= 20006000 {
 		return nil
 	}
 	configFile, doc, err := ch.ParseXML(ctx, "config.xml")
 	if err != nil {
-		return errors.WithMessage(err, "getObjectDisksCredentials ParseXML")
+		return errors.Wrap(err, "getObjectDisksCredentials ParseXML")
 	}
 	root := xmlquery.FindOne(doc, "/")
 	if root == nil {
@@ -496,7 +497,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 	if SystemDisks.Size() == 0 {
 		disks, err := ch.GetDisks(ctx, false)
 		if err != nil {
-			return nil, errors.WithMessage(err, "makeObjectDiskConnection GetDisks")
+			return nil, errors.Wrap(err, "makeObjectDiskConnection GetDisks")
 		}
 		for _, d := range disks {
 			SystemDisks.Store(d.Name, d)
@@ -519,7 +520,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		}
 		s3URL, err := url.Parse(creds.EndPoint)
 		if err != nil {
-			return nil, errors.WithMessage(err, "makeObjectDiskConnection url.Parse s3")
+			return nil, errors.Wrap(err, "makeObjectDiskConnection url.Parse s3")
 		}
 		if s3URL.Scheme == "http" {
 			s3cfg.DisableSSL = true
@@ -615,7 +616,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		s3cfg.ObjectDiskPath = s3cfg.Path
 		connection.S3 = &storage.S3{Config: &s3cfg}
 		if err = connection.S3.Connect(ctx); err != nil {
-			return nil, errors.WithMessage(err, "makeObjectDiskConnection S3.Connect")
+			return nil, errors.Wrap(err, "makeObjectDiskConnection S3.Connect")
 		}
 	case "azblob":
 		connection.Type = "azure_blob_storage"
@@ -626,7 +627,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		}
 		azureURL, err := url.Parse(creds.EndPoint)
 		if err != nil {
-			return nil, errors.WithMessage(err, "makeObjectDiskConnection url.Parse azure")
+			return nil, errors.Wrap(err, "makeObjectDiskConnection url.Parse azure")
 		}
 		azureCfg.EndpointSchema = "http"
 		if azureURL.Scheme != "" {
@@ -654,7 +655,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		azureCfg.Debug = cfg.AzureBlob.Debug
 		connection.AzureBlob = &storage.AzureBlob{Config: &azureCfg}
 		if err = connection.AzureBlob.Connect(ctx); err != nil {
-			return nil, errors.WithMessage(err, "makeObjectDiskConnection AzureBlob.Connect")
+			return nil, errors.Wrap(err, "makeObjectDiskConnection AzureBlob.Connect")
 		}
 	}
 	return &connection, nil
@@ -670,7 +671,7 @@ func ConvertLocalPathToRemote(diskName, localPath string) (string, error) {
 	}
 	meta, err := ReadMetadataFromFile(localPath)
 	if err != nil {
-		return "", errors.WithMessage(err, "ConvertLocalPathToRemote ReadMetadataFromFile")
+		return "", errors.Wrap(err, "ConvertLocalPathToRemote ReadMetadataFromFile")
 	}
 	return meta.StorageObjects[0].ObjectPath, nil
 }
@@ -685,23 +686,23 @@ func GetFileReader(ctx context.Context, diskName, remotePath string) (io.ReadClo
 	remoteStorage := connection.GetRemoteStorage()
 	f, err = remoteStorage.GetFileReader(ctx, remotePath)
 	if err != nil {
-		return nil, errors.WithMessage(err, "GetFileReader remoteStorage.GetFileReader")
+		return nil, errors.Wrap(err, "GetFileReader remoteStorage.GetFileReader")
 	}
 	return f, nil
 }
 
 func ReadFileContent(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName, localPath string) ([]byte, error) {
 	if err := InitCredentialsAndConnections(ctx, ch, cfg, diskName); err != nil {
-		return nil, errors.WithMessage(err, "ReadFileContent InitCredentialsAndConnections")
+		return nil, errors.Wrap(err, "ReadFileContent InitCredentialsAndConnections")
 	}
 	remotePath, err := ConvertLocalPathToRemote(diskName, localPath)
 	if err != nil {
-		return nil, errors.WithMessage(err, "ReadFileContent ConvertLocalPathToRemote")
+		return nil, errors.Wrap(err, "ReadFileContent ConvertLocalPathToRemote")
 	}
 
 	f, err := GetFileReader(ctx, diskName, remotePath)
 	if err != nil {
-		return nil, errors.WithMessage(err, "ReadFileContent GetFileReader")
+		return nil, errors.Wrap(err, "ReadFileContent GetFileReader")
 	}
 	return io.ReadAll(f)
 }
@@ -719,12 +720,12 @@ func PutFile(ctx context.Context, diskName, remotePath string, content []byte) e
 
 func WriteFileContent(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName, localPath string, content []byte) error {
 	if err := InitCredentialsAndConnections(ctx, ch, cfg, diskName); err != nil {
-		return errors.WithMessage(err, "WriteFileContent InitCredentialsAndConnections")
+		return errors.Wrap(err, "WriteFileContent InitCredentialsAndConnections")
 	}
 
 	remotePath, err := ConvertLocalPathToRemote(diskName, localPath)
 	if err != nil {
-		return errors.WithMessage(err, "WriteFileContent ConvertLocalPathToRemote")
+		return errors.Wrap(err, "WriteFileContent ConvertLocalPathToRemote")
 	}
 	return PutFile(ctx, diskName, remotePath, content)
 }
@@ -777,7 +778,7 @@ func CopyObject(ctx context.Context, diskName string, srcSize int64, srcBucket, 
 	return remoteStorage.CopyObject(ctx, srcSize, srcBucket, srcKey, dstPath)
 }
 
-func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, dstStorage storage.RemoteStorage, srcKey, dstKey string) error {
+func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, dstStorage storage.RemoteStorage, srcKey, dstKey string, limiter *bwlimit.Limiter) error {
 	srcInfo, statErr := srcStorage.StatFileAbsolute(ctx, srcKey)
 	if statErr != nil {
 		return errors.Wrapf(statErr, "srcStorage.StatFileReaderAbsolute(%s) error", srcKey)
@@ -792,7 +793,10 @@ func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, 
 			log.Error().Msgf("srcReader.Close(%s) error: %v", srcKey, closeErr)
 		}
 	}()
-	if putErr := dstStorage.PutFileAbsolute(ctx, dstKey, srcReader, srcInfo.Size()); putErr != nil {
+	// streaming copy moves bytes through this process (unlike server-side CopyObject),
+	// so honor the configured upload throttle, fix https://github.com/Altinity/clickhouse-backup/issues/1377
+	body := bwlimit.ReadCloser(ctx, srcReader, limiter)
+	if putErr := dstStorage.PutFileAbsolute(ctx, dstKey, body, srcInfo.Size()); putErr != nil {
 		return errors.Wrapf(putErr, "dstStorage.PutFileAbsolute(%s) error", dstKey)
 	}
 	return nil

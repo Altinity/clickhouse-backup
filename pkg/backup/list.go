@@ -87,33 +87,33 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 		bytes, err := json.Marshal(backupInfos)
 		if err != nil {
 			log.Error().Msgf("json.Marshal return error: %v", err)
-			return errors.WithMessage(err, "PrintBackup json.Marshal")
+			return errors.Wrap(err, "PrintBackup json.Marshal")
 		}
 		if _, err := fmt.Fprintln(w, string(bytes)); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
-			return errors.WithMessage(err, "PrintBackup json Fprintln")
+			return errors.Wrap(err, "PrintBackup json Fprintln")
 		}
 		return nil
 	case "yaml":
 		bytes, err := yaml.Marshal(backupInfos)
 		if err != nil {
 			log.Error().Msgf("yaml.Marshal return error: %v", err)
-			return errors.WithMessage(err, "PrintBackup yaml.Marshal")
+			return errors.Wrap(err, "PrintBackup yaml.Marshal")
 		}
 		if _, err := fmt.Fprintln(w, string(bytes)); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
-			return errors.WithMessage(err, "PrintBackup yaml Fprintln")
+			return errors.Wrap(err, "PrintBackup yaml Fprintln")
 		}
 		return nil
 	case "csv":
 		csvString, err := gocsv.MarshalString(backupInfos)
 		if err != nil {
 			log.Error().Msgf("gocsv.MarshalString return error: %v", err)
-			return errors.WithMessage(err, "PrintBackup csv MarshalString")
+			return errors.Wrap(err, "PrintBackup csv MarshalString")
 		}
 		if _, err := fmt.Fprintln(w, csvString); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", len(csvString), err)
-			return errors.WithMessage(err, "PrintBackup csv Fprintln")
+			return errors.Wrap(err, "PrintBackup csv Fprintln")
 		}
 		return nil
 	case "tsv":
@@ -125,11 +125,11 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 		csvString, err := gocsv.MarshalString(backupInfos)
 		if err != nil {
 			log.Error().Msgf("gocsv.MarshalString return error: %v", err)
-			return errors.WithMessage(err, "PrintBackup tsv MarshalString")
+			return errors.Wrap(err, "PrintBackup tsv MarshalString")
 		}
 		if _, err := fmt.Fprintln(w, csvString); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", len(csvString), err)
-			return errors.WithMessage(err, "PrintBackup tsv Fprintln")
+			return errors.Wrap(err, "PrintBackup tsv Fprintln")
 		}
 		return nil
 	case "text", "":
@@ -455,7 +455,7 @@ func (b *Backuper) getLocalBackup(ctx context.Context, backupName string, disks 
 	}
 	backupList, disks, err := b.GetLocalBackups(ctx, disks)
 	if err != nil {
-		return nil, disks, errors.WithMessage(err, "getLocalBackup GetLocalBackups")
+		return nil, disks, errors.Wrap(err, "getLocalBackup GetLocalBackups")
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
@@ -482,10 +482,10 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 	}
 	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
 	if err != nil {
-		return []storage.Backup{}, errors.WithMessage(err, "GetRemoteBackups NewBackupDestination")
+		return []storage.Backup{}, errors.Wrap(err, "GetRemoteBackups NewBackupDestination")
 	}
 	if err := bd.Connect(ctx); err != nil {
-		return []storage.Backup{}, errors.WithMessage(err, "GetRemoteBackups bd.Connect")
+		return []storage.Backup{}, errors.Wrap(err, "GetRemoteBackups bd.Connect")
 	}
 	defer func() {
 		if err := bd.Close(ctx); err != nil {
@@ -494,14 +494,14 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 	}()
 	backupList, err := bd.BackupList(ctx, parseMetadata, "")
 	if err != nil {
-		return []storage.Backup{}, errors.WithMessage(err, "GetRemoteBackups BackupList")
+		return []storage.Backup{}, errors.Wrap(err, "GetRemoteBackups BackupList")
 	}
 	// ugly hack to fix https://github.com/Altinity/clickhouse-backup/issues/309
 	if parseMetadata == false && len(backupList) > 0 {
 		lastBackup := backupList[len(backupList)-1]
 		backupList, err = bd.BackupList(ctx, true, lastBackup.BackupName)
 		if err != nil {
-			return []storage.Backup{}, errors.WithMessage(err, "GetRemoteBackups BackupList last")
+			return []storage.Backup{}, errors.Wrap(err, "GetRemoteBackups BackupList last")
 		}
 	}
 	return backupList, nil
@@ -521,7 +521,7 @@ func (b *Backuper) GetTables(ctx context.Context, tablePattern string) ([]clickh
 		return []clickhouse.Table{}, errors.Wrap(err, "can't get tables")
 	}
 	if err := b.populateBackupShardField(ctx, allTables); err != nil {
-		return nil, errors.WithMessage(err, "GetTables populateBackupShardField")
+		return nil, errors.Wrap(err, "GetTables populateBackupShardField")
 	}
 	return allTables, nil
 }
@@ -669,11 +669,11 @@ func filterSkippedRows(rows []TableRow) []TableRow {
 func (b *Backuper) collectTablesFromLive(ctx context.Context, tablePattern string) ([]TableRow, error) {
 	allTables, err := b.GetTables(ctx, tablePattern)
 	if err != nil {
-		return nil, errors.WithMessage(err, "collectTablesFromLive GetTables")
+		return nil, errors.Wrap(err, "collectTablesFromLive GetTables")
 	}
 	disks, err := b.ch.GetDisks(ctx, false)
 	if err != nil {
-		return nil, errors.WithMessage(err, "collectTablesFromLive GetDisks")
+		return nil, errors.Wrap(err, "collectTablesFromLive GetDisks")
 	}
 	rows := make([]TableRow, 0, len(allTables))
 	for _, table := range allTables {
@@ -699,7 +699,7 @@ func (b *Backuper) collectTablesFromLive(ctx context.Context, tablePattern strin
 func (b *Backuper) collectTablesFromLocalBackup(ctx context.Context, backupName, tablePattern string) ([]TableRow, error) {
 	localBackup, _, err := b.getLocalBackup(ctx, backupName, nil)
 	if err != nil {
-		return nil, errors.WithMessage(err, "collectTablesFromLocalBackup getLocalBackup")
+		return nil, errors.Wrap(err, "collectTablesFromLocalBackup getLocalBackup")
 	}
 	filtered := filterBackupTablesByPattern(localBackup.Tables, tablePattern)
 	if len(filtered) == 0 && tablePattern != "" {
@@ -734,7 +734,7 @@ func (b *Backuper) collectTablesFromRemoteBackup(ctx context.Context, backupName
 	if b.dst == nil {
 		bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
 		if err != nil {
-			return nil, errors.WithMessage(err, "collectTablesFromRemoteBackup NewBackupDestination")
+			return nil, errors.Wrap(err, "collectTablesFromRemoteBackup NewBackupDestination")
 		}
 		if err := bd.Connect(ctx); err != nil {
 			return nil, errors.Wrap(err, "can't connect to remote storage")
@@ -753,7 +753,7 @@ func (b *Backuper) collectTablesFromRemoteBackup(ctx context.Context, backupName
 
 	backupList, err := b.dst.BackupList(ctx, true, backupName)
 	if err != nil {
-		return nil, errors.WithMessage(err, "collectTablesFromRemoteBackup BackupList")
+		return nil, errors.Wrap(err, "collectTablesFromRemoteBackup BackupList")
 	}
 	var remoteBackupMeta *storage.Backup
 	for i := range backupList {
@@ -869,21 +869,21 @@ func printLiveTableRows(rows []TableRow, format string) error {
 	case "json":
 		data, err := json.Marshal(rows)
 		if err != nil {
-			return errors.WithMessage(err, "printLiveTableRows json.Marshal")
+			return errors.Wrap(err, "printLiveTableRows json.Marshal")
 		}
 		fmt.Println(string(data))
 		return nil
 	case "yaml":
 		data, err := yaml.Marshal(rows)
 		if err != nil {
-			return errors.WithMessage(err, "printLiveTableRows yaml.Marshal")
+			return errors.Wrap(err, "printLiveTableRows yaml.Marshal")
 		}
 		fmt.Print(string(data))
 		return nil
 	case "csv":
 		s, err := gocsv.MarshalString(rows)
 		if err != nil {
-			return errors.WithMessage(err, "printLiveTableRows csv MarshalString")
+			return errors.Wrap(err, "printLiveTableRows csv MarshalString")
 		}
 		fmt.Print(s)
 		return nil
@@ -895,7 +895,7 @@ func printLiveTableRows(rows []TableRow, format string) error {
 		})
 		s, err := gocsv.MarshalString(rows)
 		if err != nil {
-			return errors.WithMessage(err, "printLiveTableRows tsv MarshalString")
+			return errors.Wrap(err, "printLiveTableRows tsv MarshalString")
 		}
 		fmt.Print(s)
 		return nil
@@ -959,7 +959,7 @@ func printBackupSections(sections []tableSection, format string) error {
 			data, err = json.MarshalIndent(results, "", "  ")
 		}
 		if err != nil {
-			return errors.WithMessage(err, "printBackupSections json.Marshal")
+			return errors.Wrap(err, "printBackupSections json.Marshal")
 		}
 		fmt.Println(string(data))
 		return nil
@@ -973,7 +973,7 @@ func printBackupSections(sections []tableSection, format string) error {
 			data, err = yaml.Marshal(results)
 		}
 		if err != nil {
-			return errors.WithMessage(err, "printBackupSections yaml.Marshal")
+			return errors.Wrap(err, "printBackupSections yaml.Marshal")
 		}
 		fmt.Print(string(data))
 		return nil
@@ -984,7 +984,7 @@ func printBackupSections(sections []tableSection, format string) error {
 			}
 			csvString, err := gocsv.MarshalString(s.Rows)
 			if err != nil {
-				return errors.WithMessage(err, "printBackupSections csv MarshalString")
+				return errors.Wrap(err, "printBackupSections csv MarshalString")
 			}
 			fmt.Print(csvString)
 		}
@@ -1001,7 +1001,7 @@ func printBackupSections(sections []tableSection, format string) error {
 			}
 			csvString, err := gocsv.MarshalString(s.Rows)
 			if err != nil {
-				return errors.WithMessage(err, "printBackupSections tsv MarshalString")
+				return errors.Wrap(err, "printBackupSections tsv MarshalString")
 			}
 			fmt.Print(csvString)
 		}
@@ -1079,7 +1079,7 @@ func (b *Backuper) GetTablesRemote(ctx context.Context, backupName string, table
 	if b.dst == nil {
 		bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
 		if err != nil {
-			return nil, errors.WithMessage(err, "GetTablesRemote NewBackupDestination")
+			return nil, errors.Wrap(err, "GetTablesRemote NewBackupDestination")
 		}
 		err = bd.Connect(ctx)
 		if err != nil {
@@ -1095,7 +1095,7 @@ func (b *Backuper) GetTablesRemote(ctx context.Context, backupName string, table
 	}
 	backupList, err := b.dst.BackupList(ctx, true, backupName)
 	if err != nil {
-		return nil, errors.WithMessage(err, "GetTablesRemote BackupList")
+		return nil, errors.Wrap(err, "GetTablesRemote BackupList")
 	}
 
 	var tables []clickhouse.Table
@@ -1137,4 +1137,3 @@ func (b *Backuper) GetTablesRemote(ctx context.Context, backupName string, table
 
 	return tables, nil
 }
-

@@ -93,7 +93,7 @@ func (b *Backuper) initDisksPathsAndBackupDestination(ctx context.Context, disks
 	if disks == nil {
 		disks, err = b.ch.GetDisks(ctx, true)
 		if err != nil {
-			return errors.WithMessage(err, "b.ch.GetDisks")
+			return errors.Wrap(err, "b.ch.GetDisks")
 		}
 	}
 	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
@@ -113,11 +113,11 @@ func (b *Backuper) initDisksPathsAndBackupDestination(ctx context.Context, disks
 	b.DiskToPathMap = diskMap
 	if b.cfg.General.RemoteStorage != "none" && b.cfg.General.RemoteStorage != "custom" {
 		if err = b.CalculateMaxSize(ctx); err != nil {
-			return errors.WithMessage(err, "b.CalculateMaxSize")
+			return errors.Wrap(err, "b.CalculateMaxSize")
 		}
 		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName)
 		if err != nil {
-			return errors.WithMessage(err, "storage.NewBackupDestination")
+			return errors.Wrap(err, "storage.NewBackupDestination")
 		}
 		if err := b.dst.Connect(ctx); err != nil {
 			return errors.Wrapf(err, "can't connect to %s", b.dst.Kind())
@@ -130,7 +130,7 @@ func (b *Backuper) initDisksPathsAndBackupDestination(ctx context.Context, disks
 func (b *Backuper) CalculateMaxSize(ctx context.Context) error {
 	maxFileSize, err := b.ch.CalculateMaxFileSize(ctx, b.cfg)
 	if err != nil {
-		return errors.WithMessage(err, "b.ch.CalculateMaxFileSize")
+		return errors.Wrap(err, "b.ch.CalculateMaxFileSize")
 	}
 	if b.cfg.General.MaxFileSize > 0 && b.cfg.General.MaxFileSize < maxFileSize {
 		log.Warn().Msgf("MAX_FILE_SIZE=%d is less than actual %d, please remove general->max_file_size section from your config", b.cfg.General.MaxFileSize, maxFileSize)
@@ -159,7 +159,7 @@ func (b *Backuper) resolveEmbeddedClusterShardReplica(ctx context.Context) error
 	}
 	clusterName, err := b.ch.ApplyMacros(ctx, b.cfg.ClickHouse.UseEmbeddedBackupRestoreCluster)
 	if err != nil {
-		return errors.WithMessage(err, "ApplyMacros for UseEmbeddedBackupRestoreCluster")
+		return errors.Wrap(err, "ApplyMacros for UseEmbeddedBackupRestoreCluster")
 	}
 	type clusterReplica struct {
 		ShardNum   uint32 `ch:"shard_num"`
@@ -168,7 +168,7 @@ func (b *Backuper) resolveEmbeddedClusterShardReplica(ctx context.Context) error
 	var result []clusterReplica
 	query := fmt.Sprintf("SELECT shard_num, replica_num FROM system.clusters WHERE is_local AND cluster='%s' LIMIT 1", clusterName)
 	if err := b.ch.SelectContext(ctx, &result, query); err != nil {
-		return errors.WithMessage(err, "resolve shard_num and replica_num from system.clusters")
+		return errors.Wrap(err, "resolve shard_num and replica_num from system.clusters")
 	}
 	if len(result) == 0 {
 		return errors.Errorf("no local replica found in system.clusters for cluster '%s'", clusterName)
@@ -191,7 +191,7 @@ func (b *Backuper) populateBackupShardField(ctx context.Context, tables []clickh
 		return nil
 	}
 	if err := b.vers.CanShardOperation(ctx); err != nil {
-		return errors.WithMessage(err, "b.vers.CanShardOperation")
+		return errors.Wrap(err, "b.vers.CanShardOperation")
 	}
 
 	if b.bs == nil {
@@ -204,7 +204,7 @@ func (b *Backuper) populateBackupShardField(ctx context.Context, tables []clickh
 	}
 	assignment, err := b.bs.determineShards(ctx)
 	if err != nil {
-		return errors.WithMessage(err, "b.bs.determineShards")
+		return errors.Wrap(err, "b.bs.determineShards")
 	}
 	for i, t := range tables {
 		if t.Skip {
@@ -212,7 +212,7 @@ func (b *Backuper) populateBackupShardField(ctx context.Context, tables []clickh
 		}
 		fullBackup, err := assignment.inShard(t.Database, t.Name)
 		if err != nil {
-			return errors.WithMessage(err, "assignment.inShard")
+			return errors.Wrap(err, "assignment.inShard")
 		}
 		if !fullBackup {
 			tables[i].BackupType = clickhouse.ShardBackupSchema
@@ -311,6 +311,14 @@ func (b *Backuper) getEmbeddedRestoreSettings(version int) []string {
 			log.Fatal().Stack().Msgf("SET s3_use_adaptive_timeouts=0 error: %v", err)
 		}
 	}
+	// embedded RESTORE moves data inside ClickHouse, so our io.Reader throttle can't apply.
+	// Pass download_max_bytes_per_second as the server-side max_backup_bandwidth query setting via the
+	// RESTORE ... SETTINGS clause (see getEmbeddedBackupSettings for why not `SET`).
+	// max_backup_bandwidth is honored there since ClickHouse 25.1 (PR #72665).
+	// fix https://github.com/Altinity/clickhouse-backup/issues/1377
+	if b.cfg.General.DownloadMaxBytesPerSecond > 0 && version >= 25001000 {
+		settings = append(settings, fmt.Sprintf("max_backup_bandwidth=%d", b.cfg.General.DownloadMaxBytesPerSecond))
+	}
 	return settings
 }
 
@@ -330,6 +338,16 @@ func (b *Backuper) getEmbeddedBackupSettings(version int) []string {
 	}
 	if b.cfg.General.RemoteStorage == "azblob" && version >= 24005000 && b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
 		settings = append(settings, "allow_azure_native_copy=1")
+	}
+	// embedded BACKUP moves data inside ClickHouse, so our io.Reader throttle can't apply.
+	// Pass upload_max_bytes_per_second as the server-side max_backup_bandwidth query setting via the
+	// BACKUP ... SETTINGS clause, NOT via `SET`: our clickhouse-go pool keeps no idle connections
+	// (MaxIdleConns=0), so a session-level SET may not reach the BACKUP query's connection. Settings in
+	// the BACKUP/RESTORE SETTINGS clause travel with the query and are applied to its context.
+	// max_backup_bandwidth is honored there since ClickHouse 25.1 (PR #72665).
+	// fix https://github.com/Altinity/clickhouse-backup/issues/1377
+	if b.cfg.General.UploadMaxBytesPerSecond > 0 && version >= 25001000 {
+		settings = append(settings, fmt.Sprintf("max_backup_bandwidth=%d", b.cfg.General.UploadMaxBytesPerSecond))
 	}
 	return settings
 }
@@ -362,7 +380,7 @@ func (b *Backuper) getEmbeddedBackupLocation(ctx context.Context, backupName str
 		azblobEndpoint := b.buildEmbeddedLocationAZBLOB()
 		azblobPath, err := b.ch.ApplyMacros(ctx, b.cfg.AzureBlob.ObjectDiskPath)
 		if err != nil {
-			return "", errors.WithMessage(err, "b.ch.ApplyMacros")
+			return "", errors.Wrap(err, "b.ch.ApplyMacros")
 		}
 		if b.cfg.AzureBlob.Container != "" {
 			return fmt.Sprintf("AzureBlobStorage('%s','%s','%s/%s/')", azblobEndpoint, b.cfg.AzureBlob.Container, azblobPath, backupName), nil
@@ -486,14 +504,14 @@ func (b *Backuper) getTablesDiffFromLocal(ctx context.Context, diffFrom string, 
 	tablesForUploadFromDiff = make(map[metadata.TableTitle]metadata.TableMetadata)
 	diffFromBackup, err := b.ReadBackupMetadataLocal(ctx, diffFrom)
 	if err != nil {
-		return nil, errors.WithMessage(err, "b.ReadBackupMetadataLocal")
+		return nil, errors.Wrap(err, "b.ReadBackupMetadataLocal")
 	}
 	if len(diffFromBackup.Tables) != 0 {
 		metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
 		// empty partitions, because we don't want filter
 		diffTablesList, _, err := b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, []string{})
 		if err != nil {
-			return nil, errors.WithMessage(err, "b.getTableListByPatternLocal")
+			return nil, errors.Wrap(err, "b.getTableListByPatternLocal")
 		}
 		for _, t := range diffTablesList {
 			tablesForUploadFromDiff[metadata.TableTitle{

@@ -33,7 +33,7 @@ func (f *FTP) Kind() string {
 func (f *FTP) Connect(ctx context.Context) error {
 	timeout, err := time.ParseDuration(f.Config.Timeout)
 	if err != nil {
-		return errors.WithMessage(err, "FTP Connect ParseDuration")
+		return errors.Wrap(err, "FTP Connect ParseDuration")
 	}
 	options := make([]ftp.DialOption, 0)
 	options = append(options, ftp.DialWithContext(ctx))
@@ -71,7 +71,7 @@ func (f *FTP) getConnectionFromPool(ctx context.Context, where string) (*ftp.Ser
 	client, err := f.clients.BorrowObject(ctx)
 	if err != nil {
 		log.Error().Msgf("can't BorrowObject(%s) from FTP Connection Pool: %v", where, err)
-		return nil, errors.WithMessage(err, "FTP getConnectionFromPool BorrowObject")
+		return nil, errors.Wrap(err, "FTP getConnectionFromPool BorrowObject")
 	}
 	return client.(*ftp.ServerConn), nil
 }
@@ -95,7 +95,7 @@ func (f *FTP) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, err
 	dir := path.Dir(key)
 	client, err := f.getConnectionFromPool(ctx, fmt.Sprintf("StatFile, key=%s", key))
 	if err != nil {
-		return nil, errors.WithMessage(err, "FTP StatFileAbsolute getConnection")
+		return nil, errors.Wrap(err, "FTP StatFileAbsolute getConnection")
 	}
 	defer f.returnConnectionToPool(ctx, fmt.Sprintf("StatFile, key=%s", key), client)
 	entries, err := client.List(dir)
@@ -104,7 +104,7 @@ func (f *FTP) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, err
 		if strings.HasPrefix(err.Error(), "550") {
 			return nil, NewErrNotFound(key)
 		}
-		return nil, errors.WithMessage(err, "FTP StatFileAbsolute List")
+		return nil, errors.Wrap(err, "FTP StatFileAbsolute List")
 	}
 	file := path.Base(key)
 	for i := range entries {
@@ -126,7 +126,7 @@ func (f *FTP) DeleteFile(ctx context.Context, key string) error {
 	client, err := f.getConnectionFromPool(ctx, where)
 	defer f.returnConnectionToPool(ctx, where, client)
 	if err != nil {
-		return errors.WithMessage(err, "FTP DeleteFile getConnection")
+		return errors.Wrap(err, "FTP DeleteFile getConnection")
 	}
 	filePath := path.Join(f.Config.Path, key)
 	// goftp RemoveDirRecur calls ChangeDir which fails on files.
@@ -135,7 +135,7 @@ func (f *FTP) DeleteFile(ctx context.Context, key string) error {
 		return nil
 	}
 	if err := client.RemoveDirRecur(filePath); err != nil {
-		return errors.WithMessage(err, "FTP DeleteFile RemoveDirRecur")
+		return errors.Wrap(err, "FTP DeleteFile RemoveDirRecur")
 	}
 	return nil
 }
@@ -148,7 +148,7 @@ func (f *FTP) Walk(ctx context.Context, ftpPath string, recursive bool, process 
 func (f *FTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(context.Context, RemoteFile) error) error {
 	client, err := f.getConnectionFromPool(ctx, "Walk")
 	if err != nil {
-		return errors.WithMessage(err, "FTP WalkAbsolute getConnection")
+		return errors.Wrap(err, "FTP WalkAbsolute getConnection")
 	}
 	if !recursive {
 		entries, err := client.List(prefix)
@@ -158,7 +158,7 @@ func (f *FTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, p
 			if strings.HasPrefix(err.Error(), "550") {
 				return nil
 			}
-			return errors.WithMessage(err, "FTP WalkAbsolute List")
+			return errors.Wrap(err, "FTP WalkAbsolute List")
 		}
 		for _, entry := range entries {
 			if entry.Name == "." || entry.Name == ".." {
@@ -169,7 +169,7 @@ func (f *FTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, p
 				lastModified: entry.Time,
 				name:         entry.Name,
 			}); err != nil {
-				return errors.WithMessage(err, "FTP WalkAbsolute process entry")
+				return errors.Wrap(err, "FTP WalkAbsolute process entry")
 			}
 		}
 		return nil
@@ -178,7 +178,7 @@ func (f *FTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, p
 	walker := client.Walk(prefix)
 	for walker.Next() {
 		if err := walker.Err(); err != nil {
-			return errors.WithMessage(err, "FTP WalkAbsolute walker.Err")
+			return errors.Wrap(err, "FTP WalkAbsolute walker.Err")
 		}
 		entry := walker.Stat()
 		if entry == nil {
@@ -189,7 +189,7 @@ func (f *FTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, p
 			lastModified: entry.Time,
 			name:         strings.TrimPrefix(walker.Path(), prefix),
 		}); err != nil {
-			return errors.WithMessage(err, "FTP WalkAbsolute process")
+			return errors.Wrap(err, "FTP WalkAbsolute process")
 		}
 	}
 	return nil
@@ -202,7 +202,7 @@ func (f *FTP) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadClo
 	where := fmt.Sprintf("GetFileReaderAbsolute->%s", key)
 	client, err := f.getConnectionFromPool(ctx, where)
 	if err != nil {
-		return nil, errors.WithMessage(err, "FTP GetFileReaderAbsolute getConnection")
+		return nil, errors.Wrap(err, "FTP GetFileReaderAbsolute getConnection")
 	}
 	resp, err := client.Retr(key)
 	return &FTPFileReader{
@@ -226,14 +226,14 @@ func (f *FTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 	client, err := f.getConnectionFromPool(ctx, where)
 	defer f.returnConnectionToPool(ctx, where, client)
 	if err != nil {
-		return errors.WithMessage(err, "FTP PutFileAbsolute getConnection")
+		return errors.Wrap(err, "FTP PutFileAbsolute getConnection")
 	}
 	err = f.MkdirAll(path.Dir(key), client)
 	if err != nil {
-		return errors.WithMessage(err, "FTP PutFileAbsolute MkdirAll")
+		return errors.Wrap(err, "FTP PutFileAbsolute MkdirAll")
 	}
 	if err := client.Stor(key, r); err != nil {
-		return errors.WithMessage(err, "FTP PutFileAbsolute Stor")
+		return errors.Wrap(err, "FTP PutFileAbsolute Stor")
 	}
 	return nil
 }
@@ -247,7 +247,7 @@ func (f *FTP) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) er
 	client, err := f.getConnectionFromPool(ctx, where)
 	defer f.returnConnectionToPool(ctx, where, client)
 	if err != nil {
-		return errors.WithMessage(err, "FTP DeleteFileFromObjectDiskBackup getConnection")
+		return errors.Wrap(err, "FTP DeleteFileFromObjectDiskBackup getConnection")
 	}
 	filePath := path.Join(f.Config.ObjectDiskPath, key)
 	// goftp RemoveDirRecur calls ChangeDir which fails on files (not directories).
@@ -256,7 +256,7 @@ func (f *FTP) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) er
 		return nil
 	}
 	if err := client.RemoveDirRecur(filePath); err != nil {
-		return errors.WithMessage(err, "FTP DeleteFileFromObjectDiskBackup RemoveDirRecur")
+		return errors.Wrap(err, "FTP DeleteFileFromObjectDiskBackup RemoveDirRecur")
 	}
 	return nil
 }
@@ -375,7 +375,7 @@ func (f *FTP) MkdirAll(key string, client *ftp.ServerConn) error {
 	dirs := strings.Split(key, "/")
 	err := client.ChangeDir("/")
 	if err != nil {
-		return errors.WithMessage(err, "FTP MkdirAll ChangeDir")
+		return errors.Wrap(err, "FTP MkdirAll ChangeDir")
 	}
 
 	for i := range dirs {
@@ -412,7 +412,7 @@ type FTPFileReader struct {
 func (fr *FTPFileReader) Close() error {
 	defer fr.pool.returnConnectionToPool(fr.ctx, "FTPFileReader.Close", fr.client)
 	if err := fr.Response.Close(); err != nil {
-		return errors.WithMessage(err, "FTPFileReader Close")
+		return errors.Wrap(err, "FTPFileReader Close")
 	}
 	return nil
 }
@@ -460,7 +460,7 @@ func (f *ftpPoolFactory) MakeObject(ctx context.Context) (*pool.PooledObject, er
 func (f *ftpPoolFactory) DestroyObject(ctx context.Context, object *pool.PooledObject) error {
 	if err := object.Object.(*ftp.ServerConn).Quit(); err != nil {
 		log.Warn().Msgf("ftpPoolFactory->Destroy Quit error: %v", err)
-		return errors.WithMessage(err, "ftpPoolFactory DestroyObject Quit")
+		return errors.Wrap(err, "ftpPoolFactory DestroyObject Quit")
 	}
 	return nil
 }

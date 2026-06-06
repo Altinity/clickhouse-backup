@@ -15,6 +15,7 @@ func TestMySQLMaterialized(t *testing.T) {
 		t.Skipf("MaterializedMySQL doens't support for clickhouse version %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.DockerExecNoError(r, "mysql", "mysql", "-u", "root", "--password=root", "-v", "-e", "CREATE DATABASE ch_mysql_repl")
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	engine := "MaterializedMySQL"
@@ -35,5 +36,4 @@ func TestMySQLMaterialized(t *testing.T) {
 
 	r.NoError(env.dropDatabase("ch_mysql_repl", false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_mysql_materialized")
-	env.Cleanup(t, r)
 }

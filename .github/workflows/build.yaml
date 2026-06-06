@@ -340,10 +340,10 @@ jobs:
 
       - name: Running integration tests
         env:
-          RUN_PARALLEL: 4
           GOROOT: ${{ env.GOROOT_1_26_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
-          # LOG_LEVEL: "info"
+          RUN_PARALLEL: 4
+          # LOG_LEVEL: "debug"
           # TEST_LOG_LEVEL: "debug"
           # options for advanced debug CI/CD
           # RUN_TESTS: "^TestSkipDisk$"
@@ -369,6 +369,7 @@ jobs:
           QA_GCS_OVER_S3_BUCKET: ${{ secrets.QA_GCS_OVER_S3_BUCKET }}
         run: |
           set -xe
+          echo "RUN_PARALLEL=${RUN_PARALLEL}"
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
           echo "GCS_TESTS=${GCS_TESTS}"
           GCS_ENCRYPTION_KEY=$(openssl rand -base64 32)
@@ -386,7 +387,7 @@ jobs:
           export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
 
           set +e
-          go test -count=1 -parallel "${RUN_PARALLEL}" -race -timeout "${TEST_TIMEOUT:-120m}" -failfast -tags=integration -shuffle=$(date +%Y%m%d) -run "${RUN_TESTS:-.+}" -v "./test/integration/..."
+          go test -count=1 -parallel "${RUN_PARALLEL}" -race -timeout "${TEST_TIMEOUT:-180m}" -failfast -tags=integration -shuffle=$(date +%Y%m%d) -run "${RUN_TESTS:-.+}" -v "./test/integration/..."
           TEST_FAILED=$?
           set -e
           if [[ "0" != "${TEST_FAILED}" ]]; then

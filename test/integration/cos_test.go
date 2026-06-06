@@ -13,8 +13,8 @@ func TestCOS(t *testing.T) {
 		return
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "gettext-base")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-cos.yml.template | envsubst > /etc/clickhouse-backup/config-cos.yml")
 	env.runMainIntegrationScenario(t, "COS", "config-cos.yml")
-	env.Cleanup(t, r)
 }

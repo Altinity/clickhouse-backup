@@ -7,13 +7,13 @@ import (
 	"time"
 )
 
-// TestS3NoDeletePermission - no parallel
 func TestS3NoDeletePermission(t *testing.T) {
 	if isTestShouldSkip("RUN_ADVANCED_TESTS") {
 		t.Skip("Skipping Advanced integration tests...")
 		return
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 
 	env.DockerExecNoError(r, "minio", "/bin/minio_nodelete.sh")
@@ -31,5 +31,4 @@ func TestS3NoDeletePermission(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "remote", "no_delete_backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "list", "remote")
 	env.checkObjectStorageIsEmpty(t, r, "S3", "config-s3.yml")
-	env.Cleanup(t, r)
 }

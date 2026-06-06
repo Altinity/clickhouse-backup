@@ -14,6 +14,7 @@ func TestRestoreDistributedCluster(t *testing.T) {
 		t.Skipf("system.clusters not cleanup properly in version %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	xml := `
 <yandex>
@@ -120,6 +121,4 @@ func TestRestoreDistributedCluster(t *testing.T) {
 	r.NoError(env.dropDatabase(dbName, false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
 	env.DockerExecNoError(r, "clickhouse", "bash", "-c", "rm -fv /etc/clickhouse-server/config.d/new-cluster.xml")
-
-	env.Cleanup(t, r)
 }

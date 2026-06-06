@@ -20,6 +20,7 @@ func TestPostgreSQLMaterialized(t *testing.T) {
 	t.Skip("FREEZE don't support for MaterializedPostgreSQL, https://github.com/ClickHouse/ClickHouse/issues/32902")
 
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.DockerExecNoError(r, "pgsql", "bash", "-ce", "echo 'CREATE DATABASE ch_pgsql_repl' | PGPASSWORD=root psql -v ON_ERROR_STOP=1 -U root")
 	env.DockerExecNoError(r, "pgsql", "bash", "-ce", "echo \"CREATE TABLE t1 (id BIGINT PRIMARY KEY, s VARCHAR(255)); INSERT INTO t1(id, s) VALUES(1,'s1'),(2,'s2'),(3,'s3')\" | PGPASSWORD=root psql -v ON_ERROR_STOP=1 -U root -d ch_pgsql_repl")
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
@@ -49,5 +50,4 @@ func TestPostgreSQLMaterialized(t *testing.T) {
 
 	r.NoError(env.dropDatabase("ch_pgsql_repl", false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_pgsql_materialized")
-	env.Cleanup(t, r)
 }

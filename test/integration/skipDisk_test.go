@@ -13,6 +13,7 @@ import (
 
 func TestSkipDisk(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
@@ -47,7 +48,6 @@ func TestSkipDisk(t *testing.T) {
 
 	// Clean up
 	r.NoError(env.dropDatabase("test_skip_disks", false))
-	env.Cleanup(t, r)
 }
 
 // setupTestSkipDisks creates test database and tables on different disks

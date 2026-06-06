@@ -42,7 +42,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	defer pidlock.RemovePidFile(backupName)
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
-		return errors.WithMessage(err, "GetContextWithCancel")
+		return errors.Wrap(err, "GetContextWithCancel")
 	}
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
@@ -58,13 +58,13 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	b.adjustResumeFlag(resume)
 	clickHouseVersion, versionErr := b.ch.GetVersion(ctx)
 	if versionErr != nil {
-		return errors.WithMessage(versionErr, "GetVersion")
+		return errors.Wrap(versionErr, "GetVersion")
 	}
 	if clickHouseVersion < 24003000 && skipProjections != nil && len(skipProjections) > 0 {
 		log.Warn().Msg("backup with skip-projections can restore only in 24.3+")
 	}
 	if err = b.validateUploadParams(ctx, backupName, diffFrom, diffFromRemote); err != nil {
-		return errors.WithMessage(err, "validateUploadParams")
+		return errors.Wrap(err, "validateUploadParams")
 	}
 	if b.cfg.General.RemoteStorage == "custom" {
 		return custom.Upload(ctx, b, b.cfg, backupName, diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly)
@@ -78,7 +78,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		}
 	}
 	if initErr := b.initDisksPathsAndBackupDestination(ctx, disks, backupName); initErr != nil {
-		return errors.WithMessage(initErr, "initDisksPathsAndBackupDestination")
+		return errors.Wrap(initErr, "initDisksPathsAndBackupDestination")
 	}
 	defer func() {
 		if err := b.dst.Close(ctx); err != nil {
@@ -107,7 +107,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
 	if b.isEmbedded {
 		if err = b.resolveEmbeddedClusterShardReplica(ctx); err != nil {
-			return errors.WithMessage(err, "resolveEmbeddedClusterShardReplica")
+			return errors.Wrap(err, "resolveEmbeddedClusterShardReplica")
 		}
 	}
 	// will ignore partitions cause can't manipulate .backup
@@ -183,7 +183,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 				var parts map[string][]metadata.Part
 				files, parts, uploadedBytes, uploadTableErr = b.uploadTableData(uploadCtx, backupName, deleteSource, tablesForUpload[idx], skipProjections, disks)
 				if uploadTableErr != nil {
-					return errors.WithMessage(uploadTableErr, "uploadTableData")
+					return errors.Wrap(uploadTableErr, "uploadTableData")
 				}
 				atomic.AddInt64(&compressedDataSize, uploadedBytes)
 				tablesForUpload[idx].Files = files
@@ -193,7 +193,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 			if doUploadData || schemaOnly {
 				tableMetadataSize, uploadTableErr = b.uploadTableMetadata(uploadCtx, backupName, backupMetadata.RequiredBackup, tablesForUpload[idx])
 				if uploadTableErr != nil {
-					return errors.WithMessage(uploadTableErr, "uploadTableMetadata")
+					return errors.Wrap(uploadTableErr, "uploadTableMetadata")
 				}
 				atomic.AddInt64(&metadataSize, tableMetadataSize)
 			}
@@ -260,10 +260,16 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	backupMetadata.ClickhouseBackupVersion = backupVersion
 	newBackupMetadataBody, err := json.MarshalIndent(backupMetadata, "", "\t")
 	if err != nil {
-		return errors.WithMessage(err, "json.MarshalIndent")
+		return errors.Wrap(err, "json.MarshalIndent")
 	}
 	remoteBackupMetaFile := path.Join(backupName, "metadata.json")
-	if !b.resume || (b.resume && !b.resumableState.IsAlreadyProcessedBool(remoteBackupMetaFile)) {
+	metaAlreadyProcessed := false
+	if b.resume {
+		if metaAlreadyProcessed, err = b.resumableState.IsAlreadyProcessedBool(remoteBackupMetaFile); err != nil {
+			return errors.Wrap(err, "resumableState.IsAlreadyProcessedBool")
+		}
+	}
+	if !b.resume || !metaAlreadyProcessed {
 		retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 		err = retry.RunCtx(ctx, func(ctx context.Context) error {
 			return b.dst.PutFile(ctx, remoteBackupMetaFile, io.NopCloser(bytes.NewReader(newBackupMetadataBody)), 0)
@@ -307,7 +313,7 @@ func (b *Backuper) RemoveOldBackupsRemote(ctx context.Context) error {
 	start := time.Now()
 	backupList, err := b.dst.BackupList(ctx, true, "")
 	if err != nil {
-		return errors.WithMessage(err, "BackupList")
+		return errors.Wrap(err, "BackupList")
 	}
 	backupsToDelete := storage.GetBackupsToDeleteRemote(backupList, b.cfg.General.BackupsToKeepRemote)
 	log.Info().Fields(map[string]interface{}{
@@ -318,7 +324,7 @@ func (b *Backuper) RemoveOldBackupsRemote(ctx context.Context) error {
 		startDelete := time.Now()
 		err = b.cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx, backupToDelete)
 		if err != nil {
-			return errors.WithMessage(err, "cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent")
+			return errors.Wrap(err, "cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent")
 		}
 
 		if err := b.dst.RemoveBackupRemote(ctx, backupToDelete, b.cfg, b); err != nil {
@@ -337,7 +343,11 @@ func (b *Backuper) RemoveOldBackupsRemote(ctx context.Context) error {
 
 func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remoteFile string) (int64, error) {
 	if b.resume {
-		if isProcessed, size := b.resumableState.IsAlreadyProcessed(remoteFile); isProcessed {
+		isProcessed, size, resumeErr := b.resumableState.IsAlreadyProcessed(remoteFile)
+		if resumeErr != nil {
+			return 0, errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+		}
+		if isProcessed {
 			return size, nil
 		}
 	}
@@ -362,7 +372,9 @@ func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remote
 		return 0, errors.Errorf("can't stat %s", localFile)
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteFile, info.Size())
+		if err = b.resumableState.AppendToState(remoteFile, info.Size()); err != nil {
+			return 0, errors.Wrap(err, "resumableState.AppendToState")
+		}
 	}
 	return info.Size(), nil
 }
@@ -374,7 +386,7 @@ func (b *Backuper) prepareTableListToUpload(ctx context.Context, backupName stri
 	}
 	tablesForUpload, _, err = b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, partitions)
 	if err != nil {
-		return nil, errors.WithMessage(err, "getTableListByPatternLocal")
+		return nil, errors.Wrap(err, "getTableListByPatternLocal")
 	}
 	return tablesForUpload, nil
 }
@@ -479,7 +491,11 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 		return 0, nil
 	}
 	if b.resume {
-		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(destinationRemote); isProcessed {
+		isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(destinationRemote)
+		if resumeErr != nil {
+			return 0, errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+		}
+		if isProcessed {
 			return uint64(processedSize), nil
 		}
 	}
@@ -507,7 +523,9 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 			return 0, errors.Wrapf(err, "can't uploadBackupRelatedDir upload %s", destinationRemote)
 		}
 		if b.resume {
-			b.resumableState.AppendToState(destinationRemote, remoteUploadedBytes)
+			if err = b.resumableState.AppendToState(destinationRemote, remoteUploadedBytes); err != nil {
+				return 0, errors.Wrap(err, "resumableState.AppendToState")
+			}
 		}
 		log.Debug().Str("destinationRemote", destinationRemote).Str("operation", "uploadBackupRelatedDir").Msg("done")
 		return uint64(remoteUploadedBytes), nil
@@ -525,10 +543,12 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 		return nil
 	})
 	if err != nil {
-		return 0, errors.WithMessage(err, "uploadBackupRelatedDir")
+		return 0, errors.Wrap(err, "uploadBackupRelatedDir")
 	}
 	if b.resume {
-		b.resumableState.AppendToState(destinationRemote, remoteUploaded.Size())
+		if err = b.resumableState.AppendToState(destinationRemote, remoteUploaded.Size()); err != nil {
+			return 0, errors.Wrap(err, "resumableState.AppendToState")
+		}
 	}
 	log.Debug().Str("destinationRemote", destinationRemote).Str("operation", "uploadBackupRelatedDir").Msg("done")
 	return uint64(remoteUploaded.Size()), nil
@@ -565,7 +585,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 		backupPath := b.getLocalBackupDataPathForTable(backupName, diskName, dbAndTablePath)
 		splitPartsList, err := b.splitPartFiles(backupPath, table.Parts[diskName], table.Database, table.Table, skipProjections)
 		if err != nil {
-			return nil, nil, 0, errors.WithMessage(err, "splitPartFiles")
+			return nil, nil, 0, errors.Wrap(err, "splitPartFiles")
 		}
 		splitParts[diskName] = splitPartsList
 		splitPartsOffset[diskName] = 0
@@ -590,7 +610,11 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 				remotePathFull := path.Join(remotePath, partSuffix)
 				dataGroup.Go(func() error {
 					if b.resume {
-						if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remotePathFull); isProcessed {
+						isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(remotePathFull)
+						if resumeErr != nil {
+							return errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+						}
+						if isProcessed {
 							atomic.AddInt64(&uploadedBytes, processedSize)
 							return nil
 						}
@@ -605,7 +629,9 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 
 					atomic.AddInt64(&uploadedBytes, uploadPathBytes)
 					if b.resume {
-						b.resumableState.AppendToState(remotePathFull, uploadPathBytes)
+						if err = b.resumableState.AppendToState(remotePathFull, uploadPathBytes); err != nil {
+							return errors.Wrap(err, "resumableState.AppendToState")
+						}
 					}
 					// https://github.com/Altinity/clickhouse-backup/issues/777
 					if deleteSource {
@@ -624,7 +650,11 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 				localFiles := partFiles
 				dataGroup.Go(func() error {
 					if b.resume {
-						if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteDataFile); isProcessed {
+						isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(remoteDataFile)
+						if resumeErr != nil {
+							return errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+						}
+						if isProcessed {
 							atomic.AddInt64(&uploadedBytes, processedSize)
 							return nil
 						}
@@ -650,7 +680,9 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 					}
 					atomic.AddInt64(&uploadedBytes, remoteFile.Size())
 					if b.resume {
-						b.resumableState.AppendToState(remoteDataFile, remoteFile.Size())
+						if err = b.resumableState.AppendToState(remoteDataFile, remoteFile.Size()); err != nil {
+							return errors.Wrap(err, "resumableState.AppendToState")
+						}
 					}
 					// https://github.com/Altinity/clickhouse-backup/issues/777
 					if deleteSource {
@@ -696,7 +728,11 @@ func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName st
 	}
 	remoteTableMetaFile := path.Join(backupName, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableMetadata.Table)))
 	if b.resume {
-		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteTableMetaFile); isProcessed {
+		isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(remoteTableMetaFile)
+		if resumeErr != nil {
+			return 0, errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+		}
+		if isProcessed {
 			return processedSize, nil
 		}
 	}
@@ -708,7 +744,9 @@ func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName st
 		return 0, errors.Wrap(err, "can't upload")
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteTableMetaFile, int64(len(content)))
+		if err = b.resumableState.AppendToState(remoteTableMetaFile, int64(len(content))); err != nil {
+			return 0, errors.Wrap(err, "resumableState.AppendToState")
+		}
 	}
 	return int64(len(content)), nil
 }
@@ -719,7 +757,11 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 	}
 	remoteTableMetaFile := path.Join(backupName, b.embeddedClusterPrefix, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableMetadata.Table)))
 	if b.resume {
-		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteTableMetaFile); isProcessed {
+		isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(remoteTableMetaFile)
+		if resumeErr != nil {
+			return 0, errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+		}
+		if isProcessed {
 			return processedSize, nil
 		}
 	}
@@ -743,7 +785,7 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 		}
 	}()
 	if info, err = os.Stat(localTableMetaFile); err != nil {
-		return 0, errors.WithMessage(err, "Stat")
+		return 0, errors.Wrap(err, "Stat")
 	}
 	retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
@@ -753,7 +795,9 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 		return 0, errors.Wrap(err, "can't embeeded upload metadata")
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteTableMetaFile, info.Size())
+		if err = b.resumableState.AppendToState(remoteTableMetaFile, info.Size()); err != nil {
+			return 0, errors.Wrap(err, "resumableState.AppendToState")
+		}
 	}
 	return info.Size(), nil
 }
@@ -823,7 +867,7 @@ bodyRead:
 		default:
 			backupMetadataBody, err = os.ReadFile(backupMetadataPath)
 			if err != nil && i == len(allBackupDataPaths)-1 {
-				return nil, errors.WithMessage(err, "ReadBackupMetadataLocal")
+				return nil, errors.Wrap(err, "ReadBackupMetadataLocal")
 			}
 			if backupMetadataBody != nil && len(backupMetadataBody) > 0 {
 				break bodyRead
@@ -839,7 +883,7 @@ bodyRead:
 	default:
 		backupMetadata := metadata.BackupMetadata{}
 		if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
-			return nil, errors.WithMessage(err, "json.Unmarshal")
+			return nil, errors.Wrap(err, "json.Unmarshal")
 		}
 		if len(backupMetadata.Tables) == 0 && backupMetadata.RBACSize == 0 && backupMetadata.ConfigSize == 0 && backupMetadata.NamedCollectionsSize == 0 && !b.cfg.General.AllowEmptyBackups {
 			return nil, errors.Errorf("'%s' is empty backup", backupName)
