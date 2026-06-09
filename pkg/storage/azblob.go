@@ -410,7 +410,13 @@ func (a *AzureBlob) CopyObject(ctx context.Context, srcSize int64, srcBucket, sr
 	sleepDuration := time.Millisecond * 50
 	for copyStatus == blob.CopyStatusTypePending {
 		// @TODO think how to avoid polling GetProperties in AZBLOB during CopyObject
-		time.Sleep(sleepDuration * time.Duration(pollCount*2))
+		// honor context cancellation during the backoff so /backup/kill returns
+		// promptly instead of sleeping up to ~800ms before the next poll
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-time.After(sleepDuration * time.Duration(pollCount*2)):
+		}
 		dstMeta, err := destinationBlob.GetProperties(ctx, &blob.GetPropertiesOptions{})
 		if err != nil {
 			return 0, errors.Wrap(err, "azblob->CopyObject failed to destinationBlobURL.GetProperties operation")

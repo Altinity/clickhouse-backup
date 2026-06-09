@@ -475,15 +475,34 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 	}
 	rawReader := reader
 	reader = bwlimit.ReadCloser(ctx, reader, bd.DownloadLimiter(maxSpeed))
-	defer func() {
-		if err := reader.Close(); err != nil {
-			log.Warn().Msgf("can't close GetFileReader descriptor %v", reader)
+	var closeReaderOnce sync.Once
+	closeReader := func() {
+		closeReaderOnce.Do(func() {
+			if err := reader.Close(); err != nil {
+				log.Warn().Msgf("can't close GetFileReader descriptor %v", reader)
+			}
+		})
+	}
+	// A stalled read (slow/half-open network, disk backpressure) is not
+	// interruptible by context alone: the nio feeder and tar.Extract block in
+	// Read calls that never re-check ctx, so /backup/kill cancels the context
+	// but the download keeps running. Force-close the reader on cancellation so
+	// the blocked read returns and the download unwinds.
+	watchDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			closeReader()
+		case <-watchDone:
 		}
-		switch rawReader.(type) {
+	}()
+	defer func() {
+		close(watchDone)
+		closeReader()
+		switch rawReader := rawReader.(type) {
 		case *os.File:
-			fileName := rawReader.(*os.File).Name()
-			if err := os.Remove(fileName); err != nil {
-				log.Warn().Msgf("can't remove %s", fileName)
+			if err := os.Remove(rawReader.Name()); err != nil {
+				log.Warn().Msgf("can't remove %s", rawReader.Name())
 			}
 		}
 	}()
@@ -638,6 +657,22 @@ func (bd *BackupDestination) DownloadPath(ctx context.Context, remotePath string
 				return errors.Wrap(err, "DownloadPath GetFileReader")
 			}
 			r = bwlimit.ReadCloser(ctx, r, limiter)
+			var closeSrcOnce sync.Once
+			var srcCloseErr error
+			closeSrc := func() { closeSrcOnce.Do(func() { srcCloseErr = r.Close() }) }
+			// A stalled read is not interruptible by context alone: copyWithBuffer
+			// blocks in Read and never re-checks ctx, so /backup/kill cancels the
+			// context but the copy keeps running. Force-close the source reader on
+			// cancellation so the blocked read returns and the copy unwinds.
+			watchDone := make(chan struct{})
+			go func() {
+				select {
+				case <-ctx.Done():
+					closeSrc()
+				case <-watchDone:
+				}
+			}()
+			defer close(watchDone)
 			dstFilePath := path.Join(localPath, f.Name())
 			dstDirPath, _ := path.Split(dstFilePath)
 			if err := os.MkdirAll(dstDirPath, 0750); err != nil {
@@ -659,7 +694,7 @@ func (bd *BackupDestination) DownloadPath(ctx context.Context, remotePath string
 				log.Error().Err(dstCloseErr).Send()
 				return errors.Wrap(dstCloseErr, "DownloadPath dst.Close")
 			}
-			if srcCloseErr := r.Close(); srcCloseErr != nil {
+			if closeSrc(); srcCloseErr != nil {
 				log.Error().Err(srcCloseErr).Send()
 				return errors.Wrap(srcCloseErr, "DownloadPath r.Close")
 			}

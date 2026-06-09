@@ -210,17 +210,17 @@ func (api *APIServer) Restart() error {
 			}
 		}()
 		return nil
-	} else {
-		go func() {
-			if err = api.server.ListenAndServe(); err != nil {
-				if errors.Is(err, http.ErrServerClosed) {
-					log.Warn().Msgf("ListenAndServe get signal: %s", err.Error())
-				} else {
-					log.Fatal().Stack().Msgf("ListenAndServe error: %s", err.Error())
-				}
-			}
-		}()
 	}
+
+	go func() {
+		if err = api.server.ListenAndServe(); err != nil {
+			if errors.Is(err, http.ErrServerClosed) {
+				log.Warn().Msgf("ListenAndServe get signal: %s", err.Error())
+			} else {
+				log.Fatal().Stack().Msgf("ListenAndServe error: %s", err.Error())
+			}
+		}
+	}()
 	return nil
 }
 
