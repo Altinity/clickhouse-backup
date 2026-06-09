@@ -2744,7 +2744,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 									return retryErr
 								})
 								if copyObjectErr != nil {
-									return errors.Wrapf(copyObjectErr, "object_disk.CopyObject `%s`.`%s` error", backupTable.Database, backupTable.Table)
+									return errors.Wrapf(copyObjectErr, "object_disk.CopyObject `%s`.`%s` in %s for srcKey=%s error", backupTable.Database, backupTable.Table, capturedFPath, srcKey)
 								}
 							} else {
 								copyObjectErr = nil
@@ -2769,7 +2769,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 										return object_disk.CopyObjectStreaming(downloadCtx, srcStorage, dstStorage, srcKey, dstKey, b.dst.DownloadLimiter(b.cfg.General.DownloadMaxBytesPerSecond))
 									})
 									if copyObjectErr != nil {
-										return errors.Wrap(copyObjectErr, "object_disk.CopyObjectStreaming error")
+										return errors.Wrapf(copyObjectErr, "object_disk.CopyObjectStreaming in %s for srcKey=%s error", capturedFPath, srcKey)
 									}
 									copiedSize = storageObject.ObjectSize
 								}

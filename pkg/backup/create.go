@@ -1220,7 +1220,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 						return nil
 					})
 					if copyObjectErr != nil {
-						return errors.Wrapf(copyObjectErr, "b.dst.CopyObject in %s error", backupShadowPath)
+						return errors.Wrapf(copyObjectErr, "b.dst.CopyObject in %s for srcKey=%s error", fPath, srcKey)
 					}
 				} else {
 					if !isCopyFailed.Load() {
@@ -1236,7 +1236,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 							return object_disk.CopyObjectStreaming(uploadCtx, srcDiskConnection.GetRemoteStorage(), b.dst, srcKey, path.Join(objectDiskPath, dstKey), b.dst.UploadLimiter(b.cfg.General.UploadMaxBytesPerSecond))
 						})
 						if copyObjectErr != nil {
-							return errors.Wrapf(copyObjectErr, "object_disk.CopyObjectStreaming in %s error", backupShadowPath)
+							return errors.Wrapf(copyObjectErr, "object_disk.CopyObjectStreaming in %s for srcKey=%s error", fPath, srcKey)
 						}
 					}
 					objSize = storageObject.ObjectSize
