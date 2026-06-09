@@ -788,10 +788,30 @@ func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, 
 	if srcErr != nil {
 		return errors.Wrapf(srcErr, "srcStorage.GetFileReaderAbsolute(%s) error", srcKey)
 	}
-	defer func() {
-		if closeErr := srcReader.Close(); closeErr != nil {
-			log.Error().Msgf("srcReader.Close(%s) error: %v", srcKey, closeErr)
+	var closeSrcOnce sync.Once
+	closeSrc := func() {
+		closeSrcOnce.Do(func() {
+			if closeErr := srcReader.Close(); closeErr != nil {
+				log.Error().Msgf("srcReader.Close(%s) error: %v", srcKey, closeErr)
+			}
+		})
+	}
+	// A stalled read (slow/half-open network, disk backpressure) is not
+	// interruptible by context alone: PutFile blocks reading srcReader and never
+	// re-checks ctx, so /backup/kill cancels the context but the copy keeps
+	// running. Force-close the source reader on cancellation so the blocked read
+	// returns and the copy unwinds.
+	watchDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			closeSrc()
+		case <-watchDone:
 		}
+	}()
+	defer func() {
+		close(watchDone)
+		closeSrc()
 	}()
 	// streaming copy moves bytes through this process (unlike server-side CopyObject),
 	// so honor the configured upload throttle, fix https://github.com/Altinity/clickhouse-backup/issues/1377
