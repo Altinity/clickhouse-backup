@@ -306,10 +306,11 @@ func runActionWait(r *require.Assertions, env *TestEnvironment, command, cmdPref
 	waitForActionStatus(r, env, cmdPrefix, nameNeedle, "success", timeout)
 }
 
-// killSetupTable (re)creates a table of 100 partitions, ~100KB each. The data
-// is incompressible (randomPrintableASCII) so the tar archive stays large
-// enough that create/upload/download/restore remain observably in-progress
-// long enough to be killed mid-flight.
+// killSetupTable (re)creates a table of 100 partitions, ~100KB each. The
+// archive is stored uncompressed (compression_format: tar), so a fixed 1KiB
+// payload generated on the Go side keeps the tar archive large enough that
+// create/upload/download/restore remain observably in-progress long enough to
+// be killed mid-flight.
 func killSetupTable(r *require.Assertions, env *TestEnvironment, dbName string) {
 	r.NoError(env.dropDatabase(dbName, true))
 	env.queryWithNoError(r, "CREATE DATABASE "+dbName)
@@ -317,8 +318,9 @@ func killSetupTable(r *require.Assertions, env *TestEnvironment, dbName string) 
 		"CREATE TABLE %s.t1 (id UInt64, s String) ENGINE=MergeTree() PARTITION BY (id %% 100) ORDER BY id",
 		dbName))
 	// 10000 rows / 100 partitions = 100 rows per partition * 1KiB ≈ 100KiB each.
+	payload := strings.Repeat("x", 1024)
 	env.queryWithNoError(r, fmt.Sprintf(
-		"INSERT INTO %s.t1 SELECT number, randomPrintableASCII(1024) FROM numbers(10000)", dbName))
+		"INSERT INTO %s.t1 SELECT number, '%s' FROM numbers(10000)", dbName, payload))
 }
 
 // actionInProgress reports whether /backup/actions output has a row whose
