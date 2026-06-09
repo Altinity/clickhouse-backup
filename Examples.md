@@ -908,7 +908,7 @@ spec:
 
 ## How to use GCP Workload Identity to allow GCS backup without Explicit credentials
 
-This is the Google Cloud equivalent of AaWS IRSA. On GKE with
+This is the Google Cloud equivalent of AWS IRSA. On GKE with
 [Workload Identity Federation for GKE](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)
 enabled, a Kubernetes `ServiceAccount` (KSA) is bound to a Google Cloud IAM service account (GSA),
 so `clickhouse-backup` authenticates to Google Cloud Storage without a `credentials_file` or

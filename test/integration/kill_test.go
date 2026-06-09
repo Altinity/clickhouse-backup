@@ -68,14 +68,14 @@ func TestKill(t *testing.T) {
 
 	// 1. Create the local backup, wait for completion.
 	createOut, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-		fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/create?table=%s.*&name=%s'", dbName, backupName))
+		execCurlWithFailBody(fmt.Sprintf("-XPOST 'http://127.0.0.1:7171/backup/create?table=%s.*&name=%s'", dbName, backupName)))
 	r.NoError(err, "%s\nunexpected POST /backup/create error: %v", createOut, err)
 	r.NotContains(createOut, "\"status\":\"error\"")
 	waitForActionStatus(r, env, "create", backupName, "success", 60*time.Second)
 
 	// 2. Kick off upload (async).
 	uploadOut, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-		fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/upload/%s'", backupName))
+		execCurlWithFailBody(fmt.Sprintf("-XPOST 'http://127.0.0.1:7171/backup/upload/%s'", backupName)))
 	r.NoError(err, "%s\nunexpected POST /backup/upload error: %v", uploadOut, err)
 	r.Contains(uploadOut, "acknowledged")
 
@@ -84,7 +84,7 @@ func TestKill(t *testing.T) {
 	pidSeen := false
 	for time.Now().Before(deadline) {
 		statusOut, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-			"curl -sfL 'http://localhost:7171/backup/actions?filter=upload'")
+			execCurlWithFailBody("'http://127.0.0.1:7171/backup/actions?filter=upload'"))
 		lsOut, lsErr := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "ls "+pidPath+" 2>/dev/null || true")
 		if strings.Contains(statusOut, `"status":"in progress"`) && lsErr == nil && strings.Contains(lsOut, backupName) {
 			pidSeen = true
@@ -102,7 +102,7 @@ func TestKill(t *testing.T) {
 	// observably longer than a trivial round-trip.
 	killStart := time.Now()
 	killOut, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-		fmt.Sprintf("curl -sfL 'http://localhost:7171/backup/kill?command=upload+%s'", backupName))
+		execCurlWithFailBody(fmt.Sprintf("'http://127.0.0.1:7171/backup/kill?command=upload+%s'", backupName)))
 	killElapsed := time.Since(killStart)
 	r.NoError(err, "%s\nunexpected GET /backup/kill error: %v", killOut, err)
 	r.Contains(killOut, "\"status\":\"success\"", "kill should succeed: %s", killOut)
@@ -127,7 +127,7 @@ func TestKill(t *testing.T) {
 
 	// 6. Delete must NOT trip on a stale pid file.
 	deleteOut, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-		fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/local/%s'", backupName))
+		execCurlWithFailBody(fmt.Sprintf("-XPOST 'http://127.0.0.1:7171/backup/delete/local/%s'", backupName)))
 	r.NoError(err, "%s\nunexpected POST /backup/delete error: %v", deleteOut, err)
 	r.NotContains(deleteOut, "another clickhouse-backup",
 		"delete must not see a stale pid lock: %s", deleteOut)
@@ -182,9 +182,7 @@ func TestKillDownload(t *testing.T) {
 	delOut := postAction(r, env, "delete local "+backupName)
 	r.Contains(delOut, "\"status\":\"success\"", "delete local must succeed: %s", delOut)
 
-	// 2. start download and kill it mid-flight.
-	startOut := postAction(r, env, "download "+backupName)
-	r.Contains(startOut, "acknowledged", "download must be acknowledged: %s", startOut)
+	// 2. start download and kill it mid-flight (start happens inside observeInProgressAndKill).
 	observeInProgressAndKill(r, env, "download "+backupName, backupName, "download", 15*time.Second)
 
 	// 3. a follow-up delete must not trip on a stale pid lock.
@@ -192,7 +190,7 @@ func TestKillDownload(t *testing.T) {
 	r.NotContains(delOut, "another clickhouse-backup", "delete must not see a stale pid lock: %s", delOut)
 }
 
-// TestKillCreate kills an in-progress create and verifies the create goroutine
+// TestKillCreate kills an in-progress create and verifies the creation goroutine
 // stops (pid removed, last_create_finish advances, kill returns fast).
 func TestKillCreate(t *testing.T) {
 	env, r := NewTestEnvironment(t)
@@ -220,8 +218,8 @@ func TestKillCreate(t *testing.T) {
 	}()
 	time.Sleep(3 * time.Second)
 
-	startOut := postAction(r, env, fmt.Sprintf("create --tables=%s.* %s", dbName, backupName))
-	r.Contains(startOut, "acknowledged", "create must be acknowledged: %s", startOut)
+	// start happens inside observeInProgressAndKill so a fast create cannot
+	// finish before the kill is issued.
 	observeInProgressAndKill(r, env, fmt.Sprintf("create --tables=%s.* %s", dbName, backupName), backupName, "create", 15*time.Second)
 
 	// a follow-up delete must not trip on a stale pid lock.
@@ -266,8 +264,8 @@ func TestKillRestore(t *testing.T) {
 	}
 	env.queryWithNoError(r, dropSQL)
 
-	startOut := postAction(r, env, "restore "+backupName)
-	r.Contains(startOut, "acknowledged", "restore must be acknowledged: %s", startOut)
+	// start happens inside observeInProgressAndKill so a fast restore cannot
+	// finish before the kill is issued.
 	observeInProgressAndKill(r, env, "restore "+backupName, backupName, "restore", 15*time.Second)
 }
 
@@ -284,13 +282,37 @@ func readUploadFinishMetric(r *require.Assertions, env *TestEnvironment) int64 {
 func readActionFinishMetric(r *require.Assertions, env *TestEnvironment, command string) int64 {
 	metric := "clickhouse_backup_last_" + command + "_finish"
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-		"curl -sfL http://localhost:7171/metrics | grep -E '^"+metric+" '")
+		"curl -sSL http://127.0.0.1:7171/metrics | grep -E '^"+metric+" '")
 	r.NoError(err, "/metrics scrape failed: %s", out)
 	matches := regexp.MustCompile(metric + `\s+([0-9.eE+\-]+)`).FindStringSubmatch(out)
 	r.Len(matches, 2, "could not parse %s metric: %q", metric, out)
 	v, err := strconv.ParseFloat(strings.TrimSpace(matches[1]), 64)
 	r.NoError(err, "parse %q", matches[1])
 	return int64(v)
+}
+
+// execCurlWithFailBody builds a shell command that runs curl, prints the
+// response body, and exits non-zero on failure — so callers' r.NoError(err)
+// trips on errors while the body stays visible for diagnosis instead of just an
+// exit code. curl runs inside the ClickHouse server container, whose curl
+// version tracks CLICKHOUSE_VERSION:
+//
+//   - CLICKHOUSE_VERSION >= 25.3 (image base moved to Ubuntu 22.04, curl 7.81)
+//     ships `curl --fail-with-body`, so use it directly.
+//   - older images (Ubuntu <= 20.04, curl <= 7.68) lack --fail-with-body, so
+//     emulate it: capture %{http_code} and exit 22 (curl's
+//     CURLE_HTTP_RETURNED_ERROR) on HTTP >= 400. curl's own exit code (e.g. 7
+//     connection-refused, 28 timeout) is preserved for transport errors.
+//
+// args is everything after `curl` (flags, -d data, and the quoted URL).
+func execCurlWithFailBody(args string) string {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.3") >= 0 {
+		return "curl -sSL --fail-with-body " + args
+	}
+	return `rc=0; resp=$(curl -sSL -w '\n%{http_code}' ` + args + `) || rc=$?; ` +
+		`code="${resp##*$'\n'}"; printf '%s' "${resp%$'\n'*}"; ` +
+		`if [ "$rc" -ne 0 ]; then exit "$rc"; fi; ` +
+		`if [ "${code:-000}" -ge 400 ]; then exit 22; fi`
 }
 
 // postAction POSTs a single command to /backup/actions and returns the raw
@@ -300,7 +322,7 @@ func readActionFinishMetric(r *require.Assertions, env *TestEnvironment, command
 func postAction(r *require.Assertions, env *TestEnvironment, command string) string {
 	body := fmt.Sprintf(`{"command":%q}`, command)
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-		"curl -sfL -XPOST 'http://localhost:7171/backup/actions' -d '"+body+"'")
+		execCurlWithFailBody("-XPOST 'http://127.0.0.1:7171/backup/actions' -d '"+body+"'"))
 	r.NoError(err, "%s\nPOST /backup/actions %q error: %v", out, command, err)
 	return out
 }
@@ -329,22 +351,63 @@ func killSetupTable(r *require.Assertions, env *TestEnvironment, dbName string) 
 		"INSERT INTO %s.t1 SELECT number, '%s' FROM numbers(10000)", dbName, payload))
 }
 
-// actionInProgress reports whether /backup/actions output has a row whose
-// command equals exactly `command` and is still in progress.
-func actionInProgress(actionsOut, command string) bool {
-	for _, line := range strings.Split(actionsOut, "\n") {
-		if strings.Contains(line, `"command":"`+command+`"`) && strings.Contains(line, `"status":"in progress"`) {
-			return true
-		}
-	}
-	return false
-}
+// observeInProgressKillScript is a bash program run inside the clickhouse-backup
+// container that STARTS `command`, waits until it is in-progress (its pid file
+// exists), then fires the kill and captures the proof of cancellation — all
+// without leaving the container.
+//
+// Keeping curl off the critical path is essential. A fast action (~230ms create
+// on old ClickHouse) is comparable to how long a single curl takes to even spawn
+// when the old amd64-only ClickHouse image runs under QEMU emulation (process
+// startup ~100ms+, measured). Polling /backup/actions with curl to detect
+// "in progress" would therefore consume the whole window before the kill is sent
+// (the kill then reports "command not found"). Instead:
+//   - the before-metric is read BEFORE the start, off the critical path;
+//   - "in progress" is detected with a pure-bash wait on the pid file (no
+//     process spawn) — pidlock creates the file for the whole duration of
+//     create/download/restore and removes it when the worker returns, so its
+//     presence is an exact in-progress proxy;
+//   - only the start and the kill spawn curl, so the kill is issued ~one curl
+//     spawn after the pid appears, well inside the in-progress window.
+//
+// This is reliable on every ClickHouse version and architecture regardless of
+// how quickly the worker runs.
+//
+// Placeholders are substituted in Go (none contain a single quote, so
+// single-quote shell wrapping is safe). awk extracts the metric so a missing
+// line yields "" instead of a non-zero exit that bash -e would abort on. SECONDS
+// is a bash builtin (no spawn), so the wait loop adds no latency to detection.
+const observeInProgressKillScript = `
+pid="__PID__"
+metric="__METRIC__"
+before=$(curl -sSL 'http://127.0.0.1:7171/metrics' 2>/dev/null | awk -v m="$metric" '$1==m {print $2}')
+echo "FINISH_BEFORE=$before"
+start_resp=$(curl -sSL -XPOST 'http://127.0.0.1:7171/backup/actions' -d '__STARTBODY__' 2>/dev/null || true)
+printf 'START_RESP=%s\n' "$(printf '%s' "$start_resp" | tr -d '\n')"
+SECONDS=0
+observed=0
+while [ "$SECONDS" -lt 30 ]; do
+  if [ -f "$pid" ]; then observed=1; break; fi
+done
+echo "OBSERVED=$observed"
+[ "$observed" -eq 1 ] || exit 0
+start=$(date +%s%N)
+kill_resp=$(curl -sSL -XPOST 'http://127.0.0.1:7171/backup/actions' -d '__KILLBODY__' 2>/dev/null || true)
+end=$(date +%s%N)
+echo "KILL_ELAPSED_MS=$(( (end - start) / 1000000 ))"
+after=$(curl -sSL 'http://127.0.0.1:7171/metrics' 2>/dev/null | awk -v m="$metric" '$1==m {print $2}')
+echo "FINISH_AFTER=$after"
+if [ -f "$pid" ]; then echo "PID=EXISTS"; else echo "PID=GONE"; fi
+printf 'KILL_RESP=%s\n' "$(printf '%s' "$kill_resp" | tr -d '\n')"
+`
 
-// observeInProgressAndKill waits until `command` is observably in-progress with
-// its pid file present, kills it via /backup/actions, and asserts that the kill
-// behaved correctly. metricCommand is the bare command name ("create",
+// observeInProgressAndKill starts `command` via /backup/actions, waits until it
+// is observably in-progress with its pid file present, kills it, and asserts the
+// kill behaved correctly. metricCommand is the bare command name ("create",
 // "download", "restore") whose clickhouse_backup_last_<command>_finish gauge is
-// used as the proof that the worker goroutine actually returned.
+// used as the proof that the worker goroutine actually returned. The start and
+// kill run in one in-container script (see observeInProgressKillScript) so a
+// fast worker cannot finish before the kill is issued.
 //
 // Two assertions discriminate a real cancellation from a hung worker:
 //  1. kill returns well under cancel_operation_timeout — a worker that ignores
@@ -353,40 +416,69 @@ func actionInProgress(actionsOut, command string) bool {
 //     after cliApp.Run returns; if waitDone merely timed out it stays put.
 func observeInProgressAndKill(r *require.Assertions, env *TestEnvironment, command, backupName, metricCommand string, cancelTimeout time.Duration) {
 	pidPath := fmt.Sprintf("/tmp/clickhouse-backup.%s.pid", backupName)
-	deadline := time.Now().Add(30 * time.Second)
-	observed := false
-	for time.Now().Before(deadline) {
-		statusOut, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-			"curl -sfL 'http://localhost:7171/backup/actions'")
-		lsOut, lsErr := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "ls "+pidPath+" 2>/dev/null || true")
-		if actionInProgress(statusOut, command) && lsErr == nil && strings.Contains(lsOut, backupName) {
-			observed = true
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	r.True(observed, "expected to observe %q in-progress with pid file %s present", command, pidPath)
+	metric := "clickhouse_backup_last_" + metricCommand + "_finish"
+	startBody := fmt.Sprintf(`{"command":%q}`, command)
+	killBody := fmt.Sprintf(`{"command":%q}`, fmt.Sprintf("kill %q", command))
+	script := strings.NewReplacer(
+		"__PID__", pidPath,
+		"__METRIC__", metric,
+		"__STARTBODY__", startBody,
+		"__KILLBODY__", killBody,
+	).Replace(observeInProgressKillScript)
 
-	finishBefore := readActionFinishMetric(r, env, metricCommand)
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", script)
+	r.NoError(err, "observe+kill script failed:\n%s", out)
 
-	killStart := time.Now()
-	killOut := postAction(r, env, fmt.Sprintf("kill %q", command))
-	killElapsed := time.Since(killStart)
-	r.Contains(killOut, "\"status\":\"success\"", "kill should succeed: %s", killOut)
+	r.Contains(scriptField(out, "START_RESP="), "acknowledged",
+		"%q must be acknowledged:\n%s", command, out)
+	r.Contains(out, "OBSERVED=1",
+		"expected to observe %q in-progress with pid file %s present:\n%s", command, pidPath, out)
+
+	finishBefore := parseFinishField(r, out, "FINISH_BEFORE=")
+	finishAfter := parseFinishField(r, out, "FINISH_AFTER=")
+	killElapsed := time.Duration(parseIntField(r, out, "KILL_ELAPSED_MS=")) * time.Millisecond
+	killResp := scriptField(out, "KILL_RESP=")
 	log.Info().Msgf("kill %q returned in %s", command, killElapsed)
+
+	r.Contains(killResp, "\"status\":\"success\"", "kill should succeed: %s", killResp)
 
 	r.Less(killElapsed, cancelTimeout-2*time.Second,
 		"kill %q returned in %s; a worker that ignored context cancellation makes "+
 			"status.waitDone block until cancel_operation_timeout=%s", command, killElapsed, cancelTimeout)
 
-	finishAfter := readActionFinishMetric(r, env, metricCommand)
 	r.Greater(finishAfter, finishBefore,
 		"clickhouse_backup_last_%s_finish must advance during kill (before=%d after=%d); "+
 			"the %s goroutine did not return", metricCommand, finishBefore, finishAfter, metricCommand)
 
-	checkOut, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-		"if [ -f "+pidPath+" ]; then echo EXISTS; cat "+pidPath+"; else echo GONE; fi")
-	r.Contains(checkOut, "GONE", "pid file %s must be removed by kill, got: %s", pidPath, checkOut)
+	r.Contains(out, "PID=GONE", "pid file %s must be removed by kill:\n%s", pidPath, out)
+}
+
+// scriptField returns the value after the first line of observe+kill script
+// output that starts with prefix (e.g. "FINISH_BEFORE="), or "" if absent.
+func scriptField(out, prefix string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
+}
+
+// parseFinishField parses a clickhouse_backup_last_*_finish unix-timestamp gauge
+// (a float such as 1.749e+09) emitted by the observe+kill script into seconds.
+func parseFinishField(r *require.Assertions, out, prefix string) int64 {
+	field := scriptField(out, prefix)
+	v, err := strconv.ParseFloat(field, 64)
+	r.NoError(err, "parse %s%q from:\n%s", prefix, field, out)
+	return int64(v)
+}
+
+// parseIntField parses an integer field emitted by the observe+kill script.
+func parseIntField(r *require.Assertions, out, prefix string) int64 {
+	field := scriptField(out, prefix)
+	v, err := strconv.ParseInt(field, 10, 64)
+	r.NoError(err, "parse %s%q from:\n%s", prefix, field, out)
+	return v
 }
 
 // waitForActionStatus polls /backup/actions and returns once a row whose
@@ -398,8 +490,7 @@ func waitForActionStatus(r *require.Assertions, env *TestEnvironment, cmdPrefix,
 		if time.Now().After(deadline) {
 			r.FailNow(fmt.Sprintf("timeout waiting for %s ... %s to reach status %q", cmdPrefix, nameNeedle, expected))
 		}
-		out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-			"curl -sfL 'http://localhost:7171/backup/actions'")
+		out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", execCurlWithFailBody("'http://127.0.0.1:7171/backup/actions'"))
 		r.NoError(err)
 		for _, line := range strings.Split(out, "\n") {
 			if strings.Contains(line, `"command":"`+cmdPrefix) &&
