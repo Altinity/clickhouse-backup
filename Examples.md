@@ -906,6 +906,168 @@ spec:
                 name: clickhouse-backup-config
 ```
 
+## How to use GCP Workload Identity to allow GCS backup without Explicit credentials
+
+This is the Google Cloud equivalent of AaWS IRSA. On GKE with
+[Workload Identity Federation for GKE](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)
+enabled, a Kubernetes `ServiceAccount` (KSA) is bound to a Google Cloud IAM service account (GSA),
+so `clickhouse-backup` authenticates to Google Cloud Storage without a `credentials_file` or
+`credentials_json`.
+
+`clickhouse-backup` supports two GCS auth modes under Workload Identity:
+
+- **Direct binding** — annotate the KSA with the target GSA. The pod's Application Default
+  Credentials (ADC) already *are* that GSA, so leave the whole `gcs.credentials_*`/`gcs.sa_email`
+  block empty and `clickhouse-backup` uses ADC automatically.
+- **Impersonation via `gcs.sa_email`** — the pod runs as one identity (a "source" GSA bound to the
+  KSA, or even the cluster default) and `clickhouse-backup` mints a short-lived token for a separate
+  "target" GSA that owns the bucket permissions. Set `gcs.sa_email` to the target GSA email; the
+  source identity needs `roles/iam.serviceAccountTokenCreator` on the target. This is the GCS
+  `sa_email` flow and is what the steps below configure.
+
+First set the variables used throughout (look the values up if you don't know them):
+
+```bash
+# project that owns the GCS bucket and the service accounts
+gcloud projects list
+PROJECT_ID=<YOUR_PROJECT_ID>
+PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')
+
+# GKE cluster that runs clickhouse — Workload Identity must be enabled on it:
+gcloud container clusters list
+CLUSTER_NAME=<YOUR_CLUSTER_NAME>
+CLUSTER_LOCATION=<YOUR_CLUSTER_REGION_OR_ZONE>
+# enable Workload Identity if it is not already (no-op if already enabled):
+gcloud container clusters update "${CLUSTER_NAME}" --location "${CLUSTER_LOCATION}" \
+  --workload-pool="${PROJECT_ID}.svc.id.goog"
+
+# GCS bucket that will hold the backups — pick an existing one:
+gcloud storage buckets list --format='value(name)'
+GCS_BUCKET=<YOUR_BUCKET>
+# or create it (bucket names are globally unique):
+gcloud storage buckets create gs://your-bucket-name --project "${PROJECT_ID}" --location <REGION>
+GCS_BUCKET=your-bucket-name
+
+# kubernetes namespace and service account name (created later):
+NAMESPACE=your-kubernetes-namespace
+SERVICE_ACCOUNT_NAME=your-kubernetes-service-account
+```
+
+Create the **target** Google Cloud service account (its email becomes `gcs.sa_email`) and grant it
+access to the bucket (`roles/storage.objectAdmin` scoped to the bucket is enough for
+backup/restore; use `roles/storage.admin` if `clickhouse-backup` must also create the bucket):
+
+```bash
+TARGET_GSA_NAME=clickhouse-backup-gcs-sa-name
+gcloud iam service-accounts create "${TARGET_GSA_NAME}" --project "${PROJECT_ID}" \
+  --display-name "clickhouse-backup GCS access"
+TARGET_GSA_EMAIL="${TARGET_GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+
+# grant bucket access to the target GSA (scoped to the single bucket):
+gcloud storage buckets add-iam-policy-binding "gs://${GCS_BUCKET}" \
+  --member "serviceAccount:${TARGET_GSA_EMAIL}" \
+  --role "roles/storage.objectAdmin"
+```
+
+Bind the Kubernetes `ServiceAccount` to a **source** identity via Workload Identity, and allow that
+source identity to impersonate the target GSA. The simplest source identity is the target GSA
+itself bound directly to the KSA — then the source impersonates itself, which keeps a single GSA in
+play while still exercising the `gcs.sa_email` flow:
+
+```bash
+# allow the KSA to act as the source GSA (here: the same target GSA):
+gcloud iam service-accounts add-iam-policy-binding "${TARGET_GSA_EMAIL}" \
+  --project "${PROJECT_ID}" \
+  --role "roles/iam.workloadIdentityUser" \
+  --member "serviceAccount:${PROJECT_ID}.svc.id.goog[${NAMESPACE}/${SERVICE_ACCOUNT_NAME}]"
+
+# allow the source identity to mint impersonated tokens for the target GSA
+# (required because gcs.sa_email goes through impersonate.CredentialsTokenSource):
+gcloud iam service-accounts add-iam-policy-binding "${TARGET_GSA_EMAIL}" \
+  --project "${PROJECT_ID}" \
+  --role "roles/iam.serviceAccountTokenCreator" \
+  --member "serviceAccount:${TARGET_GSA_EMAIL}"
+```
+
+Create the namespace and a service account annotated with the source GSA so the GKE webhook injects
+the Workload Identity credentials into the pod:
+
+```bash
+kubectl create ns "${NAMESPACE}"
+```
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ${SERVICE_ACCOUNT_NAME}
+  namespace: ${NAMESPACE}
+  annotations:
+    # the source GSA the pod runs as; clickhouse-backup then impersonates gcs.sa_email
+    iam.gke.io/gcp-service-account: ${TARGET_GSA_EMAIL}
+```
+
+Put the `clickhouse-backup` config into a `ConfigMap` (no `credentials_file`/`credentials_json`
+needed). With `gcs.sa_email` set, `clickhouse-backup` uses the pod's ambient Workload Identity
+credentials to impersonate the target service account. Mount this `ConfigMap` into
+`/etc/clickhouse-backup/` and link the service account to the podTemplate:
+
+```yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-backup-config
+  namespace: ${NAMESPACE}
+data:
+  config.yml: |
+    general:
+      remote_storage: gcs
+    gcs:
+      # ${TARGET_GSA_EMAIL} — the target service account that owns the bucket permissions;
+      # the pod's Workload Identity credentials impersonate it via impersonate.CredentialsTokenSource
+      sa_email: ${TARGET_GSA_EMAIL}
+      # ${GCS_BUCKET} — the bucket granted roles/storage.objectAdmin above
+      bucket: ${GCS_BUCKET}
+      path: backup
+---
+apiVersion: "clickhouse.altinity.com/v1"
+kind: "ClickHouseInstallation"
+metadata:
+  name: <NAME>
+  namespace: ${NAMESPACE}
+spec:
+  defaults:
+    templates:
+      podTemplate: <POD_TEMPLATE_NAME>
+  templates:
+    podTemplates:
+      - name: <POD_TEMPLATE_NAME>
+        spec:
+          serviceAccountName: ${SERVICE_ACCOUNT_NAME}
+          containers:
+            - name: clickhouse
+              image: clickhouse/clickhouse-server:latest
+            - name: clickhouse-backup
+              image: altinity/clickhouse-backup:latest
+              command:
+                - bash
+                - -xc
+                - "/bin/clickhouse-backup server"
+              volumeMounts:
+                - name: clickhouse-backup-config
+                  mountPath: /etc/clickhouse-backup/
+          volumes:
+            - name: clickhouse-backup-config
+              configMap:
+                name: clickhouse-backup-config
+```
+
+> If you prefer the **direct binding** mode instead, omit `gcs.sa_email` from the `ConfigMap`,
+> keep the `iam.gke.io/gcp-service-account` annotation pointing at the GSA that owns the bucket,
+> and skip the `roles/iam.serviceAccountTokenCreator` self-binding — `clickhouse-backup` will use
+> Application Default Credentials directly.
+
 ### How to use clickhouse-backup + clickhouse-operator in FIPS compatible mode in Kubernetes for S3
 
 Use the image `altinity/clickhouse-backup:X.X.X-fips` (where X.X.X is the version number).
