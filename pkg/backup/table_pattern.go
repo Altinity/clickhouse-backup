@@ -132,17 +132,22 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 		return nil, nil, err
 	}
 	result.Sort(dropTable)
-	for i := 0; i < len(result); i++ {
+	result = b.skipTablesByEngine(result, resultPartitionNames)
+	return result, resultPartitionNames, nil
+}
+
+// skipTablesByEngine removes tables matched by ClickHouse.SkipTableEngines from result
+// and drops their partition names from resultPartitionNames.
+func (b *Backuper) skipTablesByEngine(result ListOfTables, resultPartitionNames map[metadata.TableTitle][]string) ListOfTables {
+	// iterate in reverse so removing an element never shifts an unvisited one past the cursor
+	for i := len(result) - 1; i >= 0; i-- {
 		if b.shouldSkipByTableEngine(*result[i]) {
 			t := result[i]
 			delete(resultPartitionNames, metadata.TableTitle{Database: t.Database, Table: t.Table})
 			result = append(result[:i], result[i+1:]...)
-			if i > 0 {
-				i = i - 1
-			}
 		}
 	}
-	return result, resultPartitionNames, nil
+	return result
 }
 
 func (b *Backuper) shouldSkipByTableName(tableFullName string) bool {
@@ -635,18 +640,16 @@ func getOrderByEngine(query string, dropTable bool) int64 {
 		strings.HasPrefix(query, "ATTACH MATERIALIZED VIEW") {
 		if dropTable {
 			return 1
-		} else {
-			return 2
 		}
+		return 2
 	}
 
 	if strings.HasPrefix(query, "CREATE TABLE") &&
 		(strings.Contains(query, ".inner_id.") || strings.Contains(query, ".inner.")) {
 		if dropTable {
 			return 2
-		} else {
-			return 1
 		}
+		return 1
 	}
 	return 0
 }
