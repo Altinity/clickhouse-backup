@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -258,7 +259,12 @@ func TestKillRestore(t *testing.T) {
 
 	// create a local backup, drop the table so restore has to recreate+attach.
 	runActionWait(r, env, fmt.Sprintf("create --tables=%s.* %s", dbName, backupName), "create", backupName, 60*time.Second)
-	env.queryWithNoError(r, fmt.Sprintf("DROP TABLE %s.t1 SYNC", dbName))
+	// SYNC keyword not supported before 21.x
+	dropSQL := fmt.Sprintf("DROP TABLE %s.t1", dbName)
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.1") >= 0 {
+		dropSQL += " SYNC"
+	}
+	env.queryWithNoError(r, dropSQL)
 
 	startOut := postAction(r, env, "restore "+backupName)
 	r.Contains(startOut, "acknowledged", "restore must be acknowledged: %s", startOut)
