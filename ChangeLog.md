@@ -1,3 +1,13 @@
+# v2.7.2
+
+IMPROVEMENTS
+- include the data part file path and source object key (`fPath`, `srcKey`) in `object_disk` `CopyObject`/`CopyObjectStreaming` error messages during `create` and `restore`, so broken `object_disk` data (keys missing on remote storage) points to the exact failing file instead of just the shadow/table name
+- document GCS Workload Identity authentication for the `gcs` remote storage in `Examples.md`
+
+BUG FIXES
+- fix `clickhouse.skip_table_engines` (env `CLICKHOUSE_SKIP_TABLE_ENGINES`) silently keeping some matching tables: the in-place slice removal advanced the cursor past the next element, so adjacent tables sharing a skipped engine were not all skipped; iterate in reverse so every match is dropped, fix [#1416](https://github.com/Altinity/clickhouse-backup/issues/1416)
+- ensure `/backup/kill` (and context cancellation in general) promptly aborts an in-flight `download`/`restore` even when a read is stalled on a slow/half-open network or disk backpressure — the source reader is now force-closed on cancellation so blocked `Read` calls in `DownloadCompressedStream`/`DownloadPath`, the Azure `CopyObject` poll backoff, and `object_disk.CopyObjectStreaming` return instead of running to completion, and the resumable `.pid` file is removed, fix [#1365](https://github.com/Altinity/clickhouse-backup/issues/1365)
+
 # v2.7.1
 
 NEW FEATURES
