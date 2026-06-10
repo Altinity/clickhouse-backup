@@ -10,5 +10,16 @@ if [[ "" != "${DIFF_FROM_REMOTE}" ]]; then
   DIFF_FROM_REMOTE=$(${CUR_DIR}/list.sh | grep "${DIFF_FROM_REMOTE}" | jq -r -c '.snapshot_id')
   DIFF_FROM_REMOTE_CMD="--parent ${DIFF_FROM_REMOTE}"
 fi
+# restic >= 0.17 returns exit code 3 ("command was able to back up some of the
+# source files, but not all of them") when any source path passed on the command
+# line does not exist. Not every disk has a backup directory, so the skipped
+# paths trigger exit 3 even though the snapshot is saved correctly. Treat exit
+# code 3 as success and fail on anything else.
+set +e
 restic backup --insecure-tls $DIFF_FROM_REMOTE_CMD --tag "${BACKUP_NAME}"  $LOCAL_PATHS
+backup_rc=$?
+set -e
+if [ "${backup_rc}" -ne 0 ] && [ "${backup_rc}" -ne 3 ]; then
+  exit "${backup_rc}"
+fi
 restic forget --insecure-tls --keep-last ${RESTIC_KEEP_LAST} --prune
