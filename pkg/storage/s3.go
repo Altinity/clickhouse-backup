@@ -124,7 +124,7 @@ func (s *S3) Connect(ctx context.Context) error {
 	var awsConfig aws.Config
 	awsConfig, err = awsV2Config.LoadDefaultConfig(
 		ctx,
-		awsV2Config.WithRetryMode(aws.RetryModeStandard),
+		awsV2Config.WithRetryMode(aws.RetryModeAdaptive),
 	)
 	if err != nil {
 		return errors.Wrap(err, "S3 Connect LoadDefaultConfig")
@@ -140,7 +140,7 @@ func (s *S3) Connect(ctx context.Context) error {
 		awsConfig.Credentials = stscreds.NewWebIdentityRoleProvider(
 			stsClient, awsRoleARN, stscreds.IdentityTokenFile(awsWebIdentityTokenFile),
 		)
-		// inherit IRSA and try assume role https://github.com/Altinity/clickhouse-backup/issues/1191
+		// inherit IRSA and try to assume role https://github.com/Altinity/clickhouse-backup/issues/1191
 		if s.Config.AssumeRoleARN != "" && s.Config.AssumeRoleARN != awsRoleARN {
 			awsConfig.Credentials = aws.NewCredentialsCache(awsConfig.Credentials)
 			stsClient = sts.NewFromConfig(awsConfig)

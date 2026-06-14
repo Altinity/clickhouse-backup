@@ -28,8 +28,10 @@ func TestValidateConfigCompressionTuning(t *testing.T) {
 		{"gzip multi-thread block too small", "gzip", true, 0, 16384, true},
 		{"gzip single-thread 32KB window", "gzip", false, 0, 32768, false},
 		{"gzip single-thread window too large", "gzip", false, 0, 65536, true},
-		{"multi_thread on unsupported format", "brotli", true, 0, 0, true},
-		{"buffer_size on unsupported format", "brotli", false, 0, 1024, true},
+		// unsupported formats relax instead of failing: the default compression_use_multi_thread=true
+		// must not break them, and the knobs are no-ops there, see https://github.com/Altinity/clickhouse-backup/issues/1378
+		{"multi_thread on unsupported format", "brotli", true, 0, 0, false},
+		{"buffer_size on unsupported format", "brotli", false, 0, 1024, false},
 		{"negative threads", "zstd", true, -1, 0, true},
 		{"threads set without multi_thread", "zstd", false, 4, 0, true},
 	}
@@ -45,6 +47,11 @@ func TestValidateConfigCompressionTuning(t *testing.T) {
 			}
 			if !tc.wantErr && err != nil {
 				t.Fatalf("unexpected error for %s: %v", tc.name, err)
+			}
+			// on formats that don't support multi-thread the knob must be silently disabled, not honored
+			multiThreadSupported := tc.format == "zstd" || tc.format == "gzip" || tc.format == "gz"
+			if !multiThreadSupported && cfg.General.CompressionUseMultiThread {
+				t.Fatalf("expected compression_use_multi_thread to be disabled for unsupported format %s", tc.format)
 			}
 		})
 	}

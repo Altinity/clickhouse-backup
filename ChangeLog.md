@@ -1,3 +1,11 @@
+# v2.7.3
+
+IMPROVEMENTS
+- switch the S3 client retry mode from `aws.RetryModeStandard` to `aws.RetryModeAdaptive`, so upload/download retries back off with a client-side rate limiter under throttling (`SlowDown`/503) instead of a fixed token bucket
+
+BUG FIXES
+- restore the default `general.compression_use_multi_thread` to `true`: [#1378](https://github.com/Altinity/clickhouse-backup/issues/1378) defaulted it to `false`, which silently dropped gzip/zstd compression from multi-threaded (pre-1378 gzip always used `pgzip`) to single-threaded and caused ~30% slower upload throughput for backups dominated by one large table (where `upload_concurrency` provides no per-stream parallelism); the option is now silently ignored instead of failing config validation for formats other than gzip/zstd
+
 # v2.7.2
 
 IMPROVEMENTS
