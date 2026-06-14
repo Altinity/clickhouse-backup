@@ -202,9 +202,10 @@ Notes for the other backends:
 
 ## Multi-threaded zstd/gzip compression
 
-By default `compression_use_multi_thread: false`, each compression stream is single-threaded. clickhouse-backup already
-parallelizes compression across tables via `upload_concurrency`/`download_concurrency`, so per-stream multi-threading
-mainly over-subscribes the CPU and reduces total throughput, see https://github.com/Altinity/clickhouse-backup/issues/1378.
+By default `compression_use_multi_thread: true`, each zstd/gzip stream is compressed with multiple threads (gzip via
+pgzip), matching the pre-1378 behavior. A single large table dominating a backup is gated by per-stream compression speed
+and gets no benefit from `upload_concurrency`/`download_concurrency`. Set `compression_use_multi_thread: false` to save CPU
+when many tables upload in parallel, see https://github.com/Altinity/clickhouse-backup/issues/1378.
 
 ```yaml
 general:

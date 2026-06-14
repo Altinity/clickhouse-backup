@@ -67,7 +67,7 @@ type GeneralConfig struct {
 	PipeBufferSize int64 `yaml:"pipe_buffer_size" envconfig:"PIPE_BUFFER_SIZE"`
 	// DownloadCopyBufferSize - explicit buffer size for io.CopyBuffer during download/extract, 0 means use the Go default io.Copy buffer (32KB), see https://github.com/Altinity/clickhouse-backup/issues/1376
 	DownloadCopyBufferSize int64 `yaml:"download_copy_buffer_size" envconfig:"DOWNLOAD_COPY_BUFFER_SIZE"`
-	// CompressionUseMultiThread - enable per-stream multi-threaded zstd/gzip compression and decompression (zstd encoder/decoder concurrency, gzip via pgzip). Default false because clickhouse-backup already parallelizes at table level via upload_concurrency/download_concurrency, so per-stream threading mainly over-subscribes CPU; enable it when backing up a single large table with low concurrency, see https://github.com/Altinity/clickhouse-backup/issues/1378
+	// CompressionUseMultiThread - enable per-stream multi-threaded zstd/gzip compression and decompression (zstd encoder/decoder concurrency, gzip via pgzip). Default true to match pre-1378 behavior where gzip always used pgzip; a single large table dominating a backup is gated by per-stream compression speed and gets no benefit from table-level upload_concurrency/download_concurrency. Set false to save CPU when many tables upload in parallel. Only applies to compression_format zstd and gzip; silently ignored for other formats, see https://github.com/Altinity/clickhouse-backup/issues/1378
 	CompressionUseMultiThread bool `yaml:"compression_use_multi_thread" envconfig:"COMPRESSION_USE_MULTI_THREAD"`
 	// CompressionThreads - number of per-stream compression threads when compression_use_multi_thread is enabled (zstd concurrency / pgzip block workers); 0 means auto (GOMAXPROCS). Ignored when compression_use_multi_thread is false, see https://github.com/Altinity/clickhouse-backup/issues/1378
 	CompressionThreads int `yaml:"compression_threads" envconfig:"COMPRESSION_THREADS"`
@@ -417,14 +417,18 @@ func (cfg *Config) GetCompressionFormat() string {
 // buffer size only apply to zstd and gzip; the buffer size additionally has format- and mode-specific
 // ranges, see https://github.com/Altinity/clickhouse-backup/issues/1378
 func validateCompressionTuning(cfg *Config) error {
-	format := cfg.GetCompressionFormat()
-	multiThreadSupported := format == "zstd" || format == "gzip" || format == "gz"
-
-	if cfg.General.CompressionUseMultiThread && !multiThreadSupported {
-		return errors.Errorf("compression_use_multi_thread is only supported for 'zstd' and 'gzip' compression_format, not '%s'", format)
-	}
 	if cfg.General.CompressionThreads < 0 {
 		return errors.Errorf("compression_threads=%d is invalid, it must be >= 0 (0 means auto/GOMAXPROCS)", cfg.General.CompressionThreads)
+	}
+	format := cfg.GetCompressionFormat()
+	multiThreadSupported := format == "zstd" || format == "gzip" || format == "gz"
+	if !multiThreadSupported {
+		// compression_use_multi_thread / compression_threads / compression_buffer_size only apply to
+		// zstd and gzip and are no-ops for other formats. Relax validation instead of failing config
+		// load: the default compression_use_multi_thread=true must not break tar/bzip2/xz/brotli/sz/none
+		// configs, so silently disable the knob here, see https://github.com/Altinity/clickhouse-backup/issues/1378
+		cfg.General.CompressionUseMultiThread = false
+		return nil
 	}
 	if cfg.General.CompressionThreads > 0 && !cfg.General.CompressionUseMultiThread {
 		return errors.New("compression_threads is set but compression_use_multi_thread is false; enable compression_use_multi_thread or unset compression_threads")
@@ -433,13 +437,13 @@ func validateCompressionTuning(cfg *Config) error {
 	if size == 0 {
 		return nil
 	}
-	switch format {
-	case "zstd":
-		// zstd encoder window size must be a power of two between 1KB and 512MB
+	// zstd encoder window size must be a power of two between 1KB and 512MB
+	if format == "zstd" {
 		if size < 1024 || size > 512*1024*1024 || (size&(size-1)) != 0 {
 			return errors.Errorf("compression_buffer_size=%d is invalid for zstd, it must be a power of two between 1024 and 536870912", size)
 		}
-	case "gzip", "gz":
+	}
+	if format == "gzip" || format == "gz" {
 		if cfg.General.CompressionUseMultiThread {
 			// pgzip block size must be greater than its 16KB tail size
 			if size <= 16384 {
@@ -451,8 +455,6 @@ func validateCompressionTuning(cfg *Config) error {
 				return errors.Errorf("compression_buffer_size=%d is invalid for single-threaded gzip, it must be between 32 and 32768", size)
 			}
 		}
-	default:
-		return errors.Errorf("compression_buffer_size is only supported for 'zstd' and 'gzip' compression_format, not '%s'", format)
 	}
 	return nil
 }
@@ -733,6 +735,7 @@ func DefaultConfig() *Config {
 			DeleteBatchSize:                     1000,
 			PipeBufferSize:                      128 * 1024,
 			DownloadCopyBufferSize:              0,
+			CompressionUseMultiThread:           true,
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
