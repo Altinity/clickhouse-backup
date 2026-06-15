@@ -14,10 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/antchfx/xmlquery"
@@ -26,6 +22,11 @@ import (
 	"github.com/ricochet2200/go-disk-usage/du"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 )
 
 // ClickHouse - provide
@@ -1039,11 +1040,11 @@ func (ch *ClickHouse) DropOrDetachTable(table Table, query, onCluster string, ig
 var createViewRefreshRe = regexp.MustCompile(`(?im)^(CREATE[\s\w]+VIEW[^(]+)(\s+REFRESH\s+.+)`)
 var createViewToClauseRe = regexp.MustCompile(`(?im)^(CREATE[\s\w]+VIEW[^(]+)(\s+TO\s+.+)`)
 var createViewAsWithRe = regexp.MustCompile(`(?im)^(CREATE[\s\w]+VIEW[^(]+)(\s+AS\s+WITH\s+.+)`)
-var createViewRe = regexp.MustCompile(`(?im)^(CREATE[\s\w]+VIEW[^(]+)(\s+AS\s+SELECT.+)`)
+var createViewRe = regexp.MustCompile(`(?im)^(CREATE[\s\w]+VIEW.+?)(\s+AS\s+SELECT.+)`)
 var attachViewRefreshRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+REFRESH\s+.+)`)
 var attachViewToClauseRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+TO\s+.+)`)
 var attachViewAsWithRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+AS\s+WITH\s+.+)`)
-var attachViewRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+AS\s+.+)`)
+var attachViewRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW.+?)(\s+AS\s+.+)`)
 var createObjRe = regexp.MustCompile(`(?is)^(CREATE [^(]+)(\(.+)`)
 var onClusterRe = regexp.MustCompile(`(?im)\s+ON\s+CLUSTER\s+`)
 var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^)]+)\)`)
