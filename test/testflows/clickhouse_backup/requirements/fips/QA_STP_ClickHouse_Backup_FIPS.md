@@ -13,6 +13,7 @@
 * 2 [Timeline](#timeline)
 * 3 [Configuration Requirements](#configuration-requirements)
 * 4 [Build Verification](#build-verification)
+    * 4.1 [Pre-Publish Image Verification](#pre-publish-image-verification)
 * 5 [Human Resources And Assignments](#human-resources-and-assignments)
 * 6 [Release Notes](#release-notes)
 * 7 [FIPS-Compatible `clickhouse-backup-fips` Configuration](#fips-compatible-clickhouse-backup-fips-configuration)
@@ -87,7 +88,19 @@ For TLS policy validation, the test suite also uses OpenSSL probe tools:
 | Build flag | Run `go version -m clickhouse-backup-fips` (`gofips140_build_flags_present`) | Output contains `build	GOFIPS140=v1.0.0` |
 | FIPS runtime posture across Go modes | Run `godebug_fips140_modes`, which runs `clickhouse-backup-fips --fips-info` with `GODEBUG` unset, empty, `fips140=off`, `fips140=on`, and `fips140=only` | For each mode, `--fips-info` reports the expected `enabled` / `enforced` flags (unset/empty/on → `true`/`false`; off → `false`/`false`; only → `true`/`true`) |
 
-Direct checks of `crypto/fips140.Version()` and `crypto/fips140.Enabled()` are not called as standalone assertions in the current `clickhouse-backup` TestFlows scenarios; their behavior is validated through `--version` output and runtime connectivity checks above.
+Direct checks of `crypto/fips140.Version()` and `crypto/fips140.Enabled()` are not called as standalone assertions in the current `clickhouse-backup` TestFlows scenarios; their behavior is validated through `--version` and `--info` outputs and runtime connectivity checks above.
+
+### Pre-Publish Image Verification
+
+In addition to the TestFlows scenarios above, the same FIPS build posture is enforced automatically in CI before any FIPS Docker image is published to the registry (Docker Hub). The `Verify FIPS 140-3 compatibility before push` step in both `.github/workflows/build.yaml` and `.github/workflows/release.yaml` builds the exact `image_fips` target locally and runs `.github/scripts/verify_fips_image.sh` against that image and the `clickhouse-backup-fips` binary. If any check fails the workflow stops, so a non-FIPS or mis-built image can never be pushed.
+
+This is an automation/release gate: it re-uses the same expectations already covered by the assertions in this section (no new requirement is introduced). The script verifies:
+
+| Check | Performed against | Expected Result |
+| --- | --- | --- |
+| Baked-in environment | `docker image inspect` of the `image_fips` image | `Config.Env` contains `GODEBUG=fips140=only` |
+| Version FIPS indicator | `clickhouse-backup --version` run inside the image | Output contains `FIPS 140-3: true` |
+| Build metadata | `go version -m clickhouse-backup-fips` (binary copied out of the image when `--binary` is omitted) | Reports `GOFIPS140=v1.0.0` (or a `v1.0.0-<suffix>` snapshot), the `fips140v1.0` build tag, `DefaultGODEBUG=fips140=on` and `CGO_ENABLED=0` |
 
 
 ## Human Resources And Assignments
