@@ -46,27 +46,57 @@ FIPS_TLS13_APPROVED = (
     "TLS_AES_256_GCM_SHA384",
 )
 
-# Single non-approved TLSv1.3 suite
-NON_FIPS_TLS13 = ("TLS_CHACHA20_POLY1305_SHA256",)
+# Non-approved TLSv1.3 suites the FIPS policy must reject.
+# Default runs probe the single documented suite; the `_STRESS` list adds the
+# remaining non-approved TLSv1.3 suites (CCM bulk ciphers, outside the GCM-only
+# FIPS-approved set). The wider `--stress` coverage is slower by design.
+NON_FIPS_TLS13 = (
+    "TLS_CHACHA20_POLY1305_SHA256",
+)
+NON_FIPS_TLS13_STRESS = NON_FIPS_TLS13 + (
+    "TLS_AES_128_CCM_SHA256",
+    "TLS_AES_128_CCM_8_SHA256",
+)
 
-# Non-FIPS TLS1.2 suites for the outbound verification.
-# The set covers three different reasons a TLS1.2 cipher must be rejected
-# by the Go FIPS 140-3 outbound policy:
-#
-# 1. Non-approved bulk cipher (CHACHA20):
-#       ECDHE-RSA-CHACHA20-POLY1305
-# 2. Non-approved key exchange (DHE):
-#       DHE-RSA-AES256-GCM-SHA384
-#       DHE-RSA-AES128-GCM-SHA256
-# 3. Plain RSA static key exchange (no forward secrecy):
-#       AES256-GCM-SHA384
-#       AES128-GCM-SHA256
+# Non-approved TLSv1.2 ciphers the FIPS outbound policy must reject, one per
+# rejection reason:
+#   * non-approved bulk cipher (ChaCha20):         ECDHE-RSA-CHACHA20-POLY1305
+#   * non-approved key exchange (DHE):             DHE-RSA-AES256-GCM-SHA384 / -AES128-
+#   * plain RSA key exchange (no forward secrecy): AES256-GCM-SHA384 / AES128-GCM-SHA256
+# The `_STRESS` list adds more ciphers from the same rejection classes
+# (ECDSA/DHE ChaCha20 and CBC-mode ciphers outside the GCM-only approved set).
 NON_FIPS_TLS12_OUTBOUND = (
-"ECDHE-RSA-CHACHA20-POLY1305",
-"DHE-RSA-AES256-GCM-SHA384",
-"DHE-RSA-AES128-GCM-SHA256",
-"AES256-GCM-SHA384",
-"AES128-GCM-SHA256",
+    "ECDHE-RSA-CHACHA20-POLY1305",
+    "DHE-RSA-AES256-GCM-SHA384",
+    "DHE-RSA-AES128-GCM-SHA256",
+    "AES256-GCM-SHA384",
+    "AES128-GCM-SHA256",
+)
+NON_FIPS_TLS12_OUTBOUND_STRESS = NON_FIPS_TLS12_OUTBOUND + (
+    "ECDHE-ECDSA-CHACHA20-POLY1305",
+    "DHE-RSA-CHACHA20-POLY1305",
+    "ECDHE-RSA-AES128-SHA",
+    "ECDHE-RSA-AES256-SHA",
+    "ECDHE-RSA-AES128-SHA256",
+    "ECDHE-RSA-AES256-SHA384",
+    "AES128-SHA",
+    "AES256-SHA",
+    "AES128-SHA256",
+    "AES256-SHA256",
+)
+
+# Non-approved TLSv1.2 ciphers the inbound REST API listener must reject. The
+# base adds RC4 / 3DES on top of the shared ChaCha20 reject; the `_STRESS` list
+# reuses the outbound stress set (which already covers ChaCha20) and adds only
+# the inbound-specific RC4 / 3DES.
+NON_FIPS_TLS12_INBOUND = (
+    "ECDHE-RSA-CHACHA20-POLY1305",
+    "RC4-SHA",
+    "DES-CBC3-SHA",
+)
+NON_FIPS_TLS12_INBOUND_STRESS = NON_FIPS_TLS12_OUTBOUND_STRESS + (
+    "RC4-SHA",
+    "DES-CBC3-SHA",
 )
 
 CLI_CMD_TIMEOUT_SEC = 15 # Timeout for clickhouse-backup-fips command runs.
@@ -581,6 +611,131 @@ def connectivity_against_non_fips_clickhouse_server(self):
         cluster.stop_auxiliary_container(NON_FIPS_CH_SERVER_NAME)
 
 
+
+
+
+def _godebug_env_prefix(godebug):
+    """Return the `env ...` command prefix that applies one GODEBUG case.
+
+    `None` strips any inherited `GODEBUG` (`env -u GODEBUG`), `""` sets it
+    empty (`env GODEBUG=`), and any other value sets `GODEBUG=fips140=<value>`.
+    Setting it explicitly per case makes the test independent of the suite-wide
+    `--fips-godebug` selection that the container otherwise exports.
+    """
+    if godebug is None:
+        return "env -u GODEBUG "
+    if godebug == "":
+        return "env GODEBUG= "
+    return f"env GODEBUG=fips140={godebug} "
+
+
+def _read_fips_info_field(output, field):
+    """Return the value of a `<field>:` line from `--fips-info` output."""
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(f"{field}:"):
+            return stripped.split(":", 1)[1].strip()
+    return None
+
+
+@TestStep(Then)
+def _check_fips_info_values(self, backup_fips, *, name, godebug,
+                            expected_enabled, expected_enforced):
+    """Run `--fips-info` for one GODEBUG case and assert enabled/enforced.
+
+    Asserts the command succeeds and that the `fips_module` block reports the
+    expected `enabled` / `enforced` booleans for the given GODEBUG mode.
+    """
+    cmd = f"{_godebug_env_prefix(godebug)}{FIPS_BINARY_IN_CONTAINER} --fips-info"
+    result = backup_fips.cmd(cmd, no_checks=True)
+    output = result.output or ""
+
+    assert result.exitcode == 0, error(
+        f"`--fips-info` failed for GODEBUG mode `{name}` "
+        f"(exit={result.exitcode}).\n{output}"
+    )
+
+    enabled = _read_fips_info_field(output, "enabled")
+    enforced = _read_fips_info_field(output, "enforced")
+    want_enabled = str(expected_enabled).lower()
+    want_enforced = str(expected_enforced).lower()
+
+    assert enabled == want_enabled, error(
+        f"GODEBUG mode `{name}`: expected `enabled: {want_enabled}`, "
+        f"got `enabled: {enabled}`.\n{output}"
+    )
+    assert enforced == want_enforced, error(
+        f"GODEBUG mode `{name}`: expected `enforced: {want_enforced}`, "
+        f"got `enforced: {enforced}`.\n{output}"
+    )
+
+
+@TestScenario
+@Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Unset("1.0"),
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Empty("1.0"),
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Off("1.0"),
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_On("1.0"),
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Only("1.0"),
+)
+def godebug_fips140_modes(self):
+    """Validate `--fips-info` FIPS posture for every GODEBUG fips140 mode.
+
+    For each documented GODEBUG runtime mode (`unset`, empty, `fips140=off`,
+    `fips140=on`, `fips140=only`), run `clickhouse-backup-fips --fips-info` and
+    assert the reported `enabled` / `enforced` flags match the expected truth
+    table:
+
+        GODEBUG runtime      enabled   enforced
+        unset                true      false
+        empty ("")           true      false
+        fips140=off          false     false
+        fips140=on           true      false
+        fips140=only         true      true
+
+    Each mode is set explicitly per command, so the result does not depend on
+    the suite-wide `--fips-godebug` selection.
+    """
+    # Expected `clickhouse-backup-fips --fips-info` posture for every GODEBUG
+    # fips140 runtime mode. The FIPS binary is built with `DefaultGODEBUG` set to
+    # `fips140=on`, so leaving GODEBUG unset or empty keeps FIPS *enabled* but not
+    # *enforced*; `fips140=on` is the same; `fips140=only` adds strict enforcement;
+    # `fips140=off` disables FIPS entirely.
+    #
+    #   GODEBUG runtime      enabled   enforced
+    #   -------------------   -------   --------
+    #   unset                 true      false
+    #   empty ("")            true      false
+    #   fips140=off           false     false
+    #   fips140=on            true      false
+    #   fips140=only          true      true
+    #
+    # Each tuple is (case name, GODEBUG value, expected enabled, expected enforced),
+    # where the GODEBUG value is:
+    #   None  -> GODEBUG removed from the environment (the "unset" case),
+    #   ""    -> GODEBUG present but empty,
+    #   else  -> GODEBUG=fips140=<value>.
+    FIPS_GODEBUG_INFO_CASES = [
+        ("unset", None,   True,  False),
+        ("empty", "",     True,  False),
+        ("off",   "off",  False, False),
+        ("on",    "on",   True,  False),
+        ("only",  "only", True,  True),
+    ]
+    backup_fips = _require_fips_container(self)
+
+    for name, godebug, expected_enabled, expected_enforced in FIPS_GODEBUG_INFO_CASES:
+        with Check(f"GODEBUG mode `{name}` reports "
+                   f"enabled={expected_enabled} enforced={expected_enforced}"):
+            _check_fips_info_values(
+                backup_fips=backup_fips,
+                name=name,
+                godebug=godebug,
+                expected_enabled=expected_enabled,
+                expected_enforced=expected_enforced,
+            )
+
+
 @TestScenario
 @Requirements(
     RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_Integrity("1.0"),
@@ -661,12 +816,18 @@ def inbound_tls_cipher_negotiation(self):
     (`/etc/clickhouse-server/ssl/server.{crt,key}`), inherited via
     `volumes_from_name="clickhouse1"` on the FIPS container.
     """
-    # Non-FIPS TLS1.2 suites
-    NON_FIPS_TLS12_INBOUND_REST = (
-        "ECDHE-RSA-CHACHA20-POLY1305",
-        "RC4-SHA",
-        "DES-CBC3-SHA",
-    )
+    # Non-approved profiles the REST API listener must reject. The TLSv1.2 base
+    # adds RC4 / 3DES (specific to the inbound case); the TLSv1.3 base is the
+    # shared non-approved suite. `--stress` widens both with the broader stress
+    # sets so legacy / CBC ciphers are exercised here too; default keeps the
+    # minimum. `STRESS` lists already include their base, so they are assigned,
+    # not appended, to avoid probing the same cipher twice.
+    non_fips_tls12 = NON_FIPS_TLS12_INBOUND
+    non_fips_tls13 = NON_FIPS_TLS13
+
+    if self.context.stress:
+        non_fips_tls12 = NON_FIPS_TLS12_INBOUND_STRESS
+        non_fips_tls13 = NON_FIPS_TLS13_STRESS
 
     backup_fips = _require_fips_container(self)
 
@@ -701,7 +862,7 @@ def inbound_tls_cipher_negotiation(self):
                     )
 
         with And("I try to connect using each non-FIPS TLSv1.3 cipher suite"):
-            for ciphersuite in NON_FIPS_TLS13:
+            for ciphersuite in non_fips_tls13:
                 with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
                     _check_tls_handshake(
                         node=backup_fips, target=target, tls_flag="-tls1_3",
@@ -709,7 +870,7 @@ def inbound_tls_cipher_negotiation(self):
                     )
 
         with And("I try to connect using each non-FIPS TLSv1.2 cipher"):
-            for cipher in NON_FIPS_TLS12_INBOUND_REST:
+            for cipher in non_fips_tls12:
                 with Check(f"TLSv1.2 cipher {cipher} should be rejected"):
                     _check_tls_handshake(
                         node=backup_fips, target=target, tls_flag="-tls1_2",
@@ -772,6 +933,10 @@ def outbound_tls_cipher_negotiation(self):
         f"-c {FIPS_OUTBOUND_CH_CONFIG_PATH} tables 2>&1"  # `2>&1` redirects stderr to stdout.
     )
 
+    # `--stress` widens the non-approved coverage; default keeps the minimum.
+    non_fips_tls13 = NON_FIPS_TLS13_STRESS if self.context.stress else NON_FIPS_TLS13
+    non_fips_tls12 = NON_FIPS_TLS12_OUTBOUND_STRESS if self.context.stress else NON_FIPS_TLS12_OUTBOUND
+
     with When("I try each FIPS-approved TLSv1.3 cipher suite on the CH endpoint"):
         for ciphersuite in FIPS_TLS13_APPROVED:
             with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be accepted"):
@@ -791,7 +956,7 @@ def outbound_tls_cipher_negotiation(self):
                 )
 
     with And("I try each non-FIPS TLSv1.3 cipher suite on the CH endpoint"):
-        for ciphersuite in NON_FIPS_TLS13:
+        for ciphersuite in non_fips_tls13:
             with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
                 _check_outbound_tls_with_cipher(
                     cluster=cluster, backup_fips=backup_fips,
@@ -800,7 +965,7 @@ def outbound_tls_cipher_negotiation(self):
                 )
 
     with And("I try each non-FIPS TLSv1.2 cipher on the CH endpoint"):
-        for cipher in NON_FIPS_TLS12_OUTBOUND:
+        for cipher in non_fips_tls12:
             with Check(f"TLSv1.2 cipher {cipher} should be rejected"):
                 _check_outbound_tls_with_cipher(
                     cluster=cluster, backup_fips=backup_fips,
@@ -853,6 +1018,10 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
         f"-c {FIPS_OUTBOUND_S3_CONFIG_PATH} list remote 2>&1"  # `2>&1` redirects stderr to stdout.
     )
 
+    # `--stress` widens the non-approved coverage; default keeps the minimum.
+    non_fips_tls13 = NON_FIPS_TLS13_STRESS if self.context.stress else NON_FIPS_TLS13
+    non_fips_tls12 = NON_FIPS_TLS12_OUTBOUND_STRESS if self.context.stress else NON_FIPS_TLS12_OUTBOUND
+
     with Check("I try each FIPS-approved TLSv1.3 cipher suite on the S3 endpoint"):
         for ciphersuite in FIPS_TLS13_APPROVED:
             with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be accepted"):
@@ -874,7 +1043,7 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
                 )
 
     with Check("I try each non-FIPS TLSv1.3 cipher suite on the S3 endpoint"):
-        for ciphersuite in NON_FIPS_TLS13:
+        for ciphersuite in non_fips_tls13:
             with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
                 _check_outbound_tls_with_cipher(
                     cluster=cluster, backup_fips=backup_fips,
@@ -885,7 +1054,7 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
                 )
 
     with Check("I try each non-FIPS TLSv1.2 cipher on the S3 endpoint"):
-        for cipher in NON_FIPS_TLS12_OUTBOUND:
+        for cipher in non_fips_tls12:
             with Check(f"TLSv1.2 cipher {cipher} should be rejected"):
                 _check_outbound_tls_with_cipher(
                     cluster=cluster, backup_fips=backup_fips,
@@ -1139,6 +1308,11 @@ def outbound_tls_to_nonfips_clickhouse_with_cipher_profile(self):
     `clickhouse-backup-fips tables` end-to-end and asserts the command
     succeeds (TLS + native CH protocol).
 
+    With `--stress` the server instead offers the full documented
+    FIPS-approved cipher set (`listeners-fips-cipher-stress.xml`), so the
+    end-to-end run is exercised against the same cipher list a real
+    FIPS-compatible server advertises.
+
     Cipher-policy rejection (FIPS binary refusing non-approved ciphers) is
     covered deterministically by `outbound_tls_cipher_negotiation` using
     `openssl s_server`; replaying the negative case here would be flaky
@@ -1147,9 +1321,15 @@ def outbound_tls_to_nonfips_clickhouse_with_cipher_profile(self):
     """
     backup_fips = _require_fips_container(self)
     cluster = self.context.cluster
+
+    # Default: a single FIPS-approved cipher. `--stress`: the full documented set.
+    listeners_basename = (
+        "listeners-fips-cipher-stress.xml" if self.context.stress
+        else "listeners-fips-cipher.xml"
+    )
     listeners_xml = os.path.join(
         cluster.tests_dir,
-        "configs/clickhouse_nonfips_server/config.d/listeners-fips-cipher.xml",
+        f"configs/clickhouse_nonfips_server/config.d/{listeners_basename}",
     )
 
     try:
@@ -1260,6 +1440,7 @@ def fips_140_3(self):
     Scenario(run=gofips140_build_flags_present, flags=TE)
     Scenario(run=connectivity_against_non_fips_clickhouse_server, flags=TE)
     Scenario(run=connectivity_against_fips_clickhouse_server, flags=TE)
+    Scenario(run=godebug_fips140_modes, flags=TE)
     Scenario(run=fips_integrity_self_test_failure_on_tampered_binary, flags=TE)
     Scenario(run=inbound_tls_cipher_negotiation, flags=TE)
     Scenario(run=outbound_tls_cipher_negotiation, flags=TE)
