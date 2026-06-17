@@ -43,7 +43,7 @@ Test results ensure that `clickhouse-backup`:
 
 To validate this, the following items SHALL be checked:
 
-* The FIPS-built `clickhouse-backup` binary starts with the Go FIPS 140-3 cryptographic module enabled and reports it in `--version` output under all three Go FIPS runtime modes (`GODEBUG` unset, `GODEBUG=fips140=on`, `GODEBUG=fips140=only`).
+* The FIPS-built `clickhouse-backup` binary reports the correct FIPS posture (`enabled` / `enforced`) in `clickhouse-backup-fips --fips-info` output under every Go FIPS runtime mode (`GODEBUG` unset, empty, `fips140=off`, `fips140=on`, `fips140=only`).
 * The FIPS cipher policy is enforced for inbound and outbound TLS when running in strict mode (`GODEBUG=fips140=only`).
 * The binary aborts on startup if the FIPS integrity check or any startup cryptographic self-test fails.
 * The binary stays operational against both FIPS-compatible and non-FIPS-compatible ClickHouse server versions.
@@ -85,7 +85,7 @@ For TLS policy validation, the test suite also uses OpenSSL probe tools:
 | --- | --- | --- |
 | FIPS indicator in binary version output | Run `clickhouse-backup-fips --version` (`clickhouse_backup_fips_version_output`) and run control check on non-FIPS binary (`clickhouse_backup_fips_version_output_negative_check`) | FIPS binary reports `FIPS 140-3: true`; non-FIPS binary does not report `true` |
 | Build flag | Run `go version -m clickhouse-backup-fips` (`gofips140_build_flags_present`) | Output contains `build	GOFIPS140=v1.0.0` |
-| FIPS runtime behavior across Go modes | Run `godebug_fips140_modes` with `GODEBUG` unset, `fips140=on`, and `fips140=only` | For each mode, `--version` reports `FIPS 140-3: true`, and `tables` against the FIPS ClickHouse TLS endpoint succeeds (`exit 0`) |
+| FIPS runtime posture across Go modes | Run `godebug_fips140_modes`, which runs `clickhouse-backup-fips --fips-info` with `GODEBUG` unset, empty, `fips140=off`, `fips140=on`, and `fips140=only` | For each mode, `--fips-info` reports the expected `enabled` / `enforced` flags (unset/empty/on → `true`/`false`; off → `false`/`false`; only → `true`/`true`) |
 
 Direct checks of `crypto/fips140.Version()` and `crypto/fips140.Enabled()` are not called as standalone assertions in the current `clickhouse-backup` TestFlows scenarios; their behavior is validated through `--version` output and runtime connectivity checks above.
 
@@ -135,7 +135,7 @@ The following artifacts and tools will be used:
 * `openssl` CLI tool on the test host for TLS client and server probes.
 
 > [!NOTE]
-> The regression sets `GODEBUG` per command rather than at the FIPS container level. The suite covers all three modes documented in [GODEBUG fips140 Modes](#godebug-fips140-modes) (`unset`, `fips140=on`, `fips140=only`), and the forced-CAST scenario also injects `GODEBUG=failfipscast=<NAME>,fips140=on`; a single container-level value would prevent the matrix and the negative-self-test path from running. The Altinity FIPS Docker image still ships with `GODEBUG=fips140=only` as documented in [FIPS Configuration](#fips-configuration); that default is honored when the image is run as-is.
+> The regression sets `GODEBUG` per command rather than at the FIPS container level. The `godebug_fips140_modes` scenario covers every mode documented in [GODEBUG fips140 Modes](#godebug-fips140-modes) (`unset`, empty, `fips140=off`, `fips140=on`, `fips140=only`), and the forced-CAST scenario also injects `GODEBUG=failfipscast=<NAME>,fips140=on`; a single container-level value would prevent the matrix and the negative-self-test path from running. The Altinity FIPS Docker image still ships with `GODEBUG=fips140=only` as documented in [FIPS Configuration](#fips-configuration); that default is honored when the image is run as-is.
 
 ## Inputs and Outputs of `clickhouse-backup-fips`
 
@@ -181,32 +181,28 @@ Expected result:
 ## GODEBUG `fips140` Modes
 
 
-Check that `clickhouse-backup-fips` behaves correctly under each of the three Go FIPS runtime modes listed below. 
+Check that `clickhouse-backup-fips` reports the correct FIPS posture under every Go FIPS `fips140` runtime mode.
 
-For every mode run both `--version` and a basic `tables` command against the FIPS-compatible Altinity ClickHouse server `altinity/clickhouse-server:25.3.8.30001.altinityfips`.
+The binary exposes its build/runtime posture via `clickhouse-backup-fips --fips-info`, which prints a line-oriented `key: value` dump including, under the `fips_module:` block, `enabled:` and `enforced:` booleans (these map to Go's `crypto/fips140.Enabled()` and `crypto/fips140.Enforced()`). The binary is built with `DefaultGODEBUG=fips140=on`, so leaving `GODEBUG` unset (or empty) keeps FIPS enabled but not enforced.
 
-* `GODEBUG` not set — FIPS mode is enabled by build-time default (`GOFIPS140=v1.0.0`).
+For each mode, run `clickhouse-backup-fips --fips-info` with the corresponding `GODEBUG` value and assert the reported `enabled` / `enforced` flags match the table below (scenario `godebug_fips140_modes`):
 
-    Expected result:
-    * `--version` reports `FIPS 140-3: true`.
-    * `tables` returns the list of tables.
+| `GODEBUG` runtime    | `enabled` | `enforced` | Notes |
+| -------------------- | --------- | ---------- | ----- |
+| unset                | true      | false      | Build-time default (`DefaultGODEBUG=fips140=on`). |
+| empty (`GODEBUG=`)   | true      | false      | Same as unset. |
+| `fips140=off`        | false     | false      | FIPS disabled. |
+| `fips140=on`         | true      | false      | FIPS enabled, not enforced. Mode used for the forced CAST test below. |
+| `fips140=only`       | true      | true       | Strict enforcement; any non-approved cryptographic operation triggers an error or panic. Mode used for the TLS policy tests below and the default of the FIPS Docker image. |
 
-* `GODEBUG=fips140=on` — FIPS mode is enabled explicitly without strict enforcement. This is the mode used for the forced CAST test below.
+To set each case explicitly (independent of any container-level `GODEBUG`):
 
-    Expected result:
-    * `--version` reports `FIPS 140-3: true`.
-    * `tables` returns the list of tables.
-
-* `GODEBUG=fips140=only` — FIPS mode is enabled with strict enforcement; any non-approved cryptographic operation triggers an error or panic. This is the mode used for the TLS policy tests below and the default of the FIPS Docker image.
-
-    Expected result:
-    * `--version` reports `FIPS 140-3: true`.
-    * `tables` against an approved TLS configuration returns the list of tables.
-    * Non-approved cryptographic operations cause the binary to fail.
-    * The full `clickhouse-backup` TestFlows regression suite runs in this mode without panics or strict-FIPS-only regressions.
+* unset: `env -u GODEBUG clickhouse-backup-fips --fips-info`
+* empty: `env GODEBUG= clickhouse-backup-fips --fips-info`
+* off / on / only: `env GODEBUG=fips140=<off|on|only> clickhouse-backup-fips --fips-info`
 
 > [!NOTE]
-> No negative test exists for "the binary panics when `GODEBUG` is unset". `clickhouse-backup-fips` is built with `GOFIPS140=v1.0.0`, so the FIPS module is enabled by the build flag, not by `GODEBUG`. The "GODEBUG not set" mode above IS the production-default operation; the binary is expected to operate normally there.
+> No negative test exists for "the binary panics when `GODEBUG` is unset". `clickhouse-backup-fips` is built with `GOFIPS140=v1.0.0`, so the FIPS module is enabled by the build flag (`DefaultGODEBUG=fips140=on`), not by the runtime `GODEBUG`. The "GODEBUG unset" mode above IS the production-default operation; the binary is expected to operate normally there.
 
 ## FIPS Integrity Self-test Failure on Tampered Binary
 
