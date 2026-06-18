@@ -60,9 +60,13 @@ func TestCASUploadRefusesConcurrent(t *testing.T) {
 	// simulates a concurrent upload in flight. We do NOT run cas-upload first:
 	// if metadata.json already exists, cas-upload refuses with ErrBackupExists
 	// (step 4) before it ever reaches the inprogress-marker check (step 5).
-	// S3 path: backup/{cluster}/{shard}/cas/{clusterID}/inprogress/{name}.marker
-	// casBootstrap used clusterID="concurrent_up"; path is backup/cluster/0/cas/concurrent_up/inprogress/concur_bk.marker
-	markerKey := "backup/cluster/0/cas/concurrent_up/inprogress/concur_bk.marker"
+	// S3 path: <resolved s3.path>/cas/{clusterID}/inprogress/{name}.marker.
+	// The configured s3.path carries the {version} macro (e.g.
+	// backup/cluster/0/24_8) for cross-version test isolation, so resolve it
+	// via the live server rather than hardcoding the version segment.
+	// casBootstrap used clusterID="concurrent_up".
+	casPath, _ := env.resolveConfigPaths(r, "config-s3.yml")
+	markerKey := casPath + "/cas/concurrent_up/inprogress/concur_bk.marker"
 	// Use tool="cas-upload" so the diagnostic surfaces the realistic
 	// upload-vs-upload conflict (post wave-5 N2, the diagnostic uses the
 	// marker's Tool field dynamically).
@@ -89,8 +93,10 @@ func TestCASPruneRefusesConcurrent(t *testing.T) {
 	env.casBootstrap(r, "concurrent_pr")
 
 	// Inject a prune marker simulating another prune in flight.
-	// S3 path: backup/cluster/0/cas/concurrent_pr/prune.marker
-	markerKey := "backup/cluster/0/cas/concurrent_pr/prune.marker"
+	// S3 path: <resolved s3.path>/cas/concurrent_pr/prune.marker. The s3.path
+	// carries the {version} macro, so resolve it via the live server.
+	casPath, _ := env.resolveConfigPaths(r, "config-s3.yml")
+	markerKey := casPath + "/cas/concurrent_pr/prune.marker"
 	markerBody := `{"host":"other","started_at":"2026-05-08T00:00:00Z","run_id":"abcd1234","tool":"test"}`
 	env.injectS3Object(r, markerKey, markerBody)
 

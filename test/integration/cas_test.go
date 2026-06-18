@@ -283,7 +283,10 @@ func TestCASVerify(t *testing.T) {
 	// with a "missing" diagnostic. The MinIO container exposes the bucket as a
 	// plain filesystem at /minio/data/clickhouse, so we use ordinary `find` +
 	// `rm` rather than `mc`.
-	blobDir := "/minio/data/clickhouse/backup/cluster/0/cas/verify/blob"
+	// The MinIO backup path carries the {version} macro, so resolve it via the
+	// live server rather than hardcoding the version segment (otherwise `find`
+	// matches nothing and the negative case is silently skipped).
+	blobDir := env.minioBackupFSPath(r, "config-s3.yml", "cas/verify/blob")
 	delOut, delErr := env.DockerExecOut("minio", "bash", "-ce",
 		fmt.Sprintf("find %s -type f | head -n1 | xargs -r rm -fv", blobDir))
 	if delErr != nil || strings.TrimSpace(delOut) == "" {

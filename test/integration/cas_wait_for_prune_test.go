@@ -31,8 +31,10 @@ func TestCASUploadWaitsForPrune(t *testing.T) {
 	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.`%s` SELECT number FROM numbers(100)", dbName, tblName))
 	env.casBackupNoError(r, "create", "--tables", dbName+".*", bk)
 
-	// Inject a prune marker.
-	markerKey := "backup/cluster/0/cas/wait_prune/prune.marker"
+	// Inject a prune marker. The s3.path carries the {version} macro, so
+	// resolve it via the live server rather than hardcoding the version segment.
+	casPath, _ := env.resolveConfigPaths(r, "config-s3.yml")
+	markerKey := casPath + "/cas/wait_prune/prune.marker"
 	markerBody := `{"host":"other","started_at":"2026-05-08T00:00:00Z","run_id":"abcd1234","tool":"test"}`
 	env.injectS3Object(r, markerKey, markerBody)
 
@@ -81,7 +83,9 @@ func TestCASUploadWaitTimeout(t *testing.T) {
 	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.`%s` SELECT number FROM numbers(10)", dbName, tblName))
 	env.casBackupNoError(r, "create", "--tables", dbName+".*", bk)
 
-	markerKey := "backup/cluster/0/cas/wait_timeout/prune.marker"
+	// The s3.path carries the {version} macro; resolve it via the live server.
+	casPath, _ := env.resolveConfigPaths(r, "config-s3.yml")
+	markerKey := casPath + "/cas/wait_timeout/prune.marker"
 	markerBody := `{"host":"other","started_at":"2026-05-08T00:00:00Z","run_id":"deadbeef","tool":"test"}`
 	env.injectS3Object(r, markerKey, markerBody)
 
