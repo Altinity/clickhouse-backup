@@ -359,7 +359,7 @@ Invoke `pkg/acvpwrapper/run.sh` against the FIPS-built binary.
 Expected result:
 
 * The wrapper runs the algorithm test vectors and exits successfully with no failures across the run.
-* This check is optional in automation and runs only when `RUN_ACVP_TESTS=1` is set.
+* This check is optional in automation and runs only when `RUN_ACVP_TESTS=1` is set or when tests are being run is --stress mode.
 
 ## Server Listening-Port Assertion
 
