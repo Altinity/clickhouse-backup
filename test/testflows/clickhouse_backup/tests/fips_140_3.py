@@ -1375,7 +1375,8 @@ def acvp_tests(self):
     and asserts it exits 0 and prints the expected line tracked
     in `FIPS_ACVP_EXPECTED_OUTPUT`.
 
-    Opt-in: skipped unless `RUN_ACVP_TESTS=1` is set.
+    Opt-in: skipped unless `RUN_ACVP_TESTS=1` is set or the suite runs
+    with `--stress` option.
     """
     # ACVP wrapper scenario opt-in.
     # Set `RUN_ACVP_TESTS=1` locally or in the CI workflow to enable it.
@@ -1393,10 +1394,12 @@ def acvp_tests(self):
     # a boringssl clone, an acvptool build, and then the ACVP run itself.
     FIPS_ACVP_TIMEOUT_SEC       = 30 * 60
     flag = os.environ.get(FIPS_ACVP_ENV_FLAG, "").strip().lower()
-    if flag not in FIPS_ACVP_ENV_FLAG_VALUES:
+    # `--stress` runs the full FIPS coverage, so enable ACVP tests automatically
+    # there even when `RUN_ACVP_TESTS` is unset.
+    if flag not in FIPS_ACVP_ENV_FLAG_VALUES and not self.context.stress:
         skip(
-            f"set {FIPS_ACVP_ENV_FLAG}=1 to enable; the wrapper pulls "
-            f"Docker images and clones upstream repos."
+            f"set {FIPS_ACVP_ENV_FLAG}=1 (or run with `--stress`) to enable; "
+            f"the wrapper pulls Docker images and clones upstream repos."
         )
 
     cluster = self.context.cluster
