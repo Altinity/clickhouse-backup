@@ -12,6 +12,7 @@
 * 1 [Introduction](#introduction)
 * 2 [Timeline](#timeline)
 * 3 [Configuration Requirements](#configuration-requirements)
+    * 3.1 [Supported TLS Protocol Versions and Cipher Suites](#supported-tls-protocol-versions-and-cipher-suites)
 * 4 [Build Verification](#build-verification)
     * 4.1 [Pre-Publish Image Verification](#pre-publish-image-verification)
 * 5 [Human Resources And Assignments](#human-resources-and-assignments)
@@ -73,9 +74,35 @@ For TLS policy validation, the test suite also uses OpenSSL probe tools:
 - `openssl s_client` (acts as a TLS client to test inbound API listener policy)
 - `openssl s_server` (acts as a TLS server to test outbound client policy)
 
+### Supported TLS Protocol Versions and Cipher Suites
+
+All TLS endpoints of `clickhouse-backup-fips` (the inbound REST API listener and the outbound clients to ClickHouse and S3) follow a single FIPS profile. This profile is what every TLS scenario in this plan asserts.
+
+**Protocol versions:**
+
+| Protocol | Status |
+| -------- | ------ |
+| TLSv1.3  | Supported |
+| TLSv1.2  | Supported |
+| TLSv1.1  | Rejected (below FIPS minimum) |
+| TLSv1.0  | Rejected (below FIPS minimum) |
+| SSLv2 / SSLv3 | Rejected |
+
+**FIPS-approved cipher suites (the only ones that may negotiate):**
+
+| TLS version | Approved suites |
+| ----------- | --------------- |
+| TLSv1.3 | `TLS_AES_128_GCM_SHA256`, `TLS_AES_256_GCM_SHA384` |
+| TLSv1.2 | `ECDHE-RSA-AES128-GCM-SHA256`, `ECDHE-RSA-AES256-GCM-SHA384` |
+
+Everything else MUST be rejected — including ChaCha20-Poly1305, CBC-mode, RC4, 3DES, CCM, DHE / plain-RSA key exchange, and the plain RSA-kx AES-GCM suites (`AES128-GCM-SHA256`, `AES256-GCM-SHA384`).
+
+> [!NOTE]
+> The client cipher set above is narrower than the ClickHouse server `<cipherList>` in the [Altinity FIPS documentation](https://docs.altinity.com/altinitystablebuilds/fips-compatible-altinity-builds/#configuration-of-altinity-stable-builds-for-fips-compatible-operation): that server config also permits the non-ECDHE `AES128-GCM-SHA256` / `AES256-GCM-SHA384` suites, but `clickhouse-backup-fips` rejects them because the Go FIPS module approves only the forward-secret ECDHE AES-GCM suites listed above.
+
 ## Build Verification
 
-**Objective:** Verify binaries are FIPS builds and linked to Go Cryptographic Module v1.0.0.
+**Objective:** Verify that `clickhouse-backup-fips` is a FIPS build linked to the Go Cryptographic Module v1.0.0 (reports `FIPS 140-3: true`, built with `GOFIPS140=v1.0.0`), and that the regular `clickhouse-backup` binary is not (reports `FIPS 140-3: false`).
 
 **Certificates:**
 - [CMVP #5247](https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/5247)
@@ -84,7 +111,8 @@ For TLS policy validation, the test suite also uses OpenSSL probe tools:
 
 | Test Assertion | Description | Expected Result |
 | --- | --- | --- |
-| FIPS indicator in binary version output | Run `clickhouse-backup-fips --version` (`clickhouse_backup_fips_version_output`) and run control check on non-FIPS binary (`clickhouse_backup_fips_version_output_negative_check`) | FIPS binary reports `FIPS 140-3: true`; non-FIPS binary does not report `true` |
+| FIPS indicator in FIPS binary version output | Run `clickhouse-backup-fips --version` (`clickhouse_backup_fips_version_output`) | FIPS binary reports `FIPS 140-3: true` |
+| FIPS indicator absent in non-FIPS binary (control check) | Run `clickhouse-backup --version` on the regular binary (`clickhouse_backup_fips_version_output_negative_check`) | Non-FIPS binary does not report `FIPS 140-3: true` (reports `false`) |
 | Build flag | Run `go version -m clickhouse-backup-fips` (`gofips140_build_flags_present`) | Output contains `build	GOFIPS140=v1.0.0` |
 | FIPS runtime posture across Go modes | Run `godebug_fips140_modes`, which runs `clickhouse-backup-fips --fips-info` with `GODEBUG` unset, empty, `fips140=off`, `fips140=on`, and `fips140=only` | For each mode, `--fips-info` reports the expected `enabled` / `enforced` flags (unset/empty/on → `true`/`false`; off → `false`/`false`; only → `true`/`true`) |
 
@@ -148,7 +176,12 @@ The following artifacts and tools will be used:
 * `openssl` CLI tool on the test host for TLS client and server probes.
 
 > [!NOTE]
-> The regression sets `GODEBUG` per command rather than at the FIPS container level. The `godebug_fips140_modes` scenario covers every mode documented in [GODEBUG fips140 Modes](#godebug-fips140-modes) (`unset`, empty, `fips140=off`, `fips140=on`, `fips140=only`), and the forced-CAST scenario also injects `GODEBUG=failfipscast=<NAME>,fips140=on`; a single container-level value would prevent the matrix and the negative-self-test path from running. The Altinity FIPS Docker image still ships with `GODEBUG=fips140=only` as documented in [FIPS Configuration](#fips-configuration); that default is honored when the image is run as-is.
+> Each scenario sets `GODEBUG` explicitly per command rather than once at the container level:
+>
+> * [GODEBUG `fips140` Modes](#godebug-fips140-modes) (`godebug_fips140_modes`) runs `--fips-info` under `GODEBUG` unset, empty, `fips140=off`, `fips140=on`, and `fips140=only`.
+> * [Forced CAST Failures](#forced-cast-failures) (`forced_cast_failures`) runs `--version` under `GODEBUG=failfipscast=<NAME>,fips140=only`.
+>
+> The Altinity FIPS Docker image ships with `GODEBUG=fips140=only` baked in (see [FIPS-Compatible `clickhouse-backup-fips` Configuration](#fips-compatible-clickhouse-backup-fips-configuration)); that default applies when the image is run as-is.
 
 ## Inputs and Outputs of `clickhouse-backup-fips`
 
@@ -158,7 +191,7 @@ The following artifacts and tools will be used:
 * Outbound to ClickHouse: secure native TCP port `9440` (`clickhouse.secure: true`, `clickhouse.port: 9440`). Plain native TCP `9000` and plain HTTP `8123` MUST NOT be used by `clickhouse-backup-fips`.
 * Outbound to S3-compatible storage: HTTPS to the AWS FIPS hostname `s3-fips.<region>.amazonaws.com:443` when `s3.endpoint` is empty and `s3.region` is set.
 
-The [Server Listening-Port Assertion](#server-listening-port-assertion) subsection below describes how the inbound surface is verified.
+The [Server Listening-Port Assertion](#server-listening-port-assertion) section describes how the inbound surface is verified.
 
 ## Connectivity Against ClickHouse FIPS and Non-FIPS Servers
 
@@ -222,47 +255,38 @@ To set each case explicitly (independent of any container-level `GODEBUG`):
 
 Check that the FIPS startup integrity self-test stops the binary if the FIPS module bytes have been modified.
 
-Take a copy of `clickhouse-backup-fips`, corrupt its `.go.fipsinfo` checksum section, and try to run the tampered copy.
+Take a copy of `clickhouse-backup-fips`, corrupt its `.go.fipsinfo` checksum section, and try to run the tampered copy. The scenario (`fips_integrity_self_test_failure_on_tampered_binary`) runs `scripts/tamper_go_fips_checksum.sh`, which operates only on a temporary copy of the read-only original binary, so other scenarios are unaffected.
 
 Expected result:
 
 * The tampered binary panics on startup with `panic: fips140: verification mismatch` and exits with a non-zero exit code.
-* The unmodified original binary continues to work normally.
+* The tamper script prints its explicit success marker `== OK: FIPS integrity check failed as expected ==` and exits `0` (its success contract).
+* The unmodified original binary continues to work normally (the script tampers only the copy).
 
 ## Forced CAST Failures
 
+Check that the FIPS module aborts when a Cryptographic Algorithm Self-Test (CAST) fails. The Go FIPS module exposes a `GODEBUG=failfipscast=<NAME>` hook that simulates a CAST failure for one named self-test.
 
-Check that the FIPS module refuses to start if any startup self-test fails.
-
-Run the FIPS binary with the `GODEBUG=failfipscast` hook, substituting one self-test name at a time, for example:
+The scenario `forced_cast_failures` forces one CAST at a time, for example:
 
 ```
-GODEBUG=failfipscast=SHA2-256,fips140=on clickhouse-backup-fips --version
+env 'GODEBUG=failfipscast=SHA2-256,fips140=only' clickhouse-backup-fips --version
 ```
 
-`SHA2-256` in the command above can be replaced with any effective CAST name from the list below:
+CASTs fall into two groups, and the behavior differs by group — the scenario asserts each accordingly:
+
+* **Startup CASTs** — always exercised during `clickhouse-backup-fips --version`. Forcing one MUST abort startup.
+* **First-use CASTs** — run lazily, only the first time their algorithm is used. `--version` does not necessarily reach them, so forcing one is only expected to abort if and when it is actually exercised; otherwise startup stays clean.
+
+Startup CASTs (forcing any one MUST abort `--version`):
 
 ```
 AES-CBC
 CTR_DRBG
 CounterKDF
-DetECDSA P-256 SHA2-512 sign
-ECDH PCT
-ECDSA P-256 SHA2-512 sign and verify
-ECDSA PCT
-Ed25519 sign and verify
-Ed25519 sign and verify PCT
 HKDF-SHA2-256
 HMAC-SHA2-256
-KAS-ECC-SSC P-256
-ML-DSA sign and verify PCT
-ML-DSA-44
-ML-KEM PCT
-ML-KEM PCT
-ML-KEM-768
 PBKDF2
-RSA sign and verify PCT
-RSASSA-PKCS-v1.5 2048-bit sign and verify
 SHA2-256
 SHA2-512
 TLSv1.2-SHA2-256
@@ -270,18 +294,34 @@ TLSv1.3-SHA2-256
 cSHAKE128
 ```
 
-The list is taken directly from the Go FIPS test suite (file `crypto/internal/fips140test/cast_test.go` of the Go release in use).
+First-use CASTs (forcing one aborts only if `--version` happens to exercise that algorithm; otherwise startup stays clean):
 
-Expected result for every name in the list:
+```
+DetECDSA P-256 SHA2-512 sign
+ECDH PCT
+ECDSA P-256 SHA2-512 sign and verify
+ECDSA PCT
+Ed25519 sign and verify
+Ed25519 sign and verify PCT
+KAS-ECC-SSC P-256
+ML-DSA sign and verify PCT
+ML-DSA-44
+ML-KEM PCT
+ML-KEM-768
+RSA sign and verify PCT
+RSASSA-PKCS-v1.5 2048-bit sign and verify
+```
 
-* Baseline run with `GODEBUG=fips140=on clickhouse-backup-fips --version` succeeds.
-* The process exits with a non-zero code.
-* The output contains `fatal error: FIPS 140-3 self-test failed: <NAME>: simulated CAST failure`.
+The names are taken directly from the Go FIPS test suite (the `allCASTs` slice in `crypto/internal/fips140test/cast_test.go` of the Go release in use).
 
-How to obtain and refresh this list: 
+Expected result:
 
-* Open `$(go env GOROOT)/src/crypto/internal/fips140test/cast_test.go` and copy the entries from the `allCASTs` slice. 
+* **For every startup CAST:** the process exits with a non-zero code and the output contains both `self-test failed: <NAME>` and `simulated CAST failure` (Go emits the full line `fatal error: FIPS 140-3 self-test failed: <NAME>: simulated CAST failure`).
+* **For every first-use CAST:** either the same abort markers appear (if the algorithm was exercised), or — when the algorithm is not reached by `--version` — startup stays clean: the process exits `0` and the `simulated CAST failure` marker is absent.
 
+How to obtain and refresh this list:
+
+* Open `$(go env GOROOT)/src/crypto/internal/fips140test/cast_test.go` and copy the entries from the `allCASTs` slice. Each entry's group (startup vs first-use) follows how Go registers it — keep `FIPS_FAILFIPSCAST_STARTUP_CASTS` and `FIPS_FAILFIPSCAST_FIRST_USE_CASTS` in `tests/fips_140_3.py` in sync.
 * The list should be refreshed when the Go version used to build `clickhouse-backup-fips` is upgraded, because new algorithms may add/rename/remove entries.
 
 ## Inbound TLS — REST API With `openssl s_client`
@@ -308,6 +348,8 @@ Non-FIPS profiles (handshake MUST be rejected):
 * `openssl s_client -tls1` — expected result: handshake is rejected (TLSv1.0 is below the FIPS minimum protocol version).
 * `openssl s_client -tls1_1` — expected result: handshake is rejected (TLSv1.1 is below the FIPS minimum protocol version).
 
+Additional non-FIPS TLSv1.2 ciphers exercised only under `--stress` (all MUST be rejected): `ECDHE-ECDSA-CHACHA20-POLY1305`, `DHE-RSA-CHACHA20-POLY1305`, `ECDHE-RSA-AES128-SHA`, `ECDHE-RSA-AES256-SHA`, `ECDHE-RSA-AES128-SHA256`, `ECDHE-RSA-AES256-SHA384`, `AES128-SHA`, `AES256-SHA`, `AES128-SHA256`, `AES256-SHA256` (RC4-SHA / DES-CBC3-SHA above are also kept). Additional non-FIPS TLSv1.3 suites under `--stress`: `TLS_AES_128_CCM_SHA256`, `TLS_AES_128_CCM_8_SHA256`. The default run probes the minimum set above; the wider `--stress` coverage is slower by design.
+
 ## Outbound TLS to ClickHouse Server With `openssl s_server`
 
 
@@ -327,9 +369,14 @@ Non-FIPS profiles (handshake MUST be rejected):
 * `openssl s_server -tls1_2 -cipher ECDHE-RSA-CHACHA20-POLY1305` — expected result: `clickhouse-backup-fips` fails with `remote error: tls: handshake failure` and `openssl s_server` reports `no shared cipher`.
 * `openssl s_server -tls1_2 -cipher DHE-RSA-AES256-GCM-SHA384` — expected result: handshake is rejected as above.
 * `openssl s_server -tls1_2 -cipher DHE-RSA-AES128-GCM-SHA256` — expected result: handshake is rejected as above.
-* `openssl s_server -tls1_2 -cipher AES256-GCM-SHA384` — expected result: handshake is rejected as above.
-* `openssl s_server -tls1_2 -cipher AES128-GCM-SHA256` — expected result: handshake is rejected as above.
+* `openssl s_server -tls1_2 -cipher AES256-GCM-SHA384` — expected result: handshake is rejected as above (plain RSA key exchange, no forward secrecy).
+* `openssl s_server -tls1_2 -cipher AES128-GCM-SHA256` — expected result: handshake is rejected as above (plain RSA key exchange, no forward secrecy).
 * `openssl s_server -tls1_3 -ciphersuites TLS_CHACHA20_POLY1305_SHA256` — expected result: handshake is rejected as above.
+
+Additional non-FIPS TLSv1.2 ciphers exercised only under `--stress` (all MUST be rejected): `ECDHE-ECDSA-CHACHA20-POLY1305`, `DHE-RSA-CHACHA20-POLY1305`, `ECDHE-RSA-AES128-SHA`, `ECDHE-RSA-AES256-SHA`, `ECDHE-RSA-AES128-SHA256`, `ECDHE-RSA-AES256-SHA384`, `AES128-SHA`, `AES256-SHA`, `AES128-SHA256`, `AES256-SHA256`. Additional non-FIPS TLSv1.3 suites under `--stress`: `TLS_AES_128_CCM_SHA256`, `TLS_AES_128_CCM_8_SHA256`. The default run probes the minimum set above; the wider `--stress` coverage is slower by design.
+
+> [!NOTE]
+> `AES128-GCM-SHA256` and `AES256-GCM-SHA384` appear in the Altinity ClickHouse server's `<cipherList>` (server side) but are rejected here by the `clickhouse-backup-fips` **client**. The Go FIPS cryptographic module approves a narrower TLSv1.2 set than the ClickHouse OpenSSL configuration: only ECDHE forward-secret AES-GCM suites (`ECDHE-RSA-AES128-GCM-SHA256`, `ECDHE-RSA-AES256-GCM-SHA384`) are approved on the client; plain RSA key-exchange suites are not. See [Supported TLS Protocol Versions and Cipher Suites](#supported-tls-protocol-versions-and-cipher-suites).
 
 ## Outbound TLS to S3 Endpoint With `openssl s_server`
 
@@ -349,6 +396,17 @@ FIPS-approved profiles (handshake MUST be accepted by `clickhouse-backup-fips` p
 * `openssl s_server -tls1_2 -cipher ECDHE-RSA-AES256-GCM-SHA384` — expected result: same as above.
 * `openssl s_server -tls1_3 -ciphersuites TLS_AES_128_GCM_SHA256` — expected result: same as above.
 * `openssl s_server -tls1_3 -ciphersuites TLS_AES_256_GCM_SHA384` — expected result: same as above.
+
+Non-FIPS profiles (handshake MUST be rejected by `clickhouse-backup-fips` policy):
+
+* `openssl s_server -tls1_3 -ciphersuites TLS_CHACHA20_POLY1305_SHA256` — expected result: the FIPS client refuses the handshake (`remote error: tls: handshake failure` / `no shared cipher`).
+* `openssl s_server -tls1_2 -cipher ECDHE-RSA-CHACHA20-POLY1305` — expected result: rejected as above.
+* `openssl s_server -tls1_2 -cipher DHE-RSA-AES256-GCM-SHA384` — expected result: rejected as above.
+* `openssl s_server -tls1_2 -cipher DHE-RSA-AES128-GCM-SHA256` — expected result: rejected as above.
+* `openssl s_server -tls1_2 -cipher AES256-GCM-SHA384` — expected result: rejected as above.
+* `openssl s_server -tls1_2 -cipher AES128-GCM-SHA256` — expected result: rejected as above.
+
+The same `--stress` extension as the ClickHouse outbound section applies (the wider TLSv1.2 CBC / ChaCha20 and TLSv1.3 CCM sets). For the S3 probes only, if the AWS FIPS hostname resolves to public AWS instead of the local `openssl s_server` sidecar, a remote AWS auth error (e.g. `InvalidAccessKeyId`) with no TLS-rejection marker skips the negative check rather than failing it.
 
 ## ACVP Tests
 
