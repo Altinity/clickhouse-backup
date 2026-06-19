@@ -1363,6 +1363,31 @@ func (ch *ClickHouse) GetInProgressMutations(ctx context.Context, database strin
 	return inProgressMutations, nil
 }
 
+// GetInProgressMutationsBatch returns all in-progress mutations across the whole server in a
+// SINGLE query, keyed by "database.table". system.mutations is an expensive virtual table — every
+// query against it enumerates all tables on the server — so calling GetInProgressMutations once per
+// table is O(N^2) and dominates `create` wall-clock on installations with many tables (observed:
+// ~240ms/call * tens of thousands of tables). Fetching the whole in-progress set once per backup
+// turns that into a single O(N) scan; per-table lookup is then an in-memory map access.
+func (ch *ClickHouse) GetInProgressMutationsBatch(ctx context.Context) (map[string][]metadata.MutationMetadata, error) {
+	var rows []struct {
+		Database   string `ch:"database"`
+		Table      string `ch:"table"`
+		MutationId string `ch:"mutation_id"`
+		Command    string `ch:"command"`
+	}
+	query := "SELECT database, table, mutation_id, command FROM system.mutations WHERE is_done=0"
+	if err := ch.SelectContext(ctx, &rows, query); err != nil {
+		return nil, errors.Wrap(err, "can't get in progress mutations")
+	}
+	result := make(map[string][]metadata.MutationMetadata, len(rows))
+	for _, r := range rows {
+		key := r.Database + "." + r.Table
+		result[key] = append(result[key], metadata.MutationMetadata{MutationId: r.MutationId, Command: r.Command})
+	}
+	return result, nil
+}
+
 func (ch *ClickHouse) ApplyMacros(ctx context.Context, s string) (string, error) {
 	if !strings.Contains(s, "{") {
 		return s, nil
