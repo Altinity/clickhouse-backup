@@ -176,7 +176,7 @@ The following artifacts and tools will be used:
 * `openssl` CLI tool on the test host for TLS client and server probes.
 
 > [!NOTE]
-> Each scenario sets `GODEBUG` explicitly per command rather than once at the container level:
+> The FIPS backup container exports `GODEBUG` at the container level (the regression `--fips-godebug` option, default `fips140=only`), so it applies to every command by default. Two scenarios override `GODEBUG` per command because they require other values:
 >
 > * [GODEBUG `fips140` Modes](#godebug-fips140-modes) (`godebug_fips140_modes`) runs `--fips-info` under `GODEBUG` unset, empty, `fips140=off`, `fips140=on`, and `fips140=only`.
 > * [Forced CAST Failures](#forced-cast-failures) (`forced_cast_failures`) runs `--version` under `GODEBUG=failfipscast=<NAME>,fips140=only`.
