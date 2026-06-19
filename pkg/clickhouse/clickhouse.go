@@ -1369,23 +1369,31 @@ func (ch *ClickHouse) GetInProgressMutations(ctx context.Context, database strin
 // table is O(N^2) and dominates `create` wall-clock on installations with many tables (observed:
 // ~240ms/call * tens of thousands of tables). Fetching the whole in-progress set once per backup
 // turns that into a single O(N) scan; per-table lookup is then an in-memory map access.
-func (ch *ClickHouse) GetInProgressMutationsBatch(ctx context.Context) (map[string][]metadata.MutationMetadata, error) {
-	var rows []struct {
-		Database   string `ch:"database"`
-		Table      string `ch:"table"`
-		MutationId string `ch:"mutation_id"`
-		Command    string `ch:"command"`
-	}
-	query := "SELECT database, table, mutation_id, command FROM system.mutations WHERE is_done=0"
-	if err := ch.SelectContext(ctx, &rows, query); err != nil {
-		return nil, errors.Wrap(err, "can't get in progress mutations")
-	}
+type inProgressMutationRow struct {
+	Database   string `ch:"database"`
+	Table      string `ch:"table"`
+	MutationId string `ch:"mutation_id"`
+	Command    string `ch:"command"`
+}
+
+// groupMutationsByTable buckets flat mutation rows into per-table lists keyed by
+// "database.table". Pure (no I/O) so it is unit-testable without a ClickHouse server.
+func groupMutationsByTable(rows []inProgressMutationRow) map[string][]metadata.MutationMetadata {
 	result := make(map[string][]metadata.MutationMetadata, len(rows))
 	for _, r := range rows {
 		key := r.Database + "." + r.Table
 		result[key] = append(result[key], metadata.MutationMetadata{MutationId: r.MutationId, Command: r.Command})
 	}
-	return result, nil
+	return result
+}
+
+func (ch *ClickHouse) GetInProgressMutationsBatch(ctx context.Context) (map[string][]metadata.MutationMetadata, error) {
+	var rows []inProgressMutationRow
+	query := "SELECT database, table, mutation_id, command FROM system.mutations WHERE is_done=0"
+	if err := ch.SelectContext(ctx, &rows, query); err != nil {
+		return nil, errors.Wrap(err, "can't get in progress mutations")
+	}
+	return groupMutationsByTable(rows), nil
 }
 
 func (ch *ClickHouse) ApplyMacros(ctx context.Context, s string) (string, error) {
