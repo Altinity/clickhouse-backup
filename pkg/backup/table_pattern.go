@@ -52,6 +52,7 @@ func addTableToListIfNotExistsOrEnrichQueryAndParts(tables ListOfTables, table m
 
 func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath string, tablePattern string, dropTable bool, partitions []string) (ListOfTables, map[metadata.TableTitle][]string, error) {
 	result := ListOfTables{}
+	tableIndex := make(map[metadata.TableTitle]int)
 	resultPartitionNames := map[metadata.TableTitle][]string{}
 	tablePatterns := []string{"*"}
 	if tablePattern != "" {
@@ -66,6 +67,21 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 	}
 	// https://github.com/Altinity/clickhouse-backup/issues/1091
 	replacer := strings.NewReplacer(`/`, "_", `\`, "_")
+
+	addToResult := func(t metadata.TableMetadata) {
+		key := metadata.TableTitle{Database: t.Database, Table: t.Table}
+		if idx, exists := tableIndex[key]; exists {
+			if result[idx].Query == "" && t.Query != "" {
+				result[idx].Query = t.Query
+			}
+			if len(result[idx].Parts) == 0 && len(t.Parts) > 0 {
+				result[idx].Parts = t.Parts
+			}
+		} else {
+			tableIndex[key] = len(result)
+			result = append(result, &t)
+		}
+	}
 
 	if err := filepath.Walk(metadataPath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -106,7 +122,7 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 				// .sql file will enrich Query
 				partitionsIdMap, _ := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&t}, partitions)
 				filterPartsAndFilesByPartitionsFilter(t, partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}])
-				result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
+				addToResult(t)
 				return nil
 			}
 			var t metadata.TableMetadata
@@ -115,7 +131,7 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 			}
 			partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&t}, partitions)
 			filterPartsAndFilesByPartitionsFilter(t, partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}])
-			result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
+			addToResult(t)
 			for tt := range partitionsNameList {
 				if _, exists := resultPartitionNames[tt]; !exists {
 					resultPartitionNames[tt] = []string{}
