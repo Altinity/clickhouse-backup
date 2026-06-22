@@ -111,7 +111,7 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 			}
 			var t metadata.TableMetadata
 			if err := json.Unmarshal(data, &t); err != nil {
-				return errors.WithMessage(err, "getTableListByPatternLocal json.Unmarshal")
+				return errors.Wrap(err, "getTableListByPatternLocal json.Unmarshal")
 			}
 			partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&t}, partitions)
 			filterPartsAndFilesByPartitionsFilter(t, partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}])
@@ -132,17 +132,22 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 		return nil, nil, err
 	}
 	result.Sort(dropTable)
-	for i := 0; i < len(result); i++ {
+	result = b.skipTablesByEngine(result, resultPartitionNames)
+	return result, resultPartitionNames, nil
+}
+
+// skipTablesByEngine removes tables matched by ClickHouse.SkipTableEngines from result
+// and drops their partition names from resultPartitionNames.
+func (b *Backuper) skipTablesByEngine(result ListOfTables, resultPartitionNames map[metadata.TableTitle][]string) ListOfTables {
+	// iterate in reverse so removing an element never shifts an unvisited one past the cursor
+	for i := len(result) - 1; i >= 0; i-- {
 		if b.shouldSkipByTableEngine(*result[i]) {
 			t := result[i]
 			delete(resultPartitionNames, metadata.TableTitle{Database: t.Database, Table: t.Table})
 			result = append(result[:i], result[i+1:]...)
-			if i > 0 {
-				i = i - 1
-			}
 		}
 	}
-	return result, resultPartitionNames, nil
+	return result
 }
 
 func (b *Backuper) shouldSkipByTableName(tableFullName string) bool {
@@ -283,11 +288,11 @@ func (b *Backuper) enrichTablePatternsByInnerDependencies(metadataPath string, t
 			}
 			data, err := os.ReadFile(filePath)
 			if err != nil {
-				return errors.WithMessage(err, "enrichTablePatternsByInnerDependencies ReadFile")
+				return errors.Wrap(err, "enrichTablePatternsByInnerDependencies ReadFile")
 			}
 			var t metadata.TableMetadata
 			if err := json.Unmarshal(data, &t); err != nil {
-				return errors.WithMessage(err, "enrichTablePatternsByInnerDependencies json.Unmarshal")
+				return errors.Wrap(err, "enrichTablePatternsByInnerDependencies json.Unmarshal")
 			}
 			if strings.HasPrefix(t.Query, "ATTACH MATERIALIZED") || strings.HasPrefix(t.Query, "CREATE MATERIALIZED") {
 				if strings.Contains(t.Query, " TO ") && !strings.Contains(t.Query, " TO INNER UUID") {
@@ -304,7 +309,7 @@ func (b *Backuper) enrichTablePatternsByInnerDependencies(metadataPath string, t
 				}
 				// https://github.com/Altinity/clickhouse-backup/issues/765, .inner. table could be dropped manually, .inner. table is required for ATTACH
 				if _, err := os.Stat(path.Join(metadataPath, innerTableFile+".json")); err != nil {
-					return errors.WithMessage(err, "enrichTablePatternsByInnerDependencies stat inner table")
+					return errors.Wrap(err, "enrichTablePatternsByInnerDependencies stat inner table")
 				}
 				innerPatternExists := false
 				for _, existsP := range tablePatterns {
@@ -635,18 +640,16 @@ func getOrderByEngine(query string, dropTable bool) int64 {
 		strings.HasPrefix(query, "ATTACH MATERIALIZED VIEW") {
 		if dropTable {
 			return 1
-		} else {
-			return 2
 		}
+		return 2
 	}
 
 	if strings.HasPrefix(query, "CREATE TABLE") &&
 		(strings.Contains(query, ".inner_id.") || strings.Contains(query, ".inner.")) {
 		if dropTable {
 			return 2
-		} else {
-			return 1
 		}
+		return 1
 	}
 	return 0
 }

@@ -70,7 +70,7 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 	)
 	timeout, err := time.ParseDuration(a.Config.Timeout)
 	if err != nil {
-		return errors.WithMessage(err, "AzureBlob Connect ParseDuration")
+		return errors.Wrap(err, "AzureBlob Connect ParseDuration")
 	}
 
 	clientOpts := &service.ClientOptions{}
@@ -84,30 +84,30 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 	if a.Config.AccountKey != "" {
 		credential, err := azblob.NewSharedKeyCredential(a.Config.AccountName, a.Config.AccountKey)
 		if err != nil {
-			return errors.WithMessage(err, "AzureBlob Connect NewSharedKeyCredential")
+			return errors.Wrap(err, "AzureBlob Connect NewSharedKeyCredential")
 		}
 		urlString = fmt.Sprintf("%s://%s.blob.%s", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix)
 		svc, err = service.NewClientWithSharedKeyCredential(urlString, credential, clientOpts)
 		if err != nil {
-			return errors.WithMessage(err, "AzureBlob Connect NewClientWithSharedKeyCredential")
+			return errors.Wrap(err, "AzureBlob Connect NewClientWithSharedKeyCredential")
 		}
 	} else if a.Config.SharedAccessSignature != "" {
 		urlString = fmt.Sprintf("%s://%s.blob.%s?%s", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix, a.Config.SharedAccessSignature)
 		svc, err = service.NewClientWithNoCredential(urlString, clientOpts)
 		if err != nil {
-			return errors.WithMessage(err, "AzureBlob Connect NewClientWithNoCredential")
+			return errors.Wrap(err, "AzureBlob Connect NewClientWithNoCredential")
 		}
 	} else if a.Config.UseManagedIdentity {
 		// the modern SDK refreshes managed identity / OAuth tokens internally,
 		// so the previous manual tokenRefresher closure is no longer needed.
 		credential, err := azidentity.NewDefaultAzureCredential(nil)
 		if err != nil {
-			return errors.WithMessage(err, "AzureBlob Connect NewDefaultAzureCredential")
+			return errors.Wrap(err, "AzureBlob Connect NewDefaultAzureCredential")
 		}
 		urlString = fmt.Sprintf("%s://%s.blob.%s", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix)
 		svc, err = service.NewClient(urlString, credential, clientOpts)
 		if err != nil {
-			return errors.WithMessage(err, "AzureBlob Connect NewClient")
+			return errors.Wrap(err, "AzureBlob Connect NewClient")
 		}
 	}
 
@@ -127,7 +127,7 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 		if !a.Config.AssumeContainerExists {
 			_, err = a.Container.Create(ctx, nil)
 			if err != nil && !bloberror.HasCode(err, bloberror.ContainerAlreadyExists) {
-				return errors.WithMessage(err, "AzureBlob Connect Container.Create")
+				return errors.Wrap(err, "AzureBlob Connect Container.Create")
 			}
 		}
 		if a.Config.SSEKey != "" {
@@ -167,7 +167,7 @@ func (a *AzureBlob) GetFileReaderAbsolute(ctx context.Context, key string) (io.R
 		CPKInfo: a.CPK,
 	})
 	if err != nil {
-		return nil, errors.WithMessage(err, "AzureBlob GetFileReaderAbsolute Download")
+		return nil, errors.Wrap(err, "AzureBlob GetFileReaderAbsolute Download")
 	}
 	return resp.Body, nil
 }
@@ -191,7 +191,7 @@ func (a *AzureBlob) PutFileAbsolute(ctx context.Context, key string, r io.ReadCl
 	bufferSize = AdjustValueByRange(bufferSize, 2*1024*1024, 10*1024*1024)
 
 	if _, err := b.UploadStream(ctx, r, &blockblob.UploadStreamOptions{BlockSize: bufferSize, Concurrency: a.Config.MaxBuffers, CPKInfo: a.CPK}); err != nil {
-		return errors.WithMessage(err, "AzureBlob PutFileAbsolute UploadStream")
+		return errors.Wrap(err, "AzureBlob PutFileAbsolute UploadStream")
 	}
 	return nil
 }
@@ -232,7 +232,7 @@ func (a *AzureBlob) DeleteFile(ctx context.Context, key string) error {
 	a.logf("AZBLOB->DeleteFile %s", key)
 	b := a.Container.NewBlobClient(path.Join(a.Config.Path, key))
 	if _, err := b.Delete(ctx, &blob.DeleteOptions{DeleteSnapshots: to.Ptr(blob.DeleteSnapshotsOptionTypeInclude)}); err != nil {
-		return errors.WithMessage(err, "AzureBlob DeleteFile")
+		return errors.Wrap(err, "AzureBlob DeleteFile")
 	}
 	return nil
 }
@@ -241,7 +241,7 @@ func (a *AzureBlob) DeleteFileFromObjectDiskBackup(ctx context.Context, key stri
 	a.logf("AZBLOB->DeleteFileFromObjectDiskBackup %s", key)
 	b := a.Container.NewBlobClient(path.Join(a.Config.ObjectDiskPath, key))
 	if _, err := b.Delete(ctx, &blob.DeleteOptions{DeleteSnapshots: to.Ptr(blob.DeleteSnapshotsOptionTypeInclude)}); err != nil {
-		return errors.WithMessage(err, "AzureBlob DeleteFileFromObjectDiskBackup")
+		return errors.Wrap(err, "AzureBlob DeleteFileFromObjectDiskBackup")
 	}
 	return nil
 }
@@ -330,7 +330,7 @@ func (a *AzureBlob) StatFileAbsolute(ctx context.Context, key string) (RemoteFil
 		if bloberror.HasCode(err, bloberror.BlobNotFound) {
 			return nil, NewErrNotFound(key)
 		}
-		return nil, errors.WithMessage(err, "AzureBlob StatFileAbsolute GetProperties")
+		return nil, errors.Wrap(err, "AzureBlob StatFileAbsolute GetProperties")
 	}
 	var size int64
 	if r.ContentLength != nil {
@@ -364,18 +364,18 @@ func (a *AzureBlob) WalkAbsolute(ctx context.Context, prefix string, recursive b
 		for pager.More() {
 			r, err := pager.NextPage(ctx)
 			if err != nil {
-				return errors.WithMessage(err, "AzureBlob WalkAbsolute ListBlobsHierarchySegment")
+				return errors.Wrap(err, "AzureBlob WalkAbsolute ListBlobsHierarchySegment")
 			}
 			for _, p := range r.Segment.BlobPrefixes {
 				if err := process(ctx, &azureBlobFile{
 					name: strings.TrimPrefix(*p.Name, prefix),
 				}); err != nil {
-					return errors.WithMessage(err, "AzureBlob WalkAbsolute process prefix")
+					return errors.Wrap(err, "AzureBlob WalkAbsolute process prefix")
 				}
 			}
 			for _, b := range r.Segment.BlobItems {
 				if err := process(ctx, blobItemToFile(b, prefix)); err != nil {
-					return errors.WithMessage(err, "AzureBlob WalkAbsolute process blob")
+					return errors.Wrap(err, "AzureBlob WalkAbsolute process blob")
 				}
 			}
 		}
@@ -384,11 +384,11 @@ func (a *AzureBlob) WalkAbsolute(ctx context.Context, prefix string, recursive b
 		for pager.More() {
 			r, err := pager.NextPage(ctx)
 			if err != nil {
-				return errors.WithMessage(err, "AzureBlob WalkAbsolute ListBlobsFlatSegment")
+				return errors.Wrap(err, "AzureBlob WalkAbsolute ListBlobsFlatSegment")
 			}
 			for _, b := range r.Segment.BlobItems {
 				if err := process(ctx, blobItemToFile(b, prefix)); err != nil {
-					return errors.WithMessage(err, "AzureBlob WalkAbsolute process flat blob")
+					return errors.Wrap(err, "AzureBlob WalkAbsolute process flat blob")
 				}
 			}
 		}
@@ -424,7 +424,7 @@ func (a *AzureBlob) CopyObject(ctx context.Context, srcSize int64, srcBucket, sr
 	}
 	srcURLString := fmt.Sprintf("%s://%s.%s/%s/%s", a.Config.EndpointSchema, a.Config.AccountName, endpoint, strings.Trim(srcBucket, "/"), strings.Trim(srcKey, "/"))
 	if _, err := url.Parse(srcURLString); err != nil {
-		return 0, errors.WithMessage(err, "AzureBlob CopyObject url.Parse")
+		return 0, errors.Wrap(err, "AzureBlob CopyObject url.Parse")
 	}
 
 	destinationBlob := a.Container.NewBlobClient(dstKey)
@@ -443,7 +443,13 @@ func (a *AzureBlob) CopyObject(ctx context.Context, srcSize int64, srcBucket, sr
 	sleepDuration := time.Millisecond * 50
 	for copyStatus == blob.CopyStatusTypePending {
 		// @TODO think how to avoid polling GetProperties in AZBLOB during CopyObject
-		time.Sleep(sleepDuration * time.Duration(pollCount*2))
+		// honor context cancellation during the backoff so /backup/kill returns
+		// promptly instead of sleeping up to ~800ms before the next poll
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-time.After(sleepDuration * time.Duration(pollCount*2)):
+		}
 		dstMeta, err := destinationBlob.GetProperties(ctx, &blob.GetPropertiesOptions{})
 		if err != nil {
 			return 0, errors.Wrap(err, "azblob->CopyObject failed to destinationBlobURL.GetProperties operation")

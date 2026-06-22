@@ -17,6 +17,7 @@ func TestGetPartitionId(t *testing.T) {
 		t.Skipf("Test skipped, is_in_partition_key not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 
 	type testData struct {
@@ -122,5 +123,4 @@ func TestGetPartitionId(t *testing.T) {
 		assert.Equal(t, tc.ExpectedId, partitionId, "Failed test %s.%s with partition %s: partitionId=%s, expectedId=%s, partitionName=%s, expectedName=%s", tc.Database, tc.Table, tc.Partition, partitionId, tc.ExpectedId, partitionName, tc.ExpectedName)
 		assert.Equal(t, tc.ExpectedName, partitionName)
 	}
-	env.Cleanup(t, r)
 }

@@ -13,7 +13,7 @@ func (b *Backuper) CreateToRemote(backupName string, deleteSource bool, diffFrom
 	defer pidlock.RemovePidFile(backupName)
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
-		return errors.WithMessage(err, "CreateToRemote GetContextWithCancel")
+		return errors.Wrap(err, "CreateToRemote GetContextWithCancel")
 	}
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()

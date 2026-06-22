@@ -10,6 +10,6 @@ func TestGCS(t *testing.T) {
 		return
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.runMainIntegrationScenario(t, "GCS", "config-gcs.yml")
-	env.Cleanup(t, r)
 }

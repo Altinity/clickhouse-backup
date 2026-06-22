@@ -110,12 +110,8 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	log.Debug().Msg("Restore data")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--data", fullBackupName)
 
-	log.Debug().Msg("Full restore")
-	// --rm needed: previous `restore --data` populated the cluster, safety check from issue #1325 refuses drop without it
-	restoreCmd := "clickhouse-backup -c /etc/clickhouse-backup/" + backupConfig + " restore --resume --rm " + fullBackupName
-	env.checkResumeAlreadyProcessed(restoreCmd, fullBackupName, "restore", r, remoteStorageType)
-
 	log.Debug().Msg("Full restore with rm")
+	// --rm needed: previous `restore --data` populated the cluster, safety check from issue #1325 refuses drop without it
 	restoreRmCmd := "clickhouse-backup -c /etc/clickhouse-backup/" + backupConfig + " restore --resume --rm " + fullBackupName
 	env.checkResumeAlreadyProcessed(restoreRmCmd, fullBackupName, "restore", r, remoteStorageType)
 

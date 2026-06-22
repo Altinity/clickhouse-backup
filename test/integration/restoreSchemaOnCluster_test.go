@@ -18,6 +18,7 @@ func TestRestoreSchemaOnClusterSafety(t *testing.T) {
 		t.Skipf("safety check requires system.tables.total_rows (ClickHouse >= 20.4), got %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
 	dbName := "test_restore_on_cluster_safety"
@@ -46,5 +47,4 @@ func TestRestoreSchemaOnClusterSafety(t *testing.T) {
 
 	r.NoError(env.dropDatabase(dbName, false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
-	env.Cleanup(t, r)
 }

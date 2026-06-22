@@ -6,7 +6,7 @@ import "testing"
 
 func TestSFTPAuthKey(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.uploadSSHKeys(r, "clickhouse-backup")
 	env.runMainIntegrationScenario(t, "SFTP", "config-sftp-auth-key.yaml")
-	env.Cleanup(t, r)
 }

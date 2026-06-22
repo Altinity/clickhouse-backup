@@ -18,6 +18,7 @@ func TestNamedCollections(t *testing.T) {
 		t.Skipf("DROP/CREATE NAMED COLLECTIONS .. ON CLUSTER doesn't work for version less 23.7, look https://github.com/ClickHouse/ClickHouse/issues/51609")
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 
 	backupName := "test_named_collections_backup"
@@ -166,5 +167,4 @@ func TestNamedCollections(t *testing.T) {
 	}
 	env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/test_named_collection.csv")
 	env.checkObjectStorageIsEmpty(t, r, "S3", "config-s3.yml")
-	env.Cleanup(t, r)
 }

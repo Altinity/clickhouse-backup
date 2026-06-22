@@ -19,6 +19,7 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 		t.Skipf("Test skipped, system.parts_columns have inconsistency only in 23.3+, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	version, err = env.ch.GetVersion(t.Context())
 	r.NoError(err)
@@ -56,5 +57,4 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 
 	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, "", false, ""))
 	r.NoError(env.dropDatabase(t.Name(), true))
-	env.Cleanup(t, r)
 }

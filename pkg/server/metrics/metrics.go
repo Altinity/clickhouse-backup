@@ -225,6 +225,13 @@ func (m *APIMetrics) Success(command string) {
 	} else {
 		log.Warn().Msgf("%s not found in LastStatus metrics", command)
 	}
+	if subCommands, subCommandsExists := m.SubCommands[command]; subCommandsExists {
+		for _, subCommand := range subCommands {
+			if _, exists := m.LastStatus[subCommand]; exists {
+				m.LastStatus[subCommand].Set(1)
+			}
+		}
+	}
 }
 
 func (m *APIMetrics) Failure(command string) {
@@ -237,6 +244,13 @@ func (m *APIMetrics) Failure(command string) {
 		m.LastStatus[command].Set(0)
 	} else {
 		log.Warn().Msgf("%s not found in LastStatus metrics", command)
+	}
+	if subCommands, subCommandsExists := m.SubCommands[command]; subCommandsExists {
+		for _, subCommand := range subCommands {
+			if _, exists := m.LastStatus[subCommand]; exists {
+				m.LastStatus[subCommand].Set(0)
+			}
+		}
 	}
 }
 

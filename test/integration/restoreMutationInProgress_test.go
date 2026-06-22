@@ -15,6 +15,7 @@ import (
 
 func TestRestoreMutationInProgress(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	zkPath := "/clickhouse/tables/{shard}/" + t.Name() + "/test_restore_mutation_in_progress"
 	onCluster := ""
@@ -135,5 +136,4 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version, "", false, ""))
 	r.NoError(env.dropDatabase(t.Name(), false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_restore_mutation_in_progress")
-	env.Cleanup(t, r)
 }

@@ -19,7 +19,7 @@ var watchBackupTemplateTimeRE = regexp.MustCompile(`{time:([^}]+)}`)
 func (b *Backuper) NewBackupWatchName(ctx context.Context, backupType string) (string, error) {
 	backupName, err := b.ch.ApplyMacros(ctx, b.cfg.General.WatchBackupNameTemplate)
 	if err != nil {
-		return "", errors.WithMessage(err, "NewBackupWatchName ApplyMacros")
+		return "", errors.Wrap(err, "NewBackupWatchName ApplyMacros")
 	}
 	backupName = strings.Replace(backupName, "{type}", backupType, -1)
 	if watchBackupTemplateTimeRE.MatchString(backupName) {
@@ -83,7 +83,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 	}
 
 	if err := b.ValidateWatchParams(watchInterval, fullInterval, watchBackupNameTemplate); err != nil {
-		return errors.WithMessage(err, "Watch ValidateWatchParams")
+		return errors.Wrap(err, "Watch ValidateWatchParams")
 	}
 	backupType := "full"
 	prevBackupName := ""
@@ -93,7 +93,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 
 	prevBackupName, prevBackupType, lastBackup, lastFullBackup, backupType, err = b.calculatePrevBackupNameAndType(ctx, prevBackupName, prevBackupType, lastBackup, lastFullBackup, backupType)
 	if err != nil {
-		return errors.WithMessage(err, "Watch calculatePrevBackupNameAndType")
+		return errors.Wrap(err, "Watch calculatePrevBackupNameAndType")
 	}
 
 	createRemoteErrCount := 0
@@ -103,7 +103,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 	for {
 		if !b.ch.IsOpen {
 			if err = b.ch.Connect(); err != nil {
-				return errors.WithMessage(err, "Watch ch.Connect")
+				return errors.Wrap(err, "Watch ch.Connect")
 			}
 		}
 		select {
@@ -117,12 +117,12 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 					log.Warn().Msgf("watch config.LoadConfig error: %v", err)
 				}
 				if err := b.ValidateWatchParams(watchInterval, fullInterval, watchBackupNameTemplate); err != nil {
-					return errors.WithMessage(err, "Watch ValidateWatchParams in loop")
+					return errors.Wrap(err, "Watch ValidateWatchParams in loop")
 				}
 			}
 			backupName, err := b.NewBackupWatchName(ctx, backupType)
 			if err != nil {
-				return errors.WithMessage(err, "Watch NewBackupWatchName")
+				return errors.Wrap(err, "Watch NewBackupWatchName")
 			}
 			diffFromRemote := ""
 			if backupType == "increment" {
@@ -241,11 +241,11 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 func (b *Backuper) calculatePrevBackupNameAndType(ctx context.Context, prevBackupName string, prevBackupType string, lastBackup time.Time, lastFullBackup time.Time, backupType string) (string, string, time.Time, time.Time, string, error) {
 	remoteBackups, err := b.GetRemoteBackups(ctx, true)
 	if err != nil {
-		return "", "", time.Time{}, time.Time{}, "", errors.WithMessage(err, "calculatePrevBackupNameAndType GetRemoteBackups")
+		return "", "", time.Time{}, time.Time{}, "", errors.Wrap(err, "calculatePrevBackupNameAndType GetRemoteBackups")
 	}
 	backupTemplateName, err := b.ch.ApplyMacros(ctx, b.cfg.General.WatchBackupNameTemplate)
 	if err != nil {
-		return "", "", time.Time{}, time.Time{}, "", errors.WithMessage(err, "calculatePrevBackupNameAndType ApplyMacros")
+		return "", "", time.Time{}, time.Time{}, "", errors.Wrap(err, "calculatePrevBackupNameAndType ApplyMacros")
 	}
 	backupTemplateNamePrepareRE := regexp.MustCompile(`{type}|{time:([^}]+)}`)
 	backupTemplateNameRE := regexp.MustCompile(backupTemplateNamePrepareRE.ReplaceAllString(backupTemplateName, `\S+`))

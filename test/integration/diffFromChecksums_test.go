@@ -22,6 +22,7 @@ import (
 // object_disk CopyObject path is covered too.
 func TestDiffFromChecksums(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	if !isAdvancedMode() {
 		t.Skip("requires advanced mode with storage policies")
@@ -38,8 +39,6 @@ func TestDiffFromChecksums(t *testing.T) {
 	// Case 2: same part name, SAME content → Required must be true and no
 	// part files should be linked into the local backup directory.
 	runDiffFromChecksumsCase(t, r, env, "test_diff_cksum_match", true)
-
-	env.Cleanup(t, r)
 }
 
 func runDiffFromChecksumsCase(t *testing.T, r *require.Assertions, env *TestEnvironment, dbName string, sameData bool) {

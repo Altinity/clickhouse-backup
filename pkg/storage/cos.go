@@ -36,12 +36,12 @@ func (c *COS) Kind() string {
 func (c *COS) Connect(ctx context.Context) error {
 	u, err := url.Parse(c.Config.RowURL)
 	if err != nil {
-		return errors.WithMessage(err, "COS Connect url.Parse")
+		return errors.Wrap(err, "COS Connect url.Parse")
 	}
 	b := &cos.BaseURL{BucketURL: u}
 	timeout, err := time.ParseDuration(c.Config.Timeout)
 	if err != nil {
-		return errors.WithMessage(err, "COS Connect ParseDuration")
+		return errors.Wrap(err, "COS Connect ParseDuration")
 	}
 	c.client = cos.NewClient(b, &http.Client{
 		Timeout: timeout,
@@ -59,7 +59,7 @@ func (c *COS) Connect(ctx context.Context) error {
 	})
 	// check bucket exists
 	if _, err = c.client.Bucket.Head(ctx); err != nil {
-		return errors.WithMessage(err, "COS Connect Bucket.Head")
+		return errors.Wrap(err, "COS Connect Bucket.Head")
 	}
 	return nil
 }
@@ -85,7 +85,7 @@ func (c *COS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, err
 		if cosIsNotFound(err) {
 			return nil, NewErrNotFound(key)
 		}
-		return nil, errors.WithMessage(err, "COS StatFileAbsolute Get")
+		return nil, errors.Wrap(err, "COS StatFileAbsolute Get")
 	}
 	modifiedTime, parseErr := parseTime(resp.Response.Header.Get("Date"))
 	if parseErr != nil {
@@ -100,7 +100,7 @@ func (c *COS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, err
 
 func (c *COS) DeleteFile(ctx context.Context, key string) error {
 	if _, err := c.client.Object.Delete(ctx, path.Join(c.Config.Path, key)); err != nil {
-		return errors.WithMessage(err, "COS DeleteFile")
+		return errors.Wrap(err, "COS DeleteFile")
 	}
 	return nil
 }
@@ -136,14 +136,14 @@ func (c *COS) WalkAbsolute(ctx context.Context, prefix string, recursive bool, p
 		Prefix:    prefix,
 	})
 	if err != nil {
-		return errors.WithMessage(err, "COS WalkAbsolute Bucket.Get")
+		return errors.Wrap(err, "COS WalkAbsolute Bucket.Get")
 	}
 	// When recursive is false, only process all the backups in the CommonPrefixes part.
 	for _, dir := range res.CommonPrefixes {
 		if err := process(ctx, &cosFile{
 			name: strings.TrimPrefix(dir, prefix),
 		}); err != nil {
-			return errors.WithMessage(err, "COS WalkAbsolute process prefix")
+			return errors.Wrap(err, "COS WalkAbsolute process prefix")
 		}
 	}
 	if recursive {
@@ -154,7 +154,7 @@ func (c *COS) WalkAbsolute(ctx context.Context, prefix string, recursive bool, p
 				lastModified: modifiedTime,
 				size:         v.Size,
 			}); err != nil {
-				return errors.WithMessage(err, "COS WalkAbsolute process content")
+				return errors.Wrap(err, "COS WalkAbsolute process content")
 			}
 		}
 	}
@@ -168,7 +168,7 @@ func (c *COS) GetFileReader(ctx context.Context, key string) (io.ReadCloser, err
 func (c *COS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
 	resp, err := c.client.Object.Get(ctx, key, nil)
 	if err != nil || resp == nil {
-		return nil, errors.WithMessage(err, "COS GetFileReaderAbsolute Get")
+		return nil, errors.Wrap(err, "COS GetFileReaderAbsolute Get")
 	}
 	return resp.Body, nil
 }
@@ -179,7 +179,7 @@ func (c *COS) GetFileReaderWithLocalPath(ctx context.Context, key, localPath str
 	if c.Config.AllowMultipartDownload {
 		writer, err := os.CreateTemp(localPath, strings.ReplaceAll(key, "/", "_"))
 		if err != nil {
-			return nil, errors.WithMessage(err, "COS GetFileReaderWithLocalPath CreateTemp")
+			return nil, errors.Wrap(err, "COS GetFileReaderWithLocalPath CreateTemp")
 		}
 
 		// Calculate part size based on remote size and max parts count
@@ -203,7 +203,7 @@ func (c *COS) GetFileReaderWithLocalPath(ctx context.Context, key, localPath str
 			downloadOpts,
 		)
 		if err != nil {
-			return nil, errors.WithMessage(err, "COS GetFileReaderWithLocalPath Download")
+			return nil, errors.Wrap(err, "COS GetFileReaderWithLocalPath Download")
 		}
 
 		// Reopen the file for reading
@@ -231,7 +231,7 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 	// For small files or when size is unknown, use simple Put
 	if localSize < 5*1024*1024 {
 		if _, err := c.client.Object.Put(ctx, key, r, nil); err != nil {
-			return errors.WithMessage(err, "COS PutFileAbsolute Put")
+			return errors.Wrap(err, "COS PutFileAbsolute Put")
 		}
 		return nil
 	}
@@ -272,7 +272,7 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 				params := cos.ObjectUploadPartOptions{}
 				resp, err := c.client.Object.UploadPart(ctx, key, uploadID, part.PartNumber, reader, &params)
 				if err != nil {
-					return errors.WithMessage(err, "COS PutFileAbsolute UploadPart")
+					return errors.Wrap(err, "COS PutFileAbsolute UploadPart")
 				}
 				uploadedCh <- uploadedPart{
 					PartNumber: part.PartNumber,
@@ -297,7 +297,7 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 				break
 			}
 			if readErr != nil {
-				return errors.WithMessage(readErr, "COS PutFileAbsolute ReadFull")
+				return errors.Wrap(readErr, "COS PutFileAbsolute ReadFull")
 			}
 			partsCh <- partUpload{PartNumber: partNum, Data: buf}
 			partNum++
@@ -394,7 +394,7 @@ func (c *COS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, 
 
 func (c *COS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
 	if _, err := c.client.Object.Delete(ctx, path.Join(c.Config.ObjectDiskPath, key)); err != nil {
-		return errors.WithMessage(err, "COS DeleteFileFromObjectDiskBackup")
+		return errors.Wrap(err, "COS DeleteFileFromObjectDiskBackup")
 	}
 	return nil
 }

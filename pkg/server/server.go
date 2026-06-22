@@ -188,7 +188,7 @@ func (api *APIServer) Stop() error {
 func (api *APIServer) Restart() error {
 	_, err := api.ReloadConfig(nil, "restart")
 	if err != nil {
-		return errors.WithMessage(err, "Restart ReloadConfig")
+		return errors.Wrap(err, "Restart ReloadConfig")
 	}
 	if api.GetConfig().API.CreateIntegrationTables {
 		if createErr := api.CreateIntegrationTables(); createErr != nil {
@@ -215,17 +215,17 @@ func (api *APIServer) Restart() error {
 			}
 		}()
 		return nil
-	} else {
-		go func() {
-			if err = api.server.ListenAndServe(); err != nil {
-				if errors.Is(err, http.ErrServerClosed) {
-					log.Warn().Msgf("ListenAndServe get signal: %s", err.Error())
-				} else {
-					log.Fatal().Stack().Msgf("ListenAndServe error: %s", err.Error())
-				}
-			}
-		}()
 	}
+
+	go func() {
+		if err = api.server.ListenAndServe(); err != nil {
+			if errors.Is(err, http.ErrServerClosed) {
+				log.Warn().Msgf("ListenAndServe get signal: %s", err.Error())
+			} else {
+				log.Fatal().Stack().Msgf("ListenAndServe error: %s", err.Error())
+			}
+		}
+	}()
 	return nil
 }
 
@@ -276,7 +276,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	if err := r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		t, err := route.GetPathTemplate()
 		if err != nil {
-			return errors.WithMessage(err, "registerHTTPHandlers GetPathTemplate")
+			return errors.Wrap(err, "registerHTTPHandlers GetPathTemplate")
 		}
 		routes = append(routes, t)
 		return nil
@@ -2191,9 +2191,13 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 	b := backup.NewBackuper(cfg)
 	switch vars["where"] {
 	case "local":
-		err = b.RemoveBackupLocal(ctx, vars["name"], nil)
+		err, _ = api.metrics.ExecuteWithMetrics("delete", 0, func() error {
+			return b.RemoveBackupLocal(ctx, vars["name"], nil)
+		})
 	case "remote":
-		err = b.RemoveBackupRemote(ctx, vars["name"])
+		err, _ = api.metrics.ExecuteWithMetrics("delete", 0, func() error {
+			return b.RemoveBackupRemote(ctx, vars["name"])
+		})
 	default:
 		err = errors.New("backup location must be 'local' or 'remote'")
 	}
@@ -2245,7 +2249,7 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 
 	localBackups, _, err := b.GetLocalBackups(ctx, nil)
 	if err != nil {
-		return errors.WithMessage(err, "UpdateBackupMetrics GetLocalBackups")
+		return errors.Wrap(err, "UpdateBackupMetrics GetLocalBackups")
 	}
 	if len(localBackups) > 0 {
 		numberBackupsLocal = len(localBackups)
@@ -2259,7 +2263,7 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 		api.metrics.NumberBackupsLocal.Set(0)
 	}
 	if localDataSize, err = b.GetLocalDataSize(ctx); err != nil {
-		return errors.WithMessage(err, "UpdateBackupMetrics GetLocalDataSize")
+		return errors.Wrap(err, "UpdateBackupMetrics GetLocalDataSize")
 	}
 	if localDataSize > 0 {
 		api.metrics.LocalDataSize.Set(localDataSize)
@@ -2400,30 +2404,30 @@ func (api *APIServer) CreateIntegrationTables() error {
 	settings := ""
 	version, err := ch.GetVersion(context.Background())
 	if err != nil {
-		return errors.WithMessage(err, "CreateIntegrationTables GetVersion")
+		return errors.Wrap(err, "CreateIntegrationTables GetVersion")
 	}
 	if version >= 21001000 {
 		settings = "SETTINGS input_format_skip_unknown_fields=1"
 	}
 	disks, err := ch.GetDisks(context.Background(), true)
 	if err != nil {
-		return errors.WithMessage(err, "CreateIntegrationTables GetDisks")
+		return errors.Wrap(err, "CreateIntegrationTables GetDisks")
 	}
 	defaultDataPath, err := ch.GetDefaultPath(disks)
 	if err != nil {
-		return errors.WithMessage(err, "CreateIntegrationTables GetDefaultPath")
+		return errors.Wrap(err, "CreateIntegrationTables GetDefaultPath")
 	}
 	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String, operation_id String) ENGINE=URL('%s://%s:%s/backup/actions%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, false, "", 0, defaultDataPath, false, ""); err != nil {
-		return errors.WithMessage(err, "CreateIntegrationTables backup_actions")
+		return errors.Wrap(err, "CreateIntegrationTables backup_actions")
 	}
 	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size UInt64, data_size UInt64, object_disk_size UInt64,metadata_size UInt64,rbac_size UInt64,config_size UInt64, named_collection_size UInt64, compressed_size UInt64, location String, required String, desc String) ENGINE=URL('%s://%s:%s/backup/list%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, false, "", 0, defaultDataPath, false, ""); err != nil {
-		return errors.WithMessage(err, "CreateIntegrationTables backup_list")
+		return errors.Wrap(err, "CreateIntegrationTables backup_list")
 	}
 	query = fmt.Sprintf("CREATE TABLE system.backup_version (version String) ENGINE=URL('%s://%s:%s/backup/version%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_version"}, query, true, false, "", 0, defaultDataPath, false, ""); err != nil {
-		return errors.WithMessage(err, "CreateIntegrationTables backup_version")
+		return errors.Wrap(err, "CreateIntegrationTables backup_version")
 	}
 	return nil
 }
@@ -2484,65 +2488,158 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 			stateFiles = append(stateFiles, embeddedStateFiles...)
 			for _, stateFile := range stateFiles {
 				command := strings.TrimSuffix(filepath.Base(stateFile), ".state2")
+				if !api.GetConfig().API.IsCompleteResumableAfterRestartCommand(command) {
+					log.Warn().Str("operation", "ResumeOperationsAfterRestart").Msgf("skip %s: command %q is not allowed by api.complete_resumable_after_restart_commands", stateFile, command)
+					continue
+				}
 				state := resumable.NewState(strings.TrimSuffix(filepath.Dir(stateFile), filepath.Join("backup", backupName)), backupName, command, nil)
 				params := state.GetParams()
 				state.Close()
 				if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 					return errors.New("another commands in progress")
 				}
+				args := []string{command}
 				switch command {
-				case "download":
-				case "upload":
-					args := make([]string, 0)
-					args = append(args, command)
-					if diffFrom, ok := params["diffFrom"]; ok && diffFrom.(string) != "" {
-						args = append(args, fmt.Sprintf("--diff-from=\"%s\"", diffFrom))
-					}
-					if diffFromRemote, ok := params["diffFromRemote"]; ok && diffFromRemote.(string) != "" {
-						args = append(args, fmt.Sprintf("--diff-from-remote=\"%s\"", diffFromRemote))
+				case "create":
+					if diffFromRemote := resumableStringParam(params, "diffFromRemote"); diffFromRemote != "" {
+						args = append(args, fmt.Sprintf("--diff-from-remote=%s", diffFromRemote))
 					}
 
-					if tablePattern, ok := params["tablePattern"]; ok && tablePattern.(string) != "" {
-						args = append(args, fmt.Sprintf("--tables=\"%s\"", tablePattern))
+					if tablePattern := resumableStringParam(params, "tablePattern"); tablePattern != "" {
+						args = append(args, fmt.Sprintf("--tables=%s", tablePattern))
 					}
 
-					if schemaOnly, ok := params["schemaOnly"]; ok && schemaOnly.(bool) {
+					if resumableBoolParam(params, "schemaOnly") {
 						args = append(args, "--schema=1")
 					}
 
-					if partitions, ok := params["partitions"]; ok && len(partitions.([]interface{})) > 0 {
-						partitionsStr := make([]string, len(partitions.([]interface{})))
-						for j, v := range partitions.([]interface{}) {
-							partitionsStr[j] = fmt.Sprintf("--partitions=\"%s\"", v.(string))
+					if partitions := resumableStringSliceParam(params, "partitions"); len(partitions) > 0 {
+						partitionsStr := make([]string, len(partitions))
+						for j, v := range partitions {
+							partitionsStr[j] = fmt.Sprintf("--partitions=%s", v)
 						}
 						args = append(args, partitionsStr...)
 					}
-					args = append(args, "--resumable=1", backupName)
-					fullCommand := strings.Join(args, " ")
-					log.Info().Str("operation", "ResumeOperationsAfterRestart").Send()
-					commandId, _ := status.Current.Start(fullCommand)
-					err, _ = api.metrics.ExecuteWithMetrics(command, 0, func() error {
-						return api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
-					})
-					status.Current.Stop(commandId, err)
-					if err != nil {
-						return errors.WithStack(err)
+				case "download":
+				case "upload":
+					if diffFrom := resumableStringParam(params, "diffFrom"); diffFrom != "" {
+						args = append(args, fmt.Sprintf("--diff-from=%s", diffFrom))
+					}
+					if diffFromRemote := resumableStringParam(params, "diffFromRemote"); diffFromRemote != "" {
+						args = append(args, fmt.Sprintf("--diff-from-remote=%s", diffFromRemote))
 					}
 
-					if err = os.Remove(stateFile); err != nil {
-						if api.GetConfig().General.BackupsToKeepLocal >= 0 {
-							return errors.WithStack(err)
+					if tablePattern := resumableStringParam(params, "tablePattern"); tablePattern != "" {
+						args = append(args, fmt.Sprintf("--tables=%s", tablePattern))
+					}
+
+					if resumableBoolParam(params, "schemaOnly") {
+						args = append(args, "--schema=1")
+					}
+
+					if partitions := resumableStringSliceParam(params, "partitions"); len(partitions) > 0 {
+						partitionsStr := make([]string, len(partitions))
+						for j, v := range partitions {
+							partitionsStr[j] = fmt.Sprintf("--partitions=%s", v)
 						}
-						log.Warn().Str("operation", "ResumeOperationsAfterRestart").Msgf("remove %s return error: ", err)
+						args = append(args, partitionsStr...)
+					}
+				case "restore":
+					if tablePattern := resumableStringParam(params, "tablePattern"); tablePattern != "" {
+						args = append(args, fmt.Sprintf("--tables=%s", tablePattern))
+					}
+
+					if resumableBoolParam(params, "schemaOnly") {
+						args = append(args, "--schema=1")
+					}
+
+					if resumableBoolParam(params, "dataOnly") {
+						args = append(args, "--data=1")
+					}
+
+					if resumableBoolParam(params, "dropExists") {
+						args = append(args, "--drop=1")
+					}
+
+					if partitions := resumableStringSliceParam(params, "partitions"); len(partitions) > 0 {
+						partitionsStr := make([]string, len(partitions))
+						for j, v := range partitions {
+							partitionsStr[j] = fmt.Sprintf("--partitions=%s", v)
+						}
+						args = append(args, partitionsStr...)
 					}
 				default:
 					return errors.Errorf("unkown command for state file %s", stateFile)
+				}
+				args = append(args, "--resumable=1", backupName)
+				fullCommand := strings.Join(args, " ")
+				log.Info().Str("operation", "ResumeOperationsAfterRestart").Send()
+				commandId, _ := status.Current.Start(fullCommand)
+				err, _ = api.metrics.ExecuteWithMetrics(command, 0, func() error {
+					return api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
+				})
+				status.Current.Stop(commandId, err)
+				if err != nil {
+					return errors.WithStack(err)
+				}
+
+				if err = os.Remove(stateFile); err != nil {
+					if api.GetConfig().General.BackupsToKeepLocal >= 0 {
+						return errors.WithStack(err)
+					}
+					log.Warn().Str("operation", "ResumeOperationsAfterRestart").Msgf("remove %s return error: ", err)
 				}
 			}
 		}
 	}
 
 	return nil
+}
+
+func resumableStringParam(params map[string]interface{}, key string) string {
+	if params == nil {
+		return ""
+	}
+	v, ok := params[key]
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
+}
+
+func resumableBoolParam(params map[string]interface{}, key string) bool {
+	if params == nil {
+		return false
+	}
+	v, ok := params[key]
+	if !ok {
+		return false
+	}
+	b, _ := v.(bool)
+	return b
+}
+
+func resumableStringSliceParam(params map[string]interface{}, key string) []string {
+	if params == nil {
+		return nil
+	}
+	v, ok := params[key]
+	if !ok {
+		return nil
+	}
+	values, ok := v.([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		s, ok := value.(string)
+		if ok {
+			result = append(result, s)
+		}
+	}
+	return result
 }
 
 func (api *APIServer) getQueryParameter(q url.Values, paramName string) (string, bool) {

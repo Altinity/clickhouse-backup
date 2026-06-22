@@ -10,9 +10,9 @@ import (
 )
 
 // TestConfigs - require direct access to `/etc/clickhouse-backup/`, so executed inside `clickhouse` container
-// need clickhouse-server restart, no parallel
 func TestConfigs(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	testConfigsScenario := func(config string) {
 		env.connectWithWait(t, r, 0*time.Millisecond, 1*time.Second, 1*time.Minute)
 		env.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_configs")
@@ -80,5 +80,4 @@ func TestConfigs(t *testing.T) {
 	if compareVersion(chVersion, "24.2") >= 0 {
 		testConfigsScenario("/etc/clickhouse-backup/config-azblob-embedded-url.yml")
 	}
-	env.Cleanup(t, r)
 }

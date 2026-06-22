@@ -46,11 +46,11 @@ func (sftp *SFTP) Connect(ctx context.Context) error {
 	if sftp.Config.Key != "" {
 		fSftpKey, err := os.ReadFile(sftp.Config.Key)
 		if err != nil {
-			return errors.WithMessage(err, "SFTP Connect ReadFile key")
+			return errors.Wrap(err, "SFTP Connect ReadFile key")
 		}
 		sftpKey, err := ssh.ParsePrivateKey(fSftpKey)
 		if err != nil {
-			return errors.WithMessage(err, "SFTP Connect ParsePrivateKey")
+			return errors.Wrap(err, "SFTP Connect ParsePrivateKey")
 		}
 
 		authMethods = append(authMethods, ssh.PublicKeys(sftpKey))
@@ -69,7 +69,7 @@ func (sftp *SFTP) Connect(ctx context.Context) error {
 	sftp.Debug("[SFTP_DEBUG] try connect to tcp://%s", addr)
 	sshConnection, err := ssh.Dial("tcp", addr, sftpConfig)
 	if err != nil {
-		return errors.WithMessage(err, "SFTP Connect ssh.Dial")
+		return errors.Wrap(err, "SFTP Connect ssh.Dial")
 	}
 	clientOptions := make([]libSFTP.ClientOption, 0)
 	if sftp.Config.Concurrency > 0 {
@@ -86,7 +86,7 @@ func (sftp *SFTP) Connect(ctx context.Context) error {
 	}
 	sftpConnection, err := libSFTP.NewClient(sshConnection, clientOptions...)
 	if err != nil {
-		return errors.WithMessage(err, "SFTP Connect NewClient")
+		return errors.Wrap(err, "SFTP Connect NewClient")
 	}
 
 	sftp.sftpClient = sftpConnection
@@ -115,7 +115,7 @@ func (sftp *SFTP) StatFileAbsolute(ctx context.Context, key string) (RemoteFile,
 		if strings.Contains(err.Error(), "not exist") {
 			return nil, NewErrNotFound(key)
 		}
-		return nil, errors.WithMessage(err, "SFTP StatFileAbsolute Stat")
+		return nil, errors.Wrap(err, "SFTP StatFileAbsolute Stat")
 	}
 
 	return &sftpFile{
@@ -159,7 +159,7 @@ func (sftp *SFTP) DeleteDirectory(ctx context.Context, dirPath string) error {
 	files, err := sftp.sftpClient.ReadDir(dirPath)
 	if err != nil {
 		sftp.Debug("[SFTP_DEBUG] DeleteDirectory::ReadDir %s return error %v", dirPath, err)
-		return errors.WithMessage(err, "SFTP DeleteDirectory ReadDir")
+		return errors.Wrap(err, "SFTP DeleteDirectory ReadDir")
 	}
 	for _, file := range files {
 		filePath := path.Join(dirPath, file.Name())
@@ -210,7 +210,7 @@ func (sftp *SFTP) WalkAbsolute(ctx context.Context, prefix string, recursive boo
 				name:         relName,
 			})
 			if err != nil {
-				return errors.WithMessage(err, "SFTP WalkAbsolute process")
+				return errors.Wrap(err, "SFTP WalkAbsolute process")
 			}
 		}
 	} else {
@@ -230,7 +230,7 @@ func (sftp *SFTP) WalkAbsolute(ctx context.Context, prefix string, recursive boo
 				name:         entry.Name(),
 			})
 			if err != nil {
-				return errors.WithMessage(err, "SFTP WalkAbsolute process entry")
+				return errors.Wrap(err, "SFTP WalkAbsolute process entry")
 			}
 		}
 	}
@@ -259,7 +259,7 @@ func (sftp *SFTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadClos
 	}
 	remoteFile, err := sftp.sftpClient.Create(key)
 	if err != nil {
-		return errors.WithMessage(err, "SFTP PutFileAbsolute Create")
+		return errors.Wrap(err, "SFTP PutFileAbsolute Create")
 	}
 	defer func() {
 		if err := remoteFile.Close(); err != nil {
@@ -267,7 +267,7 @@ func (sftp *SFTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadClos
 		}
 	}()
 	if _, err = remoteFile.ReadFrom(r); err != nil {
-		return errors.WithMessage(err, "SFTP PutFileAbsolute ReadFrom")
+		return errors.Wrap(err, "SFTP PutFileAbsolute ReadFrom")
 	}
 	return nil
 }
@@ -350,7 +350,7 @@ func (sftp *SFTP) DeleteFileFromObjectDiskBackup(ctx context.Context, key string
 	fileStat, err := sftp.sftpClient.Stat(filePath)
 	if err != nil {
 		sftp.Debug("[SFTP_DEBUG] DeleteFileFromObjectDiskBackup::STAT %s return error %v", filePath, err)
-		return errors.WithMessage(err, "SFTP DeleteFileFromObjectDiskBackup Stat")
+		return errors.Wrap(err, "SFTP DeleteFileFromObjectDiskBackup Stat")
 	}
 	if fileStat.IsDir() {
 		return sftp.DeleteDirectory(ctx, filePath)
@@ -450,7 +450,7 @@ func (sftp *SFTP) DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []str
 func (sftp *SFTP) deleteKeyInternal(ctx context.Context, filePath string) error {
 	fileStat, err := sftp.sftpClient.Stat(filePath)
 	if err != nil {
-		return errors.WithMessage(err, "SFTP deleteKeyInternal Stat")
+		return errors.Wrap(err, "SFTP deleteKeyInternal Stat")
 	}
 	if fileStat.IsDir() {
 		return sftp.DeleteDirectory(ctx, filePath)

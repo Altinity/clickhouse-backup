@@ -13,6 +13,7 @@ func TestRestoreAsAttach(t *testing.T) {
 		t.Skipf("--restore-schema-as-attach not works in version %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
 	// Create test database and table
@@ -47,6 +48,4 @@ func TestRestoreAsAttach(t *testing.T) {
 	// Clean up
 	r.NoError(env.dropDatabase(dbName, false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
-
-	env.Cleanup(t, r)
 }

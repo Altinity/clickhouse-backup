@@ -23,6 +23,7 @@ import (
 
 	stdlog "log"
 
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/rs/zerolog/pkgerrors"
@@ -483,6 +484,7 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 		env.ch = clickhouse.NewClickHouse(&config.ClickHouseConfig{})
 	}
 	t.Logf("%s acquired env %s", t.Name(), env.ProjectName)
+	envUsage.acquire(env.ProjectName, t.Name())
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") <= 0 {
 		r := require.New(&testing.T{})
@@ -500,6 +502,10 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	}
 
 	env.ch.Close()
+
+	// Kill any `clickhouse-backup server` left running by the test so it does not leak into the
+	// pooled env and collide on :7171 with the next test that acquires this environment.
+	_ = env.DockerExec("clickhouse-backup", "bash", "-ce", "pkill -9 -f '[c]lickhouse-backup server' || true")
 
 	// Clean shared state between test runs so the next test gets a fresh environment
 	_ = env.DockerExec("minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3")
@@ -561,6 +567,7 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	}
 
 	t.Logf("%s returning env %s to pool", t.Name(), env.ProjectName)
+	envUsage.release(env.ProjectName, t.Name())
 	envPool <- env
 }
 
@@ -578,8 +585,10 @@ func (env *TestEnvironment) DockerExecNoError(r *require.Assertions, container s
 	out, err := env.DockerExecOut(container, cmd...)
 	if err == nil {
 		log.Debug().Msg(out)
+	} else {
+		err = errors.WithStack(err)
 	}
-	r.NoError(err, "%s\n\n%s\n[ERROR]\n%v", strings.Join(append(env.GetExecDockerCommand(container), cmd...), " "), out, err)
+	r.NoError(err, "%s\n\n%s\n[ERROR]\n%+v", strings.Join(append(env.GetExecDockerCommand(container), cmd...), " "), out, err)
 }
 
 func (env *TestEnvironment) DockerExec(container string, cmd ...string) error {
@@ -1420,6 +1429,10 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	fullBackupName := fmt.Sprintf("full_backup_%d", rand.Int())
 	incrementBackupName := fmt.Sprintf("increment_backup_%d", rand.Int())
 	dbName := "test_partitions_" + t.Name()
+	// drop the test database even if an assertion below fails
+	defer func() {
+		_ = env.dropDatabase(dbName, true)
+	}()
 	fillTables := func(partitions []string) {
 		for _, dt := range partitions {
 			env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t1(dt, v) SELECT '%s', number FROM numbers(10)", dt))
@@ -1615,9 +1628,6 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", incrementBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName)
 
-	if err = env.dropDatabase(dbName, true); err != nil {
-		t.Fatal(err)
-	}
 	log.Debug().Msg("testBackupSpecifiedPartitions finish")
 }
 
