@@ -73,7 +73,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		return errors.Wrap(err, "prepareRestoreMapping table")
 	}
 
-	doRestoreData := (!schemaOnly && !rbacOnly && !configsOnly) || dataOnly
+	doRestoreData := (!schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly) || dataOnly
 
 	if err := b.ch.Connect(); err != nil {
 		return errors.Wrap(err, "can't connect to clickhouse")

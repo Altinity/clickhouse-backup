@@ -1019,7 +1019,9 @@ func (ch *ClickHouse) DropOrDetachTable(table Table, query, onCluster string, ig
 	if isAtomicOrReplicated {
 		dropQuery += " NO DELAY"
 	}
-	if ignoreDependencies {
+	if ignoreDependencies && version >= 21012000 {
+		// check_table_dependencies was introduced in 21.12; older servers reject
+		// it with "Unknown setting" (see restoreEmptyDatabase for the same gate).
 		dropQuery += " SETTINGS check_table_dependencies=0"
 	}
 	if defaultDataPath != "" && !useDetach {
