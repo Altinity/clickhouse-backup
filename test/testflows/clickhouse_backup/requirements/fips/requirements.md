@@ -18,9 +18,10 @@
         * 4.1.1 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GoCryptographicModule](#rqsrs-013clickhousebackuputilityfipsgocryptographicmodule)
         * 4.1.2 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Build.GOFIPS140](#rqsrs-013clickhousebackuputilityfipsbuildgofips140)
         * 4.1.3 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Binary](#rqsrs-013clickhousebackuputilityfipsbinary)
-        * 4.1.4 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Approved.TLSProtocolVersions](#rqsrs-013clickhousebackuputilityfipsapprovedtlsprotocolversions)
-        * 4.1.5 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Approved.CipherSuites.TLSv12.Approved](#rqsrs-013clickhousebackuputilityfipsapprovedciphersuitestlsv12approved)
-        * 4.1.6 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Approved.CipherSuites.TLSv13.Approved](#rqsrs-013clickhousebackuputilityfipsapprovedciphersuitestlsv13approved)
+        * 4.1.4 [RQ.SRS-013.ClickHouse.BackupUtility.non-FIPS.Binary](#rqsrs-013clickhousebackuputilitynon-fipsbinary)
+        * 4.1.5 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Approved.TLSProtocolVersions](#rqsrs-013clickhousebackuputilityfipsapprovedtlsprotocolversions)
+        * 4.1.6 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Approved.CipherSuites.TLSv12.Approved](#rqsrs-013clickhousebackuputilityfipsapprovedciphersuitestlsv12approved)
+        * 4.1.7 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Approved.CipherSuites.TLSv13.Approved](#rqsrs-013clickhousebackuputilityfipsapprovedciphersuitestlsv13approved)
     * 4.2 [Connectivity](#connectivity)
         * 4.2.1 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Connectivity.FIPSEndpoint](#rqsrs-013clickhousebackuputilityfipsconnectivityfipsendpoint)
         * 4.2.2 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Connectivity.NonFIPSEndpoint](#rqsrs-013clickhousebackuputilityfipsconnectivitynonfipsendpoint)
@@ -126,6 +127,12 @@ version: 1.0
 
 The FIPS-compatible build of the [clickhouse-backup] utility SHALL be distributed as a separate
 binary named `clickhouse-backup-fips`, distinct from the standard `clickhouse-backup` binary.
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.non-FIPS.Binary
+version: 1.0
+
+The regular build of the [clickhouse-backup] utility SHALL be distributed as a
+binary named `clickhouse-backup`, that SHALL report ``FIPS 140-3:	false``
 
 #### RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Approved.TLSProtocolVersions
 version: 1.0

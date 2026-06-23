@@ -324,7 +324,6 @@ func (tc *TestContainers) RestartContainer(t *testing.T, name string) error {
 	if err := tc.client.ContainerRestart(ctx, info.ID, container.StopOptions{Timeout: &timeout}); err != nil {
 		return err
 	}
-	// 12min restart headroom.
 	return tc.waitHealthy(ctx, name, 12*time.Minute, t.Name())
 }
 

@@ -412,8 +412,7 @@ def clickhouse_backup_fips_version_output(self):
 
 @TestScenario
 @Requirements(
-    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Binary("1.0"),
-    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Version_Status("1.0"),
+    RQ_SRS_013_ClickHouse_BackupUtility_non_FIPS_Binary("1.0"),
 )
 def clickhouse_backup_fips_version_output_negative_check(self):
     """Self-check for `clickhouse_backup_fips_version_output`.
