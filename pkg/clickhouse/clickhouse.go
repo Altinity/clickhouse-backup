@@ -1044,6 +1044,8 @@ var attachViewRefreshRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+
 var attachViewToClauseRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+TO\s+.+)`)
 var attachViewAsWithRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+AS\s+WITH\s+.+)`)
 var attachViewRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+AS\s+.+)`)
+var viewStorageRe = regexp.MustCompile(`(?im)^((?:ATTACH|CREATE)[\s\w]+VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?\S+(?:\s+UUID\s+'[^']+')?)(\s+ENGINE\s*=?\s*.+)`)
+var viewColumnsRe = regexp.MustCompile(`(?im)^((?:ATTACH|CREATE)[\s\w]+VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?\S+(?:\s+UUID\s+'[^']+')?)\s*(\(.+\s+(?:AS|TO)\s+.+)`)
 var createObjRe = regexp.MustCompile(`(?is)^(CREATE [^(]+)(\(.+)`)
 var onClusterRe = regexp.MustCompile(`(?im)\s+ON\s+CLUSTER\s+`)
 var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^)]+)\)`)
@@ -1171,7 +1173,7 @@ func (ch *ClickHouse) CreateTableAsAttach(query string) error {
 
 func (ch *ClickHouse) enrichQueryWithOnCluster(query string, onCluster string, version int, databaseEngine string) string {
 	if version > 19000000 && !strings.HasPrefix(databaseEngine, "Replicated") && onCluster != "" && !onClusterRe.MatchString(query) {
-		tryMatchReList := []*regexp.Regexp{attachViewRefreshRe, attachViewToClauseRe, attachViewAsWithRe, attachViewRe, createViewRefreshRe, createViewToClauseRe, createViewAsWithRe, createViewRe, createObjRe}
+		tryMatchReList := []*regexp.Regexp{attachViewRefreshRe, attachViewToClauseRe, viewStorageRe, attachViewAsWithRe, attachViewRe, createViewRefreshRe, createViewToClauseRe, createViewAsWithRe, createViewRe, viewColumnsRe, createObjRe}
 		for _, tryMatchRe := range tryMatchReList {
 			if tryMatchRe.MatchString(query) {
 				query = tryMatchRe.ReplaceAllString(query, "$1 ON CLUSTER '"+onCluster+"' $2")
