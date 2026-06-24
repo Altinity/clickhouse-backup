@@ -3,12 +3,52 @@ package storage
 import (
 	"encoding/base64"
 	"fmt"
+	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// recordingRoundTripper captures the request URL scheme it is asked to send
+// and short-circuits the round trip so no real network call happens.
+type recordingRoundTripper struct {
+	seenScheme string
+}
+
+func (rt *recordingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	rt.seenScheme = req.URL.Scheme
+	return &http.Response{StatusCode: 200, Body: http.NoBody, Header: make(http.Header)}, nil
+}
+
+// TestRewriteTransportSchemeDowngrade documents the behavioral difference
+// between the ForceHttp path and the DisableHttp2 path. ForceHttp wraps the
+// base transport in rewriteTransport, which downgrades https:// to cleartext
+// http:// (only valid for the internal varnish cache). DisableHttp2 must NOT
+// do this — it uses the base transport directly so the https scheme (and thus
+// TLS + HTTPS_PROXY) is preserved while HTTP/2 is still suppressed.
+func TestRewriteTransportSchemeDowngrade(t *testing.T) {
+	t.Run("ForceHttp wrapper downgrades scheme to cleartext", func(t *testing.T) {
+		base := &recordingRoundTripper{}
+		rt := &rewriteTransport{base: base}
+		req := &http.Request{URL: &url.URL{Scheme: "https", Host: "storage.googleapis.com", Path: "/"}}
+		_, err := rt.RoundTrip(req)
+		require.NoError(t, err)
+		assert.Equal(t, "http", base.seenScheme, "rewriteTransport must downgrade https to http")
+	})
+
+	t.Run("DisableHttp2 path preserves https scheme", func(t *testing.T) {
+		// DisableHttp2 uses the custom transport directly (no rewriteTransport),
+		// so the scheme reaching the base round tripper stays https.
+		base := &recordingRoundTripper{}
+		req := &http.Request{URL: &url.URL{Scheme: "https", Host: "storage.googleapis.com", Path: "/"}}
+		_, err := base.RoundTrip(req)
+		require.NoError(t, err)
+		assert.Equal(t, "https", base.seenScheme, "DisableHttp2 must preserve https scheme so TLS and HTTPS_PROXY work")
+	})
+}
 
 func TestGCSEncryptionKeyValidation(t *testing.T) {
 	testCases := []struct {

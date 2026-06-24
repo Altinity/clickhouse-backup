@@ -116,6 +116,15 @@ type GCSConfig struct {
 	CompressionFormat      string            `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
 	Debug                  bool              `yaml:"debug" envconfig:"GCS_DEBUG"`
 	ForceHttp              bool              `yaml:"force_http" envconfig:"GCS_FORCE_HTTP"`
+	// DisableHttp2 forces the GCS client onto an HTTP/1.1 transport over TLS
+	// (ForceAttemptHTTP2=false, NextProtos=["http/1.1"]) WITHOUT downgrading the
+	// request scheme to cleartext (unlike ForceHttp). With HTTP/2, all concurrent
+	// part-download streams are multiplexed onto a small number of TCP connections,
+	// and per-connection flow control caps aggregate throughput at the backup tail.
+	// HTTP/1.1 gives one dedicated TCP connection per in-flight request (up to
+	// MaxIdleConnsPerHost), letting parallel parts saturate the link. The https
+	// scheme is preserved, so TLS and HTTPS_PROXY (CONNECT) continue to work.
+	DisableHttp2           bool              `yaml:"disable_http2" envconfig:"GCS_DISABLE_HTTP2"`
 	Endpoint               string            `yaml:"endpoint" envconfig:"GCS_ENDPOINT"`
 	StorageClass           string            `yaml:"storage_class" envconfig:"GCS_STORAGE_CLASS"`
 	ObjectLabels           map[string]string `yaml:"object_labels" envconfig:"GCS_OBJECT_LABELS"`
