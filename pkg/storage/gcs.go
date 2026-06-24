@@ -125,16 +125,16 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		clientOptions = append(clientOptions, credOption)
 	}
 
-	// 3. For ForceHttp or Debug we need a custom HTTP client;
+	// 3. For ForceHttp, DisableHttp2, or Debug we need a custom HTTP client;
 	//    otherwise let storage.NewClient create its own optimized transport.
-	if gcs.Config.ForceHttp || gcs.Config.Debug {
+	if gcs.Config.ForceHttp || gcs.Config.DisableHttp2 || gcs.Config.Debug {
 		// Scopes are required when dialing manually
 		if !gcs.Config.SkipCredentials {
 			clientOptions = append(clientOptions, option.WithScopes(storage.ScopeFullControl))
 		}
 
 		var httpClient *http.Client
-		if gcs.Config.ForceHttp {
+		if gcs.Config.ForceHttp || gcs.Config.DisableHttp2 {
 			customTransport := &http.Transport{
 				WriteBufferSize: 128 * 1024,
 				Proxy:           http.ProxyFromEnvironment,
@@ -154,8 +154,19 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 			customTransport.TLSClientConfig = &tls.Config{
 				NextProtos: []string{"http/1.1"},
 			}
-			customRoundTripper := &rewriteTransport{base: customTransport}
-			transport, err := googleHTTPTransport.NewTransport(ctx, customRoundTripper, clientOptions...)
+			// DisableHttp2: raise connection pool limits so each parallel part gets
+			// its own dedicated TCP connection, eliminating HTTP/2 flow control bottleneck
+			if gcs.Config.DisableHttp2 {
+				customTransport.MaxIdleConns = 0 // unlimited
+				customTransport.MaxIdleConnsPerHost = 64
+			}
+			var roundTripper http.RoundTripper = customTransport
+			// ForceHttp wraps in rewriteTransport to downgrade scheme to http://;
+			// DisableHttp2 uses the base transport directly, preserving https://
+			if gcs.Config.ForceHttp {
+				roundTripper = &rewriteTransport{base: customTransport}
+			}
+			transport, err := googleHTTPTransport.NewTransport(ctx, roundTripper, clientOptions...)
 			if err != nil {
 				return errors.Wrap(err, "failed to create GCP transport")
 			}
