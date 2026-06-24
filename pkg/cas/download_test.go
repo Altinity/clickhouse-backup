@@ -825,22 +825,40 @@ func TestDownload_WritesHandoffCAS(t *testing.T) {
 	}
 }
 
-// TestDownload_DataOnlyRefuses verifies that --data-only is rejected
-// loudly because CAS doesn't yet implement the data-only path.
-// Until the feature ships, silently no-op'ing is worse than refusing.
-func TestDownload_DataOnlyRefuses(t *testing.T) {
-	f := fakedst.New()
-	cfg := testCfg(1024)
-	ctx := context.Background()
-
-	_, err := cas.Download(ctx, f, cfg, "any", cas.DownloadOptions{
-		LocalBackupDir: t.TempDir(),
-		DataOnly:       true,
-	})
-	if err == nil {
-		t.Fatal("expected Download to refuse DataOnly")
+// TestDownload_DataOnly verifies that --data-only behaves like a full
+// download on the CAS side: CAS only stores data and the per-table JSON is
+// always materialized, so the local layout (root metadata.json, per-table
+// metadata, and the reconstructed part files) is identical to a full
+// download. The schema-vs-data distinction is applied downstream by the v1
+// restore handoff, not here.
+func TestDownload_DataOnly(t *testing.T) {
+	parts := []testfixtures.PartSpec{
+		{Disk: "default", DB: "db1", Table: "t1", Name: "p1", Files: []testfixtures.FileSpec{
+			{Name: "columns.txt", Size: 23, HashLow: 1, HashHigh: 1},
+			{Name: "data.bin", Size: 1024, HashLow: 999, HashHigh: 1, Bytes: makeBlobBytes(0x10)},
+		}},
 	}
-	if !strings.Contains(err.Error(), "data-only is not yet implemented") {
-		t.Errorf("error should mention 'data-only is not yet implemented'; got: %v", err)
+	_, _, _, root := uploadAndDownload(t, parts, "b1", cas.DownloadOptions{DataOnly: true})
+	localBackupDir := filepath.Join(root, "b1")
+
+	// Root metadata.json materialized with Handoff=true (v1 restore handoff).
+	bmBody, err := os.ReadFile(filepath.Join(localBackupDir, "metadata.json"))
+	if err != nil {
+		t.Fatalf("read root metadata.json: %v", err)
+	}
+	var bm metadata.BackupMetadata
+	if err := json.Unmarshal(bmBody, &bm); err != nil {
+		t.Fatalf("parse local metadata.json: %v", err)
+	}
+	if bm.CAS == nil || !bm.CAS.Handoff {
+		t.Fatal("local metadata.json: CAS.Handoff MUST be true for the v1 restore handoff")
+	}
+
+	// Data parts must be reconstructed on disk (this is the whole point of
+	// data-only: the data is present so restore --data can attach it).
+	dlPartDir := filepath.Join(localBackupDir, "shadow",
+		common.TablePathEncode("db1"), common.TablePathEncode("t1"), "default", "p1")
+	if _, err := os.Stat(filepath.Join(dlPartDir, "data.bin")); err != nil {
+		t.Errorf("data-only download must reconstruct part files; data.bin missing: %v", err)
 	}
 }

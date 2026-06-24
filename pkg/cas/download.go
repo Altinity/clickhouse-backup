@@ -39,9 +39,11 @@ type DownloadOptions struct {
 	// metadata files locally.
 	SchemaOnly bool
 
-	// DataOnly: in v1 of CAS this behaves like a full download (CAS only
-	// stores data; schema info comes from the per-table JSON which is
-	// always written). Reserved for future use.
+	// DataOnly: in CAS this behaves like a full download (CAS only stores
+	// data; schema info comes from the per-table JSON which is always
+	// written). The schema-vs-data distinction is applied downstream by the
+	// v1 restore handoff (restore --data attaches parts without recreating
+	// the table schema).
 	DataOnly bool
 
 	// Parallelism caps simultaneous archive + blob fetches. <=0 falls
@@ -135,9 +137,11 @@ func Download(ctx context.Context, b Backend, cfg Config, name string, opts Down
 	if opts.LocalBackupDir == "" {
 		return nil, errors.New("cas: DownloadOptions.LocalBackupDir is required")
 	}
-	if opts.DataOnly {
-		return nil, errors.New("cas: --data-only is not yet implemented for cas-download (use the v1 flow if you need data-only restoration)")
-	}
+	// DataOnly needs no special handling here: CAS only stores data, and the
+	// per-table JSON metadata is always materialized. A data-only download is
+	// therefore a full download; the schema-vs-data distinction is applied by
+	// the v1 restore handoff (restore --data attaches parts to the existing
+	// table without recreating its schema).
 
 	// 1. Validate root metadata + persisted CAS params.
 	bm, err := ValidateBackup(ctx, b, cfg, name)
