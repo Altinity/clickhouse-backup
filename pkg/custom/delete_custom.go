@@ -2,16 +2,17 @@ package custom
 
 import (
 	"context"
-	"fmt"
+	"time"
+
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
-	"time"
 )
 
 func DeleteRemote(ctx context.Context, cfg *config.Config, backupName string) error {
 	if cfg.Custom.DeleteCommand == "" {
-		return fmt.Errorf("CUSTOM_DELETE_COMMAND is not defined")
+		return errors.New("CUSTOM_DELETE_COMMAND is not defined")
 	}
 	startCustomDelete := time.Now()
 	templateData := map[string]interface{}{
@@ -31,12 +32,12 @@ func DeleteRemote(ctx context.Context, cfg *config.Config, backupName string) er
 			"duration":  utils.HumanizeDuration(time.Since(startCustomDelete)),
 		}).Msg("done")
 		return nil
-	} else {
-		log.Error().Fields(map[string]interface{}{
-			"backup":    backupName,
-			"operation": "delete_custom",
-		}).Msg(err.Error())
-		return err
 	}
+
+	log.Error().Fields(map[string]interface{}{
+		"backup":    backupName,
+		"operation": "delete_custom",
+	}).Msg(err.Error())
+	return errors.Wrap(err, "DeleteRemote custom")
 
 }

@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,11 +18,13 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/google/shlex"
 	"github.com/gorilla/mux"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli"
@@ -32,6 +33,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
@@ -44,12 +46,27 @@ type APIServer struct {
 	cliCtx                  *cli.Context
 	configPath              string
 	config                  *config.Config
+	configMutex             sync.RWMutex
 	server                  *http.Server
 	restart                 chan struct{}
 	stop                    chan struct{}
 	metrics                 *metrics.APIMetrics
 	routes                  []string
 	clickhouseBackupVersion string
+}
+
+// GetConfig returns the current config with read lock protection
+func (api *APIServer) GetConfig() *config.Config {
+	api.configMutex.RLock()
+	defer api.configMutex.RUnlock()
+	return api.config
+}
+
+// setConfig sets the config with write lock protection
+func (api *APIServer) setConfig(cfg *config.Config) {
+	api.configMutex.Lock()
+	defer api.configMutex.Unlock()
+	api.config = cfg
 }
 
 var (
@@ -70,15 +87,15 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 			time.Sleep(5 * time.Second)
 			continue
 		}
-		ch := clickhouse.ClickHouse{
-			Config: &cfg.ClickHouse,
-		}
-		if err := ch.Connect(); err != nil {
-			log.Error().Stack().Err(err).Send()
+		ch := clickhouse.NewClickHouse(&cfg.ClickHouse)
+		if connErr := ch.Connect(); connErr != nil {
+			log.Error().Stack().Err(connErr).Send()
 			time.Sleep(5 * time.Second)
 			continue
 		}
-		_ = ch.GetConn().Close()
+		if closeErr := ch.GetConn().Close(); closeErr != nil {
+			log.Warn().Stack().Err(closeErr).Send()
+		}
 		break
 	}
 	api := APIServer{
@@ -93,7 +110,7 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 	}
 	api.metrics.RegisterMetrics()
 
-	log.Info().Msgf("Starting API server %s on %s", api.cliApp.Version, api.config.API.ListenAddr)
+	log.Info().Msgf("Starting API server %s on %s", api.cliApp.Version, api.GetConfig().API.ListenAddr)
 	sigterm := make(chan os.Signal, 1)
 	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
 	sighup := make(chan os.Signal, 1)
@@ -101,17 +118,17 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 	if err := api.Restart(); err != nil {
 		return err
 	}
-	if api.config.API.CompleteResumableAfterRestart {
+	if api.GetConfig().API.CompleteResumableAfterRestart {
 		go func() {
 			if err := api.ResumeOperationsAfterRestart(); err != nil {
-				log.Error().Msgf("ResumeOperationsAfterRestart return error: %v", err)
+				log.Error().Stack().Msgf("ResumeOperationsAfterRestart return error: %v", err)
 			}
 		}()
 	}
 
 	go func() {
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
-			log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
 		}
 	}()
 
@@ -157,29 +174,33 @@ func (api *APIServer) RunWatch(cliCtx *cli.Context) {
 
 // Stop cancel all running commands, @todo think about graceful period
 func (api *APIServer) Stop() error {
-	status.Current.CancelAll("canceled during server stop")
+	for _, cmd := range status.Current.CancelAll("canceled during server stop") {
+		pidlock.RemovePidFileForCommand(cmd)
+	}
 	return api.server.Close()
 }
 
 func (api *APIServer) Restart() error {
 	_, err := api.ReloadConfig(nil, "restart")
 	if err != nil {
-		return err
+		return errors.Wrap(err, "Restart ReloadConfig")
 	}
-	if api.config.API.CreateIntegrationTables {
+	if api.GetConfig().API.CreateIntegrationTables {
 		if createErr := api.CreateIntegrationTables(); createErr != nil {
 			log.Error().Err(createErr).Send()
 		}
 	}
-	status.Current.CancelAll("canceled via API /restart")
+	for _, cmd := range status.Current.CancelAll("canceled via API /restart") {
+		pidlock.RemovePidFileForCommand(cmd)
+	}
 	if api.server != nil {
 		_ = api.server.Close()
 	}
 	server := api.registerHTTPHandlers()
 	api.server = server
-	if api.config.API.Secure {
+	if api.GetConfig().API.Secure {
 		go func() {
-			err = api.server.ListenAndServeTLS(api.config.API.CertificateFile, api.config.API.PrivateKeyFile)
+			err = api.server.ListenAndServeTLS(api.GetConfig().API.CertificateFile, api.GetConfig().API.PrivateKeyFile)
 			if err != nil {
 				if errors.Is(err, http.ErrServerClosed) {
 					log.Warn().Msgf("ListenAndServeTLS get signal: %s", err.Error())
@@ -189,17 +210,17 @@ func (api *APIServer) Restart() error {
 			}
 		}()
 		return nil
-	} else {
-		go func() {
-			if err = api.server.ListenAndServe(); err != nil {
-				if errors.Is(err, http.ErrServerClosed) {
-					log.Warn().Msgf("ListenAndServe get signal: %s", err.Error())
-				} else {
-					log.Fatal().Stack().Msgf("ListenAndServe error: %s", err.Error())
-				}
-			}
-		}()
 	}
+
+	go func() {
+		if err = api.server.ListenAndServe(); err != nil {
+			if errors.Is(err, http.ErrServerClosed) {
+				log.Warn().Msgf("ListenAndServe get signal: %s", err.Error())
+			} else {
+				log.Fatal().Stack().Msgf("ListenAndServe error: %s", err.Error())
+			}
+		}
+	}()
 	return nil
 }
 
@@ -208,10 +229,10 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	r := mux.NewRouter()
 	r.Use(api.basicAuthMiddleware)
 	r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		api.writeError(w, http.StatusNotFound, r.URL.Path, fmt.Errorf("%s %s 404 Not Found", r.Method, r.URL))
+		api.writeError(w, http.StatusNotFound, r.URL.Path, errors.Errorf("%s %s 404 Not Found", r.Method, r.URL))
 	})
 	r.MethodNotAllowedHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		api.writeError(w, http.StatusMethodNotAllowed, r.URL.Path, fmt.Errorf("405 Method %s Not Allowed", r.Method))
+		api.writeError(w, http.StatusMethodNotAllowed, r.URL.Path, errors.Errorf("405 Method %s Not Allowed", r.Method))
 	})
 
 	r.HandleFunc("/", api.httpRootHandler).Methods("GET", "HEAD")
@@ -243,7 +264,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	if err := r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		t, err := route.GetPathTemplate()
 		if err != nil {
-			return err
+			return errors.Wrap(err, "registerHTTPHandlers GetPathTemplate")
 		}
 		routes = append(routes, t)
 		return nil
@@ -253,15 +274,15 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	}
 
 	api.routes = routes
-	api.registerMetricsHandlers(r, api.config.API.EnableMetrics, api.config.API.EnablePprof)
+	api.registerMetricsHandlers(r, api.GetConfig().API.EnableMetrics, api.GetConfig().API.EnablePprof)
 	srv := &http.Server{
-		Addr:    api.config.API.ListenAddr,
+		Addr:    api.GetConfig().API.ListenAddr,
 		Handler: r,
 	}
-	if api.config.API.CACertFile != "" {
-		caCert, err := os.ReadFile(api.config.API.CACertFile)
+	if api.GetConfig().API.CACertFile != "" {
+		caCert, err := os.ReadFile(api.GetConfig().API.CACertFile)
 		if err != nil {
-			log.Fatal().Stack().Msgf("api initialization error %s: %v", api.config.API.CAKeyFile, err)
+			log.Fatal().Stack().Msgf("api initialization error %s: %v", api.GetConfig().API.CAKeyFile, err)
 		}
 		caCertPool := x509.NewCertPool()
 		caCertPool.AppendCertsFromPEM(caCert)
@@ -289,7 +310,7 @@ func (api *APIServer) basicAuthMiddleware(next http.Handler) http.Handler {
 		if p, exist := query["pass"]; exist {
 			pass = p[0]
 		}
-		if (user != api.config.API.Username) || (pass != api.config.API.Password) {
+		if (user != api.GetConfig().API.Username) || (pass != api.GetConfig().API.Password) {
 			log.Warn().Msgf("%s %s Authorization failed %s:%s", r.Method, r.URL, user, pass)
 			w.Header().Set("WWW-Authenticate", "Basic realm=\"Provide username and password\"")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -317,7 +338,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body) == 0 {
-		api.writeError(w, http.StatusBadRequest, "", fmt.Errorf("empty request"))
+		api.writeError(w, http.StatusBadRequest, "", errors.New("empty request"))
 		return
 	}
 	lines := bytes.Split(body, []byte("\n"))
@@ -383,7 +404,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		default:
-			api.writeError(w, http.StatusBadRequest, row.Command, fmt.Errorf("unknown command"))
+			api.writeError(w, http.StatusBadRequest, row.Command, errors.New("unknown command"))
 			return
 		}
 	}
@@ -391,20 +412,21 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *APIServer) actionsDeleteHandler(row status.ActionRow, args []string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		return actionsResults, ErrAPILocked
 	}
 	commandId, _ := status.Current.Start(row.Command)
 	err := api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
+	if err == nil {
+		// refresh metrics before marking the operation as completed so /metrics observers see consistent state
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), args[1] == "local"); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
+	}
 	status.Current.Stop(commandId, err)
 	if err != nil {
 		return actionsResults, err
 	}
-	go func() {
-		if metricsErr := api.UpdateBackupMetrics(context.Background(), args[1] == "local"); metricsErr != nil {
-			log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
-		}
-	}()
 	actionsResults = append(actionsResults, actionsResultsRow{
 		Status:    "success",
 		Operation: row.Command,
@@ -414,25 +436,32 @@ func (api *APIServer) actionsDeleteHandler(row status.ActionRow, args []string, 
 }
 
 func (api *APIServer) actionsAsyncCommandsHandler(command string, args []string, row status.ActionRow, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		return actionsResults, ErrAPILocked
 	}
+	skipActions := api.GetConfig().API.IsBackupActionsSkipCommand(command)
 	// to avoid race condition between GET /backup/actions and POST /backup/actions
-	commandId, _ := status.Current.Start(row.Command)
+	commandId := status.NotFromAPI
+	if !skipActions {
+		commandId, _ = status.Current.Start(row.Command)
+	}
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics(command, 0, func() error {
 			return api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
 		})
-		status.Current.Stop(commandId, err)
+		if err == nil {
+			// refresh metrics before marking the operation as completed so /metrics observers see consistent state
+			if metricsErr := api.UpdateBackupMetrics(context.Background(), command == "create" || strings.HasPrefix(command, "restore") || command == "download"); metricsErr != nil {
+				log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+			}
+		}
+		if !skipActions {
+			status.Current.Stop(commandId, err)
+		}
 		if err != nil {
 			log.Error().Msgf("API /backup/actions error: %v", err)
 			return
 		}
-		go func() {
-			if err := api.UpdateBackupMetrics(context.Background(), command == "create" || strings.HasPrefix(command, "restore") || command == "download"); err != nil {
-				log.Error().Msgf("UpdateBackupMetrics return error: %v", err)
-			}
-		}()
 	}()
 	actionsResults = append(actionsResults, actionsResultsRow{
 		Status:    "acknowledged",
@@ -447,11 +476,12 @@ func (api *APIServer) actionsKillHandler(row status.ActionRow, args []string, ac
 		killCommand = args[1]
 	}
 	commandId, _ := status.Current.Start(row.Command)
-	err := status.Current.Cancel(killCommand, fmt.Errorf("canceled from API /backup/actions"))
+	canceledCommand, err := status.Current.Cancel(killCommand, errors.New("canceled from API /backup/actions"))
 	defer status.Current.Stop(commandId, err)
 	if err != nil {
 		return actionsResults, err
 	}
+	pidlock.RemovePidFileForCommand(canceledCommand)
 	actionsResults = append(actionsResults, actionsResultsRow{
 		Status:    "success",
 		Operation: row.Command,
@@ -460,7 +490,7 @@ func (api *APIServer) actionsKillHandler(row status.ActionRow, args []string, ac
 }
 
 func (api *APIServer) actionsCleanHandler(w http.ResponseWriter, row status.ActionRow, command string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Msg(ErrAPILocked.Error())
 		return actionsResults, ErrAPILocked
 	}
@@ -478,11 +508,9 @@ func (api *APIServer) actionsCleanHandler(w http.ResponseWriter, row status.Acti
 		return actionsResults, err
 	}
 	log.Info().Msg("CLEANED")
-	go func() {
-		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
-			log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
-		}
-	}()
+	if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+		log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+	}
 	status.Current.Stop(commandId, nil)
 	actionsResults = append(actionsResults, actionsResultsRow{
 		Status:    "success",
@@ -492,7 +520,7 @@ func (api *APIServer) actionsCleanHandler(w http.ResponseWriter, row status.Acti
 }
 
 func (api *APIServer) actionsCleanLocalBrokenHandler(w http.ResponseWriter, row status.ActionRow, command string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		return actionsResults, ErrAPILocked
 	}
@@ -510,11 +538,9 @@ func (api *APIServer) actionsCleanLocalBrokenHandler(w http.ResponseWriter, row 
 		return actionsResults, err
 	}
 	log.Info().Msg("CLEANED")
-	go func() {
-		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
-			log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
-		}
-	}()
+	if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+		log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+	}
 	status.Current.Stop(commandId, nil)
 	actionsResults = append(actionsResults, actionsResultsRow{
 		Status:    "success",
@@ -524,7 +550,7 @@ func (api *APIServer) actionsCleanLocalBrokenHandler(w http.ResponseWriter, row 
 }
 
 func (api *APIServer) actionsCleanRemoteBrokenHandler(w http.ResponseWriter, row status.ActionRow, command string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		return actionsResults, ErrAPILocked
 	}
@@ -535,18 +561,16 @@ func (api *APIServer) actionsCleanRemoteBrokenHandler(w http.ResponseWriter, row
 		return actionsResults, err
 	}
 	b := backup.NewBackuper(cfg)
-	err = b.CleanRemoteBroken(commandId)
+	err = b.CleanRemoteBroken(commandId, nil)
 	if err != nil {
 		log.Error().Msgf("Clean remote broken error: %v", err)
 		status.Current.Stop(commandId, err)
 		return actionsResults, err
 	}
 	log.Info().Msg("CLEANED")
-	go func() {
-		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
-			log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
-		}
-	}()
+	if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+		log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+	}
 	status.Current.Stop(commandId, nil)
 	actionsResults = append(actionsResults, actionsResultsRow{
 		Status:    "success",
@@ -556,7 +580,7 @@ func (api *APIServer) actionsCleanRemoteBrokenHandler(w http.ResponseWriter, row
 }
 
 func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.ActionRow, args []string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
-	if (!api.config.API.AllowParallel && status.Current.InProgress()) || status.Current.CheckCommandInProgress(row.Command) {
+	if (!api.GetConfig().API.AllowParallel && status.Current.InProgress()) || status.Current.CheckCommandInProgress(row.Command) {
 		log.Warn().Err(ErrAPILocked).Send()
 		return actionsResults, ErrAPILocked
 	}
@@ -661,9 +685,9 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 func (api *APIServer) handleWatchResponse(watchCommandId int, err error) {
 	status.Current.Stop(watchCommandId, err)
 	if err != nil {
-		log.Error().Msgf("Watch error: %v", err)
+		log.Error().Stack().Err(err).Msg("Watch error")
 	}
-	if api.config.API.WatchIsMainProcess {
+	if api.GetConfig().API.WatchIsMainProcess {
 		// Do not stop server if 'watch' was canceled by the user command
 		if errors.Is(err, context.Canceled) {
 			return
@@ -729,12 +753,15 @@ func (api *APIServer) httpVersionHandler(w http.ResponseWriter, _ *http.Request)
 
 // httpKillHandler - kill selected command if it InProgress
 func (api *APIServer) httpKillHandler(w http.ResponseWriter, r *http.Request) {
-	var err error
+	var (
+		err             error
+		canceledCommand string
+	)
 	command, exists := r.URL.Query()["command"]
 	if exists && len(command) > 0 {
-		err = status.Current.Cancel(command[0], fmt.Errorf("canceled from API /backup/kill"))
+		canceledCommand, err = status.Current.Cancel(command[0], errors.New("canceled from API /backup/kill"))
 	} else {
-		err = status.Current.Cancel("", fmt.Errorf("canceled from API /backup/kill"))
+		canceledCommand, err = status.Current.Cancel("", errors.New("canceled from API /backup/kill"))
 	}
 	if err != nil {
 		api.sendJSONEachRow(w, http.StatusInternalServerError, struct {
@@ -746,20 +773,27 @@ func (api *APIServer) httpKillHandler(w http.ResponseWriter, r *http.Request) {
 			Operation: "kill",
 			Error:     err.Error(),
 		})
-	} else {
-		api.sendJSONEachRow(w, http.StatusOK, struct {
-			Status    string `json:"status"`
-			Operation string `json:"operation"`
-			Command   string `json:"command"`
-		}{
-			Status:    "success",
-			Operation: "kill",
-			Command:   command[0],
-		})
+		return
 	}
+	pidlock.RemovePidFileForCommand(canceledCommand)
+	api.sendJSONEachRow(w, http.StatusOK, struct {
+		Status    string `json:"status"`
+		Operation string `json:"operation"`
+		Command   string `json:"command"`
+	}{
+		Status:    "success",
+		Operation: "kill",
+		Command:   canceledCommand,
+	})
 }
 
-// httpTablesHandler - display list of tables
+// httpTablesHandler - display list of tables.
+// Query parameters:
+//   - table            - filter by db.table glob pattern (comma-separated)
+//   - remote_backup    - list tables from a remote backup (per-table size and parts)
+//   - local_backup     - list tables from a local backup (per-table size and parts), no live ClickHouse query needed
+//
+// /backup/tables/all also returns tables that match skip_tables.
 func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) {
 	cfg, err := api.ReloadConfig(w, "tables")
 	if err != nil {
@@ -767,18 +801,34 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	b := backup.NewBackuper(cfg)
 	q := r.URL.Query()
-	var tables []clickhouse.Table
-	// https://github.com/Altinity/clickhouse-backup/issues/778
-	if remoteBackup, exists := api.getQueryParameter(q, "remote_backup"); exists {
-		tables, err = b.GetTablesRemote(context.Background(), remoteBackup, q.Get("table"))
-	} else {
-		tables, err = b.GetTables(context.Background(), q.Get("table"))
+	tablePattern := q.Get("table")
+	printAll := r.URL.Path == "/backup/tables/all"
+
+	// https://github.com/Altinity/clickhouse-backup/issues/1388
+	if localBackup, exists := api.getQueryParameter(q, "local_backup"); exists {
+		rows, err := b.GetTableRowsForLocalBackup(context.Background(), localBackup, tablePattern, printAll)
+		if err != nil {
+			api.writeError(w, http.StatusInternalServerError, "tables", err)
+			return
+		}
+		api.sendJSONEachRow(w, http.StatusOK, rows)
+		return
 	}
+	if remoteBackup, exists := api.getQueryParameter(q, "remote_backup"); exists {
+		rows, err := b.GetTableRowsForRemoteBackup(context.Background(), remoteBackup, tablePattern, printAll)
+		if err != nil {
+			api.writeError(w, http.StatusInternalServerError, "tables", err)
+			return
+		}
+		api.sendJSONEachRow(w, http.StatusOK, rows)
+		return
+	}
+	tables, err := b.GetTables(context.Background(), tablePattern)
 	if err != nil {
 		api.writeError(w, http.StatusInternalServerError, "tables", err)
 		return
 	}
-	if r.URL.Path == "/backup/tables/all" {
+	if printAll {
 		api.sendJSONEachRow(w, http.StatusOK, tables)
 		return
 	}
@@ -840,13 +890,26 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 	if wherePresent {
 		fullCommand += " " + where
 	}
-	commandId, ctx := status.Current.Start(fullCommand)
-	defer status.Current.Stop(commandId, err)
+	skipActions := cfg.API.IsBackupActionsSkipCommand("list")
+	var commandId int
+	var ctx context.Context
+	if skipActions {
+		commandId = status.NotFromAPI
+		ctx = context.Background()
+	} else {
+		commandId, ctx = status.Current.Start(fullCommand)
+	}
+	stopStatus := func(err error) {
+		if !skipActions {
+			status.Current.Stop(commandId, err)
+		}
+	}
 	b := backup.NewBackuper(cfg)
 	if where == "local" || !wherePresent {
 		var localBackups []backup.LocalBackup
 		localBackups, _, err = b.GetLocalBackups(ctx, nil)
 		if err != nil && !os.IsNotExist(err) {
+			stopStatus(err)
 			api.writeError(w, http.StatusInternalServerError, "list", err)
 			return
 		}
@@ -881,9 +944,10 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if cfg.General.RemoteStorage != "none" && (where == "remote" || !wherePresent) {
 		brokenBackups := 0
-		remoteBackups, err := b.GetRemoteBackups(ctx, true)
-		if err != nil {
-			api.writeError(w, http.StatusInternalServerError, "list", err)
+		remoteBackups, listErr := b.GetRemoteBackups(ctx, true)
+		if listErr != nil {
+			stopStatus(listErr)
+			api.writeError(w, http.StatusInternalServerError, "list", listErr)
 			return
 		}
 		for i, item := range remoteBackups {
@@ -922,11 +986,12 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		api.metrics.NumberBackupsRemote.Set(float64(len(remoteBackups)))
 	}
 	api.sendJSONEachRow(w, http.StatusOK, backupsJSON)
+	stopStatus(nil)
 }
 
 // httpCreateHandler - create a backup
 func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "create", ErrAPILocked)
 		return
@@ -1032,11 +1097,9 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
-		go func() {
-			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
-				log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
-			}
-		}()
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
 
 		status.Current.Stop(commandId, nil)
 		api.successCallback(context.Background(), operationId.String(), callback)
@@ -1056,7 +1119,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 
 // httpCreateRemoteHandler - create and upload a backup
 func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "create_remote", ErrAPILocked)
 		return
@@ -1159,7 +1222,7 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	commandId, _ := status.Current.Start(fullCommand)
+	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create_remote", 0, func() error {
 			b := backup.NewBackuper(cfg)
@@ -1171,11 +1234,9 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
-		go func() {
-			if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
-				log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
-			}
-		}()
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
 
 		status.Current.Stop(commandId, nil)
 		api.successCallback(context.Background(), operationId.String(), callback)
@@ -1195,7 +1256,7 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 
 // httpWatchHandler - run watch command go routine, can't run the same watch command twice
 func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "watch", ErrAPILocked)
 		return
@@ -1336,11 +1397,9 @@ func (api *APIServer) httpCleanLocalBrokenHandler(w http.ResponseWriter, _ *http
 		api.writeError(w, http.StatusInternalServerError, "clean_local_broken", err)
 		return
 	}
-	go func() {
-		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
-			log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
-		}
-	}()
+	if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+		log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+	}
 
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status    string `json:"status"`
@@ -1360,17 +1419,15 @@ func (api *APIServer) httpCleanRemoteBrokenHandler(w http.ResponseWriter, _ *htt
 	defer status.Current.Stop(commandId, err)
 
 	b := backup.NewBackuper(cfg)
-	err = b.CleanRemoteBroken(commandId)
+	err = b.CleanRemoteBroken(commandId, nil)
 	if err != nil {
 		log.Error().Msgf("Clean remote broken error: %v", err)
 		api.writeError(w, http.StatusInternalServerError, "clean_remote_broken", err)
 		return
 	}
-	go func() {
-		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
-			log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
-		}
-	}()
+	if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+		log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+	}
 
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status    string `json:"status"`
@@ -1383,7 +1440,7 @@ func (api *APIServer) httpCleanRemoteBrokenHandler(w http.ResponseWriter, _ *htt
 
 // httpUploadHandler - upload a backup to remote storage
 func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "upload", ErrAPILocked)
 		return
@@ -1469,8 +1526,8 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
-		commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
 			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, api.cliApp.Version, commandId)
@@ -1481,11 +1538,9 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
-		go func() {
-			if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
-				log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
-			}
-		}()
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
 		status.Current.Stop(commandId, nil)
 		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
@@ -1511,7 +1566,7 @@ var tableMappingRE = regexp.MustCompile(`[\w+]:[\w+]`)
 
 // httpRestoreHandler - restore a backup from local storage
 func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "restore", ErrAPILocked)
 		return
@@ -1558,7 +1613,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 				mappingItems := strings.Split(databaseMapping, ",")
 				for _, m := range mappingItems {
 					if strings.Count(m, ":") != 1 || !databaseMappingRE.MatchString(m) {
-						api.writeError(w, http.StatusInternalServerError, "restore", fmt.Errorf("invalid values in restore_database_mapping %s", m))
+						api.writeError(w, http.StatusInternalServerError, "restore", errors.Errorf("invalid values in restore_database_mapping %s", m))
 						return
 
 					}
@@ -1582,7 +1637,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 				mappingItems := strings.Split(tableMapping, ",")
 				for _, m := range mappingItems {
 					if strings.Count(m, ":") != 1 || !tableMappingRE.MatchString(m) {
-						api.writeError(w, http.StatusInternalServerError, "restore", fmt.Errorf("invalid values in restore_table_mapping %s", m))
+						api.writeError(w, http.StatusInternalServerError, "restore", errors.Errorf("invalid values in restore_table_mapping %s", m))
 						return
 					}
 				}
@@ -1680,6 +1735,21 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// Handle skip-empty-tables parameter
+	// https://github.com/Altinity/clickhouse-backup/issues/1265
+	skipEmptyTables := false
+	skipEmptyTablesParamName := "skip_empty_tables"
+	skipEmptyTablesParamNames := []string{
+		strings.Replace(skipEmptyTablesParamName, "_", "-", -1),
+		strings.Replace(skipEmptyTablesParamName, "-", "_", -1),
+	}
+	for _, paramName := range skipEmptyTablesParamNames {
+		if _, exist := api.getQueryParameter(query, paramName); exist {
+			skipEmptyTables = true
+			fullCommand += " --skip-empty-tables"
+		}
+	}
+
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
 	fullCommand += fmt.Sprintf(" %s", name)
 
@@ -1694,13 +1764,11 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(api.config)
-			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, api.cliApp.Version, commandId)
+			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, api.cliApp.Version, commandId)
 		})
-		go func() {
-			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
-				log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
-			}
-		}()
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
 		status.Current.Stop(commandId, err)
 		if err != nil {
 			log.Error().Msgf("API /backup/restore error: %v", err)
@@ -1724,7 +1792,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 
 // httpRestoreRemoteHandler - download and restore a backup from remote storage
 func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "restore_remote", ErrAPILocked)
 		return
@@ -1772,7 +1840,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 				mappingItems := strings.Split(databaseMapping, ",")
 				for _, m := range mappingItems {
 					if strings.Count(m, ":") != 1 || !databaseMappingRE.MatchString(m) {
-						api.writeError(w, http.StatusInternalServerError, "restore_remote", fmt.Errorf("invalid values in restore_database_mapping %s", m))
+						api.writeError(w, http.StatusInternalServerError, "restore_remote", errors.Errorf("invalid values in restore_database_mapping %s", m))
 						return
 
 					}
@@ -1796,7 +1864,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 				mappingItems := strings.Split(tableMapping, ",")
 				for _, m := range mappingItems {
 					if strings.Count(m, ":") != 1 || !tableMappingRE.MatchString(m) {
-						api.writeError(w, http.StatusInternalServerError, "restore_remote", fmt.Errorf("invalid values in restore_table_mapping %s", m))
+						api.writeError(w, http.StatusInternalServerError, "restore_remote", errors.Errorf("invalid values in restore_table_mapping %s", m))
 						return
 					}
 				}
@@ -1899,6 +1967,21 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		fullCommand += " --hardlink-exists-files"
 	}
 
+	// Handle skip-empty-tables parameter
+	// https://github.com/Altinity/clickhouse-backup/issues/1265
+	skipEmptyTables := false
+	skipEmptyTablesParamName := "skip_empty_tables"
+	skipEmptyTablesParamNames := []string{
+		strings.Replace(skipEmptyTablesParamName, "_", "-", -1),
+		strings.Replace(skipEmptyTablesParamName, "-", "_", -1),
+	}
+	for _, paramName := range skipEmptyTablesParamNames {
+		if _, exist := api.getQueryParameter(query, paramName); exist {
+			skipEmptyTables = true
+			fullCommand += " --skip-empty-tables"
+		}
+	}
+
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
 	fullCommand += fmt.Sprintf(" %s", name)
 
@@ -1909,17 +1992,15 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	commandId, _ := status.Current.Start(fullCommand)
+	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore_remote", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, hardlinkExistsFiles, false, api.cliApp.Version, commandId)
+			return b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, api.cliApp.Version, commandId)
 		})
-		go func() {
-			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
-				log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
-			}
-		}()
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
 		status.Current.Stop(commandId, err)
 		if err != nil {
 			log.Error().Msgf("API /backup/restore_remote error: %v", err)
@@ -1943,7 +2024,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 
 // httpDownloadHandler - download a backup from remote to local storage
 func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "download", ErrAPILocked)
 		return
@@ -2014,8 +2095,8 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
-		commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 		err, _ := api.metrics.ExecuteWithMetrics("download", 0, func() error {
 			b := backup.NewBackuper(cfg)
 			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, hardlinkExistsFiles, api.cliApp.Version, commandId)
@@ -2026,11 +2107,9 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
-		go func() {
-			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
-				log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
-			}
-		}()
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
 		status.Current.Stop(commandId, nil)
 		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
@@ -2049,7 +2128,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 
 // httpDeleteHandler - delete a backup from local or remote storage
 func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "delete", ErrAPILocked)
 		return
@@ -2064,11 +2143,15 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 	b := backup.NewBackuper(cfg)
 	switch vars["where"] {
 	case "local":
-		err = b.RemoveBackupLocal(ctx, vars["name"], nil)
+		err, _ = api.metrics.ExecuteWithMetrics("delete", 0, func() error {
+			return b.RemoveBackupLocal(ctx, vars["name"], nil)
+		})
 	case "remote":
-		err = b.RemoveBackupRemote(ctx, vars["name"])
+		err, _ = api.metrics.ExecuteWithMetrics("delete", 0, func() error {
+			return b.RemoveBackupRemote(ctx, vars["name"])
+		})
 	default:
-		err = fmt.Errorf("backup location must be 'local' or 'remote'")
+		err = errors.New("backup location must be 'local' or 'remote'")
 	}
 	status.Current.Stop(commandId, err)
 	if err != nil {
@@ -2076,11 +2159,9 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 		api.writeError(w, http.StatusInternalServerError, "delete", err)
 		return
 	}
-	go func() {
-		if metricsErr := api.UpdateBackupMetrics(context.Background(), vars["where"] == "local"); metricsErr != nil {
-			log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
-		}
-	}()
+	if metricsErr := api.UpdateBackupMetrics(context.Background(), vars["where"] == "local"); metricsErr != nil {
+		log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+	}
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
 		Operation  string `json:"operation"`
@@ -2113,13 +2194,14 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 	localDataSize := float64(0)
 
 	log.Info().Msgf("Update backup metrics start (onlyLocal=%v)", onlyLocal)
-	if !api.config.API.EnableMetrics {
+	if !api.GetConfig().API.EnableMetrics {
 		return nil
 	}
 	b := backup.NewBackuper(api.config)
+
 	localBackups, _, err := b.GetLocalBackups(ctx, nil)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "UpdateBackupMetrics GetLocalBackups")
 	}
 	if len(localBackups) > 0 {
 		numberBackupsLocal = len(localBackups)
@@ -2133,12 +2215,12 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 		api.metrics.NumberBackupsLocal.Set(0)
 	}
 	if localDataSize, err = b.GetLocalDataSize(ctx); err != nil {
-		return err
+		return errors.Wrap(err, "UpdateBackupMetrics GetLocalDataSize")
 	}
 	if localDataSize > 0 {
 		api.metrics.LocalDataSize.Set(localDataSize)
 	}
-	if api.config.General.RemoteStorage == "none" || onlyLocal {
+	if api.GetConfig().General.RemoteStorage == "none" || onlyLocal {
 		log.Info().Fields(map[string]interface{}{
 			"duration":              utils.HumanizeDuration(time.Since(startTime)),
 			"LastBackupCreateLocal": lastBackupCreateLocal,
@@ -2157,7 +2239,7 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 
 	remoteBackups, err := b.GetRemoteBackups(ctx, false)
 	if err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	if len(remoteBackups) > 0 {
 		numberBackupsRemote = len(remoteBackups)
@@ -2237,59 +2319,57 @@ func (api *APIServer) registerMetricsHandlers(r *mux.Router, enableMetrics bool,
 
 func (api *APIServer) CreateIntegrationTables() error {
 	log.Info().Msgf("Create integration tables")
-	ch := &clickhouse.ClickHouse{
-		Config: &api.config.ClickHouse,
-	}
+	ch := clickhouse.NewClickHouse(&api.GetConfig().ClickHouse)
 	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse: %w", err)
+		return errors.Wrap(err, "can't connect to clickhouse")
 	}
 	defer ch.Close()
 	port := "80"
-	if strings.Contains(api.config.API.ListenAddr, ":") {
-		port = api.config.API.ListenAddr[strings.Index(api.config.API.ListenAddr, ":")+1:]
+	if strings.Contains(api.GetConfig().API.ListenAddr, ":") {
+		port = api.GetConfig().API.ListenAddr[strings.Index(api.GetConfig().API.ListenAddr, ":")+1:]
 	}
 	auth := ""
-	if api.config.API.Username != "" || api.config.API.Password != "" {
+	if api.GetConfig().API.Username != "" || api.GetConfig().API.Password != "" {
 		params := url.Values{}
-		params.Add("user", api.config.API.Username)
-		params.Add("pass", api.config.API.Password)
+		params.Add("user", api.GetConfig().API.Username)
+		params.Add("pass", api.GetConfig().API.Password)
 		auth = fmt.Sprintf("?%s", params.Encode())
 	}
 	schema := "http"
-	if api.config.API.Secure {
+	if api.GetConfig().API.Secure {
 		schema = "https"
 	}
 	host := "127.0.0.1"
-	if api.config.API.IntegrationTablesHost != "" {
-		host = api.config.API.IntegrationTablesHost
+	if api.GetConfig().API.IntegrationTablesHost != "" {
+		host = api.GetConfig().API.IntegrationTablesHost
 	}
 	settings := ""
 	version, err := ch.GetVersion(context.Background())
 	if err != nil {
-		return err
+		return errors.Wrap(err, "CreateIntegrationTables GetVersion")
 	}
 	if version >= 21001000 {
 		settings = "SETTINGS input_format_skip_unknown_fields=1"
 	}
 	disks, err := ch.GetDisks(context.Background(), true)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "CreateIntegrationTables GetDisks")
 	}
 	defaultDataPath, err := ch.GetDefaultPath(disks)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "CreateIntegrationTables GetDefaultPath")
 	}
 	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String, operation_id String) ENGINE=URL('%s://%s:%s/backup/actions%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, false, "", 0, defaultDataPath, false, ""); err != nil {
-		return err
+		return errors.Wrap(err, "CreateIntegrationTables backup_actions")
 	}
 	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size UInt64, data_size UInt64, object_disk_size UInt64,metadata_size UInt64,rbac_size UInt64,config_size UInt64, named_collection_size UInt64, compressed_size UInt64, location String, required String, desc String) ENGINE=URL('%s://%s:%s/backup/list%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, false, "", 0, defaultDataPath, false, ""); err != nil {
-		return err
+		return errors.Wrap(err, "CreateIntegrationTables backup_list")
 	}
 	query = fmt.Sprintf("CREATE TABLE system.backup_version (version String) ENGINE=URL('%s://%s:%s/backup/version%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_version"}, query, true, false, "", 0, defaultDataPath, false, ""); err != nil {
-		return err
+		return errors.Wrap(err, "CreateIntegrationTables backup_version")
 	}
 	return nil
 }
@@ -2303,18 +2383,17 @@ func (api *APIServer) ReloadConfig(w http.ResponseWriter, command string) (*conf
 		}
 		return nil, err
 	}
-	api.config = cfg
+	api.setConfig(cfg)
 	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
 	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
+	status.SetCancelWaitTimeout(cfg.API.CancelOperationTimeoutDuration)
 	return cfg, nil
 }
 
 func (api *APIServer) ResumeOperationsAfterRestart() error {
-	ch := clickhouse.ClickHouse{
-		Config: &api.config.ClickHouse,
-	}
+	ch := clickhouse.NewClickHouse(&api.GetConfig().ClickHouse)
 	if err := ch.Connect(); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	defer func() {
 		if err := ch.GetConn().Close(); err != nil {
@@ -2323,93 +2402,186 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 	}()
 	disks, err := ch.GetDisks(context.Background(), true)
 	if err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	defaultDiskPath, err := ch.GetDefaultPath(disks)
 	if err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	embeddedBackupDiskPath, err := ch.GetEmbeddedBackupPath(disks)
 	if err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	backupList, err := os.ReadDir(path.Join(defaultDiskPath, "backup"))
 	if err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	for _, backupItem := range backupList {
 		if backupItem.IsDir() {
 			backupName := backupItem.Name()
-			stateFiles, err := filepath.Glob(path.Join(defaultDiskPath, "backup", backupName, "*.state2"))
-			if err != nil {
-				return err
+			stateFiles, globErr := filepath.Glob(path.Join(defaultDiskPath, "backup", backupName, "*.state2"))
+			if globErr != nil {
+				return errors.WithStack(globErr)
 			}
-			embeddedStateFiles, err := filepath.Glob(path.Join(embeddedBackupDiskPath, "backup", backupName, "*.state2"))
-			if err != nil {
-				return err
+			embeddedStateFiles, embeddedGlobErr := filepath.Glob(path.Join(embeddedBackupDiskPath, "backup", backupName, "*.state2"))
+			if embeddedGlobErr != nil {
+				return errors.WithStack(embeddedGlobErr)
 			}
 			stateFiles = append(stateFiles, embeddedStateFiles...)
 			for _, stateFile := range stateFiles {
 				command := strings.TrimSuffix(filepath.Base(stateFile), ".state2")
+				if !api.GetConfig().API.IsCompleteResumableAfterRestartCommand(command) {
+					log.Warn().Str("operation", "ResumeOperationsAfterRestart").Msgf("skip %s: command %q is not allowed by api.complete_resumable_after_restart_commands", stateFile, command)
+					continue
+				}
 				state := resumable.NewState(strings.TrimSuffix(filepath.Dir(stateFile), filepath.Join("backup", backupName)), backupName, command, nil)
 				params := state.GetParams()
 				state.Close()
-				if !api.config.API.AllowParallel && status.Current.InProgress() {
-					return fmt.Errorf("another commands in progress")
+				if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
+					return errors.New("another commands in progress")
 				}
+				args := []string{command}
 				switch command {
-				case "download":
-				case "upload":
-					args := make([]string, 0)
-					args = append(args, command)
-					if diffFrom, ok := params["diffFrom"]; ok && diffFrom.(string) != "" {
-						args = append(args, fmt.Sprintf("--diff-from=\"%s\"", diffFrom))
-					}
-					if diffFromRemote, ok := params["diffFromRemote"]; ok && diffFromRemote.(string) != "" {
-						args = append(args, fmt.Sprintf("--diff-from-remote=\"%s\"", diffFromRemote))
+				case "create":
+					if diffFromRemote := resumableStringParam(params, "diffFromRemote"); diffFromRemote != "" {
+						args = append(args, fmt.Sprintf("--diff-from-remote=%s", diffFromRemote))
 					}
 
-					if tablePattern, ok := params["tablePattern"]; ok && tablePattern.(string) != "" {
-						args = append(args, fmt.Sprintf("--tables=\"%s\"", tablePattern))
+					if tablePattern := resumableStringParam(params, "tablePattern"); tablePattern != "" {
+						args = append(args, fmt.Sprintf("--tables=%s", tablePattern))
 					}
 
-					if schemaOnly, ok := params["schemaOnly"]; ok && schemaOnly.(bool) {
+					if resumableBoolParam(params, "schemaOnly") {
 						args = append(args, "--schema=1")
 					}
 
-					if partitions, ok := params["partitions"]; ok && len(partitions.([]interface{})) > 0 {
-						partitionsStr := make([]string, len(partitions.([]interface{})))
-						for j, v := range partitions.([]interface{}) {
-							partitionsStr[j] = fmt.Sprintf("--partitions=\"%s\"", v.(string))
+					if partitions := resumableStringSliceParam(params, "partitions"); len(partitions) > 0 {
+						partitionsStr := make([]string, len(partitions))
+						for j, v := range partitions {
+							partitionsStr[j] = fmt.Sprintf("--partitions=%s", v)
 						}
 						args = append(args, partitionsStr...)
 					}
-					args = append(args, "--resumable=1", backupName)
-					fullCommand := strings.Join(args, " ")
-					log.Info().Str("operation", "ResumeOperationsAfterRestart").Send()
-					commandId, _ := status.Current.Start(fullCommand)
-					err, _ = api.metrics.ExecuteWithMetrics(command, 0, func() error {
-						return api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
-					})
-					status.Current.Stop(commandId, err)
-					if err != nil {
-						return err
+				case "download":
+				case "upload":
+					if diffFrom := resumableStringParam(params, "diffFrom"); diffFrom != "" {
+						args = append(args, fmt.Sprintf("--diff-from=%s", diffFrom))
+					}
+					if diffFromRemote := resumableStringParam(params, "diffFromRemote"); diffFromRemote != "" {
+						args = append(args, fmt.Sprintf("--diff-from-remote=%s", diffFromRemote))
 					}
 
-					if err = os.Remove(stateFile); err != nil {
-						if api.config.General.BackupsToKeepLocal >= 0 {
-							return err
+					if tablePattern := resumableStringParam(params, "tablePattern"); tablePattern != "" {
+						args = append(args, fmt.Sprintf("--tables=%s", tablePattern))
+					}
+
+					if resumableBoolParam(params, "schemaOnly") {
+						args = append(args, "--schema=1")
+					}
+
+					if partitions := resumableStringSliceParam(params, "partitions"); len(partitions) > 0 {
+						partitionsStr := make([]string, len(partitions))
+						for j, v := range partitions {
+							partitionsStr[j] = fmt.Sprintf("--partitions=%s", v)
 						}
-						log.Warn().Str("operation", "ResumeOperationsAfterRestart").Msgf("remove %s return error: ", err)
+						args = append(args, partitionsStr...)
+					}
+				case "restore":
+					if tablePattern := resumableStringParam(params, "tablePattern"); tablePattern != "" {
+						args = append(args, fmt.Sprintf("--tables=%s", tablePattern))
+					}
+
+					if resumableBoolParam(params, "schemaOnly") {
+						args = append(args, "--schema=1")
+					}
+
+					if resumableBoolParam(params, "dataOnly") {
+						args = append(args, "--data=1")
+					}
+
+					if resumableBoolParam(params, "dropExists") {
+						args = append(args, "--drop=1")
+					}
+
+					if partitions := resumableStringSliceParam(params, "partitions"); len(partitions) > 0 {
+						partitionsStr := make([]string, len(partitions))
+						for j, v := range partitions {
+							partitionsStr[j] = fmt.Sprintf("--partitions=%s", v)
+						}
+						args = append(args, partitionsStr...)
 					}
 				default:
-					return fmt.Errorf("unkown command for state file %s", stateFile)
+					return errors.Errorf("unkown command for state file %s", stateFile)
+				}
+				args = append(args, "--resumable=1", backupName)
+				fullCommand := strings.Join(args, " ")
+				log.Info().Str("operation", "ResumeOperationsAfterRestart").Send()
+				commandId, _ := status.Current.Start(fullCommand)
+				err, _ = api.metrics.ExecuteWithMetrics(command, 0, func() error {
+					return api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
+				})
+				status.Current.Stop(commandId, err)
+				if err != nil {
+					return errors.WithStack(err)
+				}
+
+				if err = os.Remove(stateFile); err != nil {
+					if api.GetConfig().General.BackupsToKeepLocal >= 0 {
+						return errors.WithStack(err)
+					}
+					log.Warn().Str("operation", "ResumeOperationsAfterRestart").Msgf("remove %s return error: ", err)
 				}
 			}
 		}
 	}
 
 	return nil
+}
+
+func resumableStringParam(params map[string]interface{}, key string) string {
+	if params == nil {
+		return ""
+	}
+	v, ok := params[key]
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
+}
+
+func resumableBoolParam(params map[string]interface{}, key string) bool {
+	if params == nil {
+		return false
+	}
+	v, ok := params[key]
+	if !ok {
+		return false
+	}
+	b, _ := v.(bool)
+	return b
+}
+
+func resumableStringSliceParam(params map[string]interface{}, key string) []string {
+	if params == nil {
+		return nil
+	}
+	v, ok := params[key]
+	if !ok {
+		return nil
+	}
+	values, ok := v.([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		s, ok := value.(string)
+		if ok {
+			result = append(result, s)
+		}
+	}
+	return result
 }
 
 func (api *APIServer) getQueryParameter(q url.Values, paramName string) (string, bool) {

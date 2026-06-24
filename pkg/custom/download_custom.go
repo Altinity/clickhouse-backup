@@ -2,19 +2,20 @@ package custom
 
 import (
 	"context"
-	"fmt"
+	"time"
+
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/eapache/go-resiliency/retrier"
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
-	"time"
 )
 
 func Download(ctx context.Context, retrierClassifier retrier.Classifier, cfg *config.Config, backupName string, tablePattern string, partitions []string, schemaOnly bool) error {
 	startCustomDownload := time.Now()
 	if cfg.Custom.DownloadCommand == "" {
-		return fmt.Errorf("CUSTOM_DOWNLOAD_COMMAND is not defined")
+		return errors.New("CUSTOM_DOWNLOAD_COMMAND is not defined")
 	}
 	templateData := map[string]interface{}{
 		"BACKUP_NAME":   backupName,
@@ -45,10 +46,10 @@ func Download(ctx context.Context, retrierClassifier retrier.Classifier, cfg *co
 			Str("duration", utils.HumanizeDuration(time.Since(startCustomDownload))).
 			Msg("done")
 		return nil
-	} else {
-		log.Error().
-			Str("operation", "download_custom").
-			Err(err).Send()
-		return err
 	}
+
+	log.Error().
+		Str("operation", "download_custom").
+		Err(err).Send()
+	return errors.Wrap(err, "Download custom")
 }

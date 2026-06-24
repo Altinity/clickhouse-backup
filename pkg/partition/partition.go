@@ -3,17 +3,18 @@ package partition
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
-	"path/filepath"
-	"regexp"
-	"sort"
-	"strconv"
-	"strings"
 )
 
 // https://regex101.com/r/k4Zxs9/1
@@ -54,6 +55,63 @@ var StringsRE = regexp.MustCompile(`(?i)'[^']+'`)
 var SpecialCharsRE = regexp.MustCompile(`(?i)[)(*+\-/\\,]+`)
 var FieldsNamesRE = regexp.MustCompile("(?i)\\w+|`[^`]+`\\.`[^`]+`|\"[^\"]+\"")
 
+func extractPartitionComponents(partitionExpr string) []string {
+	partitionExpr = strings.TrimSpace(partitionExpr)
+	log.Debug().Msgf("extractPartitionComponents(partitionExpr=%s)", partitionExpr)
+	if strings.HasPrefix(partitionExpr, "(") && strings.HasSuffix(partitionExpr, ")") {
+		inner := strings.TrimSpace(partitionExpr[1 : len(partitionExpr)-1])
+		return splitPartitionTuple(inner)
+	}
+	return []string{partitionExpr}
+}
+
+func splitPartitionTuple(s string) []string {
+	var components []string
+	var current strings.Builder
+	depth := 0
+	inQuote := false
+	var quoteChar rune
+
+	for _, ch := range s {
+		switch ch {
+		case '\'', '"':
+			if !inQuote {
+				inQuote = true
+				quoteChar = ch
+			} else if ch == quoteChar {
+				inQuote = false
+			}
+			current.WriteRune(ch)
+		case '(':
+			if !inQuote {
+				depth++
+			}
+			current.WriteRune(ch)
+		case ')':
+			if !inQuote {
+				depth--
+			}
+			current.WriteRune(ch)
+		case ',':
+			if !inQuote && depth == 0 {
+				// Top-level comma, split here
+				components = append(components, strings.TrimSpace(current.String()))
+				current.Reset()
+			} else {
+				current.WriteRune(ch)
+			}
+		default:
+			current.WriteRune(ch)
+		}
+	}
+
+	if current.Len() > 0 {
+		components = append(components, strings.TrimSpace(current.String()))
+	}
+
+	return components
+}
+
 func extractPartitionByFieldNames(s string) []struct {
 	Name string `ch:"name"`
 } {
@@ -61,13 +119,13 @@ func extractPartitionByFieldNames(s string) []struct {
 	s = OrderByRE.ReplaceAllString(s, "")
 	s = FunctionsRE.ReplaceAllString(s, "")
 	s = StringsRE.ReplaceAllString(s, "")
-	s = SpecialCharsRE.ReplaceAllString(s, "")
+	s = SpecialCharsRE.ReplaceAllString(s, " ")
 	matches := FieldsNamesRE.FindAllString(s, -1)
 	columns := make([]struct {
 		Name string `ch:"name"`
 	}, len(matches))
 	for i := range matches {
-		columns[i].Name = matches[i]
+		columns[i].Name = strings.TrimSpace(matches[i])
 	}
 	return columns
 }
@@ -76,6 +134,218 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 	if !strings.Contains(createQuery, "MergeTree") || !PartitionByRE.MatchString(createQuery) {
 		return "", "", nil
 	}
+
+	partitionByMatches := PartitionByRE.FindStringSubmatch(createQuery)
+	if len(partitionByMatches) < 2 || partitionByMatches[1] == "" {
+		return "", "", nil
+	}
+	partitionExpr := strings.TrimSpace(partitionByMatches[1])
+	s := partitionExpr
+	s = SettingsRE.ReplaceAllString(s, "")
+	s = OrderByRE.ReplaceAllString(s, "")
+	partitionExpr = s
+
+	version, err := ch.GetVersion(ctx)
+	if err != nil {
+		log.Warn().Msgf("can't get ClickHouse version, falling back to temporary table: %v", err)
+	}
+
+	if version >= 21008000 {
+		partitionId, partitionName, err := getPartitionIdWithFunction(ctx, ch, createQuery, partitionExpr, partition)
+		if err != nil {
+			log.Warn().Msgf("partitionId function failed, using temporary table: %v", err)
+			return getPartitionIdWithTempTable(ctx, ch, database, table, createQuery, partition, partitionByMatches)
+		}
+		return partitionId, partitionName, nil
+	}
+
+	return getPartitionIdWithTempTable(ctx, ch, database, table, createQuery, partition, partitionByMatches)
+}
+
+func getPartitionIdWithFunction(ctx context.Context, ch *clickhouse.ClickHouse, createQuery, partitionExpr, partition string) (string, string, error) {
+	partitionValues := splitAndParsePartition(partition)
+	partitionComponents := extractPartitionComponents(partitionExpr)
+
+	if len(partitionValues) != len(partitionComponents) {
+		return "", "", errors.Errorf("partition values count (%d) doesn't match components count (%d)", len(partitionValues), len(partitionComponents))
+	}
+
+	evaluatedId, evaluatedName, evaluatedErr := tryEvaluatedPartitionId(ctx, ch, createQuery, partitionExpr, partitionComponents, partitionValues)
+	if evaluatedErr == nil {
+		return evaluatedId, evaluatedName, nil
+	}
+
+	directId, directName, directErr := tryDirectPartitionId(ctx, ch, partitionValues)
+	if directErr == nil {
+		return directId, directName, nil
+	}
+
+	return "", "", errors.Errorf("both approaches failed: evaluated=%v, direct=%v", evaluatedErr, directErr)
+}
+
+func tryDirectPartitionId(ctx context.Context, ch *clickhouse.ClickHouse, partitionValues []interface{}) (string, string, error) {
+	placeholders := make([]string, len(partitionValues))
+	var args []interface{}
+
+	for i := range partitionValues {
+		placeholders[i] = "?"
+		args = append(args, partitionValues[i])
+	}
+
+	var partitionNameExpr string
+	if len(partitionValues) == 1 {
+		partitionNameExpr = "toString(?)"
+		args = append(args, partitionValues[0])
+	} else {
+		partitionNameExpr = fmt.Sprintf("toString((%s))", strings.Join(placeholders, ", "))
+		args = append(args, partitionValues...)
+	}
+
+	sql := fmt.Sprintf("SELECT partitionId(%s) AS partition_id, %s AS partition_name",
+		strings.Join(placeholders, ", "), partitionNameExpr)
+
+	var result []struct {
+		PartitionId   string `ch:"partition_id"`
+		PartitionName string `ch:"partition_name"`
+	}
+
+	if err := ch.SelectContext(ctx, &result, sql, args...); err != nil {
+		return "", "", errors.Wrap(err, "tryDirectPartitionId SelectContext")
+	}
+
+	if len(result) != 1 {
+		return "", "", errors.Errorf("unexpected result count: %d", len(result))
+	}
+
+	return result[0].PartitionId, result[0].PartitionName, nil
+}
+
+func tryEvaluatedPartitionId(ctx context.Context, ch *clickhouse.ClickHouse, createQuery, partitionExpr string, partitionComponents []string, partitionValues []interface{}) (string, string, error) {
+	columns := extractPartitionByFieldNames(partitionExpr)
+	if len(columns) == 0 {
+		return "", "", errors.Errorf("can't extract column names from partition expression: %s", partitionExpr)
+	}
+
+	if len(partitionValues) != len(columns) {
+		return "", "", errors.Errorf("partition values count (%d) doesn't match columns count (%d)", len(partitionValues), len(columns))
+	}
+
+	var args []interface{}
+	withItems := make([]string, len(columns))
+	for i, col := range columns {
+		columnType := extractFieldType(createQuery, col.Name, partitionValues[i])
+		withItems[i] = fmt.Sprintf("CAST(? AS %s) AS %s", columnType, col.Name)
+		args = append(args, partitionValues[i])
+	}
+
+	partitionIdArgs := partitionExpr
+	if len(partitionComponents) > 1 {
+		partitionIdArgs = strings.Join(partitionComponents, ", ")
+	}
+
+	// Use ClickHouse's native partition formatting by calling toString() on the full expression
+	partitionNameExpr := fmt.Sprintf("toString(%s)", partitionExpr)
+
+	sql := fmt.Sprintf("WITH %s SELECT partitionId(%s) AS partition_id, %s AS partition_name",
+		strings.Join(withItems, ", "), partitionIdArgs, partitionNameExpr)
+
+	var result []struct {
+		PartitionId   string `ch:"partition_id"`
+		PartitionName string `ch:"partition_name"`
+	}
+
+	if err := ch.SelectContext(ctx, &result, sql, args...); err != nil {
+		return "", "", errors.Wrapf(err, "can't execute partitionId query: sql=%s, args=%#v", sql, args)
+	}
+
+	if len(result) != 1 {
+		return "", "", errors.Errorf("unexpected result: %#v", result)
+	}
+
+	return result[0].PartitionId, result[0].PartitionName, nil
+}
+
+func extractFieldType(createQuery, columnName string, value interface{}) string {
+	fieldNamePattern := fmt.Sprintf(`(?:[\s,\(])\x60?%s\x60?\s+`, regexp.QuoteMeta(columnName))
+	re := regexp.MustCompile(fieldNamePattern)
+
+	loc := re.FindStringIndex(createQuery)
+	if loc != nil {
+		remaining := createQuery[loc[1]:]
+
+		var parsedType strings.Builder
+		nesting := 0
+		inQuotes := false
+
+		for _, ch := range remaining {
+			// We process strings inside the type (for example, DateTime('Europe/Moscow'))
+			if ch == '\'' {
+				inQuotes = !inQuotes
+				parsedType.WriteRune(ch)
+				continue
+			}
+
+			// If we are inside quotes, we just take everything as it is
+			if inQuotes {
+				parsedType.WriteRune(ch)
+				continue
+			}
+
+			// Accounting for nesting of parentheses
+			if ch == '(' {
+				nesting++
+				parsedType.WriteRune(ch)
+				continue
+			}
+			if ch == ')' {
+				if nesting == 0 {
+					break // Дошли до закрывающей скобки списка колонок (конец таблицы)
+				}
+				nesting--
+				parsedType.WriteRune(ch)
+				continue
+			}
+
+			// A comma OUTSIDE parentheses means the end of the current column definition
+			if ch == ',' {
+				if nesting == 0 {
+					break
+				}
+				parsedType.WriteRune(ch)
+				continue
+			}
+
+			// A space OUTSIDE the parentheses means the end of the type and the beginning of the properties (e.g. DEFAULT, COMMENT)
+			// Spaces INSIDE parentheses (e.g. Decimal(64, 3)) are preserved
+			if ch == ' ' || ch == '\t' || ch == '\n' {
+				if nesting == 0 {
+					if parsedType.Len() > 0 {
+						break // Space after type
+					}
+					continue // Skip leading spaces if present
+				}
+				parsedType.WriteRune(ch)
+				continue
+			}
+
+			// Any other character is added to the result
+			parsedType.WriteRune(ch)
+		}
+
+		return parsedType.String()
+	}
+
+	switch value.(type) {
+	case int64:
+		return "Int64"
+	case float64:
+		return "Float64"
+	default:
+		return "String"
+	}
+}
+
+func getPartitionIdWithTempTable(ctx context.Context, ch *clickhouse.ClickHouse, database, table, createQuery, partition string, partitionByMatches []string) (string, string, error) {
 	createQuery = replicatedMergeTreeRE.ReplaceAllString(createQuery, "$1($4)$5")
 	if len(uuidRE.FindAllString(createQuery, -1)) > 0 {
 		newUUID, _ := uuid.NewUUID()
@@ -91,20 +361,19 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 	partitionIdTable := "__partition_id_" + table
 	createQuery = dbAndTableNameRE.ReplaceAllString(createQuery, fmt.Sprintf("`%s`.`%s`", database, partitionIdTable))
 	if err := ch.Query(createQuery); err != nil {
-		return "", "", err
+		return "", "", errors.Wrap(err, "getPartitionIdWithTempTable ch.Query createQuery")
 	}
 	columns := make([]struct {
 		Name string `ch:"name"`
 	}, 0)
 	sql := "SELECT name FROM system.columns WHERE database=? AND table=? AND is_in_partition_key"
 	oldVersion := false
-	partitionByMatches := PartitionByRE.FindStringSubmatch(createQuery)
 	if err := ch.SelectContext(ctx, &columns, sql, database, partitionIdTable); err != nil {
 		if len(partitionByMatches) == 0 {
 			if dropErr := dropPartitionIdTable(ch, database, partitionIdTable); dropErr != nil {
 				return "", "", dropErr
 			}
-			return "", "", fmt.Errorf("can't get is_in_partition_key column names from for table `%s`.`%s`: %v", database, partitionIdTable, err)
+			return "", "", errors.Wrapf(err, "can't get is_in_partition_key column names from for table `%s`.`%s`", database, partitionIdTable)
 		}
 		columns = extractPartitionByFieldNames(partitionByMatches[1])
 		oldVersion = true
@@ -154,7 +423,7 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 		}
 	}
 	if err != nil {
-		return "", "", err
+		return "", "", errors.Wrap(err, "getPartitionIdWithTempTable insert partition")
 	}
 	partitions := make([]struct {
 		Id   string `ch:"partition_id"`
@@ -162,10 +431,10 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 	}, 0)
 	sql = "SELECT partition_id, partition FROM system.parts WHERE active AND database=? AND table=?"
 	if err = ch.SelectContext(ctx, &partitions, sql, database, partitionIdTable); err != nil {
-		return "", "", fmt.Errorf("can't SELECT partition_id for PARTITION BY fields(%#v) FROM `%s`.`%s`: %v", partitionInsert, database, partitionIdTable, err)
+		return "", "", errors.Wrapf(err, "can't SELECT partition_id for PARTITION BY fields(%#v) FROM `%s`.`%s`", partitionInsert, database, partitionIdTable)
 	}
 	if len(partitions) != 1 {
-		return "", "", fmt.Errorf("wrong partitionsIds=%#v found system.parts for table `%s`.`%s`", partitions, database, partitionIdTable)
+		return "", "", errors.Errorf("wrong partitionsIds=%#v found system.parts for table `%s`.`%s`", partitions, database, partitionIdTable)
 	}
 
 	return partitions[0].Id, partitions[0].Name, nil
@@ -176,10 +445,10 @@ func dropPartitionIdTable(ch *clickhouse.ClickHouse, database string, partitionI
 	if isAtomicOrReplicated, err := ch.IsDbAtomicOrReplicated(database); isAtomicOrReplicated {
 		sql += " SYNC"
 	} else if err != nil {
-		return err
+		return errors.Wrap(err, "dropPartitionIdTable IsDbAtomicOrReplicated")
 	}
 	if err := ch.Query(sql); err != nil {
-		return err
+		return errors.Wrap(err, "dropPartitionIdTable ch.Query")
 	}
 	return nil
 }
@@ -216,7 +485,7 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 				for _, t := range tablesFromClickHouse {
 					createIdMapAndNameListIfNotExists(t.Database, t.Name, partitionsIdMap, partitionsNameList)
 					if partitionId, partitionName, err := GetPartitionIdAndName(ctx, ch, t.Database, t.Name, t.CreateTableQuery, partitionTuple); err != nil {
-						log.Fatal().Msgf("partition.GetPartitionIdAndName error: %v", err)
+						log.Fatal().Stack().Msgf("partition.GetPartitionIdAndName error: %v", err)
 					} else if partitionId != "" {
 						addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, t.Database, t.Name, partitionsIdMap, partitionsNameList, tablePattern)
 					}
@@ -224,7 +493,7 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 				for _, t := range tablesFromMetadata {
 					createIdMapAndNameListIfNotExists(t.Database, t.Table, partitionsIdMap, partitionsNameList)
 					if partitionId, partitionName, err := GetPartitionIdAndName(ctx, ch, t.Database, t.Table, t.Query, partitionTuple); err != nil {
-						log.Fatal().Msgf("partition.GetPartitionIdAndName error: %v", err)
+						log.Fatal().Stack().Msgf("partition.GetPartitionIdAndName error: %v", err)
 					} else if partitionId != "" {
 						addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, t.Database, t.Table, partitionsIdMap, partitionsNameList, tablePattern)
 					}

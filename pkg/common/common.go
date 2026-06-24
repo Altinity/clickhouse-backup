@@ -1,7 +1,6 @@
 package common
 
 import (
-	"github.com/rs/zerolog/log"
 	"hash/crc64"
 	"io"
 	"math/rand"
@@ -11,6 +10,9 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
+	"github.com/rs/zerolog/log"
 )
 
 func TablePathEncode(str string) string {
@@ -127,6 +129,7 @@ func AddRandomJitter(duration time.Duration, jitterPercent int8) time.Duration {
 
 // CalculateChecksum calculates checksum for a file on a given disk
 func CalculateChecksum(diskPath string, relativePath string) (uint64, error) {
+	start := time.Now()
 	fullPath := path.Join(diskPath, relativePath)
 	file, err := os.Open(fullPath)
 	if err != nil {
@@ -143,6 +146,6 @@ func CalculateChecksum(diskPath string, relativePath string) (uint64, error) {
 	if _, err := io.Copy(hash, file); err != nil {
 		return 0, err
 	}
-
+	log.Debug().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("fullPath", fullPath).Msg("checksum calculated")
 	return hash.Sum64(), nil
 }

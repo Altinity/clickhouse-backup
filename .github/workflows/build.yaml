@@ -16,25 +16,26 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.25"
+          - "1.26"
     steps:
       - name: Checkout project
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Setup golang
         id: setup-go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '^${{ matrix.golang-version }}'
 
-      - name: Setup musl
-        id: setup-musl
-        run: |
-          sudo apt-get install -y musl-tools musl-dev
+# we don't need musl after switch go 1.26
+#      - name: Setup musl
+#        id: setup-musl
+#        run: |
+#          sudo apt-get install -y musl-tools musl-dev
 
 #      - name: Cache golang
 #        id: cache-golang
-#        uses: actions/cache@v4
+#        uses: actions/cache@v5
 #        with:
 #          path: |
 #            ~/go/pkg/mod
@@ -42,23 +43,15 @@ jobs:
 #          key: clickhouse-backup-golang-${{ matrix.golang-version }}-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
 
       - name: Install golang dependencies
-        run: go mod download
+        run: go mod download -x
 #        if: |
 #          steps.cache-golang.outputs.cache-hit != 'true'
 
       - name: Build clickhouse-backup binary
         id: make-race
         env:
-          GOROOT: ${{ env.GOROOT_1_25_X64 }}
+          GOROOT: ${{ env.GOROOT_1_26_X64 }}
         run: |
-          echo "=== Go Environment Diagnostics ==="
-          echo "Expected Go version: ${{ matrix.golang-version }}"
-          echo "GOROOT environment: ${{ env.GOROOT_1_25_X64 }}"
-          echo "Actual go version:"
-          go version
-          echo "Actual GOROOT:"
-          go env GOROOT
-          echo "================================"
           make build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup
           make build/linux/amd64/clickhouse-backup-fips build/linux/arm64/clickhouse-backup-fips 
           make build-race build-race-fips config test
@@ -66,6 +59,7 @@ jobs:
       - name: Report unittest coverage
         uses: coverallsapp/github-action@v2
         with:
+          fail-on-error: false
           file: _coverage_/coverage.out
           parallel: true
           format: golang
@@ -77,7 +71,7 @@ jobs:
         with:
           VAULT_PASSWORD: ${{ secrets.VAULT_PASSWORD }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: build-artifacts
           path: |
@@ -88,7 +82,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: build-test-artifacts
           path: |
@@ -104,9 +98,10 @@ jobs:
     name: Testflows
     runs-on: ubuntu-22.04
     strategy:
+      fail-fast: false
       matrix:
         golang-version:
-          - "1.25"
+          - "1.26"
         clickhouse:
           - '22.3'
           - '22.8'
@@ -116,28 +111,30 @@ jobs:
           - '24.8'
           - '25.3'
           - '25.8'
+          - '26.3'
     steps:
       - name: Checkout project
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup golang
         id: setup-go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '^${{ matrix.golang-version }}'
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: build-test-artifacts
           path: ./clickhouse-backup/
 
       - name: Install python venv
         run: |
-          (dpkg -l | grep venv) > /dev/null || (apt-get update && apt-get install -y python3-venv)
+          set -x
+          (dpkg -l | grep venv) || (apt-get update && apt-get install -y python3-venv)
           python3 -m venv ~/venv/qa
 
       - name: Cache python
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: cache-python
         with:
           path: ~/venv/qa
@@ -145,6 +142,7 @@ jobs:
 
       - name: Install python dependencies
         run: |
+          set -x
           ~/venv/qa/bin/pip3 install -U -r ./test/testflows/requirements.txt
         if: |
           steps.cache-python.outputs.cache-hit != 'true'
@@ -158,54 +156,129 @@ jobs:
           QA_AWS_REGION: ${{ secrets.QA_AWS_REGION }}
           QA_AWS_BUCKET: ${{ secrets.QA_AWS_BUCKET }}
           QA_GCS_CRED_JSON: ${{ secrets.QA_GCS_CRED_JSON }}
+          RUN_PARALLEL: 3
+          DEBUG: 1
+          NO_COLORS: 1
+          GOROOT: ${{ env.GOROOT_1_26_X64 }}
           # don't change it to avoid not working CI/CD
           RUN_TESTS: "*"
         run: |
-          set -e
+          set -xe
           export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
-
-          docker compose -f ${CLICKHOUSE_TESTS_DIR}/docker-compose/docker-compose.yml pull --quiet
-          
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
           source ~/venv/qa/bin/activate
-          ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --debug --only="${RUN_TESTS:-*}" --log ./test/testflows/raw.log 
-          tfs --debug --no-colors transform compact ./test/testflows/raw.log ./test/testflows/compact.log
-          tfs --debug --no-colors transform nice ./test/testflows/raw.log ./test/testflows/nice.log.txt
-          tfs --debug --no-colors transform short ./test/testflows/raw.log ./test/testflows/short.log.txt
-          tfs --debug --no-colors report results -a "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/" ./test/testflows/raw.log - --confidential --copyright "Altinity LTD" --logo ./test/testflows/altinity.png | ~/venv/qa/bin/tfs --debug --no-colors document convert > ./test/testflows/report.html
-          sudo chmod -Rv +rx test/testflows/clickhouse_backup/_instances
-      - name: Format testflows coverage
-        env:
-          GOROOT: ${{ env.GOROOT_1_25_X64 }}
-        run: |
-          echo "=== TestFlows Coverage Go Environment ==="
-          echo "Expected Go version: ${{ matrix.golang-version }}"
-          echo "GOROOT environment: ${{ env.GOROOT_1_25_X64 }}"
-          echo "Actual go version:"
-          go version
-          echo "Actual GOROOT:"
-          go env GOROOT
-          echo "========================================"
-          sudo chmod -Rv a+rw test/testflows/_coverage_/
-          ls -la test/testflows/_coverage_
-          go env
-          go tool covdata textfmt -i test/testflows/_coverage_/ -o test/testflows/_coverage_/coverage.out
+          ./test/testflows/run.sh
       - name: Report testflows coverage
         uses: coverallsapp/github-action@v2
         with:
+          fail-on-error: false
           base-path: ./
           file: test/testflows/_coverage_/coverage.out
           parallel: true
           format: golang
           flag-name: testflows-${{ matrix.clickhouse }}
       # todo possible failures  https://github.com/actions/upload-artifact/issues/270
+      - name: Fix testflows _instances log permissions
+        if: always()
+        run: |
+          set -xe
+          if [ -d "test/testflows/clickhouse_backup/_instances" ]; then
+            sudo chown -R "$(id -u)":"$(id -g)" test/testflows/clickhouse_backup/_instances || true
+            chmod -R u+rwX test/testflows/clickhouse_backup/_instances || true
+          fi
       - name: Upload testflows logs
-        uses: actions/upload-artifact@v4
+        if: always()
+        uses: actions/upload-artifact@v7
         with:
           name: testflows-logs-and-reports-${{ matrix.clickhouse }}-${{ github.run_id }}
           path: |
             test/testflows/*.log
             test/testflows/*.log.txt
+            test/testflows/_logs_/**/*.log
+            test/testflows/clickhouse_backup/_instances/**/*.log
+            test/testflows/*.html
+          retention-days: 7
+
+  testflows_fips:
+    needs:
+      - build
+    name: Testflows FIPS
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        golang-version:
+          - "1.26"
+        clickhouse:
+          - "fips"
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v6
+
+      - name: Setup golang
+        id: setup-go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '^${{ matrix.golang-version }}'
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: build-test-artifacts
+          path: ./clickhouse-backup/
+
+      - name: Install python venv
+        run: |
+          set -x
+          (dpkg -l | grep venv) || (apt-get update && apt-get install -y python3-venv)
+          python3 -m venv ~/venv/qa
+
+      - name: Cache python
+        uses: actions/cache@v5
+        id: cache-python
+        with:
+          path: ~/venv/qa
+          key: clickhouse-backup-python-${{ hashFiles('test/testflows/requirements.txt','.github/workflows/*.yaml') }}
+
+      - name: Install python dependencies
+        run: |
+          set -x
+          ~/venv/qa/bin/pip3 install -U -r ./test/testflows/requirements.txt
+        if: |
+          steps.cache-python.outputs.cache-hit != 'true'
+
+      - name: Running FIPS TestFlows tests
+        env:
+          CLICKHOUSE_IMAGE: altinity/clickhouse-server
+          CLICKHOUSE_VERSION: 25.3.8.30001.altinityfips
+          RUN_PARALLEL: 1
+          DEBUG: 1
+          NO_COLORS: 1
+          # Keep in sync with @Name("FIPS 140-3 Compatibility") in tests/fips_140_3.py
+          RUN_TESTS: "/clickhouse backup/FIPS 140-3 Compatibility*"
+          GOROOT: ${{ env.GOROOT_1_26_X64 }}
+        run: |
+          set -xe
+          chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
+          source ~/venv/qa/bin/activate
+          export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
+          ./test/testflows/run.sh
+
+      - name: Fix FIPS log permissions for artifact upload
+        if: always()
+        run: |
+          set -xe
+          if [ -d "test/testflows/clickhouse_backup/_instances" ]; then
+            sudo chown -R "$(id -u)":"$(id -g)" test/testflows/clickhouse_backup/_instances || true
+            chmod -R u+rwX test/testflows/clickhouse_backup/_instances || true
+          fi
+      - name: Upload FIPS testflows logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fips-testflows-logs-and-reports-${{ github.run_id }}
+          path: |
+            test/testflows/*.log
+            test/testflows/*.log.txt
+            test/testflows/_logs_/**/*.log
             test/testflows/clickhouse_backup/_instances/**/*.log
             test/testflows/*.html
           retention-days: 7
@@ -215,9 +288,10 @@ jobs:
     name: Test
     runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         golang-version:
-          - "1.25"
+          - "1.26"
         clickhouse:
           - '1.1.54394'
           - '19.17'
@@ -233,26 +307,27 @@ jobs:
           - '24.8'
           - '25.3'
           - '25.8'
+          - '26.3'
     steps:
       - name: Checkout project
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup golang
         id: setup-go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '^${{ matrix.golang-version }}'
 
 #      - name: Cache golang
 #        id: cache-golang
-#        uses: actions/cache@v4
+#        uses: actions/cache@v5
 #        with:
 #          path: |
 #            ~/go/pkg/mod
 #            ~/.cache/go-build
 #          key: clickhouse-backup-golang-${{ matrix.golang-version }}-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: build-test-artifacts
           path: ./clickhouse-backup/
@@ -265,20 +340,22 @@ jobs:
 
       - name: Running integration tests
         env:
-          RUN_PARALLEL: 4
-          GOROOT: ${{ env.GOROOT_1_25_X64 }}
+          GOROOT: ${{ env.GOROOT_1_26_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
-          # options for advanced debug CI/CD
-          # RUN_TESTS: "^TestSkipDisk$"
+          RUN_PARALLEL: 4
           # LOG_LEVEL: "debug"
           # TEST_LOG_LEVEL: "debug"
+          # options for advanced debug CI/CD
+          # RUN_TESTS: "^TestSkipDisk$"
+          # CLICKHOUSE_DEBUG: "true"
           # GCS_DEBUG: "true"
           # SFTP_DEBUG: "true"
           # AZBLOB_DEBUG: "true"
           # FTP_DEBUG: "true"
           # S3_DEBUG: "true"
-          CGO_ENABLED: 0
+          CGO_ENABLED: 1
           GCS_TESTS: ${{ needs.build.outputs.GCS_TESTS }}
+          KEEPER_TLS_ENABLED: 1
           RUN_ADVANCED_TESTS: 1
           AZURE_TESTS: 1
           # need for FIPS
@@ -291,85 +368,43 @@ jobs:
           QA_GCS_OVER_S3_SECRET_KEY: ${{ secrets.QA_GCS_OVER_S3_SECRET_KEY }}
           QA_GCS_OVER_S3_BUCKET: ${{ secrets.QA_GCS_OVER_S3_BUCKET }}
         run: |
-          set -e
+          set -xe
+          echo "RUN_PARALLEL=${RUN_PARALLEL}"
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
           echo "GCS_TESTS=${GCS_TESTS}"
-          echo "Go version: $(go version)"
-          echo "Testing ClickHouse ${CLICKHOUSE_VERSION}"
+          GCS_ENCRYPTION_KEY=$(openssl rand -base64 32)
+          export GCS_ENCRYPTION_KEY
 
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
 
-          if [[ "${CLICKHOUSE_VERSION}" =~ 2[2-9]+ ]]; then
+          if [[ "${CLICKHOUSE_VERSION}" =~ ^2[1-9]+ || "${CLICKHOUSE_VERSION}" == "head" ]]; then
             export CLICKHOUSE_IMAGE=clickhouse/clickhouse-server
           else
             export CLICKHOUSE_IMAGE=yandex/clickhouse-server
           fi
 
-          if [[ "${CLICKHOUSE_VERSION}" == 2* ]]; then
-            export COMPOSE_FILE=docker-compose_advanced.yml
-          else
-            export COMPOSE_FILE=docker-compose.yml
-          fi
-
           export CUR_DIR="$(pwd)/test/integration"
           export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
-          docker compose -f "${CUR_DIR}/${COMPOSE_FILE}" --progress=quiet pull
-          
-          pids=()
-          project_ids=()
-          for ((i = 0; i < RUN_PARALLEL; i++)); do
-            docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} --progress=quiet up -d &
-            pids+=($!)
-            project_ids+=("project${i}")
-          done
-          
-          
-          for index in "${!pids[@]}"; do
-            pid=${pids[index]}
-            project_id=${project_ids[index]}
-            if wait "$pid"; then
-                echo "$pid docker compose up successful"
-            else
-                echo "=== docker ${project_id} state ==="
-                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress=quiet ps -a
-                echo "=== docker ${project_id} logs ==="
-                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress=quiet logs
-                echo "$pid the docker compose up failed."
-                exit 1  # Exit with an error code if any command fails
-            fi
-          done
+
           set +e
-          go test -parallel ${RUN_PARALLEL} -timeout 90m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
+          go test -count=1 -parallel "${RUN_PARALLEL}" -race -timeout "${TEST_TIMEOUT:-180m}" -failfast -tags=integration -shuffle=$(date +%Y%m%d) -run "${RUN_TESTS:-.+}" -v "./test/integration/..."
           TEST_FAILED=$?
           set -e
           if [[ "0" != "${TEST_FAILED}" ]]; then
-            for project_id in "${project_ids[@]}"; do
-                echo "=== docker ${project_id} state ==="
-                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress=quiet ps -a
-                echo "=== docker ${project_id} logs ==="
-                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress=quiet logs
-            done
             exit 1
-          fi      
+          fi
 
       - name: Format integration coverage
         env:
-          GOROOT: ${{ env.GOROOT_1_25_X64 }}
+          GOROOT: ${{ env.GOROOT_1_26_X64 }}
         run: |
-          echo "=== Coverage Format Go Environment ==="
-          echo "Expected Go version: ${{ matrix.golang-version }}"
-          echo "GOROOT environment: ${{ env.GOROOT_1_25_X64 }}"
-          echo "Actual go version:"
-          go version
-          echo "Actual GOROOT:"
-          go env GOROOT
-          echo "====================================="
           sudo chmod -Rv a+rw test/integration/_coverage_/
           ls -la test/integration/_coverage_ 
           go tool covdata textfmt -i test/integration/_coverage_/ -o test/integration/_coverage_/coverage.out
       - name: Report integration coverage
         uses: coverallsapp/github-action@v2
         with:
+          fail-on-error: false
           base-path: ./
           file: test/integration/_coverage_/coverage.out
           parallel: true
@@ -385,19 +420,27 @@ jobs:
         - name: Coveralls Finished
           uses: coverallsapp/github-action@v2
           with:
+            fail-on-error: false
             base-path: ./
             parallel-finished: true
   docker:
     needs:
       - test
       - testflows
+      - testflows_fips
     name: Docker
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout project
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - uses: actions/download-artifact@v4
+      - name: Setup golang
+        id: setup-go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '^1.26'
+
+      - uses: actions/download-artifact@v7
         with:
           name: build-artifacts
           path: ./build/linux/
@@ -410,9 +453,21 @@ jobs:
           echo "docker_tag=${DOCKER_TAG:-dev}" >> $GITHUB_OUTPUT
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
+
+      - name: Verify FIPS 140-3 compatibility before push
+        run: |
+          set -x
+          # Build the exact image_fips target locally for the runner arch and load
+          # it, so we inspect/run the same image that is pushed below. VERSION is
+          # intentionally omitted: it only sets an image label and does not affect
+          # the FIPS checks.
+          docker buildx build --progress=plain --platform=linux/amd64 --tag=clickhouse-backup-fips-verify:local --target=image_fips --pull --load .
+          bash .github/scripts/verify_fips_image.sh \
+            --image clickhouse-backup-fips-verify:local \
+            --binary build/linux/amd64/clickhouse-backup-fips
 
       - name: Building docker image
         env:

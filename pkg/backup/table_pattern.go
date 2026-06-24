@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"io"
 	"net/url"
 	"os"
@@ -13,6 +12,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/pkg/errors"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -109,7 +111,7 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 			}
 			var t metadata.TableMetadata
 			if err := json.Unmarshal(data, &t); err != nil {
-				return err
+				return errors.Wrap(err, "getTableListByPatternLocal json.Unmarshal")
 			}
 			partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&t}, partitions)
 			filterPartsAndFilesByPartitionsFilter(t, partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}])
@@ -130,17 +132,22 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 		return nil, nil, err
 	}
 	result.Sort(dropTable)
-	for i := 0; i < len(result); i++ {
+	result = b.skipTablesByEngine(result, resultPartitionNames)
+	return result, resultPartitionNames, nil
+}
+
+// skipTablesByEngine removes tables matched by ClickHouse.SkipTableEngines from result
+// and drops their partition names from resultPartitionNames.
+func (b *Backuper) skipTablesByEngine(result ListOfTables, resultPartitionNames map[metadata.TableTitle][]string) ListOfTables {
+	// iterate in reverse so removing an element never shifts an unvisited one past the cursor
+	for i := len(result) - 1; i >= 0; i-- {
 		if b.shouldSkipByTableEngine(*result[i]) {
 			t := result[i]
 			delete(resultPartitionNames, metadata.TableTitle{Database: t.Database, Table: t.Table})
 			result = append(result[:i], result[i+1:]...)
-			if i > 0 {
-				i = i - 1
-			}
 		}
 	}
-	return result, resultPartitionNames, nil
+	return result
 }
 
 func (b *Backuper) shouldSkipByTableName(tableFullName string) bool {
@@ -281,11 +288,11 @@ func (b *Backuper) enrichTablePatternsByInnerDependencies(metadataPath string, t
 			}
 			data, err := os.ReadFile(filePath)
 			if err != nil {
-				return err
+				return errors.Wrap(err, "enrichTablePatternsByInnerDependencies ReadFile")
 			}
 			var t metadata.TableMetadata
 			if err := json.Unmarshal(data, &t); err != nil {
-				return err
+				return errors.Wrap(err, "enrichTablePatternsByInnerDependencies json.Unmarshal")
 			}
 			if strings.HasPrefix(t.Query, "ATTACH MATERIALIZED") || strings.HasPrefix(t.Query, "CREATE MATERIALIZED") {
 				if strings.Contains(t.Query, " TO ") && !strings.Contains(t.Query, " TO INNER UUID") {
@@ -302,7 +309,7 @@ func (b *Backuper) enrichTablePatternsByInnerDependencies(metadataPath string, t
 				}
 				// https://github.com/Altinity/clickhouse-backup/issues/765, .inner. table could be dropped manually, .inner. table is required for ATTACH
 				if _, err := os.Stat(path.Join(metadataPath, innerTableFile+".json")); err != nil {
-					return err
+					return errors.Wrap(err, "enrichTablePatternsByInnerDependencies stat inner table")
 				}
 				innerPatternExists := false
 				for _, existsP := range tablePatterns {
@@ -344,7 +351,7 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 			if createOrAttachRE.MatchString(originTable.Query) {
 				matches := queryRE.FindAllStringSubmatch(originTable.Query, -1)
 				if matches[0][4] != originTable.Database {
-					return fmt.Errorf("invalid SQL: %s for restore-database-mapping[%s]=%s", originTable.Query, originTable.Database, targetDB)
+					return errors.Errorf("invalid SQL: %s for restore-database-mapping[%s]=%s", originTable.Query, originTable.Database, targetDB)
 				}
 				setMatchedDb := func(clauseTargetDb, beforeQuote string) string {
 					if clauseMappedDb, isClauseMapped := dbMapRule[clauseTargetDb]; isClauseMapped {
@@ -369,7 +376,7 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 				if originTable.Query == "" {
 					continue
 				}
-				return fmt.Errorf("error when try to replace database `%s` to `%s` in query: %s", originTable.Database, targetDB, originTable.Query)
+				return errors.Errorf("error when try to replace database `%s` to `%s` in query: %s", originTable.Database, targetDB, originTable.Query)
 			}
 			originTable.Query = queryRE.ReplaceAllString(originTable.Query, substitution)
 			if uuidRE.MatchString(originTable.Query) {
@@ -404,17 +411,43 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 	return nil
 }
 
+// lookupTableMapping checks mapping first by full qualified name (db.table), then by table name only.
+// Returns target value, target database (if specified), target table, and whether mapping was found.
+func lookupTableMapping(tableMapRule map[string]string, database, table string) (targetValue string, targetDatabase string, targetTable string, isMapped bool) {
+	// First try full qualified name
+	fullName := database + "." + table
+	if targetValue, isMapped = tableMapRule[fullName]; isMapped {
+		// Check if target also contains database
+		if strings.Contains(targetValue, ".") {
+			parts := strings.SplitN(targetValue, ".", 2)
+			return targetValue, parts[0], parts[1], true
+		}
+		return targetValue, "", targetValue, true
+	}
+	// Fall back to table name only
+	if targetValue, isMapped = tableMapRule[table]; isMapped {
+		// Check if target contains database
+		if strings.Contains(targetValue, ".") {
+			parts := strings.SplitN(targetValue, ".", 2)
+			return targetValue, parts[0], parts[1], true
+		}
+		return targetValue, "", targetValue, true
+	}
+	return "", "", "", false
+}
+
 func changeTableQueryToAdjustTableMapping(originTables *ListOfTables, tableMapRule map[string]string) error {
 	for i := 0; i < len(*originTables); i++ {
 		originTable := (*originTables)[i]
-		if targetTable, isMapped := tableMapRule[originTable.Table]; isMapped {
+		_, targetDatabase, targetTable, isMapped := lookupTableMapping(tableMapRule, originTable.Database, originTable.Table)
+		if isMapped {
 			// substitute table in the table create query
 			var substitution string
 
 			if createOrAttachRE.MatchString(originTable.Query) {
 				matches := queryRE.FindAllStringSubmatch(originTable.Query, -1)
 				if len(matches) == 0 || len(matches[0]) < 8 || matches[0][7] != originTable.Table {
-					return fmt.Errorf("invalid SQL: %s\nRE: `%s`\nmatches=%#v for restore-table-mapping[%s]=%s", originTable.Query, queryRE.String(), matches, originTable.Table, targetTable)
+					return errors.Errorf("invalid SQL: %s\nRE: `%s`\nmatches=%#v for restore-table-mapping[%s]=%s", originTable.Query, queryRE.String(), matches, originTable.Table, targetTable)
 				}
 				setMatchedTable := func(clauseTargetTable, beforeQuote string) string {
 					if clauseMappedTable, isClauseMapped := tableMapRule[clauseTargetTable]; isClauseMapped {
@@ -426,20 +459,28 @@ func changeTableQueryToAdjustTableMapping(originTables *ListOfTables, tableMapRu
 					}
 					return clauseTargetTable
 				}
-				createTargetTable := targetTable
+				createTargetTableName := targetTable
 				// https://github.com/Altinity/clickhouse-backup/issues/820#issuecomment-2773501803
-				if !usualIdentifier.MatchString(createTargetTable) && !strings.Contains(matches[0][6], "`") {
-					createTargetTable = "`" + createTargetTable + "`"
+				if !usualIdentifier.MatchString(createTargetTableName) && !strings.Contains(matches[0][6], "`") {
+					createTargetTableName = "`" + createTargetTableName + "`"
+				}
+				// Handle database in target mapping (e.g., source_db.table:target_db.new_table)
+				createTargetDatabase := "${4}"
+				if targetDatabase != "" {
+					createTargetDatabase = targetDatabase
+					if !usualIdentifier.MatchString(createTargetDatabase) && !strings.Contains(matches[0][3], "`") {
+						createTargetDatabase = "`" + createTargetDatabase + "`"
+					}
 				}
 				toClauseTargetTable := setMatchedTable(matches[0][16], matches[0][15])
 				fromClauseTargetTable := setMatchedTable(matches[0][24], matches[0][23])
 				// matching CREATE|ATTACH ... TO .. SELECT ... FROM ... command
-				substitution = fmt.Sprintf("${1} ${2} ${3}${4}${5}.${6}%v${8}${9}${10}${11}${12}${13}${14}${15}%v${17}${18}${19}${20}${21}${22}${23}%v${25}", createTargetTable, toClauseTargetTable, fromClauseTargetTable)
+				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}%v${8}${9}${10}${11}${12}${13}${14}${15}%v${17}${18}${19}${20}${21}${22}${23}%v${25}", createTargetDatabase, createTargetTableName, toClauseTargetTable, fromClauseTargetTable)
 			} else {
 				if originTable.Query == "" {
 					continue
 				}
-				return fmt.Errorf("error when try to replace table `%s` to `%s` in query: %s", originTable.Table, targetTable, originTable.Query)
+				return errors.Errorf("error when try to replace table `%s` to `%s` in query: %s", originTable.Table, targetTable, originTable.Query)
 			}
 			originTable.Query = queryRE.ReplaceAllString(originTable.Query, substitution)
 			if uuidRE.MatchString(originTable.Query) {
@@ -468,6 +509,10 @@ func changeTableQueryToAdjustTableMapping(originTables *ListOfTables, tableMapRu
 				}
 			}
 			originTable.Table = targetTable
+			// Update database if target mapping includes database
+			if targetDatabase != "" {
+				originTable.Database = targetDatabase
+			}
 			(*originTables)[i] = originTable
 		}
 	}
@@ -550,19 +595,19 @@ func getTableListByPatternRemote(ctx context.Context, b *Backuper, remoteBackupM
 				tableMetadataPath := path.Join(metadataPath, common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table)))
 				tmReader, err := b.dst.GetFileReader(ctx, tableMetadataPath)
 				if err != nil {
-					return nil, fmt.Errorf("b.dst.GetFileReader(%s) error: %v", tableMetadataPath, err)
+					return nil, errors.Wrapf(err, "b.dst.GetFileReader(%s) error", tableMetadataPath)
 				}
 				data, err := io.ReadAll(tmReader)
 				if err != nil {
-					return nil, fmt.Errorf("io.ReadAll(%s) error: %v", tableMetadataPath, err)
+					return nil, errors.Wrapf(err, "io.ReadAll(%s) error", tableMetadataPath)
 				}
 				err = tmReader.Close()
 				if err != nil {
-					return nil, fmt.Errorf("can't close %s error: %v", tableMetadataPath, err)
+					return nil, errors.Wrapf(err, "can't close %s error", tableMetadataPath)
 				}
 				var t metadata.TableMetadata
 				if err = json.Unmarshal(data, &t); err != nil {
-					return nil, fmt.Errorf("json.Unmarshal(%s) error: %v", data, err)
+					return nil, errors.Wrapf(err, "json.Unmarshal(%s) error", data)
 				}
 				result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
 				break tablePatterns
@@ -595,18 +640,16 @@ func getOrderByEngine(query string, dropTable bool) int64 {
 		strings.HasPrefix(query, "ATTACH MATERIALIZED VIEW") {
 		if dropTable {
 			return 1
-		} else {
-			return 2
 		}
+		return 2
 	}
 
 	if strings.HasPrefix(query, "CREATE TABLE") &&
 		(strings.Contains(query, ".inner_id.") || strings.Contains(query, ".inner.")) {
 		if dropTable {
 			return 2
-		} else {
-			return 1
 		}
+		return 1
 	}
 	return 0
 }

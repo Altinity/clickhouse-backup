@@ -12,23 +12,25 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.25"
+          - "1.26"
 
     steps:
       - name: Checkout project
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup golang
         id: setup-go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '^${{ matrix.golang-version }}'
 
       - name: Setup fpm and make
         run: |
-          sudo apt-get install -y --no-install-recommends ruby ruby-dev gcc g++ rpm musl-dev musl-tools
+          sudo apt-get install -y --no-install-recommends ruby ruby-dev gcc rpm 
           sudo apt-get install --no-install-recommends -y make
           sudo gem install --no-document fpm
+# we don't need musl after switch to 1.26
+#         sudo apt-get install -y --no-install-recommends g++ musl-dev musl-tools
 
 #      - name: Cache golang
 #        id: cache-golang
@@ -55,10 +57,10 @@ jobs:
       - name: Prepare binaries
         id: make
         env:
-          GOROOT: ${{ env.GOROOT_1_24_X64 }}
+          GOROOT: ${{ env.GOROOT_1_26_X64 }}
         run: |
           make build build-fips config test
-          #make build-fips-darwin
+          make build-fips-darwin
 
       - name: Building deb, rpm and tar.gz packages
         id: make_packages
@@ -74,11 +76,11 @@ jobs:
           echo "tgz_darwin_arm64=${NAME}-darwin-arm64.tar.gz" >> $GITHUB_OUTPUT
 
           printf "amd64 arm64" | xargs -P 2 -d " " -I {} tar -czvf ${NAME}-linux-{}-fips.tar.gz build/linux/{}/${NAME}-fips
-          # printf "amd64 arm64" | xargs -P 2 -d " " -I {} tar -czvf ${NAME}-darwin-{}-fips.tar.gz build/darwin/{}/${NAME}-fips
+          printf "amd64 arm64" | xargs -P 2 -d " " -I {} tar -czvf ${NAME}-darwin-{}-fips.tar.gz build/darwin/{}/${NAME}-fips
           echo "tgz_linux_amd64_fips=${NAME}-linux-amd64-fips.tar.gz" >> $GITHUB_OUTPUT
           echo "tgz_linux_arm64_fips=${NAME}-linux-arm64-fips.tar.gz" >> $GITHUB_OUTPUT
-          # echo "tgz_darwin_amd64_fips=${NAME}-darwin-amd64-fips.tar.gz" >> $GITHUB_OUTPUT
-          # echo "tgz_darwin_arm64_fips=${NAME}-darwin-arm64-fips.tar.gz" >> $GITHUB_OUTPUT
+          echo "tgz_darwin_amd64_fips=${NAME}-darwin-amd64-fips.tar.gz" >> $GITHUB_OUTPUT
+          echo "tgz_darwin_arm64_fips=${NAME}-darwin-arm64-fips.tar.gz" >> $GITHUB_OUTPUT
 
           make packages
           cp -lv ./build/linux/*/*.deb ./
@@ -97,7 +99,7 @@ jobs:
 
       - name: Create release
         id: create_release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/')
         with:
           tag_name: v${{ steps.docker_tag.outputs.docker_tag }}
@@ -116,13 +118,25 @@ jobs:
             ${{ steps.make_packages.outputs.tgz_darwin_arm64 }}
             ${{ steps.make_packages.outputs.tgz_linux_amd64_fips }}
             ${{ steps.make_packages.outputs.tgz_linux_arm64_fips }}
-      #          ${{ steps.make_packages.outputs.tgz_darwin_amd64_fips }}
-      #          ${{ steps.make_packages.outputs.tgz_darwin_arm64_fips }}
+            ${{ steps.make_packages.outputs.tgz_darwin_amd64_fips }}
+            ${{ steps.make_packages.outputs.tgz_darwin_arm64_fips }}
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
+
+      - name: Verify FIPS 140-3 compatibility before push
+        run: |
+          set -x
+          # Build the exact image_fips target locally for the runner arch and load
+          # it, so we inspect/run the same image that is pushed below. VERSION is
+          # intentionally omitted: it only sets an image label and does not affect
+          # the FIPS checks.
+          docker buildx build --progress=plain --platform=linux/amd64 --tag=clickhouse-backup-fips-verify:local --target=image_fips --pull --load .
+          bash .github/scripts/verify_fips_image.sh \
+            --image clickhouse-backup-fips-verify:local \
+            --binary build/linux/amd64/clickhouse-backup-fips
 
       - name: Building docker image
         env:

@@ -1,9 +1,10 @@
 package config
 
 import (
-	"github.com/rs/zerolog/log"
 	"os"
 	"syscall"
+
+	"github.com/rs/zerolog/log"
 )
 
 func (cfg *Config) SetPriority() error {
@@ -13,7 +14,7 @@ func (cfg *Config) SetPriority() error {
 		if err != nil {
 			log.Warn().Msgf("can't get current executable path: %v", err)
 		}
-		log.Warn().Msgf("can't set CPU priority %s, error: %v, use `sudo setcap cap_sys_nice+ep %s` to fix it", cfg.General.CPUNicePriority, err, executable)
+		log.Warn().Msgf("can't set CPU priority %d, error: %v, use `sudo setcap cap_sys_nice+ep %s` to fix it", cfg.General.CPUNicePriority, err, executable)
 	}
 	return nil
 }

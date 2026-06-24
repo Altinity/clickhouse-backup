@@ -1,0 +1,14 @@
+//go:build integration
+
+package main
+
+import (
+	"testing"
+)
+
+func TestS3(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.checkObjectStorageIsEmpty(t, r, "S3", "config-s3.yml")
+	env.runMainIntegrationScenario(t, "S3", "config-s3.yml")
+}

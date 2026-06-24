@@ -3,9 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"io"
 	"net/http"
 	"net/url"
@@ -16,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/tencentyun/cos-go-sdk-v5"
 	"github.com/tencentyun/cos-go-sdk-v5/debug"
@@ -36,12 +36,12 @@ func (c *COS) Kind() string {
 func (c *COS) Connect(ctx context.Context) error {
 	u, err := url.Parse(c.Config.RowURL)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "COS Connect url.Parse")
 	}
 	b := &cos.BaseURL{BucketURL: u}
 	timeout, err := time.ParseDuration(c.Config.Timeout)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "COS Connect ParseDuration")
 	}
 	c.client = cos.NewClient(b, &http.Client{
 		Timeout: timeout,
@@ -58,8 +58,10 @@ func (c *COS) Connect(ctx context.Context) error {
 		},
 	})
 	// check bucket exists
-	_, err = c.client.Bucket.Head(ctx)
-	return err
+	if _, err = c.client.Bucket.Head(ctx); err != nil {
+		return errors.Wrap(err, "COS Connect Bucket.Head")
+	}
+	return nil
 }
 
 func (c *COS) Close(ctx context.Context) error {
@@ -73,15 +75,18 @@ func (c *COS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 func (c *COS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, error) {
 	// @todo - COS Stat file max size is 5Gb
 	resp, err := c.client.Object.Get(ctx, key, nil)
-	if err != nil {
+	if err != nil || resp == nil {
 		var cosErr *cos.ErrorResponse
 		ok := errors.As(err, &cosErr)
 		if ok && cosErr.Code == "NoSuchKey" {
-			return nil, ErrNotFound
+			return nil, NewErrNotFound(key)
 		}
-		return nil, err
+		return nil, errors.Wrap(err, "COS StatFileAbsolute Get")
 	}
-	modifiedTime, _ := parseTime(resp.Response.Header.Get("Date"))
+	modifiedTime, parseErr := parseTime(resp.Response.Header.Get("Date"))
+	if parseErr != nil {
+		log.Warn().Err(parseErr).Stack().Msg("parseTime(COS.Response.Header.Get(\"Date\")) return error")
+	}
 	return &cosFile{
 		size:         resp.Response.ContentLength,
 		name:         resp.Request.URL.Path,
@@ -90,8 +95,10 @@ func (c *COS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, err
 }
 
 func (c *COS) DeleteFile(ctx context.Context, key string) error {
-	_, err := c.client.Object.Delete(ctx, path.Join(c.Config.Path, key))
-	return err
+	if _, err := c.client.Object.Delete(ctx, path.Join(c.Config.Path, key)); err != nil {
+		return errors.Wrap(err, "COS DeleteFile")
+	}
+	return nil
 }
 
 func (c *COS) Walk(ctx context.Context, cosPath string, recursive bool, process func(context.Context, RemoteFile) error) error {
@@ -101,6 +108,10 @@ func (c *COS) Walk(ctx context.Context, cosPath string, recursive bool, process 
 }
 
 func (c *COS) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(context.Context, RemoteFile) error) error {
+	// COS API needs prefix to end with "/" for proper directory listing.
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
 
 	delimiter := ""
 	if !recursive {
@@ -121,14 +132,14 @@ func (c *COS) WalkAbsolute(ctx context.Context, prefix string, recursive bool, p
 		Prefix:    prefix,
 	})
 	if err != nil {
-		return err
+		return errors.Wrap(err, "COS WalkAbsolute Bucket.Get")
 	}
 	// When recursive is false, only process all the backups in the CommonPrefixes part.
 	for _, dir := range res.CommonPrefixes {
 		if err := process(ctx, &cosFile{
 			name: strings.TrimPrefix(dir, prefix),
 		}); err != nil {
-			return err
+			return errors.Wrap(err, "COS WalkAbsolute process prefix")
 		}
 	}
 	if recursive {
@@ -139,7 +150,7 @@ func (c *COS) WalkAbsolute(ctx context.Context, prefix string, recursive bool, p
 				lastModified: modifiedTime,
 				size:         v.Size,
 			}); err != nil {
-				return err
+				return errors.Wrap(err, "COS WalkAbsolute process content")
 			}
 		}
 	}
@@ -152,8 +163,8 @@ func (c *COS) GetFileReader(ctx context.Context, key string) (io.ReadCloser, err
 
 func (c *COS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
 	resp, err := c.client.Object.Get(ctx, key, nil)
-	if err != nil {
-		return nil, err
+	if err != nil || resp == nil {
+		return nil, errors.Wrap(err, "COS GetFileReaderAbsolute Get")
 	}
 	return resp.Body, nil
 }
@@ -164,7 +175,7 @@ func (c *COS) GetFileReaderWithLocalPath(ctx context.Context, key, localPath str
 	if c.Config.AllowMultipartDownload {
 		writer, err := os.CreateTemp(localPath, strings.ReplaceAll(key, "/", "_"))
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrap(err, "COS GetFileReaderWithLocalPath CreateTemp")
 		}
 
 		// Calculate part size based on remote size and max parts count
@@ -188,7 +199,7 @@ func (c *COS) GetFileReaderWithLocalPath(ctx context.Context, key, localPath str
 			downloadOpts,
 		)
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrap(err, "COS GetFileReaderWithLocalPath Download")
 		}
 
 		// Reopen the file for reading
@@ -215,8 +226,10 @@ type uploadedPart struct {
 func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
 	// For small files or when size is unknown, use simple Put
 	if localSize < 5*1024*1024 {
-		_, err := c.client.Object.Put(ctx, key, r, nil)
-		return err
+		if _, err := c.client.Object.Put(ctx, key, r, nil); err != nil {
+			return errors.Wrap(err, "COS PutFileAbsolute Put")
+		}
+		return nil
 	}
 
 	// For larger files, use multipart upload
@@ -232,7 +245,7 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 		ACLHeaderOptions: &cos.ACLHeaderOptions{XCosACL: "private"},
 	})
 	if initErr != nil {
-		return fmt.Errorf("COS->InitiateMultipartUpload return error: %w", initErr)
+		return errors.Wrap(initErr, "COS->InitiateMultipartUpload return error")
 	}
 
 	uploadID := resInit.UploadID
@@ -242,8 +255,6 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 			log.Warn().Msgf("COS can't close reader for %s, error: %v", key, closeErr)
 		}
 	}()
-
-	var parts []cos.Object // To store parts for completion
 
 	partsCh := make(chan partUpload)
 	uploadedCh := make(chan uploadedPart)
@@ -257,7 +268,7 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 				params := cos.ObjectUploadPartOptions{}
 				resp, err := c.client.Object.UploadPart(ctx, key, uploadID, part.PartNumber, reader, &params)
 				if err != nil {
-					return err
+					return errors.Wrap(err, "COS PutFileAbsolute UploadPart")
 				}
 				uploadedCh <- uploadedPart{
 					PartNumber: part.PartNumber,
@@ -282,7 +293,7 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 				break
 			}
 			if readErr != nil {
-				return readErr
+				return errors.Wrap(readErr, "COS PutFileAbsolute ReadFull")
 			}
 			partsCh <- partUpload{PartNumber: partNum, Data: buf}
 			partNum++
@@ -291,11 +302,16 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 	})
 
 	// Collector goroutine: collect uploaded parts
+	// NOTE: This runs OUTSIDE the errgroup to avoid deadlock - it must wait for uploadedCh to close,
+	// which happens after errgroup.Wait() returns
 	var (
 		uploadedParts []cos.Object
 		mu            sync.Mutex
+		collectorWg   sync.WaitGroup
 	)
-	uploadPartErrGroup.Go(func() error {
+	collectorWg.Add(1)
+	go func() {
+		defer collectorWg.Done()
 		for up := range uploadedCh {
 			mu.Lock()
 			uploadedParts = append(uploadedParts, cos.Object{
@@ -304,34 +320,119 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 			})
 			mu.Unlock()
 		}
-		return nil
-	})
+	}()
+
 	if wgWaitErr := uploadPartErrGroup.Wait(); wgWaitErr != nil {
+		close(uploadedCh)
+		collectorWg.Wait()
 		if _, abortErr := c.client.Object.AbortMultipartUpload(ctx, key, uploadID); abortErr != nil {
-			return fmt.Errorf("COS Multipart upload %s abort error: %v, original error was: %v", key, abortErr, wgWaitErr)
+			return errors.Wrapf(wgWaitErr, "COS Multipart upload %s abort error: %v, original error was", key, abortErr)
 		}
-		return fmt.Errorf("COS Multipart upload %s error: %v", key, wgWaitErr)
+		return errors.Wrapf(wgWaitErr, "COS Multipart upload %s error", key)
 	}
 
 	close(uploadedCh)
+	collectorWg.Wait()
 	sort.Slice(uploadedParts, func(i, j int) bool { return uploadedParts[i].PartNumber < uploadedParts[j].PartNumber })
 
 	// Step 3: Complete Multipart Upload
-	_, _, completeErr := c.client.Object.CompleteMultipartUpload(ctx, key, uploadID, &cos.CompleteMultipartUploadOptions{Parts: parts})
+	_, _, completeErr := c.client.Object.CompleteMultipartUpload(ctx, key, uploadID, &cos.CompleteMultipartUploadOptions{Parts: uploadedParts})
 	if completeErr != nil {
-		return fmt.Errorf("COS Multipart upload complete %s error: %v", key, completeErr)
+		return errors.Wrapf(completeErr, "COS Multipart upload complete %s error", key)
 	}
 
 	return nil
 }
 
 func (c *COS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
-	return 0, fmt.Errorf("CopyObject not imlemented for %s", c.Kind())
+	return 0, errors.Errorf("CopyObject not implemented for %s", c.Kind())
 }
 
 func (c *COS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
-	_, err := c.client.Object.Delete(ctx, path.Join(c.Config.ObjectDiskPath, key))
-	return err
+	if _, err := c.client.Object.Delete(ctx, path.Join(c.Config.ObjectDiskPath, key)); err != nil {
+		return errors.Wrap(err, "COS DeleteFileFromObjectDiskBackup")
+	}
+	return nil
+}
+
+// DeleteKeysBatch implements BatchDeleter interface for COS
+// Uses concurrent deletion with configurable concurrency
+func (c *COS) DeleteKeysBatch(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	// Prepend path to all keys
+	fullKeys := make([]string, len(keys))
+	for i, key := range keys {
+		fullKeys[i] = path.Join(c.Config.Path, key)
+	}
+	return c.deleteKeysConcurrent(ctx, fullKeys)
+}
+
+// DeleteKeysFromObjectDiskBackupBatch implements BatchDeleter interface for COS
+func (c *COS) DeleteKeysFromObjectDiskBackupBatch(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	// Prepend object disk path to all keys
+	fullKeys := make([]string, len(keys))
+	for i, key := range keys {
+		fullKeys[i] = path.Join(c.Config.ObjectDiskPath, key)
+	}
+	return c.deleteKeysConcurrent(ctx, fullKeys)
+}
+
+// deleteKeysConcurrent performs concurrent deletion of keys
+func (c *COS) deleteKeysConcurrent(ctx context.Context, keys []string) error {
+	concurrency := c.Config.DeleteConcurrency
+
+	log.Debug().Msgf("COS batch delete: deleting %d keys with concurrency %d", len(keys), concurrency)
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(concurrency)
+
+	var mu sync.Mutex
+	var failures []KeyError
+	deletedCount := 0
+
+	for _, key := range keys {
+		key := key // capture for goroutine
+		g.Go(func() error {
+			_, err := c.client.Object.Delete(ctx, key)
+			if err != nil {
+				// Check if it's a "not found" error - that's OK
+				var cosErr *cos.ErrorResponse
+				if errors.As(err, &cosErr) && cosErr.Code == "NoSuchKey" {
+					mu.Lock()
+					deletedCount++
+					mu.Unlock()
+					return nil
+				}
+				mu.Lock()
+				failures = append(failures, KeyError{Key: key, Err: err})
+				mu.Unlock()
+				return nil // Don't fail the entire group
+			}
+			mu.Lock()
+			deletedCount++
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return errors.Wrap(err, "COS concurrent delete failed")
+	}
+
+	if len(failures) > 0 {
+		return &BatchDeleteError{
+			Message:  fmt.Sprintf("COS batch delete: %d keys deleted, %d failed", deletedCount, len(failures)),
+			Failures: failures,
+		}
+	}
+
+	log.Debug().Msgf("COS batch delete: successfully deleted %d keys", deletedCount)
+	return nil
 }
 
 type cosFile struct {

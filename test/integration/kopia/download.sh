@@ -2,6 +2,7 @@
 set -xeuo pipefail
 CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 source "${CUR_DIR}/init.sh"
+trap kopia_diag ERR
 BACKUP_NAME=$1
 ${CUR_DIR}/list.sh | grep "${BACKUP_NAME}" | while IFS= read -r line; do
   SNAPSHOT_ID=$(echo "${line}" | jq -r -c -M .snapshot_id)

@@ -14,9 +14,9 @@
 A tool for easy backup and restore utility for ClickHouse databases with support for many cloud and non-cloud storage types.
 
 ### Don't run `clickhouse-backup` remotely
-To backup data, `clickhouse-backup` requires access to the same files as `clickhouse-server` in `/var/lib/clickhouse` folders.
+During backup and restore data, `clickhouse-backup` requires access to the same files as `clickhouse-server` in `/var/lib/clickhouse` folders.
 For that reason, it's required to run `clickhouse-backup` on the same host or same Kubernetes Pod or the neighbor container on the same host where `clickhouse-server` ran.
-**WARNING** You can backup only schema when connect to remote `clickhouse-server` hosts.
+**WARNING** You can backup and restore only schema when connect to remote `clickhouse-server` hosts.
 
 ## Features
 
@@ -111,12 +111,24 @@ general:
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
   # Concurrency means parallel tables and parallel parts inside tables
   # For example, 4 means max 4 parallel tables and 4 parallel parts inside one table, so equals 16 concurrent streams
-  download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2))
-  upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2))
+  download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is floor(AVAILABLE_CPU_CORES / 2). If result is < 1, then 1.
+  upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2)). If result is < 1, then 1.
   
-  # Throttling speed for upload and download, calculates on part level, not the socket level, it means short period for high traffic values and then time to sleep 
+  # Throttling speed for upload and download, enforced inline via a token-bucket rate limiter shared across all concurrent workers, so the value is an aggregate cap with smooth (non-bursty) throughput.
+  # Throttling does NOT apply to server-side object disk copy (`CopyObject`, e.g. S3 server-side copy / Azure copy-blob), because those bytes move inside the cloud provider and never pass through clickhouse-backup. When server-side copy is unavailable (incompatible src/dst `remote_storage`, or a failed `CopyObject` falling back to streaming through local memory), the streaming copy IS throttled.
+  # Throttling does NOT apply to `remote_storage: custom`, because data transfer happens inside your external upload/download command, not through clickhouse-backup.
+  # When `clickhouse->use_embedded_backup_restore: true`, throttling is delegated to the ClickHouse server via the `max_backup_bandwidth` query setting passed in the BACKUP/RESTORE SETTINGS clause (requires ClickHouse 25.1+); upload_max_bytes_per_second applies to BACKUP, download_max_bytes_per_second to RESTORE. On older ClickHouse versions embedded transfers are not throttled.
   download_max_bytes_per_second: 0  # DOWNLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling 
   upload_max_bytes_per_second: 0    # UPLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling
+
+  # Buffer tuning for high-bandwidth (10Gbit+) networks, see https://github.com/Altinity/clickhouse-backup/issues/1376 and Examples.md#tuning-for-high-bandwidth-10gbit-networks
+  pipe_buffer_size: 131072          # PIPE_BUFFER_SIZE, size in bytes of the in-memory ring buffer between the compression and the upload/download stream handlers, default 128KB; raise (e.g. 8388608 = 8MB) to let compression run ahead of uploads on fast networks
+  download_copy_buffer_size: 0      # DOWNLOAD_COPY_BUFFER_SIZE, explicit buffer size in bytes for io.CopyBuffer during download/extract, 0 means use the Go default (32KB); raise (e.g. 1048576 = 1MB) to reduce syscalls per file on fast networks
+
+  # zstd/gzip compression tuning, see https://github.com/Altinity/clickhouse-backup/issues/1378 and Examples.md#multi-threaded-zstdgzip-compression
+  compression_use_multi_thread: true # COMPRESSION_USE_MULTI_THREAD, enable per-stream multi-threaded zstd/gzip compression and decompression; default true to match pre-1378 behavior (gzip always used pgzip). A single large table dominating a backup is gated by per-stream compression speed and gets no benefit from upload_concurrency/download_concurrency. Set false to save CPU when many tables upload in parallel. Only affects compression_format: zstd and gzip (silently ignored for other formats)
+  compression_threads: 0            # COMPRESSION_THREADS, number of per-stream compression threads when compression_use_multi_thread is enabled (zstd concurrency / pgzip block workers), 0 means auto (GOMAXPROCS); must be unset/0 when compression_use_multi_thread is false
+  compression_buffer_size: 0        # COMPRESSION_BUFFER_SIZE, compression buffer size in bytes, 0 keeps library defaults. Meaning and valid range depend on compression_format and compression_use_multi_thread: zstd = encoder window (power of two, 1024..536870912, e.g. 4194304 = 4MB); single-threaded gzip = DEFLATE window (32..32768); multi-threaded gzip = pgzip block size (>16384). Other formats reject it
   
   # when table data contains in system.disks with type=ObjectStorage, then we need execute remote copy object in object storage service provider, this parameter can restrict how many files will copied in parallel  for each table 
   object_disk_server_side_copy_concurrency: 32
@@ -141,7 +153,8 @@ general:
 
   retries_on_failure: 3          # RETRIES_ON_FAILURE, how many times to retry after a failure during upload or download
   retries_pause: 5s              # RETRIES_PAUSE, duration time to pause after each download or upload failure
-  retries_jitter: 30             # RETRIES_JITTER, percent of RETRIES_PAUSE for jitter to avoid same time retries from parallel operations 
+  retries_jitter: 30             # RETRIES_JITTER, percent of RETRIES_PAUSE for jitter to avoid same time retries from parallel operations
+  delete_batch_size: 1000        # DELETE_BATCH_SIZE, default batch size for bulk DeleteObjects() requests in remote storages that support batch delete (e.g. S3); upper bound for one API call 
 
   watch_interval: 1h       # WATCH_INTERVAL, use only for `watch` command, backup will create every 1h
   full_interval: 24h       # FULL_INTERVAL, use only for `watch` command, full backup will create every 24h
@@ -181,13 +194,13 @@ clickhouse:
     - INFORMATION_SCHEMA.*
     - information_schema.*
   # CLICKHOUSE_SKIP_TABLE_ENGINES, the list of tables engines which are ignored during backup, upload, download, restore process
-  # The format for this env variable is "Engine1,Engine2,engine3". For YAML please continue using list syntax
+  # The format for this env variable is "Engine1,Engine2,engine3". For YAML please continue using array syntax
   skip_table_engines: []
   # CLICKHOUSE_SKIP_DISKS, list of disk names which are ignored during create, upload, download and restore command
-  # The format for this env variable is "Engine1,Engine2,engine3". For YAML please continue using list syntax
+  # The format for this env variable is "Disk1,disk2,disk3". For YAML please continue using array syntax
   skip_disks: []
   # CLICKHOUSE_SKIP_DISK_TYPES, list of disk types which are ignored during create, upload, download and restore command
-  # The format for this env variable is "Engine1,Engine2,engine3". For YAML please continue using list syntax
+  # The format for this env variable is "Engine1,Engine2,engine3". For YAML please continue using array syntax
   skip_disk_types: []
   timeout: 5m                  # CLICKHOUSE_TIMEOUT
   freeze_by_part: false        # CLICKHOUSE_FREEZE_BY_PART, allow freezing by part instead of freezing the whole table
@@ -200,6 +213,13 @@ clickhouse:
   tls_ca: ""                   # CLICKHOUSE_TLS_CA, filename with TLS custom authority file
   log_sql_queries: true        # CLICKHOUSE_LOG_SQL_QUERIES, logging `clickhouse-backup` SQL queries on `info` level, when true, `debug` level when false
   debug: false                 # CLICKHOUSE_DEBUG
+  # CLICKHOUSE_FORCE_REBALANCE, when true, forces disk rebalancing during download even when the backup's disk
+  # name exists on the target server. This is useful when restoring a backup taken on a single-disk machine
+  # to a target with multiple JBOD disks under the same storage policy (e.g. both named "default").
+  # Without this option, all data lands on the built-in "default" disk because the rebalancing logic
+  # only triggers when the disk name is missing. With force_rebalance, parts are distributed across
+  # all disks in the matching storage policy using the "least_used" strategy.
+  force_rebalance: false       # CLICKHOUSE_FORCE_REBALANCE
   config_dir:      "/etc/clickhouse-server"              # CLICKHOUSE_CONFIG_DIR
   # CLICKHOUSE_RESTART_COMMAND, use this command when restoring with --rbac, --rbac-only or --configs, --configs-only options
   # will split command by ; and execute one by one, all errors will logged and ignore
@@ -212,12 +232,16 @@ clickhouse:
   default_replica_path: "/clickhouse/tables/{cluster}/{shard}/{database}/{table}" # CLICKHOUSE_DEFAULT_REPLICA_PATH, will use during restore Replicated tables without macros in replication_path if replica already exists, to avoid restoring conflicts
   default_replica_name: "{replica}" # CLICKHOUSE_DEFAULT_REPLICA_NAME, will use during restore Replicated tables without macros in replica_name if replica already exists, to avoid restoring conflicts
   use_embedded_backup_restore: false # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE, use BACKUP / RESTORE SQL statements instead of regular SQL queries to use features of modern ClickHouse server versions
-  embedded_backup_disk: ""  # CLICKHOUSE_EMBEDDED_BACKUP_DISK - disk from system.disks which will use when `use_embedded_backup_restore: true` 
+  use_embedded_backup_restore_cluster: "" # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE_CLUSTER, add ON CLUSTER clause to BACKUP / RESTORE SQL statements when `use_embedded_backup_restore: true`, value is cluster name from system.clusters, e.g. "{cluster}"
+  embedded_backup_disk: ""  # CLICKHOUSE_EMBEDDED_BACKUP_DISK - disk from system.disks which will use when `use_embedded_backup_restore: true`
   backup_mutations: true # CLICKHOUSE_BACKUP_MUTATIONS, allow backup mutations from system.mutations WHERE is_done=0 and apply it during restore
   restore_as_attach: false # CLICKHOUSE_RESTORE_AS_ATTACH, allow restore tables which have inconsistent data parts structure and mutations in progress
+  restore_distributed_cluster: "" # CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER, cluster name (can use macros) which will use during restore `engine=Distributed` tables, when cluster defined in backup table definition not exists in `system.clusters`
   check_parts_columns: true # CLICKHOUSE_CHECK_PARTS_COLUMNS, check data types from system.parts_columns during create backup to guarantee mutation is complete
+  parts_columns_batch_size: 25 # CLICKHOUSE_PARTS_COLUMNS_BATCH_SIZE, batch size for system.parts_columns checks
   max_connections: 0 # CLICKHOUSE_MAX_CONNECTIONS, how many parallel connections could be opened during operations
 azblob:
+  endpoint_schema: "https"            # AZBLOB_ENDPOINT_SCHEMA, URL scheme used to build the AZBLOB endpoint (e.g. http for Azurite emulator)
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
   account_name: ""               # AZBLOB_ACCOUNT_NAME
   account_key: ""                # AZBLOB_ACCOUNT_KEY
@@ -232,6 +256,8 @@ azblob:
   sse_key: ""                    # AZBLOB_SSE_KEY
   max_parts_count: 256           # AZBLOB_MAX_PARTS_COUNT, number of parts for AZBLOB uploads, for properly calculate buffer size
   max_buffers: 3                 # AZBLOB_MAX_BUFFERS, similar with S3_CONCURRENCY
+  timeout: 4h                    # AZBLOB_TIMEOUT, per-blob upload/download/delete operation timeout (Go duration), defaults to 4h
+  delete_concurrency: 50         # AZBLOB_DELETE_CONCURRENCY, how many blobs delete in parallel during clean/delete operations
   debug: false                   # AZBLOB_DEBUG
 s3:
   access_key: ""                   # S3_ACCESS_KEY
@@ -244,7 +270,7 @@ s3:
   # use `acl: ""` if you see "api error AccessControlListNotSupported: The bucket does not allow ACLs"
   acl: private                     # S3_ACL 
   assume_role_arn: ""              # S3_ASSUME_ROLE_ARN
-  force_path_style: false          # S3_FORCE_PATH_STYLE
+  force_path_style: false          # S3_FORCE_PATH_STYLE, set to `true` for S3-compatible storage (MinIO, Ceph, etc.) or when using custom endpoints that require path-style URLs (https://endpoint/bucket/key) instead of virtual-hosted style (https://bucket.endpoint/key)
   path: ""                         # S3_PATH, `system.macros` values can be applied as {macro_name}
   object_disk_path: ""             # S3_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   disable_ssl: false               # S3_DISABLE_SSL
@@ -264,10 +290,22 @@ s3:
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
   use_custom_storage_class: false  # S3_USE_CUSTOM_STORAGE_CLASS
   storage_class: STANDARD          # S3_STORAGE_CLASS, by default allow only from list https://github.com/aws/aws-sdk-go-v2/blob/main/service/s3/types/enums.go#L787-L799
-  concurrency: 1                   # S3_CONCURRENCY
+  concurrency: 1                   # S3_CONCURRENCY, default: (download_concurrency + 1)
+  chunk_size: 0                    # S3_CHUNK_SIZE, default 0: remoteSize / max_part_count
   max_parts_count: 4000            # S3_MAX_PARTS_COUNT, number of parts for S3 multipart uploads and downloads
   allow_multipart_download: false  # S3_ALLOW_MULTIPART_DOWNLOAD, allow faster multipart download speed, but will require additional disk space, download_concurrency * part size in worst case
   checksum_algorithm: ""           # S3_CHECKSUM_ALGORITHM, use it when you use object lock which allow to avoid delete keys from bucket until some timeout after creation, use CRC32 as fastest
+  request_content_md5: false       # S3_REQUEST_CONTENT_MD5, set to true for S3-compatible storage that requires Content-MD5 header for DeleteObjects API (e.g., some MinIO configurations), see https://github.com/aws/aws-sdk-go-v2/discussions/2960
+  retry_mode: standard             # S3_RETRY_MODE, AWS SDK retry mode, allowed values: standard, adaptive
+  delete_concurrency: 10           # S3_DELETE_CONCURRENCY, how many parallel DeleteObjects requests during clean/delete operations
+
+  # HTTP transport and buffer tuning for high-bandwidth (10Gbit+) networks, see https://github.com/Altinity/clickhouse-backup/issues/1376 and Examples.md#tuning-for-high-bandwidth-10gbit-networks
+  http_max_idle_conns: 0              # S3_HTTP_MAX_IDLE_CONNS, http.Transport.MaxIdleConns, 0 keeps the AWS SDK default
+  http_max_idle_conns_per_host: 0     # S3_HTTP_MAX_IDLE_CONNS_PER_HOST, http.Transport.MaxIdleConnsPerHost, 0 keeps the Go default (2); raise (e.g. 128) to avoid serializing parallel up/downloads to the same endpoint when concurrency is high
+  http_max_conns_per_host: 0          # S3_HTTP_MAX_CONNS_PER_HOST, http.Transport.MaxConnsPerHost, 0 means unlimited
+  http_write_buffer_size: 0           # S3_HTTP_WRITE_BUFFER_SIZE, http.Transport.WriteBufferSize in bytes, 0 keeps the Go default (4KB); raise (e.g. 1048576 = 1MB) on fast networks
+  http_read_buffer_size: 0            # S3_HTTP_READ_BUFFER_SIZE, http.Transport.ReadBufferSize in bytes, 0 keeps the Go default (4KB); raise (e.g. 1048576 = 1MB) on fast networks
+  http_idle_conn_timeout: ""          # S3_HTTP_IDLE_CONN_TIMEOUT, http.Transport.IdleConnTimeout as a duration string, empty keeps the Go default (90s)
 
   # S3_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
@@ -280,7 +318,8 @@ s3:
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
   credentials_json: ""         # GCS_CREDENTIALS_JSON
-  credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED
+  credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED, base64 encoded json with credentials
+  sa_email: ""                 # GCS_SA_EMAIL, service account email for authorization without credentials
   # look https://cloud.google.com/storage/docs/authentication/managing-hmackeys#create how to get HMAC keys for access to bucket
   embedded_access_key: ""      # GCS_EMBEDDED_ACCESS_KEY, use it when `use_embedded_backup_restore: true`, `embedded_backup_disk: ""`, `remote_storage: gcs`
   embedded_secret_key: ""      # GCS_EMBEDDED_SECRET_KEY, use it when `use_embedded_backup_restore: true`, `embedded_backup_disk: ""`, `remote_storage: gcs`
@@ -294,6 +333,8 @@ gcs:
   storage_class: STANDARD      # GCS_STORAGE_CLASS
   chunk_size: 0                # GCS_CHUNK_SIZE, default 16 * 1024 * 1024 (16MB)
   client_pool_size: 500        # GCS_CLIENT_POOL_SIZE, default max(upload_concurrency, download concurrency) * 3, should be at least 3 times bigger than `UPLOAD_CONCURRENCY` or `DOWNLOAD_CONCURRENCY` in each upload and download case to avoid stuck
+  delete_concurrency: 50       # GCS_DELETE_CONCURRENCY, how many objects delete in parallel during clean/delete operations
+  upload_buffer_size: 131072   # GCS_UPLOAD_BUFFER_SIZE, io.CopyBuffer size in bytes feeding the GCS object writer, default 128KB; raise (e.g. 1048576 = 1MB) on high-bandwidth networks, see https://github.com/Altinity/clickhouse-backup/issues/1376
   # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
   object_labels: {}
@@ -301,6 +342,10 @@ gcs:
   custom_storage_class_map: {}
   debug: false                 # GCS_DEBUG
   force_http: false            # GCS_FORCE_HTTP
+  # GCS_ENCRYPTION_KEY, base64-encoded 256-bit key for customer-supplied encryption (CSEK)
+  # This encrypts backup data at rest using a key you control. Generate with: `openssl rand -base64 32`
+  # See https://cloud.google.com/storage/docs/encryption/customer-supplied-keys
+  encryption_key: ""
 cos:
   url: ""                      # COS_URL
   timeout: 2m                  # COS_TIMEOUT
@@ -311,8 +356,9 @@ cos:
   compression_format: tar      # COS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # COS_COMPRESSION_LEVEL
   max_parts_count: 1000        # COS_MAX_PARTS_COUNT, number of parts for COS multipart uploads and downloads
-  concurrency: 1               # COS_CONCURRENCY, concurrency for multipart upload and download
+  concurrency: 1               # COS_CONCURRENCY, concurrency for multipart upload and download, default: (download_concurrency + 1)
   allow_multipart_download: false  # COS_ALLOW_MULTIPART_DOWNLOAD, allow faster multipart download speed, but will require additional disk space, download_concurrency * part size in worst case
+  delete_concurrency: 50       # COS_DELETE_CONCURRENCY, how many objects delete in parallel during clean/delete operations
 ftp:
   address: ""                  # FTP_ADDRESS in format `host:port`
   timeout: 2m                  # FTP_TIMEOUT
@@ -322,6 +368,7 @@ ftp:
   tls_skip_verify: false       # FTP_TLS_SKIP_VERIFY
   path: ""                     # FTP_PATH, `system.macros` values can be applied as {macro_name}
   object_disk_path: ""         # FTP_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
+  concurrency: 1               # FTP_CONCURRENCY, default: (download_concurrency * 3)
   compression_format: tar      # FTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # FTP_COMPRESSION_LEVEL
   debug: false                 # FTP_DEBUG
@@ -333,7 +380,8 @@ sftp:
   key: ""                      # SFTP_KEY
   path: ""                     # SFTP_PATH, `system.macros` values can be applied as {macro_name}
   object_disk_path: ""         # SFTP_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
-  concurrency: 1               # SFTP_CONCURRENCY
+  concurrency: 1               # SFTP_CONCURRENCY, default: (download_concurrency * 3)
+  max_packet_size: 0           # SFTP_MAX_PACKET_SIZE, max SFTP payload in bytes per packet, 0 keeps the default 32KB; raise (e.g. 262144 = 256KB) to cut round-trips on high-bandwidth/high-latency links, only works with servers that accept packets larger than 32KB, see https://github.com/Altinity/clickhouse-backup/issues/1376
   compression_format: tar      # SFTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # SFTP_COMPRESSION_LEVEL
   debug: false                 # SFTP_DEBUG
@@ -360,8 +408,11 @@ api:
   integration_tables_host: ""  # API_INTEGRATION_TABLES_HOST, allow using DNS name to connect in `system.backup_list` and `system.backup_actions`
   allow_parallel: false        # API_ALLOW_PARALLEL, enable parallel operations, this allows for significant memory allocation and spawns go-routines, don't enable it if you are not sure
   create_integration_tables: false # API_CREATE_INTEGRATION_TABLES, create `system.backup_list` and `system.backup_actions`
-  complete_resumable_after_restart: true # API_COMPLETE_RESUMABLE_AFTER_RESTART, after API server startup, if `/var/lib/clickhouse/backup/*/(upload|download).state2` present, then operation will continue in the background
+  complete_resumable_after_restart: true # API_COMPLETE_RESUMABLE_AFTER_RESTART, after API server startup, if `/var/lib/clickhouse/backup/*/{command}.state2` present and command is allowed by complete_resumable_after_restart_commands, then operation will continue in the background
+  complete_resumable_after_restart_commands: [upload, download] # API_COMPLETE_RESUMABLE_AFTER_RESTART_COMMANDS, commands allowed for automatic resume after API server restart
   watch_is_main_process: false # WATCH_IS_MAIN_PROCESS, treats 'watch' command as a main api process, if it is stopped unexpectedly, api server is also stopped. Does not stop api server if 'watch' command canceled by the user. 
+  backup_actions_skip_commands: [] # API_BACKUP_ACTIONS_SKIP_COMMANDS, list of commands that must NOT be recorded into the in-memory async status exposed via `system.backup_actions` and `/backup/actions`. Useful to keep high-frequency monitoring calls (typically `list`) from growing the actions state and consuming RAM during long-running backups. Example: `[list]`
+  cancel_operation_timeout: "1800s" # API_CANCEL_OPERATION_TIMEOUT, how long `/backup/kill` (and server stop/restart) waits for the underlying command goroutine to actually return after the context is canceled. If the goroutine is stuck on an IO without timeout, kill returns once this timeout elapses. See https://github.com/Altinity/clickhouse-backup/issues/1365
 
 ```
 
@@ -376,6 +427,8 @@ A high value for `S3_CONCURRENCY` will allocate more memory for buffers inside t
 `concurrency` in the `sftp` section means how many concurrent request will be used for `upload` and `download` for each file.
 
 For `compression_format`, a good default is `tar`, which uses less CPU. In most cases the data in clickhouse is already compressed, so you may not get a lot of space savings when compressing already-compressed data.
+
+On high-bandwidth (10Gbit+) networks the default buffer sizes and HTTP transport settings limit throughput. See [Tuning for high-bandwidth (10Gbit) networks](Examples.md#tuning-for-high-bandwidth-10gbit-networks) for a config example.
 
 ## remote_storage: custom
 
@@ -412,17 +465,19 @@ Kill selected command from `GET /backup/actions` command list, kill process shou
 
 ### GET /backup/tables
 
-Print list of tables: `curl -s localhost:7171/backup/tables | jq .`, exclude pattern matched tables from `skip_tables` configuration parameters
+Print list of tables: `curl -s localhost:7171/backup/tables | jq .`, exclude pattern matched tables from `skip_tables` configuration parameters.
 
 - Optional query argument `table` works the same as the `--table=pattern` CLI argument.
-- Optional query argument `remote_backup` or `remote-backup` works the same as `--remote-backup=name` CLI argument.
+- Optional query argument `remote_backup` (or `remote-backup`) works the same as the `--remote-backup=name` CLI argument. The response then includes per-table `size`, `total_bytes`, `parts`, and `disks` (JSON array of disk names) fields read from the remote backup metadata.
+- Optional query argument `local_backup` (or `local-backup`) works the same as the `--local-backup=name` CLI argument: it lists tables from a local backup directly from disk (no live ClickHouse query required), with `size`, `total_bytes`, `parts`, and `disks` (JSON array) fields.
 
 ### GET /backup/tables/all
 
 Print list of tables: `curl -s localhost:7171/backup/tables/all | jq .`, ignore `skip_tables` configuration parameters.
 
 - Optional query argument `table` works the same as the `--table=pattern` CLI argument.
-- Optional query argument `remote_backup`or `remote-backup` works the same as `--remote-backup=name` CLI argument.
+- Optional query argument `remote_backup` (or `remote-backup`) works the same as the `--remote-backup=name` CLI argument; response shape matches `GET /backup/tables` with the remote-backup parameter.
+- Optional query argument `local_backup` (or `local-backup`) works the same as the `--local-backup=name` CLI argument; response shape matches `GET /backup/tables` with the local-backup parameter.
 
 ### POST /backup/create
 
@@ -560,6 +615,7 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 - Optional string query argument `restore_table_mapping` or `restore-table-mapping` works the same as the `--restore-table-mapping=old_table:new_table` CLI argument.
 - Optional string query argument `restore_schema_as_attach` or `restore-schema-as-attach` works the same as the `--restore-schema-as-attach` CLI argument.
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
+- Optional boolean query argument `skip_empty_tables` or `skip-empty-tables` works the same as the `--skip-empty-tables` CLI argument (skip restoring tables that have no data).
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
@@ -585,6 +641,7 @@ Download and restore data from remote backup: `curl -s localhost:7171/backup/res
 - Optional boolean query argument `replicated_copy_to_detached` or `replicated-copy-to-detached` works the same as the `--replicated-copy-to-detached` CLI argument.
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
 - Optional boolean query argument `hardlink_exists_files` or `hardlink-exists-files` works the same as the `--hardlink-exists-files` CLI argument (Create hardlinks for existing files instead of downloading).
+- Optional boolean query argument `skip_empty_tables` or `skip-empty-tables` works the same as the `--skip-empty-tables` CLI argument (skip restoring tables that have no data).
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
@@ -632,7 +689,9 @@ Display a list of all operations from start of API server: `curl -s localhost:71
 - [How to back up object disks to s3 with s3:CopyObject](Examples.md#how-to-back-up-object-disks-to-s3-with-s3copyobject)
 - [How to restore object disks to s3 with s3:CopyObject](Examples.md#how-to-restore-object-disks-to-s3-with-s3copyobject)
 - [How to use AWS IRSA and IAM to allow S3 backup without Explicit credentials](Examples.md#how-to-use-aws-irsa-and-iam-to-allow-s3-backup-without-explicit-credentials)
-- [How to do incremental backups work to remote storage](Examples.md#how-incremental-backups-work-with-remote-storage)
+- [How to use Azure AD Workload Identity to allow AZBLOB backup without Explicit credentials](Examples.md#how-to-use-azure-ad-workload-identity-to-allow-azblob-backup-without-explicit-credentials)
+- [How to use GCP Workload Identity to allow GCS backup without Explicit credentials](Examples.md#how-to-use-gcp-workload-identity-to-allow-gcs-backup-without-explicit-credentials)
+- [How incremental backups work with remote storage](Examples.md#how-incremental-backups-work-with-remote-storage)
 - [How to watch backups work](Examples.md#how-to-watch-backups-work)
 - [How to track operation status with operation_id](Examples.md#How-to-track-operation-status-with-operation_id)
 
@@ -647,14 +706,16 @@ NAME:
    clickhouse-backup tables - List of tables, exclude skip_tables
 
 USAGE:
-   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--all]
+   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all]
 
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
    --all, -a                                  Print table even when match with skip_tables pattern
    --table value, --tables value, -t value    List tables only match with table name patterns, separated by comma, allow ? and * as wildcard
-   --remote-backup value                      List tables from remote backup
+   --remote-backup value                      List tables from a remote backup, including per-table size and parts count
+   --local-backup value                       List tables from a local backup (read from disk, no live ClickHouse query), including per-table size and parts count
+   --format value, -f value                   Output format (text|json|yaml|csv|tsv)
    
 ```
 ### CLI command - create
@@ -806,7 +867,7 @@ NAME:
    clickhouse-backup restore - Create schema and restore data from backup
 
 USAGE:
-   clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] <backup_name>
+   clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] [--skip-empty-tables] <backup_name>
 
 OPTIONS:
    --config value, -c value                    Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
@@ -835,6 +896,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --resume, --resumable                                                             Will resume download for object disk data
    --restore-schema-as-attach                                                        Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --replicated-copy-to-detached                                                     Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step
+   --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
    
 ```
 ### CLI command - restore_remote
@@ -843,7 +905,7 @@ NAME:
    clickhouse-backup restore_remote - Download and restore
 
 USAGE:
-   clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] <backup_name>
+   clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] <backup_name>
 
 OPTIONS:
    --config value, -c value                    Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
@@ -872,6 +934,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --resume, --resumable                                                             Save intermediate download state and resume download if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --restore-schema-as-attach                                                        Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --hardlink-exists-files                                                           Create hardlinks for existing files instead of downloading
+   --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
    
 ```
 ### CLI command - delete
@@ -932,11 +995,12 @@ NAME:
    clickhouse-backup clean_remote_broken - Remove all broken remote backups
 
 USAGE:
-   clickhouse-backup clean_remote_broken [command options] [arguments...]
+   clickhouse-backup clean_remote_broken [--include=glob ...]
 
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
+   --include value                            Glob (path.Match syntax) to scope cleanup only to broken backup names matching these patterns; can be passed multiple times; if omitted, all broken backups are deleted
    
 ```
 ### CLI command - clean_local_broken
@@ -950,6 +1014,25 @@ USAGE:
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
+   
+```
+### CLI command - clean_broken_retention
+```
+NAME:
+   clickhouse-backup clean_broken_retention - Remove orphan entries under remote `path` and `object_disks_path` that are not in the live backup list
+
+USAGE:
+   clickhouse-backup clean_broken_retention [--commit] [--include=glob ...] [--exclude=glob ...]
+
+DESCRIPTION:
+   Walks top-level of remote `path` and `object_disks_path`, batch-deletes (with retry) every entry that is not a live backup and is not excluded by --exclude globs and is matched by --include globs (if provided). Object disk orphans are deleted in parallel with progress tracking. Pass --commit to actually delete; without it the command only logs what would be deleted.
+
+OPTIONS:
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   --include value                            Glob (path.Match syntax) to scope cleanup only to backup names matching these patterns; can be passed multiple times; if omitted, all orphans are candidates
+   --exclude value                            Glob (path.Match syntax) of backup names to preserve even if they appear as orphans; can be passed multiple times
+   --commit                                   Actually delete orphans; without this flag the command only logs what would be deleted
    
 ```
 ### CLI command - watch
@@ -985,6 +1068,14 @@ Look at the system.parts partition and partition_id fields for details https://c
    --skip-projections db_pattern.table_pattern:projections_pattern                 Skip make and upload hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --delete, --delete-source, --delete-local                                       explicitly delete local backup during upload
    
+```
+### CLI command - acvp
+```
+NAME:
+   clickhouse-backup acvp - Run ACVP wrapper protocol over stdin/stdout
+
+USAGE:
+   clickhouse-backup acvp
 ```
 ### CLI command - server
 ```

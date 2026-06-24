@@ -2,10 +2,11 @@ package backup
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"github.com/rs/zerolog/log"
 	"hash/fnv"
+
+	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -78,7 +79,7 @@ func shardFuncByName(name string) (shardFunc, error) {
 			}
 			validOptions = append(validOptions, k)
 		}
-		return nil, fmt.Errorf("unknown backup sharding option %q, valid options: %v", name,
+		return nil, errors.Errorf("unknown backup sharding option %q, valid options: %v", name,
 			validOptions)
 	}
 	return chosen, nil
@@ -108,7 +109,7 @@ func fnvShardReplicaFromString(str string, activeReplicas []string) (string, err
 func fnvHashModTableShardFunc(md *tableReplicaMetadata) (bool, error) {
 	assignedReplica, err := fnvShardReplicaFromString(md.fullName(), md.ActiveReplicas)
 	if err != nil {
-		return false, err
+		return false, errors.Wrap(err, "fnvHashModTableShardFunc")
 	}
 	return assignedReplica == md.ReplicaName, nil
 }
@@ -118,7 +119,7 @@ func fnvHashModTableShardFunc(md *tableReplicaMetadata) (bool, error) {
 func fnvHashModDatabaseShardFunc(md *tableReplicaMetadata) (bool, error) {
 	assignedReplica, err := fnvShardReplicaFromString(md.Database, md.ActiveReplicas)
 	if err != nil {
-		return false, err
+		return false, errors.Wrap(err, "fnvHashModDatabaseShardFunc")
 	}
 	return assignedReplica == md.ReplicaName, nil
 }
@@ -166,11 +167,11 @@ func newReplicaDeterminer(q querier, sf shardFunc) *replicaDeterminer {
 
 // getReplicaState obtains the local replication state through a query to `system.replicas`
 func (rd *replicaDeterminer) getReplicaState(ctx context.Context) ([]tableReplicaMetadata, error) {
-	md := []tableReplicaMetadata{}
+	var md []tableReplicaMetadata
 	// TODO: Change query to pull replica_is_active after upgrading to clickhouse-go v2
 	query := "SELECT t.database, t.name AS table, r.replica_name, arraySort(mapKeys(mapFilter((replica, active) -> (active == 1), r.replica_is_active))) AS active_replicas FROM system.tables t LEFT JOIN system.replicas r ON t.database = r.database AND t.name = r.table"
 	if err := rd.q.SelectContext(ctx, &md, query); err != nil {
-		return nil, fmt.Errorf("could not determine replication state: %w", err)
+		return nil, errors.Wrap(err, "could not determine replication state")
 	}
 
 	// Handle views and memory tables by putting in stand-in replication metadata
@@ -186,13 +187,13 @@ func (rd *replicaDeterminer) getReplicaState(ctx context.Context) ([]tableReplic
 func (rd *replicaDeterminer) determineShards(ctx context.Context) (shardDetermination, error) {
 	md, err := rd.getReplicaState(ctx)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "determineShards getReplicaState")
 	}
 	sd := shardDetermination{}
 	for _, entry := range md {
 		assigned, err := rd.sf(&entry)
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrap(err, "determineShards shardFunc")
 		}
 		sd[entry.fullName()] = assigned
 	}

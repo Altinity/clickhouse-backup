@@ -156,6 +156,81 @@ operations.
 In addition, you may create instance of ClickHouse on another DC and have it fresh by clickhouse-copier to protect you
 from hardware or DC failures.
 
+## Tuning for high-bandwidth (10Gbit) networks
+
+The default buffer sizes and HTTP transport settings are tuned for low-bandwidth environments. On 10Gbit+ links to
+S3/GCS-compatible object storage they limit throughput, see https://github.com/Altinity/clickhouse-backup/issues/1376.
+
+The config below shows **only the parameters that change** from their defaults; keep the rest of your config as is.
+Start from these values and adjust to your hardware and network. The single most impactful knob is
+`s3.http_max_idle_conns_per_host` — Go's default of 2 forces most parallel streams to open a fresh TCP+TLS connection
+per request when `upload_concurrency`/`download_concurrency` are high.
+
+```yaml
+general:
+  # let compression run ahead of uploads, and copy files in larger chunks
+  pipe_buffer_size: 8388608          # 8MB (default 128KB)
+  download_copy_buffer_size: 1048576 # 1MB (default 0 = Go's 32KB io.Copy buffer)
+  # raise concurrency to actually saturate a 10Gbit link (tune to CPU cores and storage)
+  upload_concurrency: 16
+  download_concurrency: 16
+s3:
+  buffer_size: 1048576               # 1MB per-part s3manager buffer (default 64KB)
+  http_max_idle_conns_per_host: 128  # default 2 (!), critical for parallel streams to the same endpoint
+  http_max_idle_conns: 512           # default AWS SDK value
+  http_write_buffer_size: 1048576    # 1MB (default 4KB)
+  http_read_buffer_size: 1048576     # 1MB (default 4KB)
+  http_idle_conn_timeout: 120s       # default 90s
+  chunk_size: 67108864               # 64MB multipart part size (default 0 = remoteSize / max_parts_count, min 5MB), fewer parts for large files
+# when remote_storage: gcs
+gcs:
+  upload_buffer_size: 1048576        # 1MB (default 128KB)
+# when remote_storage: sftp
+sftp:
+  concurrency: 16                    # parallel requests per file
+  max_packet_size: 262144            # 256KB SFTP payload per packet (default 32KB), only works with servers that accept >32KB packets
+# when remote_storage: azblob
+azblob:
+  buffer_count: 16                   # AZBLOB_MAX_BUFFERS, parallel block buffers per upload (default 3); the per-block size auto-scales from max_parts_count
+  max_parts_count: 1024              # default 256, larger backups need more blocks
+```
+
+Notes for the other backends:
+- **azblob**: there is no separate buffer-size knob — the upload block size auto-scales (2–10MB) from `max_parts_count`, and `buffer_count` controls how many blocks upload in parallel. Raise both for fast networks.
+- **cos**: the SDK uses `cos.DNSScatterTransport` for internal Tencent endpoints, which already spreads connections across IPs; raise `concurrency` rather than touching the HTTP pool.
+- **ftp**: the FTP library has no transfer-buffer knob; throughput is governed by `concurrency` (connection pool size).
+
+## Multi-threaded zstd/gzip compression
+
+By default `compression_use_multi_thread: true`, each zstd/gzip stream is compressed with multiple threads (gzip via
+pgzip), matching the pre-1378 behavior. A single large table dominating a backup is gated by per-stream compression speed
+and gets no benefit from `upload_concurrency`/`download_concurrency`. Set `compression_use_multi_thread: false` to save CPU
+when many tables upload in parallel, see https://github.com/Altinity/clickhouse-backup/issues/1378.
+
+```yaml
+general:
+  remote_storage: s3
+  compression_use_multi_thread: true # COMPRESSION_USE_MULTI_THREAD, zstd WithEncoderConcurrency/WithDecoderConcurrency, gzip via pgzip
+  compression_threads: 8             # COMPRESSION_THREADS, per-stream threads (zstd concurrency / pgzip block workers); 0 = auto (GOMAXPROCS)
+  compression_buffer_size: 4194304   # COMPRESSION_BUFFER_SIZE, 4MB; zstd encoder window / pgzip block size (multi-threaded gzip)
+s3:
+  compression_format: zstd           # or gzip; the three settings above only affect zstd and gzip
+  compression_level: 3
+```
+
+Notes:
+- `compression_use_multi_thread` enables parallel zstd encode/decode (`WithEncoderConcurrency`/`WithDecoderConcurrency`)
+  and switches gzip to the parallel `pgzip` implementation.
+- `compression_threads` sets how many threads each stream uses when `compression_use_multi_thread` is enabled (zstd
+  concurrency / pgzip block workers); `0` means auto (`GOMAXPROCS`). It must be left at `0` when multi-thread is off.
+- `compression_buffer_size` meaning depends on the format and on `compression_use_multi_thread`:
+  - **zstd**: encoder window size (`WithWindowSize`), must be a power of two between 1024 and 536870912; larger windows
+    improve the compression ratio at the cost of more memory and CPU.
+  - **gzip, single-threaded**: DEFLATE window size (`gzip.NewWriterWindow`), 32..32768 — the gzip format caps the window
+    at 32KB, so values above that are rejected.
+  - **gzip, multi-threaded**: `pgzip` block size (`SetConcurrency`), must be greater than 16384 (e.g. 1–4MB).
+- The other formats (`lz4`, `bzip2`, `sz`, `xz`, `brotli`) ignore both settings.
+
 ## How to use clickhouse-backup in Kubernetes
 
 Install the [clickhouse kubernetes operator](https://github.com/Altinity/clickhouse-operator/) and use the following
@@ -241,7 +316,7 @@ spec:
               args: [ "server" ]
               env:
                 - name: LOG_LEVEL
-                  value: "debug"
+                  value: "info"
                 - name: ALLOW_EMPTY_BACKUPS
                   value: "true"
                 - name: API_LISTEN
@@ -275,7 +350,7 @@ spec:
                 - name: S3_DISABLE_SSL
                   value: "true"
                 - name: S3_DEBUG
-                  value: "true"
+                  value: "false"
                 # require to avoid double scraping clickhouse and clickhouse-backup containers
               ports:
                 - name: backup-rest
@@ -685,6 +760,315 @@ spec:
             - name: clickhouse-backup
 ```
 
+## How to use Azure AD Workload Identity to allow AZBLOB backup without Explicit credentials
+
+This is the Azure equivalent of AWS IRSA. On AKS with
+[Workload Identity](https://learn.microsoft.com/en-us/azure/aks/workload-identity-overview)
+enabled, a Kubernetes `ServiceAccount` is federated to an Azure user-assigned managed identity,
+so `clickhouse-backup` authenticates to Azure Blob Storage without an `account_key` or `sas`.
+
+A resource group is just a named container for Azure resources; it must already exist before you
+put resources into it. There are three groups in play here and they are NOT necessarily the same
+(role assignment and workload-identity federation work across resource groups and subscriptions):
+
+```bash
+# 1) resource group of your AKS cluster — look it up in the ResourceGroup column:
+az aks list -o table
+AKS_RESOURCE_GROUP=<AKS_RESOURCE_GROUP_FROM_LIST>
+
+# 2) the storage account that will hold the backups — pick an existing one (az storage account
+az storage account list -o table
+STORAGE_ACCOUNT=<STORAGE_ACCOUNT_FROM_LIST>
+# or create it (name must be globally unique, 3-24 lowercase alphanumeric chars):
+# only if it does not exist yet
+az storage account create --name "your-account-name" --resource-group "${AKS_RESOURCE_GROUP}" --location <REGION>   
+STORAGE_ACCOUNT=your-account-name
+
+# full resource id of the account (includes subscription + resource group) — used as the role scope:
+STORAGE_ACCOUNT_ID=$(az storage account show --name "${STORAGE_ACCOUNT}" --query id -o tsv)
+
+# 3) resource group for the managed identity — reuse an existing one
+az group list -o table
+IDENTITY_RESOURCE_GROUP=<IDENTITY_RESOURCE_GROUP_FROM_LIST>
+#    or create a dedicated one:
+az group create --name "your-identity-resource-group" --location <REGION>   # 
+IDENTITY_RESOURCE_GROUP=your-identity-resource-group
+```
+
+Create a user-assigned managed identity and grant it access to the storage account
+(`Storage Blob Data Contributor` on the account or container):
+
+```bash
+IDENTITY_NAME=your-new-idenity-name
+az identity create --name ${IDENTITY_NAME} --resource-group "${IDENTITY_RESOURCE_GROUP}"
+# capture the client id used below as ${CLIENT_ID} in the ServiceAccount annotation
+CLIENT_ID=$(az identity show --name ${IDENTITY_NAME} --resource-group "${IDENTITY_RESOURCE_GROUP}" --query clientId -o tsv)
+PRINCIPAL_ID=$(az identity show --name ${IDENTITY_NAME} --resource-group "${IDENTITY_RESOURCE_GROUP}" --query principalId -o tsv)
+# tenant id of the managed identity, used below as ${TENANT_ID} in the ServiceAccount annotation
+TENANT_ID=$(az identity show --name ${IDENTITY_NAME} --resource-group "${IDENTITY_RESOURCE_GROUP}" --query tenantId -o tsv)
+az role assignment create \
+  --assignee-object-id "${PRINCIPAL_ID}" --assignee-principal-type ServicePrincipal \
+  --role "Storage Blob Data Contributor" \
+  --scope "${STORAGE_ACCOUNT_ID}"
+```
+
+Federate the managed identity with the AKS Kubernetes `ServiceAccount` via the cluster OIDC issuer:
+
+```bash
+NAMESPACE=your-kubernetes-namespace
+kubectl create ns ${NAMESPACE}
+# will create later in kubernetes
+SERVICE_ACCOUNT_NAME=your-kubernetes-service-account
+ 
+OIDC_ISSUER=$(az aks show --name <CLUSTER_NAME> --resource-group "${AKS_RESOURCE_GROUP}" --query oidcIssuerProfile.issuerUrl -o tsv)
+FEDERATED_CREDENTIAL_NAME=your-federated-cretential-name
+az identity federated-credential create \
+  --name ${FEDERATED_CREDENTIAL_NAME} \
+  --identity-name <IDENTITY_NAME> --resource-group "${IDENTITY_RESOURCE_GROUP}" \
+  --issuer "${OIDC_ISSUER}" \
+  --subject "system:serviceaccount:${NAMESPACE}:${SERVICE_ACCOUNT_NAME}" \
+  --audience api://AzureADTokenExchange
+```
+
+Create a service account with annotations:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ${SERVICE_ACCOUNT_NAME}
+  namespace: ${NAMESPACE}
+  annotations:
+    azure.workload.identity/client-id: "${CLIENT_ID}"
+    azure.workload.identity/tenant-id: "${TENANT_ID}"
+```
+
+Put the `clickhouse-backup` config into a `ConfigMap` (no `account_key`/`sas` needed). With
+`use_managed_identity: true`, `clickhouse-backup` uses `DefaultAzureCredential`, which
+automatically consumes the federated token injected by the webhook. Mount this `ConfigMap` into
+`/etc/clickhouse-backup/`, add the `azure.workload.identity/use: "true"` label so the mutating
+webhook injects `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_AUTHORITY_HOST` and
+`AZURE_FEDERATED_TOKEN_FILE`, and link the service account to the podTemplate:
+
+```yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-backup-config
+  namespace: ${NAMESPACE}
+data:
+  config.yml: |
+    azblob:
+      use_managed_identity: true
+      # ${STORAGE_ACCOUNT} — the storage account created/selected in the bash steps above,
+      # the one you granted "Storage Blob Data Contributor" on in the role assignment
+      account_name: ${STORAGE_ACCOUNT}
+      # blob container that holds the backups (e.g. `clickhouse-backup`);
+      # create it with: az storage container create --name <CONTAINER> --account-name "${STORAGE_ACCOUNT}" --auth-mode login
+      # clickhouse-backup also auto-creates it on first upload (default assume_container_exists: false)
+      container: <CONTAINER>
+---
+apiVersion: "clickhouse.altinity.com/v1"
+kind: "ClickHouseInstallation"
+metadata:
+  name: <NAME>
+  namespace: ${NAMESPACE}
+spec:
+  defaults:
+    templates:
+      podTemplate: <POD_TEMPLATE_NAME>
+  templates:
+    podTemplates:
+      - name: <POD_TEMPLATE_NAME>
+        # the azure.workload.identity/use: "true" label together with serviceAccountName makes the
+        # mutating webhook inject AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_AUTHORITY_HOST /
+        # AZURE_FEDERATED_TOKEN_FILE into every container of this pod
+        metadata:
+          labels:
+            azure.workload.identity/use: "true"
+        spec:
+          serviceAccountName: ${SERVICE_ACCOUNT_NAME}
+          containers:
+            - name: clickhouse
+              image: clickhouse/clickhouse-server:latest
+            - name: clickhouse-backup
+              image: altinity/clickhouse-backup:latest
+              command:
+                - bash
+                - -xc
+                - "/bin/clickhouse-backup server"
+              volumeMounts:
+                - name: clickhouse-backup-config
+                  mountPath: /etc/clickhouse-backup/
+          volumes:
+            - name: clickhouse-backup-config
+              configMap:
+                name: clickhouse-backup-config
+```
+
+## How to use GCP Workload Identity to allow GCS backup without Explicit credentials
+
+This is the Google Cloud equivalent of AWS IRSA. On GKE with
+[Workload Identity Federation for GKE](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)
+enabled, a Kubernetes `ServiceAccount` (KSA) is bound to a Google Cloud IAM service account (GSA),
+so `clickhouse-backup` authenticates to Google Cloud Storage without a `credentials_file` or
+`credentials_json`.
+
+`clickhouse-backup` supports two GCS auth modes under Workload Identity:
+
+- **Direct binding** — annotate the KSA with the target GSA. The pod's Application Default
+  Credentials (ADC) already *are* that GSA, so leave the whole `gcs.credentials_*`/`gcs.sa_email`
+  block empty and `clickhouse-backup` uses ADC automatically.
+- **Impersonation via `gcs.sa_email`** — the pod runs as one identity (a "source" GSA bound to the
+  KSA, or even the cluster default) and `clickhouse-backup` mints a short-lived token for a separate
+  "target" GSA that owns the bucket permissions. Set `gcs.sa_email` to the target GSA email; the
+  source identity needs `roles/iam.serviceAccountTokenCreator` on the target. This is the GCS
+  `sa_email` flow and is what the steps below configure.
+
+First set the variables used throughout (look the values up if you don't know them):
+
+```bash
+# project that owns the GCS bucket and the service accounts
+gcloud projects list
+PROJECT_ID=<YOUR_PROJECT_ID>
+PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')
+
+# GKE cluster that runs clickhouse — Workload Identity must be enabled on it:
+gcloud container clusters list
+CLUSTER_NAME=<YOUR_CLUSTER_NAME>
+CLUSTER_LOCATION=<YOUR_CLUSTER_REGION_OR_ZONE>
+# enable Workload Identity if it is not already (no-op if already enabled):
+gcloud container clusters update "${CLUSTER_NAME}" --location "${CLUSTER_LOCATION}" \
+  --workload-pool="${PROJECT_ID}.svc.id.goog"
+
+# GCS bucket that will hold the backups — pick an existing one:
+gcloud storage buckets list --format='value(name)'
+GCS_BUCKET=<YOUR_BUCKET>
+# or create it (bucket names are globally unique):
+gcloud storage buckets create gs://your-bucket-name --project "${PROJECT_ID}" --location <REGION>
+GCS_BUCKET=your-bucket-name
+
+# kubernetes namespace and service account name (created later):
+NAMESPACE=your-kubernetes-namespace
+SERVICE_ACCOUNT_NAME=your-kubernetes-service-account
+```
+
+Create the **target** Google Cloud service account (its email becomes `gcs.sa_email`) and grant it
+access to the bucket (`roles/storage.objectAdmin` scoped to the bucket is enough for
+backup/restore; use `roles/storage.admin` if `clickhouse-backup` must also create the bucket):
+
+```bash
+TARGET_GSA_NAME=clickhouse-backup-gcs-sa-name
+gcloud iam service-accounts create "${TARGET_GSA_NAME}" --project "${PROJECT_ID}" \
+  --display-name "clickhouse-backup GCS access"
+TARGET_GSA_EMAIL="${TARGET_GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+
+# grant bucket access to the target GSA (scoped to the single bucket):
+gcloud storage buckets add-iam-policy-binding "gs://${GCS_BUCKET}" \
+  --member "serviceAccount:${TARGET_GSA_EMAIL}" \
+  --role "roles/storage.objectAdmin"
+```
+
+Bind the Kubernetes `ServiceAccount` to a **source** identity via Workload Identity, and allow that
+source identity to impersonate the target GSA. The simplest source identity is the target GSA
+itself bound directly to the KSA — then the source impersonates itself, which keeps a single GSA in
+play while still exercising the `gcs.sa_email` flow:
+
+```bash
+# allow the KSA to act as the source GSA (here: the same target GSA):
+gcloud iam service-accounts add-iam-policy-binding "${TARGET_GSA_EMAIL}" \
+  --project "${PROJECT_ID}" \
+  --role "roles/iam.workloadIdentityUser" \
+  --member "serviceAccount:${PROJECT_ID}.svc.id.goog[${NAMESPACE}/${SERVICE_ACCOUNT_NAME}]"
+
+# allow the source identity to mint impersonated tokens for the target GSA
+# (required because gcs.sa_email goes through impersonate.CredentialsTokenSource):
+gcloud iam service-accounts add-iam-policy-binding "${TARGET_GSA_EMAIL}" \
+  --project "${PROJECT_ID}" \
+  --role "roles/iam.serviceAccountTokenCreator" \
+  --member "serviceAccount:${TARGET_GSA_EMAIL}"
+```
+
+Create the namespace and a service account annotated with the source GSA so the GKE webhook injects
+the Workload Identity credentials into the pod:
+
+```bash
+kubectl create ns "${NAMESPACE}"
+```
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ${SERVICE_ACCOUNT_NAME}
+  namespace: ${NAMESPACE}
+  annotations:
+    # the source GSA the pod runs as; clickhouse-backup then impersonates gcs.sa_email
+    iam.gke.io/gcp-service-account: ${TARGET_GSA_EMAIL}
+```
+
+Put the `clickhouse-backup` config into a `ConfigMap` (no `credentials_file`/`credentials_json`
+needed). With `gcs.sa_email` set, `clickhouse-backup` uses the pod's ambient Workload Identity
+credentials to impersonate the target service account. Mount this `ConfigMap` into
+`/etc/clickhouse-backup/` and link the service account to the podTemplate:
+
+```yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-backup-config
+  namespace: ${NAMESPACE}
+data:
+  config.yml: |
+    general:
+      remote_storage: gcs
+    gcs:
+      # ${TARGET_GSA_EMAIL} — the target service account that owns the bucket permissions;
+      # the pod's Workload Identity credentials impersonate it via impersonate.CredentialsTokenSource
+      sa_email: ${TARGET_GSA_EMAIL}
+      # ${GCS_BUCKET} — the bucket granted roles/storage.objectAdmin above
+      bucket: ${GCS_BUCKET}
+      path: backup
+---
+apiVersion: "clickhouse.altinity.com/v1"
+kind: "ClickHouseInstallation"
+metadata:
+  name: <NAME>
+  namespace: ${NAMESPACE}
+spec:
+  defaults:
+    templates:
+      podTemplate: <POD_TEMPLATE_NAME>
+  templates:
+    podTemplates:
+      - name: <POD_TEMPLATE_NAME>
+        spec:
+          serviceAccountName: ${SERVICE_ACCOUNT_NAME}
+          containers:
+            - name: clickhouse
+              image: clickhouse/clickhouse-server:latest
+            - name: clickhouse-backup
+              image: altinity/clickhouse-backup:latest
+              command:
+                - bash
+                - -xc
+                - "/bin/clickhouse-backup server"
+              volumeMounts:
+                - name: clickhouse-backup-config
+                  mountPath: /etc/clickhouse-backup/
+          volumes:
+            - name: clickhouse-backup-config
+              configMap:
+                name: clickhouse-backup-config
+```
+
+> If you prefer the **direct binding** mode instead, omit `gcs.sa_email` from the `ConfigMap`,
+> keep the `iam.gke.io/gcp-service-account` annotation pointing at the GSA that owns the bucket,
+> and skip the `roles/iam.serviceAccountTokenCreator` self-binding — `clickhouse-backup` will use
+> Application Default Credentials directly.
+
 ### How to use clickhouse-backup + clickhouse-operator in FIPS compatible mode in Kubernetes for S3
 
 Use the image `altinity/clickhouse-backup:X.X.X-fips` (where X.X.X is the version number).
@@ -968,4 +1352,27 @@ while true; do
   fi
   sleep 5
 done
+```
+
+## Minimal grants for backup user
+
+Better use maximum grants, but minimal grants is here (could fail with restore RBAC objects)
+
+```sql
+CREATE ROLE IF NOT EXISTS backup_role;
+
+GRANT SELECT ON system.* TO backup_role;
+GRANT INSERT ON system.backup_actions TO backup_role;
+
+GRANT ALTER FREEZE PARTITION ON *.* TO backup_role;
+GRANT ALTER FETCH PARTITION ON *.* TO backup_role;
+
+GRANT CREATE TABLE ON *.* TO backup_role;
+GRANT DROP TABLE   ON *.* TO backup_role;
+
+GRANT DROP DATABASE ON *.* TO backup_role;
+GRANT CREATE DATABASE ON *.* TO backup_role;
+
+CREATE USER IF NOT EXISTS backup_user IDENTIFIED WITH sha256_password BY 'YourStrongP@ssw0rd!';             
+CREATE GRANT backup_role TO backup_user;
 ```

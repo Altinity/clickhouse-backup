@@ -2,12 +2,17 @@ package utils
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
-	"github.com/rs/zerolog/log"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -61,8 +66,13 @@ func HumanizeDuration(d time.Duration) string {
 
 func ExecCmd(ctx context.Context, timeout time.Duration, cmd string, args ...string) error {
 	out, err := ExecCmdOut(ctx, timeout, cmd, args...)
+	if err != nil {
+		// surface the command output in the error so custom command failures
+		// (kopia/restic/rsync) are diagnosable without LOG_LEVEL=debug
+		return errors.Wrapf(err, "output: %s", out)
+	}
 	log.Debug().Msg(out)
-	return err
+	return nil
 }
 
 func ExecCmdOut(ctx context.Context, timeout time.Duration, cmd string, args ...string) (string, error) {
@@ -70,5 +80,36 @@ func ExecCmdOut(ctx context.Context, timeout time.Duration, cmd string, args ...
 	log.Debug().Msgf("%s %s", cmd, strings.Join(args, " "))
 	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
 	cancel()
-	return string(out), err
+	if err != nil {
+		return string(out), errors.Wrap(err, "ExecCmdOut")
+	}
+	return string(out), nil
+}
+
+func NewTLSConfig(caPath, certPath, keyPath string, skipVerify, loadSystemCAs bool) (*tls.Config, error) {
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: skipVerify,
+	}
+	if certPath != "" || keyPath != "" {
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return nil, errors.Wrap(err, "tls.LoadX509KeyPair")
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+	if caPath != "" {
+		caCert, err := os.ReadFile(caPath)
+		if err != nil {
+			return nil, errors.Wrapf(err, "read ca file %s", caPath)
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, errors.Errorf("AppendCertsFromPEM %s return false", caPath)
+		}
+		tlsConfig.RootCAs = caCertPool
+	} else if !loadSystemCAs {
+		// If RootCAs is nil, TLS uses the host's root CA set
+		tlsConfig.RootCAs = x509.NewCertPool()
+	}
+	return tlsConfig, nil
 }

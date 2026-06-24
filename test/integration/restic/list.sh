@@ -6,7 +6,9 @@ source "${CUR_DIR}/init.sh"
 rm -rf /tmp/restic_list_full.json
 restic snapshots --insecure-tls --json | jq -c -M '.[] | {"snapshot_id": .short_id, "backup_name": .tags[0], "creation_date": .time, "upload_date": .time }' > /tmp/restic_list.json
 jq -c -r -M --slurp '.[].snapshot_id' /tmp/restic_list.json | while IFS= read -r snapshot_id ; do
-  jq -c -M -s 'add' <(grep ${snapshot_id} /tmp/restic_list.json) <(restic stats --insecure-tls --json ${snapshot_id}) >> /tmp/restic_list_full.json
+  # restic >= 0.17 prints a progress line to stdout before the JSON document
+  # (even with --quiet), so keep only the JSON object line for jq.
+  jq -c -M -s 'add' <(grep ${snapshot_id} /tmp/restic_list.json) <(restic stats --insecure-tls --json ${snapshot_id} | grep -E '^\{') >> /tmp/restic_list_full.json
 done
 cat /tmp/restic_list_full.json | jq -c -M --slurp '.[] | .data_size = .total_size | .metadata_size = 0'
 set -x

@@ -4,14 +4,16 @@ NAME:
    clickhouse-backup tables - List of tables, exclude skip_tables
 
 USAGE:
-   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--all]
+   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all]
 
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
    --all, -a                                  Print table even when match with skip_tables pattern
    --table value, --tables value, -t value    List tables only match with table name patterns, separated by comma, allow ? and * as wildcard
-   --remote-backup value                      List tables from remote backup
+   --remote-backup value                      List tables from a remote backup, including per-table size and parts count
+   --local-backup value                       List tables from a local backup (read from disk, no live ClickHouse query), including per-table size and parts count
+   --format value, -f value                   Output format (text|json|yaml|csv|tsv)
    
 ```
 ### CLI command - create
@@ -163,7 +165,7 @@ NAME:
    clickhouse-backup restore - Create schema and restore data from backup
 
 USAGE:
-   clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] <backup_name>
+   clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] [--skip-empty-tables] <backup_name>
 
 OPTIONS:
    --config value, -c value                    Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
@@ -192,6 +194,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --resume, --resumable                                                             Will resume download for object disk data
    --restore-schema-as-attach                                                        Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --replicated-copy-to-detached                                                     Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step
+   --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
    
 ```
 ### CLI command - restore_remote
@@ -200,7 +203,7 @@ NAME:
    clickhouse-backup restore_remote - Download and restore
 
 USAGE:
-   clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] <backup_name>
+   clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] <backup_name>
 
 OPTIONS:
    --config value, -c value                    Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
@@ -229,6 +232,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --resume, --resumable                                                             Save intermediate download state and resume download if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --restore-schema-as-attach                                                        Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --hardlink-exists-files                                                           Create hardlinks for existing files instead of downloading
+   --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
    
 ```
 ### CLI command - delete
@@ -289,11 +293,12 @@ NAME:
    clickhouse-backup clean_remote_broken - Remove all broken remote backups
 
 USAGE:
-   clickhouse-backup clean_remote_broken [command options] [arguments...]
+   clickhouse-backup clean_remote_broken [--include=glob ...]
 
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
+   --include value                            Glob (path.Match syntax) to scope cleanup only to broken backup names matching these patterns; can be passed multiple times; if omitted, all broken backups are deleted
    
 ```
 ### CLI command - clean_local_broken
@@ -307,6 +312,25 @@ USAGE:
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
+   
+```
+### CLI command - clean_broken_retention
+```
+NAME:
+   clickhouse-backup clean_broken_retention - Remove orphan entries under remote `path` and `object_disks_path` that are not in the live backup list
+
+USAGE:
+   clickhouse-backup clean_broken_retention [--commit] [--include=glob ...] [--exclude=glob ...]
+
+DESCRIPTION:
+   Walks top-level of remote `path` and `object_disks_path`, batch-deletes (with retry) every entry that is not a live backup and is not excluded by --exclude globs and is matched by --include globs (if provided). Object disk orphans are deleted in parallel with progress tracking. Pass --commit to actually delete; without it the command only logs what would be deleted.
+
+OPTIONS:
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   --include value                            Glob (path.Match syntax) to scope cleanup only to backup names matching these patterns; can be passed multiple times; if omitted, all orphans are candidates
+   --exclude value                            Glob (path.Match syntax) of backup names to preserve even if they appear as orphans; can be passed multiple times
+   --commit                                   Actually delete orphans; without this flag the command only logs what would be deleted
    
 ```
 ### CLI command - watch
@@ -342,6 +366,14 @@ Look at the system.parts partition and partition_id fields for details https://c
    --skip-projections db_pattern.table_pattern:projections_pattern                 Skip make and upload hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --delete, --delete-source, --delete-local                                       explicitly delete local backup during upload
    
+```
+### CLI command - acvp
+```
+NAME:
+   clickhouse-backup acvp - Run ACVP wrapper protocol over stdin/stdout
+
+USAGE:
+   clickhouse-backup acvp
 ```
 ### CLI command - server
 ```

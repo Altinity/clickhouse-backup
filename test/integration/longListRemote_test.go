@@ -1,0 +1,97 @@
+//go:build integration
+
+package main
+
+import (
+	"fmt"
+	"regexp"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/rs/zerolog/log"
+)
+
+func TestLongListRemote(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	totalCacheCount := 20
+	testBackupName := "test_list_remote"
+
+	testListRemoteAllBackups := make([]string, totalCacheCount)
+	for i := 0; i < totalCacheCount; i++ {
+		testListRemoteAllBackups[i] = fmt.Sprintf("%s_%d", testBackupName, i)
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml ALLOW_EMPTY_BACKUPS=true RBAC_BACKUP_ALWAYS=false clickhouse-backup create_remote %s_%d", testBackupName, i))
+	}
+	// clean up even if an assertion below fails midway, otherwise these 20 remote
+	// backups leak into shared minio and break later checkRemoteNoFiles assertions
+	// (e.g. TestTablesCommand / TestTablePatterns)
+	defer fullCleanup(t, r, env, testListRemoteAllBackups, []string{"remote", "local"}, nil, false, true, true, "config-s3.yml")
+
+	r.NoError(env.tc.RestartContainer(t, "minio"))
+	time.Sleep(2 * time.Second)
+
+	var err error
+	var cachedOut, nonCachedOut, clearCacheOut string
+	listTimeMsRE := regexp.MustCompile(`list_duration=(\d+.\d+)`)
+	extractListTimeMs := func(out string) float64 {
+		r.Contains(out, "list_duration=")
+		matches := listTimeMsRE.FindStringSubmatch(out)
+		r.True(len(matches) == 2)
+		log.Debug().Msgf("extractListTimeMs=%s", matches[1])
+		result, parseErr := strconv.ParseFloat(matches[1], 64)
+		r.NoError(parseErr)
+		log.Debug().Msg(out)
+		return result
+	}
+	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-rfv", "/tmp/.clickhouse-backup-metadata.cache.S3")
+	nonCachedOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
+	r.NoError(err)
+	noCacheDuration := extractListTimeMs(nonCachedOut)
+
+	env.DockerExecNoError(r, "clickhouse-backup", "chmod", "-Rv", "+r", "/tmp/.clickhouse-backup-metadata.cache.S3")
+
+	cachedOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
+	r.NoError(err)
+	cachedDuration := extractListTimeMs(cachedOut)
+	// On shared environments parallel tests may add IO jitter, retry measurement if needed
+	for retry := 0; retry < 3 && noCacheDuration <= cachedDuration; retry++ {
+		log.Warn().Msgf("cached duration %f >= noCacheDuration %f, retry %d", cachedDuration, noCacheDuration, retry+1)
+		time.Sleep(2 * time.Second)
+		cachedOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
+		r.NoError(err)
+		cachedDuration = extractListTimeMs(cachedOut)
+	}
+	if noCacheDuration <= cachedDuration {
+		log.Debug().Msg("===== NON CACHED OUT ======")
+		log.Debug().Msg(nonCachedOut)
+		log.Debug().Msg("===== CACHED OUT ======")
+		log.Debug().Msg(cachedOut)
+	}
+	r.GreaterOrEqualf(noCacheDuration, cachedDuration, "noCacheDuration=%f shall be greater cachedDuration=%f", noCacheDuration, cachedDuration)
+
+	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-Rfv", "/tmp/.clickhouse-backup-metadata.cache.S3")
+	clearCacheOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
+	r.NoError(err)
+	cacheClearDuration := extractListTimeMs(clearCacheOut)
+	// On shared environments parallel tests may add IO jitter, retry measurement if needed
+	for retry := 0; retry < 3 && cacheClearDuration < cachedDuration; retry++ {
+		log.Warn().Msgf("cacheClearDuration %f < cachedDuration %f, retry %d", cacheClearDuration, cachedDuration, retry+1)
+		time.Sleep(2 * time.Second)
+		env.DockerExecNoError(r, "clickhouse-backup", "rm", "-Rfv", "/tmp/.clickhouse-backup-metadata.cache.S3")
+		clearCacheOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
+		r.NoError(err)
+		cacheClearDuration = extractListTimeMs(clearCacheOut)
+	}
+
+	if noCacheDuration <= cacheClearDuration {
+		log.Debug().Msg("===== NON CACHED OUT ======")
+		log.Debug().Msg(nonCachedOut)
+		log.Debug().Msg("===== CLEAR CACHE OUT ======")
+		log.Debug().Msg(clearCacheOut)
+	}
+
+	r.GreaterOrEqualf(cacheClearDuration, cachedDuration, "cacheClearDuration=%f ms shall be greater cachedDuration=%f ms", cacheClearDuration, cachedDuration)
+	log.Debug().Msgf("noCacheDuration=%f cachedDuration=%f cacheClearDuration=%f", noCacheDuration, cachedDuration, cacheClearDuration)
+}
