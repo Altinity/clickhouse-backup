@@ -1,10 +1,12 @@
 package backup
 
 import (
+	"context"
 	"fmt"
+	"testing"
+
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func TestDetectRBACObject(t *testing.T) {
@@ -220,4 +222,12 @@ func TestChangeTablePatternFromRestoreMapping(t *testing.T) {
 			assert.Equal(t, tc.expected, result)
 		})
 	}
+}
+
+func TestRestoreRBACResolveAllConflictsMissingAccessDir(t *testing.T) {
+	b := &Backuper{DefaultDataPath: t.TempDir()}
+
+	err := b.restoreRBACResolveAllConflicts(context.Background(), "missing-backup", t.TempDir(), 0, nil, nil, false)
+
+	assert.NoError(t, err)
 }

@@ -616,6 +616,10 @@ func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []c
 
 func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupName string, accessPath string, version int, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory, dropExists bool) error {
 	backupAccessPath := path.Join(b.DefaultDataPath, "backup", backupName, "access")
+	if _, statErr := os.Stat(backupAccessPath); os.IsNotExist(statErr) {
+		log.Debug().Msgf("backup access path %s doesn't exist, skip RBAC restore", backupAccessPath)
+		return nil
+	}
 
 	walkErr := filepath.Walk(backupAccessPath, func(fPath string, fInfo fs.FileInfo, err error) error {
 		if err != nil {
