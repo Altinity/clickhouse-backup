@@ -252,7 +252,11 @@ func testCASRestoreNamedCollectionsOnly(t *testing.T, env *TestEnvironment, r *r
 	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
 	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(2)", db))
 	env.queryWithNoError(r, fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collection))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE NAMED COLLECTION %s AS key='val' OVERRIDABLE", collection))
+	// No OVERRIDABLE/NOT OVERRIDABLE modifier: that per-key override syntax was
+	// only added in ClickHouse 24.x and 23.x (this subtest runs on 22.12+)
+	// rejects it with a syntax error. The override mode is irrelevant to what
+	// this test verifies (named-collection round-trip + DB isolation).
+	env.queryWithNoError(r, fmt.Sprintf("CREATE NAMED COLLECTION %s AS key='val'", collection))
 
 	env.casBackupNoError(r, "create", "--named-collections", "--tables", db+".*", backup)
 	env.casBackupNoError(r, "cas-upload", backup)
