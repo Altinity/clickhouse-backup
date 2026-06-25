@@ -616,6 +616,10 @@ func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []c
 
 func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupName string, accessPath string, version int, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory, dropExists bool) error {
 	backupAccessPath := path.Join(b.DefaultDataPath, "backup", backupName, "access")
+	if _, statErr := os.Stat(backupAccessPath); os.IsNotExist(statErr) {
+		log.Debug().Msgf("backup access path %s doesn't exist, skip RBAC restore", backupAccessPath)
+		return nil
+	}
 
 	walkErr := filepath.Walk(backupAccessPath, func(fPath string, fInfo fs.FileInfo, err error) error {
 		if err != nil {
@@ -927,6 +931,10 @@ func (b *Backuper) restoreRBACReplicated(backupName string, backupPrefixDir stri
 	info, err := os.Stat(srcBackupDir)
 	if err != nil {
 		log.Warn().Msgf("stat: %s error: %v", srcBackupDir, err)
+		// keep the not-exist error unwrapped so callers can detect it via os.IsNotExist
+		if os.IsNotExist(err) {
+			return err
+		}
 		return errors.Wrap(err, "stat backup dir")
 	}
 
@@ -1420,6 +1428,10 @@ func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinat
 	info, err := os.Stat(srcBackupDir)
 	if err != nil {
 		log.Warn().Msgf("stat: %s error: %v", srcBackupDir, err)
+		// keep the not-exist error unwrapped so callers can detect it via os.IsNotExist
+		if os.IsNotExist(err) {
+			return err
+		}
 		return errors.Wrap(err, "stat backup dir")
 	}
 	existsFiles, _ := os.ReadDir(destinationDir)
