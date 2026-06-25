@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -230,4 +231,15 @@ func TestRestoreRBACResolveAllConflictsMissingAccessDir(t *testing.T) {
 	err := b.restoreRBACResolveAllConflicts(context.Background(), "missing-backup", t.TempDir(), 0, nil, nil, false)
 
 	assert.NoError(t, err)
+}
+
+// restoreBackupRelatedDir must surface a missing source dir as an os.IsNotExist-recognizable
+// error so restoreRBAC's `os.IsNotExist(err)` guards can skip RBAC restore gracefully (issue #1432).
+func TestRestoreBackupRelatedDirMissingDirIsNotExist(t *testing.T) {
+	b := &Backuper{DefaultDataPath: t.TempDir()}
+
+	err := b.restoreBackupRelatedDir("missing-backup", "access", t.TempDir(), nil, []string{"*.jsonl"})
+
+	assert.Error(t, err)
+	assert.True(t, os.IsNotExist(err), "expected os.IsNotExist to match the returned error, got: %v", err)
 }

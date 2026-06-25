@@ -931,6 +931,10 @@ func (b *Backuper) restoreRBACReplicated(backupName string, backupPrefixDir stri
 	info, err := os.Stat(srcBackupDir)
 	if err != nil {
 		log.Warn().Msgf("stat: %s error: %v", srcBackupDir, err)
+		// keep the not-exist error unwrapped so callers can detect it via os.IsNotExist
+		if os.IsNotExist(err) {
+			return err
+		}
 		return errors.Wrap(err, "stat backup dir")
 	}
 
@@ -1424,6 +1428,10 @@ func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinat
 	info, err := os.Stat(srcBackupDir)
 	if err != nil {
 		log.Warn().Msgf("stat: %s error: %v", srcBackupDir, err)
+		// keep the not-exist error unwrapped so callers can detect it via os.IsNotExist
+		if os.IsNotExist(err) {
+			return err
+		}
 		return errors.Wrap(err, "stat backup dir")
 	}
 	existsFiles, _ := os.ReadDir(destinationDir)
