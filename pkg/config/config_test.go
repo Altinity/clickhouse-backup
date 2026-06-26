@@ -55,6 +55,10 @@ func TestOverrideEnvVarsMasksSensitiveValuesOnlyInLogs(t *testing.T) {
 	t.Setenv(sensitiveName, "original-secret")
 	t.Setenv(nonSensitiveName, "original-storage")
 	t.Setenv(nameOnlyFlag, "false")
+	// Pin LOG_LEVEL so OverrideEnvVars, which resets the global zerolog level
+	// from this variable, does not drop below info and suppress the override
+	// logs this test asserts on when the outer process sets LOG_LEVEL=warn/error.
+	t.Setenv("LOG_LEVEL", "info")
 
 	var buf bytes.Buffer
 	originalLogger := log.Logger
