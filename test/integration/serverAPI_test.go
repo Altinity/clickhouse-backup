@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"path"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
@@ -85,6 +87,141 @@ func TestServerAPI(t *testing.T) {
 	testAPIBackupActionsSkipCommands(r, env)
 
 	env.DockerExecNoError(r, "clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
+}
+
+// TestWatchIncrementalSkipDisks reproduces the Slack-reported scenario where a
+// tiered table moves a partition from the hot (default) disk to a cold object
+// disk listed in clickhouse.skip_disks, and the next incremental backup must
+// skip the now-cold partition instead of attempting an object-disk server-side
+// blob copy (which, for the reporter, failed with Azure 404 Container Not Found
+// and eventually tripped the watch loop's "too many errors" circuit breaker).
+//
+// The cold tier here is a cache disk wrapping an s3 object disk, mirroring the
+// reporter's azure_cold + azure_cold_cache topology: both disks share one
+// metadata_path, so GetDisks collapses them to the underlying name. The
+// increment is created with --diff-from-remote, the exact CreateToRemote path
+// the `watch` loop uses for increment backups (pkg/backup/watch.go).
+func TestWatchIncrementalSkipDisks(t *testing.T) {
+	version := os.Getenv("CLICKHOUSE_VERSION")
+	if compareVersion(version, "22.8") < 0 {
+		t.Skipf("requires ClickHouse >= 22.8 for `type: cache` disk over s3, current version %s", version)
+	}
+
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+
+	// Cold tier = cache disk wrapping an s3 object disk (azure_cold + azure_cold_cache analogue).
+	env.DockerExecNoError(r, "clickhouse", "bash", "-xc", `
+cat > /etc/clickhouse-server/config.d/skip_disk_tiered.xml <<'XML'
+<clickhouse>
+  <storage_configuration>
+    <disks>
+      <s3_cold>
+        <type>s3</type>
+        <endpoint>https://minio:9000/clickhouse/skip_disk_cold/</endpoint>
+        <access_key_id>access_key</access_key_id>
+        <secret_access_key>it_is_my_super_secret_key</secret_access_key>
+        <skip_access_check>true</skip_access_check>
+      </s3_cold>
+      <s3_cold_cache>
+        <type>cache</type>
+        <disk>s3_cold</disk>
+        <path>/var/lib/clickhouse/filesystem_caches/s3_cold_cache_test/</path>
+        <max_size>1073741824</max_size>
+      </s3_cold_cache>
+    </disks>
+    <policies>
+      <skip_disk_tiered>
+        <volumes>
+          <hot><disk>default</disk></hot>
+          <cold><disk>s3_cold_cache</disk></cold>
+        </volumes>
+      </skip_disk_tiered>
+    </policies>
+  </storage_configuration>
+</clickhouse>
+XML
+`)
+	env.ch.Close()
+	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
+	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
+
+	dbName := "test_watch_incr_skip"
+	tableName := "tiered"
+	fullBackup := "test_watch_incr_skip_full"
+	incrBackup := "test_watch_incr_skip_increment"
+
+	// Clean any leftovers from previous runs.
+	for _, b := range []string{incrBackup, fullBackup} {
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote "+b+" 2>/dev/null || true")
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local "+b+" 2>/dev/null || true")
+	}
+	r.NoError(env.dropDatabase(dbName, true))
+
+	env.queryWithNoError(r, "CREATE DATABASE "+dbName)
+	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64, p UInt8) ENGINE=MergeTree() PARTITION BY p ORDER BY id SETTINGS storage_policy='skip_disk_tiered'")
+	// Partition 1 lands on the hot (default) disk.
+	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number, 1 FROM numbers(100)")
+
+	// Parent (full) backup: partition 1 is on hot, captured normally. No parent => skip_disks bug can't fire here.
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--tables="+dbName+".*", fullBackup)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", fullBackup)
+
+	// Move partition 1 to the cold (skipped) object disk, as past-TTL tiering would.
+	env.queryWithNoError(r, "ALTER TABLE "+dbName+"."+tableName+" MOVE PARTITION 1 TO VOLUME 'cold'")
+	var coldParts uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&coldParts, "SELECT count() FROM system.parts WHERE active AND database='"+dbName+"' AND `table`='"+tableName+"' AND disk_name LIKE 's3_cold%'"))
+	r.Equal(uint64(1), coldParts, "partition 1 should live on the cold s3 disk after MOVE PARTITION TO VOLUME 'cold'")
+
+	// A new partition lands on hot, giving the increment real work on a non-skipped disk.
+	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number, 2 FROM numbers(50)")
+
+	// Incremental backup with the cold disk skipped — same CreateToRemote(diffFromRemote) path `watch` uses.
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
+		"CLICKHOUSE_SKIP_DISKS=s3_cold,s3_cold_cache clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create_remote --diff-from-remote="+fullBackup+" --tables="+dbName+".* "+incrBackup)
+	r.NoError(err, "incremental create_remote must not fail when a moved partition lives on a skipped object disk:\n%s", out)
+
+	// The increment metadata must NOT contain any parts on the skipped cold disk,
+	// but must still back up the new hot partition on `default`.
+	type partMeta struct {
+		Name string `json:"name"`
+	}
+	type tableMetaJSON struct {
+		Parts map[string][]partMeta `json:"parts"`
+	}
+	metaPath := path.Join("/var/lib/clickhouse/backup", incrBackup, "metadata", common.TablePathEncode(dbName), common.TablePathEncode(tableName)+".json")
+	metaOut, err := env.DockerExecOut("clickhouse-backup", "cat", metaPath)
+	r.NoError(err, "cat %s: %s", metaPath, metaOut)
+	var tm tableMetaJSON
+	r.NoError(json.Unmarshal([]byte(metaOut), &tm))
+	for _, coldDisk := range []string{"s3_cold", "s3_cold_cache"} {
+		_, found := tm.Parts[coldDisk]
+		r.Falsef(found, "increment must not back up parts on skipped disk %s; metadata=%s", coldDisk, metaOut)
+	}
+	r.NotEmptyf(tm.Parts["default"], "increment should back up the new hot partition on default; metadata=%s", metaOut)
+
+	// End-to-end: restoring the increment chain yields ONLY the hot partition (50
+	// rows). skip_disks=cold means "cold data is not part of the backup": the
+	// partition that moved to the skipped cold disk is intentionally absent from
+	// the increment and is NOT inherited from the parent (full) backup on restore.
+	// This is the desired semantics — the cold tier is expected to stay durable in
+	// its own object storage, outside clickhouse-backup.
+	env.queryWithNoError(r, "DROP TABLE "+dbName+"."+tableName+" SYNC")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", incrBackup)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore_remote", "--rm", incrBackup)
+	env.checkCount(r, 1, 50, "SELECT count() FROM "+dbName+"."+tableName)
+
+	// Cleanup and restore the default ClickHouse storage configuration.
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", incrBackup)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", fullBackup)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", incrBackup)
+	r.NoError(env.dropDatabase(dbName, true))
+	env.DockerExecNoError(r, "clickhouse", "rm", "-f", "/etc/clickhouse-server/config.d/skip_disk_tiered.xml")
+	env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/skip_disk_cold")
+	env.ch.Close()
+	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
+	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 }
 
 func testAPIRestart(r *require.Assertions, env *TestEnvironment) {
