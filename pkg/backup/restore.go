@@ -38,6 +38,7 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -72,7 +73,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		return errors.Wrap(err, "prepareRestoreMapping table")
 	}
 
-	doRestoreData := (!schemaOnly && !rbacOnly && !configsOnly) || dataOnly
+	doRestoreData := (!schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly) || dataOnly
 
 	if err := b.ch.Connect(); err != nil {
 		return errors.Wrap(err, "can't connect to clickhouse")
@@ -139,6 +140,19 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	backupMetadata := metadata.BackupMetadata{}
 	if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
 		return errors.Wrap(err, "unmarshal backup metadata")
+	}
+	// CAS-format backups are restored exclusively via the cas-restore CLI
+	// (pkg/cas.Restore); the v1 path looks up state (parts on disk, embedded
+	// metadata, object-disk descriptors) that CAS layouts do not carry.
+	//
+	// Exception: when cas-download has materialized a v1-shaped local backup
+	// for the cas-restore handoff it sets CAS.Handoff = true in the local
+	// metadata.json to signal "this layout was written by cas-restore; v1
+	// restore is permitted here, and object-disk handling must be skipped."
+	// The two downloadObjectDiskParts guards below already check CAS == nil
+	// and skip the call when CAS is set (including the Handoff case).
+	if backupMetadata.CAS != nil && !backupMetadata.CAS.Handoff {
+		return cas.ErrCASBackup
 	}
 	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
 	if b.isEmbedded {
@@ -2264,8 +2278,14 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 		Str("database", backupTable.Database).
 		Str("table", backupTable.Table).
 		Msg("download object_disks start")
-	if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, backupTable, diskMap, diskTypes, disks, needsKeyRewrite); err != nil {
-		return errors.Wrapf(err, "can't restore object_disk server-side copy data parts '%s.%s'", backupTable.Database, backupTable.Table)
+	// CAS backups carry no object-disk parts (object-disk tables are
+	// rejected by cas-upload preflight); the v1 detector inspects live
+	// ClickHouse disk types rather than backup metadata, so explicitly
+	// short-circuit when the local backup is CAS-shaped.
+	if backupMetadata.CAS == nil {
+		if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, backupTable, diskMap, diskTypes, disks, needsKeyRewrite); err != nil {
+			return errors.Wrapf(err, "can't restore object_disk server-side copy data parts '%s.%s'", backupTable.Database, backupTable.Table)
+		}
 	}
 	if size > 0 {
 		logger.
@@ -2314,8 +2334,12 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 	var size int64
 	var err error
 	start := time.Now()
-	if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, backupTable, diskMap, diskTypes, disks, needsKeyRewrite); err != nil {
-		return errors.Wrapf(err, "can't restore object_disk server-side copy data parts '%s.%s'", backupTable.Database, backupTable.Table)
+	// CAS backups never carry object-disk parts; see comment in
+	// restoreDataRegularByAttach above.
+	if backupMetadata.CAS == nil {
+		if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, backupTable, diskMap, diskTypes, disks, needsKeyRewrite); err != nil {
+			return errors.Wrapf(err, "can't restore object_disk server-side copy data parts '%s.%s'", backupTable.Database, backupTable.Table)
+		}
 	}
 	log.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Str("database", backupTable.Database).Str("table", backupTable.Table).Msg("download object_disks finish")
 	// Skip ATTACH PART for Replicated*MergeTree tables if replicatedCopyToDetached is true
