@@ -1,0 +1,32 @@
+<!--
+    Stress variant of `listeners-fips-cipher.xml`, mounted on the
+    non-FIPS Altinity ClickHouse server by the stress arm of
+    `outbound_tls_to_nonfips_clickhouse_with_cipher_profile`
+    (enabled by the `stress` regression flag).
+
+    Instead of a single cipher, this offers the FULL FIPS-approved cipher
+    set documented for Altinity FIPS-compatible builds, so the end-to-end
+    `clickhouse-backup-fips tables` run is exercised against the same
+    cipher list a real FIPS-compatible server would advertise. See:
+    https://docs.altinity.com/altinitystablebuilds/fips-compatible-altinity-builds/
+
+    The plain `tcp_port` (9000) and `http_port` (8123) are left as image
+    defaults so the container's healthcheck (`/ping` on 8123) keeps working.
+
+    Server certificate / key paths point at `/etc/clickhouse-server/ssl/`
+    which the test bind-mounts from `configs/clickhouse/ssl/`.
+-->
+<clickhouse>
+    <tcp_port_secure>9440</tcp_port_secure>
+    <openSSL>
+        <server>
+            <certificateFile>/etc/clickhouse-server/ssl/server.crt</certificateFile>
+            <privateKeyFile>/etc/clickhouse-server/ssl/server.key</privateKeyFile>
+            <cipherList>ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:AES128-GCM-SHA256:AES256-GCM-SHA384</cipherList>
+            <cipherSuites>TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384</cipherSuites>
+            <preferServerCiphers>true</preferServerCiphers>
+            <disableProtocols>sslv2,sslv3,tlsv1,tlsv1_1</disableProtocols>
+            <verificationMode>relaxed</verificationMode>
+        </server>
+    </openSSL>
+</clickhouse>
