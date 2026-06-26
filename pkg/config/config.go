@@ -23,7 +23,20 @@ import (
 
 const (
 	DefaultConfigPath = "/etc/clickhouse-backup/config.yml"
+	maskedEnvValue    = "[MASKED]"
 )
+
+var sensitiveEnvNameTokens = []string{
+	"PASSWORD",
+	"SECRET",
+	"ACCESS_KEY",
+	"SECRET_KEY",
+	"TOKEN",
+	"CREDENTIAL",
+	"PRIVATE_KEY",
+	"SAS",
+	"CONNECTION_STRING",
+}
 
 // Config - config file format
 type Config struct {
@@ -869,6 +882,16 @@ type oldEnvValues struct {
 	WasPresent bool
 }
 
+func maskSensitiveEnvValue(name, value string) string {
+	upperName := strings.ToUpper(name)
+	for _, token := range sensitiveEnvNameTokens {
+		if strings.Contains(upperName, token) {
+			return maskedEnvValue
+		}
+	}
+	return value
+}
+
 func OverrideEnvVars(ctx *cli.Context) map[string]oldEnvValues {
 	env := ctx.StringSlice("env")
 	oldValues := map[string]oldEnvValues{}
@@ -895,7 +918,7 @@ func OverrideEnvVars(ctx *cli.Context) map[string]oldEnvValues {
 		})
 
 		processEnvFromCli(func(envVariable []string) {
-			log.Info().Msgf("override %s=%s", envVariable[0], envVariable[1])
+			log.Info().Msgf("override %s=%s", envVariable[0], maskSensitiveEnvValue(envVariable[0], envVariable[1]))
 			oldValue, wasPresent := os.LookupEnv(envVariable[0])
 			oldValues[envVariable[0]] = oldEnvValues{
 				OldValue:   oldValue,

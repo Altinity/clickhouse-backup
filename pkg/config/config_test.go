@@ -1,6 +1,111 @@
 package config
 
-import "testing"
+import (
+	"bytes"
+	"flag"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"github.com/urfave/cli"
+)
+
+func TestMaskSensitiveEnvValue(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"S3_SECRET_KEY", "secret", maskedEnvValue},
+		{"CLICKHOUSE_PASSWORD", "password", maskedEnvValue},
+		{"AZBLOB_SAS_TOKEN", "sas-token", maskedEnvValue},
+		{"GCS_CREDENTIALS_JSON", "{}", maskedEnvValue},
+		{"s3_secret_key", "secret", maskedEnvValue},
+		{"REMOTE_STORAGE", "s3", "s3"},
+		{"LOG_LEVEL", "debug", "debug"},
+		{"UPLOAD_CONCURRENCY", "4", "4"},
+		{"FOO", "", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := maskSensitiveEnvValue(tc.name, tc.value); got != tc.want {
+				t.Fatalf("expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestOverrideEnvVarsMasksSensitiveValuesOnlyInLogs(t *testing.T) {
+	const (
+		sensitiveName     = "CLICKHOUSE_BACKUP_TEST_SECRET_KEY"
+		sensitiveValue    = "plain-secret"
+		nonSensitiveName  = "CLICKHOUSE_BACKUP_TEST_REMOTE_STORAGE"
+		nonSensitiveValue = "s3"
+		nameOnlyFlag      = "CLICKHOUSE_BACKUP_TEST_FLAG"
+	)
+
+	t.Setenv(sensitiveName, "original-secret")
+	t.Setenv(nonSensitiveName, "original-storage")
+	t.Setenv(nameOnlyFlag, "false")
+
+	var buf bytes.Buffer
+	originalLogger := log.Logger
+	originalGlobalLevel := zerolog.GlobalLevel()
+	t.Cleanup(func() {
+		log.Logger = originalLogger
+		zerolog.SetGlobalLevel(originalGlobalLevel)
+	})
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	log.Logger = zerolog.New(&buf)
+
+	oldValues := OverrideEnvVars(newEnvContext(t,
+		sensitiveName+"="+sensitiveValue,
+		nonSensitiveName+"="+nonSensitiveValue,
+		nameOnlyFlag,
+	))
+	defer RestoreEnvVars(oldValues)
+
+	if got := os.Getenv(sensitiveName); got != sensitiveValue {
+		t.Fatalf("expected sensitive env override value %q, got %q", sensitiveValue, got)
+	}
+	if got := os.Getenv(nonSensitiveName); got != nonSensitiveValue {
+		t.Fatalf("expected non-sensitive env override value %q, got %q", nonSensitiveValue, got)
+	}
+	if got := os.Getenv(nameOnlyFlag); got != "true" {
+		t.Fatalf("expected name-only env override value %q, got %q", "true", got)
+	}
+
+	output := buf.String()
+	if strings.Contains(output, sensitiveValue) {
+		t.Fatalf("sensitive value leaked in log output: %s", output)
+	}
+	if !strings.Contains(output, "override "+sensitiveName+"="+maskedEnvValue) {
+		t.Fatalf("expected masked sensitive override in log output, got: %s", output)
+	}
+	if !strings.Contains(output, "override "+nonSensitiveName+"="+nonSensitiveValue) {
+		t.Fatalf("expected non-sensitive override value in log output, got: %s", output)
+	}
+	if !strings.Contains(output, "override "+nameOnlyFlag+"=true") {
+		t.Fatalf("expected name-only override value in log output, got: %s", output)
+	}
+}
+
+func newEnvContext(t *testing.T, values ...string) *cli.Context {
+	t.Helper()
+
+	env := cli.StringSlice{}
+	flagSet := flag.NewFlagSet("test", flag.ContinueOnError)
+	flagSet.Var(&env, "env", "")
+	for _, value := range values {
+		if err := flagSet.Set("env", value); err != nil {
+			t.Fatalf("failed to set env flag %q: %v", value, err)
+		}
+	}
+	return cli.NewContext(cli.NewApp(), flagSet, nil)
+}
 
 func TestValidateConfigCompressionTuning(t *testing.T) {
 	// validCompressionConfig returns a DefaultConfig wired to s3 with the given compression_format,
