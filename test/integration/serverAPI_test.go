@@ -60,6 +60,8 @@ func TestServerAPI(t *testing.T) {
 
 	testAPIBackupRestoreRemote(r, env)
 
+	testAPIRebindReplicaPath(r, env)
+
 	testAPIBackupStatus(r, env)
 
 	testAPIBackupList(t, r, env)
@@ -633,6 +635,82 @@ func testAPIBackupTablesLocal(r *require.Assertions, env *TestEnvironment) {
 	r.NoError(err, "%s\nunexpected GET /backup/tables?local_backup=z_backup_1&table=long_schema.t0 error: %v", out, err)
 	r.Contains(out, `"table":"t0"`)
 	r.NotContains(out, `"table":"t1"`)
+}
+
+// testAPIRebindReplicaPath verifies the rebind_replica_path_if_exists query parameter for the
+// /backup/restore endpoint (https://github.com/Altinity/clickhouse-backup/issues/1428).
+//
+// It reproduces the opt-in "stale leftovers" scenario from the CLI-level TestRebindReplicaPathIfExists:
+// an occupant ReplicatedMergeTree holds a shared ZK path, DETACH-ing it keeps the path alive but removes
+// it from node-local system.replicas (simulating a remote HA sibling / stale state). Then:
+//
+//	flag off => restore JOINS the existing shared path (HA-safe default)
+//	flag on  => restore REBINDS to clickhouse.default_replica_path
+func testAPIRebindReplicaPath(r *require.Assertions, env *TestEnvironment) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") < 0 {
+		log.Info().Msgf("testAPIRebindReplicaPath skipped, requires ClickHouse >= 20.8 for `DROP TABLE ... SYNC`, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
+		return
+	}
+	log.Debug().Msg("Check /backup/restore with rebind_replica_path_if_exists parameter")
+
+	const sharedPath = "/clickhouse/tables/api_rebind_path"
+	const backupName = "api_rebind_backup"
+
+	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE default.api_rebind_occupant (id UInt64) ENGINE=ReplicatedMergeTree('%s','other-replica') ORDER BY id", sharedPath))
+	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE default.api_test_rebind_path (id UInt64) ENGINE=ReplicatedMergeTree('%s','{replica}') ORDER BY id", sharedPath))
+	env.queryWithNoError(r, "INSERT INTO default.api_test_rebind_path SELECT number FROM numbers(10)")
+
+	expectedDefaultPath := "/clickhouse/tables/{cluster}/{shard}/{database}/{table}"
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") < 0 || compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") > 0 {
+		expectedDefaultPath = strings.NewReplacer("{database}", "default", "{table}", "api_test_rebind_path").Replace(expectedDefaultPath)
+	}
+
+	engineFull := func() string {
+		out := ""
+		r.NoError(env.ch.SelectSingleRowNoCtx(&out, "SELECT engine_full FROM system.tables WHERE database=? AND name=?", "default", "api_test_rebind_path"))
+		return out
+	}
+
+	// Create a local backup of the table via API.
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/create?table=default.api_test_rebind_path&name=%s'", backupName))
+	r.NoError(err, "%s\nunexpected POST /backup/create error: %v", out, err)
+	r.Contains(out, "acknowledged")
+	waitForAPIOperationStatus(r, env, parseAPIOperationID(r, out), "create", 60*time.Second)
+
+	// DETACH the occupant: it leaves system.replicas but its ZK path/replica entry stays alive,
+	// so no local table occupies sharedPath (the remote-sibling / stale-leftovers state).
+	env.queryWithNoError(r, "DETACH TABLE default.api_rebind_occupant")
+
+	restoreSchemaViaAPI := func(extraQuery string) {
+		env.queryWithNoError(r, "DROP TABLE default.api_test_rebind_path SYNC")
+		url := fmt.Sprintf("http://localhost:7171/backup/restore/%s?schema=1&table=default.api_test_rebind_path%s", backupName, extraQuery)
+		restoreOut, restoreErr := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST '%s'", url))
+		r.NoError(restoreErr, "%s\nunexpected POST /backup/restore error: %v", restoreOut, restoreErr)
+		r.Contains(restoreOut, "acknowledged")
+		waitForAPIOperationStatus(r, env, parseAPIOperationID(r, restoreOut), "restore", 60*time.Second)
+	}
+
+	// Case B: flag off => join the existing shared path, no rebind (HA-safe default).
+	restoreSchemaViaAPI("")
+	r.Contains(engineFull(), sharedPath, "without rebind_replica_path_if_exists the table must join the existing shared ZK path")
+
+	// Case C: flag on => rebind to clickhouse.default_replica_path.
+	restoreSchemaViaAPI("&rebind_replica_path_if_exists=true")
+	r.Contains(engineFull(), expectedDefaultPath, "with rebind_replica_path_if_exists=true the table must rebind to default_replica_path")
+	r.NotContains(engineFull(), sharedPath, "with rebind_replica_path_if_exists=true the table must not keep the shared ZK path")
+
+	// The API must record the overriding flag in system.backup_actions for the restore command.
+	var rebindActions uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&rebindActions, "SELECT count() FROM system.backup_actions WHERE command LIKE '%--rebind-replica-path-if-exists%' AND status=?", status.SuccessStatus))
+	r.Greater(rebindActions, uint64(0), "restore with rebind_replica_path_if_exists must be recorded in system.backup_actions")
+
+	// cleanup: drop the restored table, re-attach the occupant so DROP ... SYNC can deregister its ZK entry,
+	// then drop the occupant and the local backup.
+	env.queryWithNoError(r, "DROP TABLE default.api_test_rebind_path SYNC")
+	env.queryWithNoError(r, "ATTACH TABLE default.api_rebind_occupant")
+	env.queryWithNoError(r, "DROP TABLE default.api_rebind_occupant SYNC")
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/local/%s'", backupName))
+	r.NoError(err, "%s\nunexpected POST /backup/delete/local error: %v", out, err)
 }
 
 func testAPIBackupVersion(r *require.Assertions, env *TestEnvironment) {

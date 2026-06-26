@@ -1364,9 +1364,13 @@ func (api *APIServer) httpCleanHandler(w http.ResponseWriter, _ *http.Request) {
 	var err error
 	fullCommand := "clean"
 	commandId, ctx := status.Current.Start(fullCommand)
-	b := backup.NewBackuper(api.config)
+	defer func() { status.Current.Stop(commandId, err) }()
+	cfg, err := api.ReloadConfig(w, "clean")
+	if err != nil {
+		return
+	}
+	b := backup.NewBackuper(cfg)
 	err = b.Clean(ctx)
-	defer status.Current.Stop(commandId, err)
 	if err != nil {
 		log.Error().Msgf("Clean error: %v", err)
 		api.writeError(w, http.StatusInternalServerError, "clean", err)
@@ -1571,7 +1575,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		api.writeError(w, http.StatusLocked, "restore", ErrAPILocked)
 		return
 	}
-	_, err := api.ReloadConfig(w, "restore")
+	cfg, err := api.ReloadConfig(w, "restore")
 	if err != nil {
 		return
 	}
@@ -1750,6 +1754,20 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// Handle rebind-replica-path-if-exists parameter, overrides clickhouse.rebind_replica_path_if_exists for this request only
+	// https://github.com/Altinity/clickhouse-backup/issues/1428
+	rebindReplicaPathParamName := "rebind_replica_path_if_exists"
+	rebindReplicaPathParamNames := []string{
+		strings.Replace(rebindReplicaPathParamName, "_", "-", -1),
+		strings.Replace(rebindReplicaPathParamName, "-", "_", -1),
+	}
+	for _, paramName := range rebindReplicaPathParamNames {
+		if _, exist := api.getQueryParameter(query, paramName); exist {
+			cfg.ClickHouse.RebindReplicaPathIfExists = true
+			fullCommand += " --rebind-replica-path-if-exists"
+		}
+	}
+
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
 	fullCommand += fmt.Sprintf(" %s", name)
 
@@ -1763,7 +1781,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
-			b := backup.NewBackuper(api.config)
+			b := backup.NewBackuper(cfg)
 			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, api.cliApp.Version, commandId)
 		})
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
@@ -1979,6 +1997,20 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		if _, exist := api.getQueryParameter(query, paramName); exist {
 			skipEmptyTables = true
 			fullCommand += " --skip-empty-tables"
+		}
+	}
+
+	// Handle rebind-replica-path-if-exists parameter, overrides clickhouse.rebind_replica_path_if_exists for this request only
+	// https://github.com/Altinity/clickhouse-backup/issues/1428
+	rebindReplicaPathParamName := "rebind_replica_path_if_exists"
+	rebindReplicaPathParamNames := []string{
+		strings.Replace(rebindReplicaPathParamName, "_", "-", -1),
+		strings.Replace(rebindReplicaPathParamName, "-", "_", -1),
+	}
+	for _, paramName := range rebindReplicaPathParamNames {
+		if _, exist := api.getQueryParameter(query, paramName); exist {
+			cfg.ClickHouse.RebindReplicaPathIfExists = true
+			fullCommand += " --rebind-replica-path-if-exists"
 		}
 	}
 
