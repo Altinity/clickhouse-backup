@@ -785,10 +785,13 @@ func testAPIBackupTablesLocal(r *require.Assertions, env *TestEnvironment) {
 //	flag on  => restore REBINDS to clickhouse.default_replica_path
 func testAPIRebindReplicaPath(r *require.Assertions, env *TestEnvironment) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") < 0 {
-		log.Info().Msgf("testAPIRebindReplicaPath skipped, requires ClickHouse >= 20.8 for `DROP TABLE ... SYNC`, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
+		log.Info().Msgf("testAPIRebindReplicaPath skipped, requires ClickHouse >= 20.8 for synchronous `DROP TABLE ... NO DELAY`, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
 		return
 	}
 	log.Debug().Msg("Check /backup/restore with rebind_replica_path_if_exists parameter")
+
+	// `DROP TABLE ... NO DELAY` (synchronous drop) is available from 20.8; the `SYNC` keyword only lands in 21.x.
+	const dropSuffix = " NO DELAY"
 
 	const sharedPath = "/clickhouse/tables/api_rebind_path"
 	const backupName = "api_rebind_backup"
@@ -819,7 +822,7 @@ func testAPIRebindReplicaPath(r *require.Assertions, env *TestEnvironment) {
 	env.queryWithNoError(r, "DETACH TABLE default.api_rebind_occupant")
 
 	restoreSchemaViaAPI := func(extraQuery string) {
-		env.queryWithNoError(r, "DROP TABLE default.api_test_rebind_path SYNC")
+		env.queryWithNoError(r, "DROP TABLE default.api_test_rebind_path"+dropSuffix)
 		url := fmt.Sprintf("http://localhost:7171/backup/restore/%s?schema=1&table=default.api_test_rebind_path%s", backupName, extraQuery)
 		restoreOut, restoreErr := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST '%s'", url))
 		r.NoError(restoreErr, "%s\nunexpected POST /backup/restore error: %v", restoreOut, restoreErr)
@@ -841,11 +844,11 @@ func testAPIRebindReplicaPath(r *require.Assertions, env *TestEnvironment) {
 	r.NoError(env.ch.SelectSingleRowNoCtx(&rebindActions, "SELECT count() FROM system.backup_actions WHERE command LIKE '%--rebind-replica-path-if-exists%' AND status=?", status.SuccessStatus))
 	r.Greater(rebindActions, uint64(0), "restore with rebind_replica_path_if_exists must be recorded in system.backup_actions")
 
-	// cleanup: drop the restored table, re-attach the occupant so DROP ... SYNC can deregister its ZK entry,
+	// cleanup: drop the restored table, re-attach the occupant so the synchronous drop can deregister its ZK entry,
 	// then drop the occupant and the local backup.
-	env.queryWithNoError(r, "DROP TABLE default.api_test_rebind_path SYNC")
+	env.queryWithNoError(r, "DROP TABLE default.api_test_rebind_path"+dropSuffix)
 	env.queryWithNoError(r, "ATTACH TABLE default.api_rebind_occupant")
-	env.queryWithNoError(r, "DROP TABLE default.api_rebind_occupant SYNC")
+	env.queryWithNoError(r, "DROP TABLE default.api_rebind_occupant"+dropSuffix)
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/local/%s'", backupName))
 	r.NoError(err, "%s\nunexpected POST /backup/delete/local error: %v", out, err)
 }
