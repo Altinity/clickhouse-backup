@@ -111,12 +111,15 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 // Single-node infra can't host a real second node, so the "remote sibling / stale" state (cases B, C) is simulated
 // by DETACH-ing the occupant: DETACH drops it from system.replicas but keeps its ZK path/replica entry alive.
 func TestRebindReplicaPathIfExists(t *testing.T) {
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") < 0 {
-		t.Skipf("Test requires ClickHouse >= 20.8 for `DROP TABLE ... SYNC`, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
-	}
 	env, r := NewTestEnvironment(t)
 	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+
+	// `DROP TABLE ... NO DELAY` (synchronous drop) is available from 20.8; older versions use a plain DROP.
+	dropSuffix := ""
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
+		dropSuffix = " NO DELAY"
+	}
 
 	const sharedPath = "/clickhouse/tables/rebind_path"
 	// occupant holds sharedPath under a different replica name. While ATTACHED it is a local table visible in
@@ -153,7 +156,7 @@ func TestRebindReplicaPathIfExists(t *testing.T) {
 	}
 
 	// Case A: a different local table (occupant, still attached) uses sharedPath => auto-rebind even without the flag.
-	env.queryWithNoError(r, "DROP TABLE default.test_rebind_path SYNC")
+	env.queryWithNoError(r, "DROP TABLE default.test_rebind_path"+dropSuffix)
 	autoOut := restoreSchema()
 	r.Contains(autoOut, "is already used by")
 	r.Contains(autoOut, "will rebind to fresh replica path")
@@ -164,13 +167,13 @@ func TestRebindReplicaPathIfExists(t *testing.T) {
 	env.queryWithNoError(r, "DETACH TABLE default.rebind_occupant")
 
 	// Case B: no local table at sharedPath, flag off => join the existing path, no rebind (HA-safe default).
-	env.queryWithNoError(r, "DROP TABLE default.test_rebind_path SYNC")
+	env.queryWithNoError(r, "DROP TABLE default.test_rebind_path"+dropSuffix)
 	joinOut := restoreSchema()
 	r.NotContains(joinOut, "will rebind to fresh replica path")
 	r.Contains(engineFull(), sharedPath)
 
 	// Case C: no local table at sharedPath, --rebind-replica-path-if-exists => rebind to default_replica_path.
-	env.queryWithNoError(r, "DROP TABLE default.test_rebind_path SYNC")
+	env.queryWithNoError(r, "DROP TABLE default.test_rebind_path"+dropSuffix)
 	flagOut := restoreSchema("--rebind-replica-path-if-exists")
 	r.Contains(flagOut, "rebind_replica_path_if_exists=true")
 	r.Contains(flagOut, "will rebind to fresh replica path")
@@ -178,8 +181,8 @@ func TestRebindReplicaPathIfExists(t *testing.T) {
 
 	// cleanup: re-attach the occupant so DROP ... SYNC can deregister its ZK entry; dropping the last replica of
 	// a path also removes the table-level znode.
-	env.queryWithNoError(r, "DROP TABLE default.test_rebind_path SYNC")
+	env.queryWithNoError(r, "DROP TABLE default.test_rebind_path"+dropSuffix)
 	env.queryWithNoError(r, "ATTACH TABLE default.rebind_occupant")
-	env.queryWithNoError(r, "DROP TABLE default.rebind_occupant SYNC")
+	env.queryWithNoError(r, "DROP TABLE default.rebind_occupant"+dropSuffix)
 	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_rebind_backup"))
 }
