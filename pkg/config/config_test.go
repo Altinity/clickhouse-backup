@@ -57,6 +57,65 @@ func TestValidateConfigCompressionTuning(t *testing.T) {
 	}
 }
 
+func TestDefaultMaxBrokenPartRatio(t *testing.T) {
+	if got := DefaultConfig().General.MaxBrokenPartRatio; got != 0 {
+		t.Fatalf("expected default max_broken_part_ratio to be 0, got %v", got)
+	}
+}
+
+func TestValidateMaxBrokenPartRatio(t *testing.T) {
+	cases := []struct {
+		name    string
+		ratio   float64
+		wantErr bool
+	}{
+		{"default zero", 0, false},
+		{"mid", 0.5, false},
+		{"one", 1, false},
+		{"negative", -0.1, true},
+		{"above one", 1.5, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.General.RemoteStorage = "s3"
+			cfg.General.MaxBrokenPartRatio = tc.ratio
+			err := ValidateConfig(cfg)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error for ratio %v, got nil", tc.ratio)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error for ratio %v: %v", tc.ratio, err)
+			}
+		})
+	}
+}
+
+func TestAllowPartialBackup(t *testing.T) {
+	cases := []struct {
+		name        string
+		ratio       float64
+		broken      int
+		total       int
+		wantAllowed bool
+	}{
+		{"no broken parts always allowed", 0, 0, 10, true},
+		{"default ratio rejects any broken part", 0, 1, 10, false},
+		{"broken under threshold allowed", 0.5, 4, 10, true},
+		{"broken exactly at threshold allowed", 0.5, 5, 10, true},
+		{"broken over threshold rejected", 0.5, 6, 10, false},
+		{"zero total parts rejected when broken", 0.5, 1, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := GeneralConfig{MaxBrokenPartRatio: tc.ratio}
+			if got := cfg.AllowPartialBackup(tc.broken, tc.total); got != tc.wantAllowed {
+				t.Fatalf("AllowPartialBackup(%d,%d) with ratio %v = %v, want %v", tc.broken, tc.total, tc.ratio, got, tc.wantAllowed)
+			}
+		})
+	}
+}
+
 func TestDefaultCompleteResumableAfterRestartCommands(t *testing.T) {
 	cfg := DefaultConfig()
 

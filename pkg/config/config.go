@@ -63,6 +63,13 @@ type GeneralConfig struct {
 	UploadConcurrency         uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
 	UploadMaxBytesPerSecond   uint64 `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
 	DownloadMaxBytesPerSecond uint64 `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
+	// MaxBrokenPartRatio - maximum allowed fraction (0..1) of broken data parts that still produces a
+	// successful but partial backup during backup creation (`create`, and the create stage of
+	// `create_remote`). 0 (default) preserves legacy behavior where any broken part aborts the whole
+	// backup. When >0 and the observed broken/total part ratio stays at or below this value, creation
+	// skips the broken parts, logs a warning and the backup is marked successful, see
+	// https://github.com/Altinity/clickhouse-backup/issues/1418
+	MaxBrokenPartRatio float64 `yaml:"max_broken_part_ratio" envconfig:"MAX_BROKEN_PART_RATIO"`
 	// PipeBufferSize - size of the in-memory ring buffer between the compression and the upload/download stream handlers, see https://github.com/Altinity/clickhouse-backup/issues/1376
 	PipeBufferSize int64 `yaml:"pipe_buffer_size" envconfig:"PIPE_BUFFER_SIZE"`
 	// DownloadCopyBufferSize - explicit buffer size for io.CopyBuffer during download/extract, 0 means use the Go default io.Copy buffer (32KB), see https://github.com/Altinity/clickhouse-backup/issues/1376
@@ -412,6 +419,20 @@ func (cfg *Config) GetCompressionFormat() string {
 	}
 }
 
+// AllowPartialBackup reports whether a backup that produced brokenParts out of totalParts data parts
+// may still be treated as successful, given general.max_broken_part_ratio. With the default ratio 0
+// (or when there are no parts at all) any broken part fails the backup, preserving legacy behavior.
+// See https://github.com/Altinity/clickhouse-backup/issues/1418
+func (cfg *GeneralConfig) AllowPartialBackup(brokenParts, totalParts int) bool {
+	if brokenParts <= 0 {
+		return true
+	}
+	if cfg.MaxBrokenPartRatio <= 0 || totalParts <= 0 {
+		return false
+	}
+	return float64(brokenParts)/float64(totalParts) <= cfg.MaxBrokenPartRatio
+}
+
 // validateCompressionTuning checks the general.compression_use_multi_thread, compression_threads and
 // compression_buffer_size options against the configured compression_format. Multi-threading and the
 // buffer size only apply to zstd and gzip; the buffer size additionally has format- and mode-specific
@@ -551,6 +572,11 @@ func ValidateConfig(cfg *Config) error {
 	// zstd and gzip, and the buffer size has format- and mode-specific valid ranges, see https://github.com/Altinity/clickhouse-backup/issues/1378
 	if err := validateCompressionTuning(cfg); err != nil {
 		return err
+	}
+	// max_broken_part_ratio is a fraction of broken data parts; values outside [0,1] make no sense,
+	// see https://github.com/Altinity/clickhouse-backup/issues/1418
+	if cfg.General.MaxBrokenPartRatio < 0 || cfg.General.MaxBrokenPartRatio > 1 {
+		return errors.Errorf("max_broken_part_ratio=%v is invalid, it must be between 0 and 1", cfg.General.MaxBrokenPartRatio)
 	}
 	if timeout, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
 		return errors.Wrap(err, "invalid clickhouse timeout")
@@ -736,6 +762,7 @@ func DefaultConfig() *Config {
 			PipeBufferSize:                      128 * 1024,
 			DownloadCopyBufferSize:              0,
 			CompressionUseMultiThread:           true,
+			MaxBrokenPartRatio:                  0,
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
