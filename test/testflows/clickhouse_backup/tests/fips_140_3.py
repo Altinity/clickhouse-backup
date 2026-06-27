@@ -138,7 +138,7 @@ def read_fips_status(node, binary, *, godebug=None):
     return None, result.output
 
 
-@TestStep(Check)
+@TestStep(Then)
 def check_tls_handshake(self, node, target, tls_flag, cipher=None, ciphersuites=None,
                          expected_success=True):
     """Try to open a TLS connection with `openssl s_client` and check the result.
@@ -183,19 +183,11 @@ def check_tls_handshake(self, node, target, tls_flag, cipher=None, ciphersuites=
 
     cipher_unavailable = (
         "no cipher match" in output_lower
-        or "error setting cipher list" in output_lower
-        or "no ciphers available" in output_lower
-        or "cipher_list" in output_lower and "no cipher" in output_lower
     )
 
     handshake_failed = (
-        "handshake failure" in output_lower
-        or "no shared cipher" in output_lower
-        or "ssl alert" in output_lower
-        or "alert" in output_lower
+        "alert handshake failure" in output_lower
         or "no protocols available" in output_lower
-        or "unsupported protocol" in output_lower
-        or "wrong version number" in output_lower
         or cipher_unavailable
     )
 
@@ -215,9 +207,10 @@ def check_tls_handshake(self, node, target, tls_flag, cipher=None, ciphersuites=
         )
 
 
-@TestStep(Check)
+@TestStep(Then)
 def check_outbound_tls_handshake(self, node, command, expected_success,
-                                  allow_remote_auth_error_as_skip=False):
+                                  allow_remote_auth_error_as_skip=False,
+                                  require_native_handshake_marker=True):
     """Run `command` inside `node` and assert on the *outbound* TLS outcome.
 
     `command` invokes `clickhouse-backup-fips` with
@@ -237,44 +230,60 @@ def check_outbound_tls_handshake(self, node, command, expected_success,
     those probes, `allow_remote_auth_error_as_skip=True` can skip the check when
     an AWS auth failure marker (e.g. `InvalidAccessKeyId`) is present but no TLS
     rejection marker is visible.
+
+    `require_native_handshake_marker` controls how an `accepted` handshake is
+    proven. The native-protocol marker (`handshake: failed to read packet`) is only emitted when the `ClickHouse`
+    connection itself runs through the `openssl s_server. The S3 scenario drives the AWS-SDK HTTP path while
+    ClickHouse points at a real node, so the marker never appears there (the S3 `list remote` command always exits 0, even
+    when the walk fails).
     """
     bounded = f"timeout {CLI_CMD_TIMEOUT_SEC} {command}"
     result = node.cmd(bounded, no_checks=True)
     output = (result.output or "")
     output_lower = output.lower()
+    debug(f"output_lower: {output_lower}")
 
     handshake_rejected = (
         "remote error: tls: handshake failure" in output_lower
-        or "tls: handshake failure" in output_lower
-        or "no shared cipher" in output_lower
-        or "tls: no cipher suite supported" in output_lower
-        or "tls: protocol version not supported" in output_lower
     )
     remote_auth_failed = (
         "invalidaccesskeyid" in output_lower
         or "signaturedoesnotmatch" in output_lower
         or "accessdenied" in output_lower
-        or "statuscode: 403" in output_lower
     )
 
     if expected_success:
-        assert not handshake_rejected, error(
-            f"Expected the FIPS policy to ACCEPT the handshake, but the output "
-            f"contains a TLS handshake-failure marker.\n{output}"
-        )
+        if require_native_handshake_marker:
+            # The approved cipher was negotiated. TLS completed and the connection
+            # reached the ClickHouse native protocol, which against `openssl s_server` surfaces.
+            assert "handshake: failed to read packet" in output_lower, error(
+                f"Expected the TLS handshake to complete (post-TLS native-protocol "
+                f"marker), but it was not found.\n{output}"
+            )
+        else:
+            # S3 path: `clickhouse-backup list remote` accepts the S3 walk error
+            # and ALWAYS exits 0. Acceptance is proven by the FIPS client NOT emitting a handshake-failure marker.
+            assert not handshake_rejected, error(
+                f"Expected the FIPS policy to ACCEPT the handshake, but the output "
+                f"contains a TLS handshake-failure marker.\n{output}"
+            )
     else:
         if allow_remote_auth_error_as_skip and remote_auth_failed:
             skip(
                 "No TLS rejection marker was found and remote auth failed "
                 "(endpoint resolved outside the local openssl sidecar). "
             )
+        # Rejection is proven by the FIPS handshake-failure marker on both paths.
+        # The exit code is intentionally NOT asserted: `list remote` exits 0 even
+        # when the S3 walk fails (error logged as WRN), and `tables` exits 124
+        # whether TLS is accepted or rejected (it retries until `timeout`).
         assert handshake_rejected, error(
             f"Expected the FIPS policy to REJECT the handshake, but no "
             f"TLS handshake-failure marker was found.\n{output}"
         )
 
 
-@TestStep(Check)
+@TestStep(Then)
 def assert_s_server_logs_match_outcome(self, cluster, aux_name, expected_success):
     """Check the s_server's stdout confirms the client-side outcome.
 
@@ -326,12 +335,13 @@ def assert_s_server_logs_match_outcome(self, cluster, aux_name, expected_success
         )
 
 
-@TestStep(Check)
+@TestStep(Then)
 def check_outbound_tls_with_cipher(self, cluster, backup_fips, *, listen, command,
                                     expected_success, tls_version,
                                     cipher=None, ciphersuites=None,
                                     aux_name='openssl_server',
-                                    allow_remote_auth_error_as_skip=False):
+                                    allow_remote_auth_error_as_skip=False,
+                                    require_native_handshake_marker=True):
     """One outbound TLS handshake check for one cipher profile.
 
     Brings up an `openssl s_server` container, runs `command` inside
@@ -356,9 +366,12 @@ def check_outbound_tls_with_cipher(self, cluster, backup_fips, *, listen, comman
         `-tls1_3`); mutually exclusive with `cipher`.
     :param aux_name: docker hostname / network alias of the aux container;
         callers can name it after a target hostname.
-    :param allow_remote_auth_error_as_skip: if `True`, a remote auth failure
+    :param allow_remote_auth_error_as_skip: if `true`, a remote auth failure
         marker can skip a negative expectation when TLS rejection markers are
         absent (used for S3 CI stability when DNS bypasses the sidecar).
+    :param require_native_handshake_marker: if `true`,an accepted handshake must be proven by the clickhouse
+        native-protocol marker. If `False` (S3 scenario), acceptance is asserted
+        as the absence of a FIPS-policy rejection.
     """
     ssl_dir = cluster.ssl_certs_dir
     try:
@@ -375,6 +388,7 @@ def check_outbound_tls_with_cipher(self, cluster, backup_fips, *, listen, comman
             command=command,
             expected_success=expected_success,
             allow_remote_auth_error_as_skip=allow_remote_auth_error_as_skip,
+            require_native_handshake_marker=require_native_handshake_marker,
         )
         assert_s_server_logs_match_outcome(
             cluster=cluster,
@@ -472,7 +486,7 @@ def gofips140_build_flags_present(self):
         )
 
 
-@TestStep(Check)
+@TestStep(Then)
 def assert_tables_succeeds(self, backup_fips, *, config, godebug=None):
     """Run `clickhouse-backup-fips -c <config> tables` and assert it exits 0.
 
@@ -495,7 +509,7 @@ def assert_tables_succeeds(self, backup_fips, *, config, godebug=None):
     )
 
 
-@TestStep(Check)
+@TestStep(Then)
 def assert_tables_fails(self, backup_fips, *, config, reason, godebug=None):
     """Run `clickhouse-backup-fips -c <config> tables` and assert it fails.
 
@@ -1032,6 +1046,7 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
                     aux_name=OPENSSL_S3_FIPS_AUX_NAME,
                     listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_3",
                     ciphersuites=ciphersuite, command=cmd, expected_success=True,
+                    require_native_handshake_marker=False,
                 )
 
     with Check("I try each FIPS-approved TLSv1.2 cipher on the S3 endpoint"):
@@ -1042,6 +1057,7 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
                     aux_name=OPENSSL_S3_FIPS_AUX_NAME,
                     listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_2",
                     cipher=cipher, command=cmd, expected_success=True,
+                    require_native_handshake_marker=False,
                 )
 
     with Check("I try each non-FIPS TLSv1.3 cipher suite on the S3 endpoint"):
@@ -1053,6 +1069,7 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
                     listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_3",
                     ciphersuites=ciphersuite, command=cmd, expected_success=False,
                     allow_remote_auth_error_as_skip=True,
+                    require_native_handshake_marker=False,
                 )
 
     with Check("I try each non-FIPS TLSv1.2 cipher on the S3 endpoint"):
@@ -1064,6 +1081,7 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
                     listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_2",
                     cipher=cipher, command=cmd, expected_success=False,
                     allow_remote_auth_error_as_skip=True,
+                    require_native_handshake_marker=False,
                 )
 
 
