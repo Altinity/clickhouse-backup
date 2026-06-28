@@ -262,7 +262,11 @@ def check_outbound_tls_handshake(self, node, command, expected_success,
             )
         else:
             # S3 path: `clickhouse-backup list remote` accepts the S3 walk error
-            # and ALWAYS exits 0. Acceptance is proven by the FIPS client NOT emitting a handshake-failure marker.
+            # and ALWAYS exits 0, and the AWS-SDK HTTP path emits no native
+            # handshake marker, so the client side can only assert the ABSENCE
+            # of a handshake-failure marker here. The independent server-side check in
+            # `assert_s_server_logs_match_outcome` (no `no shared cipher` in the
+            # s_server log) is what corroborates that the cipher was accepted.
             assert not handshake_rejected, error(
                 f"Expected the FIPS policy to ACCEPT the handshake, but the output "
                 f"contains a TLS handshake-failure marker.\n{output}"
@@ -285,23 +289,38 @@ def check_outbound_tls_handshake(self, node, command, expected_success,
 
 @TestStep(Then)
 def assert_s_server_logs_match_outcome(self, cluster, aux_name, expected_success):
-    """Check the s_server's stdout confirms the client-side outcome.
+    """Corroborate the client-side outcome against the s_server's own log.
 
-    The client probe only sees what `clickhouse-backup-fips` printed, so this
-    helper reads the s_server container's stdout and looks for handshake
-    markers. Mismatches are reported via `note(...)` since
-    OpenSSL log formatting varies across Alpine builds and TLS versions.
+    This is an INDEPENDENT, server-side confirmation of what the FIPS client
+    reported, so a green result cannot rest on the client output alone.
+
+    Important property of `openssl s_server` stdout (verified empirically
+    against `alpine/openssl`, OpenSSL 3.x): it has **no positive per-connection
+    marker**. It prints `ACCEPT` exactly once at startup - in BOTH the success
+    and the failure case - and with `-www` it never logs the negotiated cipher
+    to stdout. The only discriminating signal is the *rejection* line it writes
+    when the client offered no cipher the server also has:
+
+        approved cipher  -> server log shows `unexpected eof while reading`
+                            (the FIPS client closing after its native-protocol
+                            read times out), and NO `no shared cipher`.
+        rejected cipher  -> server log shows
+                            `tls_post_process_client_hello: no shared cipher`.
+
+    Therefore acceptance is proven by the ABSENCE of a rejection marker and
+    rejection by its PRESENCE:
+
+      * `expected_success=True`  -> the log must NOT contain a rejection marker.
+      * `expected_success=False` -> the log MUST contain a rejection marker.
 
     Variables:
-      * `cluster`           - test Cluster, used to fetch container logs.
-      * `aux_name`          - name of the auxiliary openssl s_server container.
-      * `expected_success`  - True if the handshake should have negotiated
-                                a cipher; False if it should have been rejected.
-      * `s_server_log`      - captured stdout of the s_server container.
-      * `success_markers`   - substrings that prove cipher negotiation
-                                completed (e.g. `Cipher : <name>`).
-      * `failure_markers`   - substrings that prove the server rejected the
-                                handshake (e.g. `no shared cipher`).
+      * `cluster`            - test Cluster, used to fetch container logs.
+      * `aux_name`           - name of the auxiliary openssl s_server container.
+      * `expected_success`   - True if the handshake should have been accepted,
+                                 False if the server should have rejected it.
+      * `s_server_log`       - captured stdout of the s_server container.
+      * `rejection_markers`  - substrings that prove the server rejected the
+                                 handshake (e.g. `no shared cipher`).
     """
     try:
         s_server_log = cluster.container_logs(aux_name)
@@ -310,28 +329,32 @@ def assert_s_server_logs_match_outcome(self, cluster, aux_name, expected_success
         return
 
     log_lower = (s_server_log or "").lower()
-    success_markers = ("cipher    :", "cipher   :", "shared ciphers:")
-    failure_markers = (
+    # Lowercased substrings proving the server REJECTED the handshake because
+    # the client (under the FIPS cipher policy) offered nothing the server had.
+    # `no shared cipher` is the canonical one; the rest cover OpenSSL/TLS
+    # version wording variance.
+    rejection_markers = (
         "no shared cipher",
-        "no suitable signature algorithm",
-        "tlsv1 alert handshake failure",
+        "sslv3 alert handshake failure",
         "ssl handshake failure",
+        "no cipher match",
         "wrong version number",
     )
 
-    has_success_marker = any(marker in log_lower for marker in success_markers)
-    has_failure_marker = any(marker in log_lower for marker in failure_markers)
+    has_rejection_marker = any(marker in log_lower for marker in rejection_markers)
     log_tail = s_server_log[-1000:] if s_server_log else "<empty>"
 
-    if expected_success and not has_success_marker:
-        note(
-            f"s_server `{aux_name}` log lacks a cipher-negotiation marker even "
-            f"though the client-side check passed. Tail of log:\n{log_tail}"
+    if expected_success:
+        assert not has_rejection_marker, error(
+            f"s_server `{aux_name}` logged a handshake-rejection marker even "
+            f"though the cipher was expected to be ACCEPTED. The server, not "
+            f"just the client, refused the handshake. Tail of log:\n{log_tail}"
         )
-    elif not expected_success and not has_failure_marker:
-        note(
-            f"s_server `{aux_name}` log lacks a handshake-rejection marker even "
-            f"though the client-side check expected failure. Tail of log:\n{log_tail}"
+    else:
+        assert has_rejection_marker, error(
+            f"s_server `{aux_name}` did NOT log a handshake-rejection marker "
+            f"even though the cipher was expected to be REJECTED. The server "
+            f"may have accepted a non-approved cipher. Tail of log:\n{log_tail}"
         )
 
 
