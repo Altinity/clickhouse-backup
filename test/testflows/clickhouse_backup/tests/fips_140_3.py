@@ -218,8 +218,7 @@ def check_outbound_tls_handshake(self, node, command, expected_success,
     `command` invokes `clickhouse-backup-fips` with
     `GODEBUG=fips140=only` against an `openssl s_server` whose offered
     cipher we want the FIPS policy to accept or reject. The function wraps
-    `command` in `timeout <N>` so the retry loop is bounded; the check
-    is **TLS-policy-only**:
+    `command` in `timeout <N>`. The check is **TLS-policy-only**:
 
     * `expected_success=True`  - the FIPS policy must NOT reject the
       handshake.
@@ -235,9 +234,8 @@ def check_outbound_tls_handshake(self, node, command, expected_success,
 
     `require_native_handshake_marker` controls how an `accepted` handshake is
     proven. The native-protocol marker (`handshake: failed to read packet`) is only emitted when the `ClickHouse`
-    connection itself runs through the `openssl s_server. The S3 scenario drives the AWS-SDK HTTP path while
-    ClickHouse points at a real node, so the marker never appears there (the S3 `list remote` command always exits 0, even
-    when the walk fails).
+    connection itself runs through the `openssl s_server. The marker never appears in S3 scenarios 
+    (the S3 `list remote` command always exits 0, even when the walk fails).
     """
     bounded = f"timeout {CLI_CMD_TIMEOUT_SEC} {command}"
     result = node.cmd(bounded, no_checks=True)
@@ -266,15 +264,15 @@ def check_outbound_tls_handshake(self, node, command, expected_success,
             # S3 path: `clickhouse-backup list remote` accepts the S3 walk error
             # and ALWAYS exits 0, and the AWS-SDK HTTP path emits no native
             # handshake marker, so the client side can only assert the ABSENCE
-            # of a handshake-failure marker here. The independent server-side check in
+            # of a handshake-failure marker. The independent server-side check in
             # `assert_s_server_logs_match_outcome` (no `no shared cipher` in the
-            # s_server log) is what corroborates that the cipher was accepted.
+            # s_server log) is what proves that the cipher was accepted.
             assert not handshake_rejected, error(
                 f"Expected the FIPS policy to ACCEPT the handshake, but the output "
                 f"contains a TLS handshake-failure marker.\n{output}"
             )
     else:
-        if allow_remote_auth_error_as_skip and remote_auth_failed:
+        if allow_remote_auth_error_as_skip and remote_auth_failed: # allow_remote_auth_error_as_skip true for S3 scenarios
             skip(
                 "No TLS rejection marker was found and remote auth failed "
                 "(endpoint resolved outside the local openssl sidecar). "
@@ -291,16 +289,15 @@ def check_outbound_tls_handshake(self, node, command, expected_success,
 
 @TestStep(Then)
 def assert_s_server_logs_match_outcome(self, cluster, aux_name, expected_success):
-    """Corroborate the client-side outcome against the s_server's own log.
+    """CHeck the client-side outcome against the s_server's own log.
 
-    This is an INDEPENDENT, server-side confirmation of what the FIPS client
-    reported, so a green result cannot rest on the client output alone.
+    This is an independent, server-side confirmation of what the FIPS client
+    reported.
 
-    Important property of `openssl s_server` stdout (verified empirically
-    against `alpine/openssl`, OpenSSL 3.x): it has **no positive per-connection
-    marker**. It prints `ACCEPT` exactly once at startup - in BOTH the success
-    and the failure case - and with `-www` it never logs the negotiated cipher
-    to stdout. The only discriminating signal is the *rejection* line it writes
+    Important property of `openssl s_server` stdout: it has no positive per-connection
+    marker. It prints `ACCEPT` exactly once at startup in both the success
+    and the failure case, and with `-www` it never logs the negotiated cipher
+    to stdout. The only distinguishing signal is the `rejection` line it writes
     when the client offered no cipher the server also has:
 
         approved cipher  -> server log shows `unexpected eof while reading`
@@ -331,19 +328,13 @@ def assert_s_server_logs_match_outcome(self, cluster, aux_name, expected_success
         return
 
     log_lower = (s_server_log or "").lower()
-    # Lowercased substrings proving the server REJECTED the handshake because
-    # the client (under the FIPS cipher policy) offered nothing the server had.
-    # `no shared cipher` is the canonical one; the rest cover OpenSSL/TLS
-    # version wording variance.
-    rejection_markers = (
-        "no shared cipher",
-        "sslv3 alert handshake failure",
-        "ssl handshake failure",
-        "no cipher match",
-        "wrong version number",
-    )
 
-    has_rejection_marker = any(marker in log_lower for marker in rejection_markers)
+    has_rejection_marker = (
+    "no shared cipher" in log_lower # canonical rejection marker
+    or "remote error: tls: handshake failure" in log_lower
+    or "no cipher match" in log_lower
+)
+
     log_tail = s_server_log[-1000:] if s_server_log else "<empty>"
 
     if expected_success:
@@ -463,8 +454,7 @@ def clickhouse_backup_fips_version_output_negative_check(self):
 
     Run the same `--version` parser as in clickhouse_backup_fips_version_output 
     against the regular (non-FIPS) `clickhouse-backup` binary,
-     which is exactly what `make build-race` produces. The status line must
-    report `false`.
+    which is what `make build-race` produces. The status line must show `false`.
     """
     backup = self.context.backup
 
@@ -562,7 +552,7 @@ def assert_tables_fails(self, backup_fips, *, config, reason, godebug=None):
 
     output_lower = output.lower()
     assert "atomic" not in output_lower and "ordinary" not in output_lower, error(
-        f"`tables` output looks successful (database-listing marker present) "
+        f"`tables` output is successful (database-listing marker present) "
         f"for `{config}`. Expected failure reason: {reason}\n{output}"
     )
 
@@ -601,7 +591,7 @@ def connectivity_against_fips_clickhouse_server(self):
                 ],
             )
 
-        with When("I run `clickhouse-backup-fips tables` over secure native TCP 9440"):
+        with Then("I run `clickhouse-backup-fips tables` over secure native TCP 9440 and assert it succeeds"):
             assert_tables_succeeds(
                 backup_fips=backup_fips,
                 config=FIPS_CONNECTIVITY_FIPS_CONFIG_PATH,
@@ -646,9 +636,9 @@ def connectivity_against_non_fips_clickhouse_server(self):
                 name=NON_FIPS_CH_SERVER_NAME,
                 image_tag=NON_FIPS_CH_SERVER_IMAGE,
             )
-        with When(
+        with Then(
             "I run `clickhouse-backup-fips tables` with the FIPS-compatible "
-            "client config (`secure: true`, `port: 9440`)"
+            "client config (`secure: true`, `port: 9440`) and assert it fails"
         ):
             assert_tables_fails(
                 backup_fips=backup_fips,
@@ -664,8 +654,6 @@ def connectivity_against_non_fips_clickhouse_server(self):
         cluster.stop_auxiliary_container(NON_FIPS_CH_SERVER_NAME)
 
 
-
-
 @TestStep(When)
 def godebug_env_prefix(self, godebug):
     """Return the `env ...` command prefix that applies one GODEBUG case.
@@ -675,20 +663,23 @@ def godebug_env_prefix(self, godebug):
     Setting it explicitly per case makes the test independent of the suite-wide
     `--fips-godebug` selection that the container otherwise exports.
     """
-    if godebug is None:
-        return "env -u GODEBUG "
-    if godebug == "":
-        return "env GODEBUG= "
-    return f"env GODEBUG=fips140={godebug} "
+    with When("I return the `env ...` command prefix"):
+        if godebug is None:
+            return "env -u GODEBUG "
+        if godebug == "":
+            return "env GODEBUG= "
+        return f"env GODEBUG=fips140={godebug} "
+
 
 @TestStep(When)
 def read_fips_info_field(self, output, field):
     """Return the value of a `<field>:` line from `--fips-info` output."""
-    for line in output.splitlines():
-        stripped = line.strip()
-        if stripped.startswith(f"{field}:"):
-            return stripped.split(":", 1)[1].strip()
-    return None
+    with When("I read the `field` field from the `--fips-info` output"):
+        for line in output.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(f"{field}:"):
+                return stripped.split(":", 1)[1].strip()
+        return None
 
 
 @TestStep(Then)
@@ -765,20 +756,7 @@ def godebug_fips140_modes(self):
     # `fips140=on`, so leaving GODEBUG unset or empty keeps FIPS *enabled* but not
     # *enforced*; `fips140=on` is the same; `fips140=only` adds strict enforcement;
     # `fips140=off` disables FIPS entirely.
-    #
-    #   GODEBUG runtime      enabled   enforced
-    #   -------------------   -------   --------
-    #   unset                 true      false
-    #   empty ("")            true      false
-    #   fips140=off           false     false
-    #   fips140=on            true      false
-    #   fips140=only          true      true
-    #
-    # Each tuple is (case name, GODEBUG value, expected enabled, expected enforced),
-    # where the GODEBUG value is:
-    #   None  -> GODEBUG removed from the environment (the "unset" case),
-    #   ""    -> GODEBUG present but empty,
-    #   else  -> GODEBUG=fips140=<value>.
+
     FIPS_GODEBUG_INFO_CASES = [
         ("unset", None,   True,  False),
         ("empty", "",     True,  False),
@@ -830,10 +808,6 @@ def fips_integrity_self_test_failure_on_tampered_binary(self):
         output = result.output or ""
 
     with Then("the tampered binary output includes `panic: fips140: verification mismatch`"):
-        # The script prints an informational banner containing the phrase
-        # `fips140: verification mismatch` before it executes the binary.
-        # Check for the panic marker here.
-
         assert "panic: fips140: verification mismatch" in output, error(
             f"tamper script did not capture "
             f"`panic: fips140: verification mismatch` in tampered binary output "
@@ -846,7 +820,7 @@ def fips_integrity_self_test_failure_on_tampered_binary(self):
             f"for the meaning of non-zero exit codes.\n{output}"
         )
 
-    with And("the tamper script reports its explicit success marker"):
+    with Then("the tamper script reports its explicit success marker"):
         assert "== OK: FIPS integrity check failed as expected ==" in output, error(
             f"tamper script did not print the expected success marker.\n{output}"
         )
@@ -884,9 +858,10 @@ def inbound_tls_cipher_negotiation(self):
     """
     # Non-approved profiles the REST API listener must reject. The TLSv1.2 base
     # adds RC4 / 3DES (specific to the inbound case); the TLSv1.3 base is the
-    # shared non-approved suite. `--stress` widens both with the broader stress
-    # sets so legacy / CBC ciphers are exercised here too; default keeps the
-    # minimum. `STRESS` lists already include their base, so they are assigned,
+    # shared non-approved suite. 
+    # `--stress` widens both with the broader stres sets so legacy / CBC ciphers 
+    # are exercised here too; default keeps the minimum. `STRESS` lists already include 
+    # their base, so they are assigned,
     # not appended, to avoid probing the same cipher twice.
     non_fips_tls12 = NON_FIPS_TLS12_INBOUND
     non_fips_tls13 = NON_FIPS_TLS13
@@ -1088,7 +1063,7 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
         f"-c {FIPS_OUTBOUND_S3_CONFIG_PATH} list remote 2>&1"  # `2>&1` redirects stderr to stdout.
     )
 
-    # `--stress` widens the non-approved coverage; default keeps the minimum.
+    # `--stress` widens the non-approved coverage.
     non_fips_tls13 = NON_FIPS_TLS13_STRESS if self.context.stress else NON_FIPS_TLS13
     non_fips_tls12 = NON_FIPS_TLS12_OUTBOUND_STRESS if self.context.stress else NON_FIPS_TLS12_OUTBOUND
 
@@ -1138,119 +1113,6 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
                     require_native_handshake_marker=False,
                 )
 
-
-# Startup/core CASTs used during `clickhouse-backup-fips --version`. Forcing
-# any of these via `failfipscast` must abort startup deterministically.
-# Source: Go FIPS `allCASTs` in `crypto/internal/fips140test/cast_test.go`.
-FIPS_FAILFIPSCAST_STARTUP_CASTS = (
-    "AES-CBC",
-    "CTR_DRBG",
-    "CounterKDF",
-    "HKDF-SHA2-256",
-    "HMAC-SHA2-256",
-    "PBKDF2",
-    "SHA2-256",
-    "SHA2-512",
-    "TLSv1.2-SHA2-256",
-    "TLSv1.3-SHA2-256",
-    "cSHAKE128",
-)
-
-# First-use CASTs run lazily, the first time their algorithm is used. `clickhouse-backup-fips --version`
-# may or may not exercise them, so forcing one is only expected to fail when it
-# happens to be reached.
-FIPS_FAILFIPSCAST_FIRST_USE_CASTS = (
-    "DetECDSA P-256 SHA2-512 sign",
-    "ECDH PCT",
-    "ECDSA P-256 SHA2-512 sign and verify",
-    "ECDSA PCT",
-    "Ed25519 sign and verify",
-    "Ed25519 sign and verify PCT",
-    "KAS-ECC-SSC P-256",
-    "ML-DSA sign and verify PCT",
-    "ML-DSA-44",
-    "ML-KEM PCT",
-    "ML-KEM-768",
-    "RSA sign and verify PCT",
-    "RSASSA-PKCS-v1.5 2048-bit sign and verify",
-)
-
-@TestScenario
-@Requirements(
-    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_CAST_ForcedFailure("1.0"),
-    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_CAST_Coverage("1.0"),
-)
-@Examples(
-    "cast must_fail",
-    [(cast, True) for cast in FIPS_FAILFIPSCAST_STARTUP_CASTS]
-    + [(cast, False) for cast in FIPS_FAILFIPSCAST_FIRST_USE_CASTS],
-)
-def forced_cast_failures(self):
-    """Force each CAST via `failfipscast` and check `--version` behavior.
-
-    Startup CASTs (`must_fail=True`) are always exercised by `--version`, so
-    forcing one must abort with `self-test failed: <NAME>: simulated CAST
-    failure` on stderr. First-use CASTs (`must_fail=False`) run lazily, so the
-    abort only happens when the CAST is actually reached; otherwise startup
-    stays clean without the marker.
-    """
-
-    # On a forced CAST, Go's FIPS module aborts with the stderr line:
-    # `fatal error: FIPS 140-3 self-test failed: <NAME>: simulated CAST failure`.
-    FIPS_FAILFIPSCAST_MARKER = "simulated CAST failure"
-    FIPS_FAILFIPSCAST_SELFTEST_PREFIX = "self-test failed: "
-    
-    with Given("a FIPS backup container is available"):
-        backup_fips = require_fips_container()
-
-    for cast, must_fail in self.examples:
-        # `must_fail` encodes the CAST group: startup CASTs are always exercised by
-        # `--version` (forcing one must abort), first-use CASTs run lazily.
-        kind = "startup" if must_fail else "first-use"
-
-        with Example(f"force {kind} CAST {cast}"):
-            with When(f"I force CAST `{cast}` and run `--version`"):
-                # Single-quote GODEBUG so names with spaces stay one arg; `2>&1`
-                # captures the `fatal error:` lines Go writes to stderr.
-                cmd = (
-                    f"env 'GODEBUG=failfipscast={cast},fips140=only' "
-                    f"{FIPS_BINARY_IN_CONTAINER} --version 2>&1"
-                )
-                result = backup_fips.cmd(cmd, no_checks=True)
-                output = result.output or ""
-
-            with And("I parse CAST-failure markers from the command output"):
-                marker_present = FIPS_FAILFIPSCAST_MARKER in output
-                selftest_present = f"{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}" in output
-
-            # Startup CASTs must always abort; first-use CASTs abort only when
-            # `--version` happens to reach them. A forced failure is therefore
-            # expected when the CAST is a startup one or the process exited non-zero.
-            if must_fail or result.exitcode != 0:
-                with Then(f"the forced failure is reported for `{cast}`"):
-                    if must_fail:
-                        assert result.exitcode != 0, error(
-                            f"forced CAST failure expected non-zero exit for `{cast}`.\n{output}"
-                        )
-                    assert marker_present, error(
-                        f"forced CAST failure output missing "
-                        f"`{FIPS_FAILFIPSCAST_MARKER}` for `{cast}`.\n{output}"
-                    )
-                    assert selftest_present, error(
-                        f"forced CAST failure output missing "
-                        f"`{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}`.\n{output}"
-                    )
-            else:
-                with Then(f"`{cast}` was not exercised and startup stayed clean"):
-                    assert result.exitcode == 0, error(
-                    f"first-use CAST `{cast}` exited non-zero unexpectedly.\n{output}"
-                    )
-
-                    # first-use CASTs abort only when the CAST is actually reached; otherwise startup stays clean without the marker.
-                    assert not marker_present, error(
-                        f"first-use CAST `{cast}` showed "
-                        f"`{FIPS_FAILFIPSCAST_MARKER}` but exited 0.\n{output}"
-                    )
 
 @TestScenario
 @Requirements(
@@ -1444,6 +1306,120 @@ def outbound_tls_to_nonfips_clickhouse_with_cipher_profile(self):
             )
     finally:
         cluster.stop_auxiliary_container(NON_FIPS_CH_SERVER_NAME)
+
+# Startup/core CASTs used during `clickhouse-backup-fips --version`. Forcing
+# any of these via `failfipscast` must abort startup deterministically.
+# Source: Go FIPS `allCASTs` in `crypto/internal/fips140test/cast_test.go`.
+FIPS_FAILFIPSCAST_STARTUP_CASTS = (
+    "AES-CBC",
+    "CTR_DRBG",
+    "CounterKDF",
+    "HKDF-SHA2-256",
+    "HMAC-SHA2-256",
+    "PBKDF2",
+    "SHA2-256",
+    "SHA2-512",
+    "TLSv1.2-SHA2-256",
+    "TLSv1.3-SHA2-256",
+    "cSHAKE128",
+)
+
+# First-use CASTs run lazily, the first time their algorithm is used. `clickhouse-backup-fips --version`
+# may or may not exercise them, so forcing one is only expected to fail when it
+# happens to be reached.
+FIPS_FAILFIPSCAST_FIRST_USE_CASTS = (
+    "DetECDSA P-256 SHA2-512 sign",
+    "ECDH PCT",
+    "ECDSA P-256 SHA2-512 sign and verify",
+    "ECDSA PCT",
+    "Ed25519 sign and verify",
+    "Ed25519 sign and verify PCT",
+    "KAS-ECC-SSC P-256",
+    "ML-DSA sign and verify PCT",
+    "ML-DSA-44",
+    "ML-KEM PCT",
+    "ML-KEM-768",
+    "RSA sign and verify PCT",
+    "RSASSA-PKCS-v1.5 2048-bit sign and verify",
+)
+
+
+@TestScenario
+@Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_CAST_ForcedFailure("1.0"),
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_CAST_Coverage("1.0"),
+)
+@Examples(
+    "cast must_fail",
+    [(cast, True) for cast in FIPS_FAILFIPSCAST_STARTUP_CASTS]
+    + [(cast, False) for cast in FIPS_FAILFIPSCAST_FIRST_USE_CASTS],
+)
+def forced_cast_failures(self):
+    """Force each CAST via `failfipscast` and check `--version` behavior.
+
+    Startup CASTs (`must_fail=True`) are always exercised by `--version`, so
+    forcing one must abort with `self-test failed: <NAME>: simulated CAST
+    failure` on stderr. First-use CASTs (`must_fail=False`) run lazily, so the
+    abort only happens when the CAST is actually reached; otherwise startup
+    stays clean without the marker.
+    """
+
+    # On a forced CAST, Go's FIPS module aborts with the stderr line:
+    # `fatal error: FIPS 140-3 self-test failed: <NAME>: simulated CAST failure`.
+    FIPS_FAILFIPSCAST_MARKER = "simulated CAST failure"
+    FIPS_FAILFIPSCAST_SELFTEST_PREFIX = "self-test failed: "
+    
+    with Given("a FIPS backup container is available"):
+        backup_fips = require_fips_container()
+
+    for cast, must_fail in self.examples:
+        # `must_fail` encodes the CAST group: startup CASTs are always exercised by
+        # `--version` (forcing one must abort), first-use CASTs run lazily.
+        kind = "startup" if must_fail else "first-use"
+
+        with Example(f"force {kind} CAST {cast}"):
+            with When(f"I force CAST `{cast}` and run `--version`"):
+                # Single-quote GODEBUG so names with spaces stay one arg; `2>&1`
+                # captures the `fatal error:` lines Go writes to stderr.
+                cmd = (
+                    f"env 'GODEBUG=failfipscast={cast},fips140=only' "
+                    f"{FIPS_BINARY_IN_CONTAINER} --version 2>&1"
+                )
+                result = backup_fips.cmd(cmd, no_checks=True)
+                output = result.output or ""
+
+            with And("I parse CAST-failure markers from the command output"):
+                marker_present = FIPS_FAILFIPSCAST_MARKER in output
+                selftest_present = f"{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}" in output
+
+            # Startup CASTs must always abort; first-use CASTs abort only when
+            # `--version` happens to reach them. A forced failure is therefore
+            # expected when the CAST is a startup one or the process exited non-zero.
+            if must_fail or result.exitcode != 0:
+                with Then(f"the forced failure is reported for `{cast}`"):
+                    if must_fail:
+                        assert result.exitcode != 0, error(
+                            f"forced CAST failure expected non-zero exit for `{cast}`.\n{output}"
+                        )
+                    assert marker_present, error(
+                        f"forced CAST failure output missing "
+                        f"`{FIPS_FAILFIPSCAST_MARKER}` for `{cast}`.\n{output}"
+                    )
+                    assert selftest_present, error(
+                        f"forced CAST failure output missing "
+                        f"`{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}`.\n{output}"
+                    )
+            else:
+                with Then(f"`{cast}` was not exercised and startup stayed clean"):
+                    assert result.exitcode == 0, error(
+                    f"first-use CAST `{cast}` exited non-zero unexpectedly.\n{output}"
+                    )
+
+                    # first-use CASTs abort only when the CAST is actually reached; otherwise startup stays clean without the marker.
+                    assert not marker_present, error(
+                        f"first-use CAST `{cast}` showed "
+                        f"`{FIPS_FAILFIPSCAST_MARKER}` but exited 0.\n{output}"
+                    )
 
 
 @TestScenario
