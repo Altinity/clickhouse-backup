@@ -402,7 +402,8 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 		Name string `ch:"name"`
 	}, 0)
 	// MaterializedPostgreSQL doesn't support FREEZE look https://github.com/Altinity/clickhouse-backup/issues/550 and https://github.com/ClickHouse/ClickHouse/issues/32902
-	if err = ch.SelectContext(ctx, &skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('MySQL','PostgreSQL','MaterializedPostgreSQL')"); err != nil {
+	// DataLakeCatalog is read-only, we don't need these tables in metadata, look https://github.com/Altinity/clickhouse-backup/issues/1417
+	if err = ch.SelectContext(ctx, &skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('DataLakeCatalog','MySQL','PostgreSQL','MaterializedPostgreSQL')"); err != nil {
 		return nil, errors.Wrap(err, "GetTables: select skip databases")
 	}
 	skipDatabaseNames := make([]string, len(skipDatabases))
