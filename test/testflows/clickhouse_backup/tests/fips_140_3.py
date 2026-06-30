@@ -368,14 +368,12 @@ def _check_outbound_tls_with_cipher(self, cluster, backup_fips, *, listen, comma
             tls_version=tls_version,
         )
         _check_outbound_tls_handshake(
-            self=self,
             node=backup_fips,
             command=command,
             expected_success=expected_success,
             allow_remote_auth_error_as_skip=allow_remote_auth_error_as_skip,
         )
         _assert_s_server_logs_match_outcome(
-            self=self,
             cluster=cluster,
             aux_name=aux_name,
             expected_success=expected_success,
@@ -555,7 +553,6 @@ def connectivity_against_fips_clickhouse_server(self):
             )
         with When("I run `clickhouse-backup-fips tables` over secure native TCP 9440"):
             _assert_tables_succeeds(
-                self=self,
                 backup_fips=backup_fips,
                 cfg=FIPS_CONNECTIVITY_FIPS_CONFIG_PATH,
             )
@@ -600,7 +597,6 @@ def connectivity_against_non_fips_clickhouse_server(self):
             "client config (`secure: true`, `port: 9440`)"
         ):
             _assert_tables_fails(
-                self=self,
                 backup_fips=backup_fips,
                 cfg=FIPS_CONNECTIVITY_NONFIPS_CONFIG_PATH,
                 reason=(
@@ -731,7 +727,6 @@ def godebug_fips140_modes(self):
         with Check(f"GODEBUG mode `{godebug_info_case}` reports "
                    f"enabled={expected_enabled} enforced={expected_enforced}"):
             _check_fips_info_values(
-                self=self,
                 backup_fips=backup_fips,
                 godebug_info_case=godebug_info_case,
                 godebug=godebug,
@@ -853,7 +848,6 @@ def inbound_tls_cipher_negotiation(self):
             for ciphersuite in FIPS_TLS13_APPROVED:  # shared with outbound scenario
                 with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be accepted"):
                     _check_tls_handshake(
-                        self=self,
                         node=backup_fips, target=target, tls_flag="-tls1_3",
                         ciphersuites=ciphersuite, expected_success=True,
                     )
@@ -862,7 +856,6 @@ def inbound_tls_cipher_negotiation(self):
             for cipher in FIPS_TLS12_APPROVED:  # shared with outbound scenario
                 with Check(f"TLSv1.2 cipher {cipher} should be accepted"):
                     _check_tls_handshake(
-                        self=self,
                         node=backup_fips, target=target, tls_flag="-tls1_2",
                         cipher=cipher, expected_success=True,
                     )
@@ -871,7 +864,6 @@ def inbound_tls_cipher_negotiation(self):
             for ciphersuite in non_fips_tls13:
                 with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
                     _check_tls_handshake(
-                        self=self,
                         node=backup_fips, target=target, tls_flag="-tls1_3",
                         ciphersuites=ciphersuite, expected_success=False,
                     )
@@ -880,7 +872,6 @@ def inbound_tls_cipher_negotiation(self):
             for cipher in non_fips_tls12:
                 with Check(f"TLSv1.2 cipher {cipher} should be rejected"):
                     _check_tls_handshake(
-                        self=self,
                         node=backup_fips, target=target, tls_flag="-tls1_2",
                         cipher=cipher, expected_success=False,
                     )
@@ -888,13 +879,11 @@ def inbound_tls_cipher_negotiation(self):
         with And("I try to connect using legacy TLSv1.0 / TLSv1.1 protocols and assert they are rejected"):
             with Check("TLSv1.0 handshake should be rejected"):
                 _check_tls_handshake(
-                    self=self,
                     node=backup_fips, target=target, tls_flag="-tls1",
                     expected_success=False,
                 )
             with Check("TLSv1.1 handshake should be rejected"):
                 _check_tls_handshake(
-                    self=self,
                     node=backup_fips, target=target, tls_flag="-tls1_1",
                     expected_success=False,
                 )
@@ -951,7 +940,6 @@ def outbound_tls_cipher_negotiation(self):
         for ciphersuite in FIPS_TLS13_APPROVED:
             with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be accepted"):
                 _check_outbound_tls_with_cipher(
-                    self=self,
                     cluster=cluster, backup_fips=backup_fips,
                     listen=FIPS_OUTBOUND_CH_TLS_PORT, tls_version="-tls1_3",
                     ciphersuites=ciphersuite, command=cmd, expected_success=True,
@@ -961,7 +949,6 @@ def outbound_tls_cipher_negotiation(self):
         for cipher in FIPS_TLS12_APPROVED:
             with Check(f"TLSv1.2 cipher {cipher} should be accepted"):
                 _check_outbound_tls_with_cipher(
-                    self=self,
                     cluster=cluster, backup_fips=backup_fips,
                     listen=FIPS_OUTBOUND_CH_TLS_PORT, tls_version="-tls1_2",
                     cipher=cipher, command=cmd, expected_success=True,
@@ -971,7 +958,6 @@ def outbound_tls_cipher_negotiation(self):
         for ciphersuite in non_fips_tls13:
             with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
                 _check_outbound_tls_with_cipher(
-                    self=self,
                     cluster=cluster, backup_fips=backup_fips,
                     listen=FIPS_OUTBOUND_CH_TLS_PORT, tls_version="-tls1_3",
                     ciphersuites=ciphersuite, command=cmd, expected_success=False,
@@ -981,7 +967,6 @@ def outbound_tls_cipher_negotiation(self):
         for cipher in non_fips_tls12:
             with Check(f"TLSv1.2 cipher {cipher} should be rejected"):
                 _check_outbound_tls_with_cipher(
-                    self=self,
                     cluster=cluster, backup_fips=backup_fips,
                     listen=FIPS_OUTBOUND_CH_TLS_PORT, tls_version="-tls1_2",
                     cipher=cipher, command=cmd, expected_success=False,
@@ -1040,7 +1025,6 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
         for ciphersuite in FIPS_TLS13_APPROVED:
             with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be accepted"):
                 _check_outbound_tls_with_cipher(
-                    self=self,
                     cluster=cluster, backup_fips=backup_fips,
                     aux_name=OPENSSL_S3_FIPS_AUX_NAME,
                     listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_3",
@@ -1051,7 +1035,6 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
         for cipher in FIPS_TLS12_APPROVED:
             with Check(f"TLSv1.2 cipher {cipher} should be accepted"):
                 _check_outbound_tls_with_cipher(
-                    self=self,
                     cluster=cluster, backup_fips=backup_fips,
                     aux_name=OPENSSL_S3_FIPS_AUX_NAME,
                     listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_2",
@@ -1062,7 +1045,6 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
         for ciphersuite in non_fips_tls13:
             with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
                 _check_outbound_tls_with_cipher(
-                    self=self,
                     cluster=cluster, backup_fips=backup_fips,
                     aux_name=OPENSSL_S3_FIPS_AUX_NAME,
                     listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_3",
@@ -1074,7 +1056,6 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
         for cipher in non_fips_tls12:
             with Check(f"TLSv1.2 cipher {cipher} should be rejected"):
                 _check_outbound_tls_with_cipher(
-                    self=self,
                     cluster=cluster, backup_fips=backup_fips,
                     aux_name=OPENSSL_S3_FIPS_AUX_NAME,
                     listen=FIPS_OUTBOUND_S3_TLS_PORT, tls_version="-tls1_2",
