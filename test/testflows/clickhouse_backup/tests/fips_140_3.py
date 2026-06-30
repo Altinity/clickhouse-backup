@@ -727,13 +727,9 @@ def check_fips_info_values(self, backup_fips, *, name, godebug,
 
 @TestScenario
 @Requirements(
-    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Unset("1.0"),
-    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Empty("1.0"),
-    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Off("1.0"),
-    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_On("1.0"),
-    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Only("1.0"),
+    RQ_SRS_013_ClickHouse_BackupUtility_FIPS_FipsInfo_Values("1.0"),
 )
-def godebug_fips140_modes(self):
+def fips_info_values_output(self):
     """Validate `--fips-info` FIPS posture for every GODEBUG fips140 mode.
 
     For each documented GODEBUG runtime mode (`unset`, empty, `fips140=off`,
@@ -1182,7 +1178,7 @@ def connection_to_fips_clickhouse_with_nonfips_config(self):
                 f"reachable via plain native TCP.\n{output}"
             )
 
-        with And("the output does not include the list-of-tables success marker"):
+        with Then("the output does not include the list-of-tables success marker"):
             output_lower = output.lower()
             assert "atomic" not in output_lower and "ordinary" not in output_lower, error(
                 f"`tables` produced what looks like a successful database listing "
@@ -1485,7 +1481,7 @@ def acvp_tests(self):
             f"`bash {script_path}` exit={result.exitcode}.\n{output}"
         )
 
-    with And(f"output contains `{FIPS_ACVP_EXPECTED_OUTPUT}`"):
+    with Then(f"output contains `{FIPS_ACVP_EXPECTED_OUTPUT}`"):
         assert FIPS_ACVP_EXPECTED_OUTPUT in output, error(
             f"ACVP run did not print `{FIPS_ACVP_EXPECTED_OUTPUT}`. "
             f"See `pkg/acvpwrapper/README.md` for the expected oracle.\n{output}"
@@ -1501,7 +1497,7 @@ def fips_140_3(self):
     Scenario(run=gofips140_build_flags_present, flags=TE)
     Scenario(run=connectivity_against_non_fips_clickhouse_server, flags=TE)
     Scenario(run=connectivity_against_fips_clickhouse_server, flags=TE)
-    Scenario(run=godebug_fips140_modes, flags=TE)
+    Scenario(run=fips_info_values_output, flags=TE)
     Scenario(run=fips_integrity_self_test_failure_on_tampered_binary, flags=TE)
     Scenario(run=inbound_tls_cipher_negotiation, flags=TE)
     Scenario(run=outbound_tls_cipher_negotiation, flags=TE)

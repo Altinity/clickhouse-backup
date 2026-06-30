@@ -207,88 +207,32 @@ RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Version_BuildSetting = Requirement(
     num='4.3.2'
 )
 
-RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Unset = Requirement(
-    name='RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.Unset',
+RQ_SRS_013_ClickHouse_BackupUtility_FIPS_FipsInfo_Values = Requirement(
+    name='RQ.SRS-013.ClickHouse.BackupUtility.FIPS.FipsInfo.Values',
     version='1.0',
     priority=None,
     group=None,
     type=None,
     uid=None,
     description=(
-        'When `GODEBUG` is not set, the [clickhouse-backup-fips] binary SHALL rely on its build-time default\n'
+        '* When `GODEBUG` is not set, the [clickhouse-backup-fips] binary SHALL rely on its build-time default\n'
         '(`DefaultGODEBUG=fips140=on`) and operate with FIPS 140-3 mode enabled but not enforced. The\n'
         'output of `clickhouse-backup-fips --fips-info` SHALL report `enabled: true` and `enforced: false`.\n'
         '\n'
-    ),
-    link=None,
-    level=3,
-    num='4.4.1'
-)
-
-RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Empty = Requirement(
-    name='RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.Empty',
-    version='1.0',
-    priority=None,
-    group=None,
-    type=None,
-    uid=None,
-    description=(
-        'When started with an empty `GODEBUG` (i.e. `GODEBUG=`), the [clickhouse-backup-fips] binary SHALL\n'
+        '* When started with an `empty` `GODEBUG` (i.e. `GODEBUG=`), the [clickhouse-backup-fips] binary SHALL\n'
         'behave identically to the unset case, relying on its build-time default (`fips140=on`) with\n'
         'FIPS 140-3 mode enabled but not enforced. The output of `clickhouse-backup-fips --fips-info`\n'
         'SHALL report `enabled: true` and `enforced: false`.\n'
         '\n'
-    ),
-    link=None,
-    level=3,
-    num='4.4.2'
-)
-
-RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Off = Requirement(
-    name='RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.Off',
-    version='1.0',
-    priority=None,
-    group=None,
-    type=None,
-    uid=None,
-    description=(
-        'When started with `GODEBUG=fips140=off`, the [clickhouse-backup-fips] binary SHALL disable\n'
+        '* When started with `GODEBUG=fips140=off`, the [clickhouse-backup-fips] binary SHALL disable\n'
         'FIPS 140-3 mode. The output of `clickhouse-backup-fips --fips-info` SHALL report `enabled: false`\n'
         'and `enforced: false`.\n'
         '\n'
-    ),
-    link=None,
-    level=3,
-    num='4.4.3'
-)
-
-RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_On = Requirement(
-    name='RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.On',
-    version='1.0',
-    priority=None,
-    group=None,
-    type=None,
-    uid=None,
-    description=(
-        'When started with `GODEBUG=fips140=on`, the [clickhouse-backup-fips] binary SHALL operate with\n'
+        '* When started with `GODEBUG=fips140=on`, the [clickhouse-backup-fips] binary SHALL operate with\n'
         'FIPS 140-3 mode enabled without strict enforcement. The output of\n'
         '`clickhouse-backup-fips --fips-info` SHALL report `enabled: true` and `enforced: false`.\n'
         '\n'
-    ),
-    link=None,
-    level=3,
-    num='4.4.4'
-)
-
-RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Only = Requirement(
-    name='RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.Only',
-    version='1.0',
-    priority=None,
-    group=None,
-    type=None,
-    uid=None,
-    description=(
-        'When started with `GODEBUG=fips140=only`, the [clickhouse-backup-fips] binary SHALL operate with\n'
+        '* When started with `GODEBUG=fips140=only`, the [clickhouse-backup-fips] binary SHALL operate with\n'
         'strict FIPS 140-3 enforcement so that any non-approved cryptographic operation triggers an error\n'
         'or panic. The output of `clickhouse-backup-fips --fips-info` SHALL report `enabled: true` and\n'
         '`enforced: true`.\n'
@@ -296,7 +240,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Only = Requirement(
     ),
     link=None,
     level=3,
-    num='4.4.5'
+    num='4.4.1'
 )
 
 RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_Integrity = Requirement(
@@ -656,12 +600,8 @@ QA_SRS013_ClickHouse_Backup_Utility_FIPS_Compatibility = Specification(
         Heading(name='Version Output', level=2, num='4.3'),
         Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Version.Status', level=3, num='4.3.1'),
         Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Version.BuildSetting', level=3, num='4.3.2'),
-        Heading(name='GODEBUG fips140 Modes', level=2, num='4.4'),
-        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.Unset', level=3, num='4.4.1'),
-        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.Empty', level=3, num='4.4.2'),
-        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.Off', level=3, num='4.4.3'),
-        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.On', level=3, num='4.4.4'),
-        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.Only', level=3, num='4.4.5'),
+        Heading(name='`--fips-info` Output Values Depending on `fips140` Modes', level=2, num='4.4'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.FIPS.FipsInfo.Values', level=3, num='4.4.1'),
         Heading(name='Startup Integrity Self-Tests', level=2, num='4.5'),
         Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.FIPS.SelfTest.Integrity', level=3, num='4.5.1'),
         Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.FIPS.SelfTest.TamperedBinary', level=3, num='4.5.2'),
@@ -698,11 +638,7 @@ QA_SRS013_ClickHouse_Backup_Utility_FIPS_Compatibility = Specification(
         RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Connectivity_NonFIPSEndpoint,
         RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Version_Status,
         RQ_SRS_013_ClickHouse_BackupUtility_FIPS_Version_BuildSetting,
-        RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Unset,
-        RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Empty,
-        RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Off,
-        RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_On,
-        RQ_SRS_013_ClickHouse_BackupUtility_FIPS_GODEBUG_Only,
+        RQ_SRS_013_ClickHouse_BackupUtility_FIPS_FipsInfo_Values,
         RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_Integrity,
         RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_TamperedBinary,
         RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_CAST_ForcedFailure,
@@ -749,12 +685,8 @@ QA_SRS013_ClickHouse_Backup_Utility_FIPS_Compatibility = Specification(
     * 4.3 [Version Output](#version-output)
         * 4.3.1 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Version.Status](#rqsrs-013clickhousebackuputilityfipsversionstatus)
         * 4.3.2 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.Version.BuildSetting](#rqsrs-013clickhousebackuputilityfipsversionbuildsetting)
-    * 4.4 [GODEBUG fips140 Modes](#godebug-fips140-modes)
-        * 4.4.1 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.Unset](#rqsrs-013clickhousebackuputilityfipsgodebugunset)
-        * 4.4.2 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.Empty](#rqsrs-013clickhousebackuputilityfipsgodebugempty)
-        * 4.4.3 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.Off](#rqsrs-013clickhousebackuputilityfipsgodebugoff)
-        * 4.4.4 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.On](#rqsrs-013clickhousebackuputilityfipsgodebugon)
-        * 4.4.5 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.Only](#rqsrs-013clickhousebackuputilityfipsgodebugonly)
+    * 4.4 [`--fips-info` Output Values Depending on `fips140` Modes](#--fips-info-output-values-depending-on-fips140-modes)
+        * 4.4.1 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.FipsInfo.Values](#rqsrs-013clickhousebackuputilityfipsfipsinfovalues)
     * 4.5 [Startup Integrity Self-Tests](#startup-integrity-self-tests)
         * 4.5.1 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.SelfTest.Integrity](#rqsrs-013clickhousebackuputilityfipsselftestintegrity)
         * 4.5.2 [RQ.SRS-013.ClickHouse.BackupUtility.FIPS.SelfTest.TamperedBinary](#rqsrs-013clickhousebackuputilityfipsselftesttamperedbinary)
@@ -915,7 +847,7 @@ version: 1.0
 The output of `go version -m $(which clickhouse-backup-fips)` SHALL contain the line
 `build	GOFIPS140=v1.0.0`, confirming the binary was built against the Go FIPS 140-3 module.
 
-### GODEBUG fips140 Modes
+### `--fips-info` Output Values Depending on `fips140` Modes
 
 The [clickhouse-backup-fips] binary SHALL expose its FIPS build and runtime posture via
 `clickhouse-backup-fips --fips-info`, which prints a line-oriented `key: value` dump including,
@@ -923,7 +855,7 @@ under the `fips_module:` block, `enabled: <true|false>` and `enforced: <true|fal
 is built with `DefaultGODEBUG=fips140=on`, so the `fips140` runtime key SHALL produce the
 following result:
 
-| `GODEBUG` runtime | `enabled` | `enforced` |
+| `GODEBUG` setting | `enabled` | `enforced` |
 | ----------------- | --------- | ---------- |
 | unset             | true      | false      |
 | empty (`GODEBUG=`)| true      | false      |
@@ -931,39 +863,27 @@ following result:
 | `fips140=on`      | true      | false      |
 | `fips140=only`    | true      | true       |
 
-#### RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.Unset
+#### RQ.SRS-013.ClickHouse.BackupUtility.FIPS.FipsInfo.Values
 version: 1.0
 
-When `GODEBUG` is not set, the [clickhouse-backup-fips] binary SHALL rely on its build-time default
+* When `GODEBUG` is not set, the [clickhouse-backup-fips] binary SHALL rely on its build-time default
 (`DefaultGODEBUG=fips140=on`) and operate with FIPS 140-3 mode enabled but not enforced. The
 output of `clickhouse-backup-fips --fips-info` SHALL report `enabled: true` and `enforced: false`.
 
-#### RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.Empty
-version: 1.0
-
-When started with an empty `GODEBUG` (i.e. `GODEBUG=`), the [clickhouse-backup-fips] binary SHALL
+* When started with an `empty` `GODEBUG` (i.e. `GODEBUG=`), the [clickhouse-backup-fips] binary SHALL
 behave identically to the unset case, relying on its build-time default (`fips140=on`) with
 FIPS 140-3 mode enabled but not enforced. The output of `clickhouse-backup-fips --fips-info`
 SHALL report `enabled: true` and `enforced: false`.
 
-#### RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.Off
-version: 1.0
-
-When started with `GODEBUG=fips140=off`, the [clickhouse-backup-fips] binary SHALL disable
+* When started with `GODEBUG=fips140=off`, the [clickhouse-backup-fips] binary SHALL disable
 FIPS 140-3 mode. The output of `clickhouse-backup-fips --fips-info` SHALL report `enabled: false`
 and `enforced: false`.
 
-#### RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.On
-version: 1.0
-
-When started with `GODEBUG=fips140=on`, the [clickhouse-backup-fips] binary SHALL operate with
+* When started with `GODEBUG=fips140=on`, the [clickhouse-backup-fips] binary SHALL operate with
 FIPS 140-3 mode enabled without strict enforcement. The output of
 `clickhouse-backup-fips --fips-info` SHALL report `enabled: true` and `enforced: false`.
 
-#### RQ.SRS-013.ClickHouse.BackupUtility.FIPS.GODEBUG.Only
-version: 1.0
-
-When started with `GODEBUG=fips140=only`, the [clickhouse-backup-fips] binary SHALL operate with
+* When started with `GODEBUG=fips140=only`, the [clickhouse-backup-fips] binary SHALL operate with
 strict FIPS 140-3 enforcement so that any non-approved cryptographic operation triggers an error
 or panic. The output of `clickhouse-backup-fips --fips-info` SHALL report `enabled: true` and
 `enforced: true`.
