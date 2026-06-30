@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"testing"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/go-faster/errors"
 	"github.com/stretchr/testify/assert"
 )
@@ -204,4 +205,51 @@ func TestEnrichQueryWithOnCluster(t *testing.T) {
 			assert.Equal(t, tc.ExpectedQuery, result)
 		})
 	}
+}
+
+// TestGroupMutationsByTable covers the per-backup batch mutation lookup that replaced the
+// per-table system.mutations query (O(N^2) fix). Verifies that mutations from a single
+// server-wide scan are bucketed to the correct database.table and never leak across tables.
+func TestGroupMutationsByTable(t *testing.T) {
+	rows := []inProgressMutationRow{
+		{Database: "db1", Table: "t1", MutationId: "0000000001", Command: "MODIFY COLUMN a UInt64"},
+		{Database: "db1", Table: "t1", MutationId: "0000000002", Command: "DROP COLUMN b"},
+		{Database: "db1", Table: "t2", MutationId: "0000000003", Command: "MODIFY COLUMN c String"},
+	}
+
+	got := groupMutationsByTable(rows)
+
+	assert.Len(t, got, 2, "two distinct tables expected")
+	assert.Equal(t, []metadata.MutationMetadata{
+		{MutationId: "0000000001", Command: "MODIFY COLUMN a UInt64"},
+		{MutationId: "0000000002", Command: "DROP COLUMN b"},
+	}, got[metadata.TableTitle{Database: "db1", Table: "t1"}], "t1 must keep both of its mutations, in order")
+	assert.Equal(t, []metadata.MutationMetadata{
+		{MutationId: "0000000003", Command: "MODIFY COLUMN c String"},
+	}, got[metadata.TableTitle{Database: "db1", Table: "t2"}], "t2 must get only its own mutation (no cross-table leak)")
+}
+
+// TestGroupMutationsByTableDottedNames pins the reason for the metadata.TableTitle struct key:
+// dots are legal in database/table names, so a "database.table" string key would collapse
+// {db="a.b", table="c"} and {db="a", table="b.c"} into the same "a.b.c" bucket. The struct key
+// keeps them separate.
+func TestGroupMutationsByTableDottedNames(t *testing.T) {
+	rows := []inProgressMutationRow{
+		{Database: "a.b", Table: "c", MutationId: "0000000001", Command: "DROP COLUMN x"},
+		{Database: "a", Table: "b.c", MutationId: "0000000002", Command: "DROP COLUMN y"},
+	}
+
+	got := groupMutationsByTable(rows)
+
+	assert.Len(t, got, 2, "ambiguous string key would have merged these into one bucket")
+	assert.Equal(t, []metadata.MutationMetadata{
+		{MutationId: "0000000001", Command: "DROP COLUMN x"},
+	}, got[metadata.TableTitle{Database: "a.b", Table: "c"}])
+	assert.Equal(t, []metadata.MutationMetadata{
+		{MutationId: "0000000002", Command: "DROP COLUMN y"},
+	}, got[metadata.TableTitle{Database: "a", Table: "b.c"}])
+}
+
+func TestGroupMutationsByTableEmpty(t *testing.T) {
+	assert.Empty(t, groupMutationsByTable(nil))
 }

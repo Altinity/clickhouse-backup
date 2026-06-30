@@ -403,7 +403,8 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 		Name string `ch:"name"`
 	}, 0)
 	// MaterializedPostgreSQL doesn't support FREEZE look https://github.com/Altinity/clickhouse-backup/issues/550 and https://github.com/ClickHouse/ClickHouse/issues/32902
-	if err = ch.SelectContext(ctx, &skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('MySQL','PostgreSQL','MaterializedPostgreSQL')"); err != nil {
+	// DataLakeCatalog is read-only, we don't need these tables in metadata, look https://github.com/Altinity/clickhouse-backup/issues/1417
+	if err = ch.SelectContext(ctx, &skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('DataLakeCatalog','MySQL','PostgreSQL','MaterializedPostgreSQL')"); err != nil {
 		return nil, errors.Wrap(err, "GetTables: select skip databases")
 	}
 	skipDatabaseNames := make([]string, len(skipDatabases))
@@ -1362,6 +1363,42 @@ func (ch *ClickHouse) GetInProgressMutations(ctx context.Context, database strin
 		return nil, errors.Wrap(err, "can't get in progress mutations")
 	}
 	return inProgressMutations, nil
+}
+
+// GetInProgressMutationsBatch returns all in-progress mutations across the whole server in a
+// SINGLE query, keyed by metadata.TableTitle{Database, Table}. system.mutations is an expensive
+// virtual table — every query against it enumerates all tables on the server — so calling
+// GetInProgressMutations once per table is O(N^2) and dominates `create` wall-clock on
+// installations with many tables (observed: ~240ms/call * tens of thousands of tables). Fetching
+// the whole in-progress set once per backup turns that into a single O(N) scan; per-table lookup is
+// then an in-memory map access.
+type inProgressMutationRow struct {
+	Database   string `ch:"database"`
+	Table      string `ch:"table"`
+	MutationId string `ch:"mutation_id"`
+	Command    string `ch:"command"`
+}
+
+// groupMutationsByTable buckets flat mutation rows into per-table lists keyed by
+// metadata.TableTitle{Database, Table}. A struct key avoids the corner cases of a "database.table"
+// string key (dots are legal in database/table names, so concatenation is ambiguous). Pure (no I/O)
+// so it is unit-testable without a ClickHouse server.
+func groupMutationsByTable(rows []inProgressMutationRow) map[metadata.TableTitle][]metadata.MutationMetadata {
+	result := make(map[metadata.TableTitle][]metadata.MutationMetadata, len(rows))
+	for _, r := range rows {
+		key := metadata.TableTitle{Database: r.Database, Table: r.Table}
+		result[key] = append(result[key], metadata.MutationMetadata{MutationId: r.MutationId, Command: r.Command})
+	}
+	return result
+}
+
+func (ch *ClickHouse) GetInProgressMutationsBatch(ctx context.Context) (map[metadata.TableTitle][]metadata.MutationMetadata, error) {
+	var rows []inProgressMutationRow
+	query := "SELECT database, table, mutation_id, command FROM system.mutations WHERE is_done=0"
+	if err := ch.SelectContext(ctx, &rows, query); err != nil {
+		return nil, errors.Wrap(err, "can't get in progress mutations")
+	}
+	return groupMutationsByTable(rows), nil
 }
 
 func (ch *ClickHouse) ApplyMacros(ctx context.Context, s string) (string, error) {

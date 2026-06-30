@@ -331,6 +331,18 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 		log.Debug().Msgf("CheckSystemPartsColumnsForTables passed for %d tables", len(tablesToCheck))
 	}
 
+	// Fetch in-progress mutations ONCE for the whole backup. system.mutations scans all tables on
+	// every query, so the previous per-table GetInProgressMutations call was O(N^2) and dominated
+	// create time on installations with many tables. We now do a single scan and look up per table.
+	var allInProgressMutations map[metadata.TableTitle][]metadata.MutationMetadata
+	if b.cfg.ClickHouse.BackupMutations && !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+		var allInProgressMutationsErr error
+		allInProgressMutations, allInProgressMutationsErr = b.ch.GetInProgressMutationsBatch(ctx)
+		if allInProgressMutationsErr != nil {
+			return errors.Wrap(allInProgressMutationsErr, "b.ch.GetInProgressMutationsBatch")
+		}
+	}
+
 	var backupDataSize, backupObjectDiskSize, backupMetadataSize uint64
 	var metaMutex sync.Mutex
 	createBackupWorkingGroup, createCtx := errgroup.WithContext(ctx)
@@ -372,12 +384,9 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 			logger.Debug().Msg("get in progress mutations list")
 			inProgressMutations := make([]metadata.MutationMetadata, 0)
 			if b.cfg.ClickHouse.BackupMutations && !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
-				var inProgressMutationsErr error
-				inProgressMutations, inProgressMutationsErr = b.ch.GetInProgressMutations(createCtx, table.Database, table.Name)
-				if inProgressMutationsErr != nil {
-					logger.Error().Msgf("b.ch.GetInProgressMutations error: %v", inProgressMutationsErr)
-					return errors.Wrap(inProgressMutationsErr, "b.ch.GetInProgressMutations")
-				}
+				// looked up from the single GetInProgressMutationsBatch query above — avoids the
+				// O(N^2) per-table system.mutations scan.
+				inProgressMutations = allInProgressMutations[metadata.TableTitle{Database: table.Database, Table: table.Name}]
 			}
 			logger.Debug().Msg("create metadata")
 			if schemaOnly || doBackupData {
