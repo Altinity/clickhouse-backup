@@ -102,24 +102,33 @@ type GeneralConfig struct {
 
 // GCSConfig - GCS settings section
 type GCSConfig struct {
-	CredentialsFile        string            `yaml:"credentials_file" envconfig:"GCS_CREDENTIALS_FILE"`
-	CredentialsJSON        string            `yaml:"credentials_json" envconfig:"GCS_CREDENTIALS_JSON"`
-	CredentialsJSONEncoded string            `yaml:"credentials_json_encoded" envconfig:"GCS_CREDENTIALS_JSON_ENCODED"`
-	SAEmail                string            `yaml:"sa_email" envconfig:"GCS_SA_EMAIL"`
-	EmbeddedAccessKey      string            `yaml:"embedded_access_key" envconfig:"GCS_EMBEDDED_ACCESS_KEY"`
-	EmbeddedSecretKey      string            `yaml:"embedded_secret_key" envconfig:"GCS_EMBEDDED_SECRET_KEY"`
-	SkipCredentials        bool              `yaml:"skip_credentials" envconfig:"GCS_SKIP_CREDENTIALS"`
-	Bucket                 string            `yaml:"bucket" envconfig:"GCS_BUCKET"`
-	Path                   string            `yaml:"path" envconfig:"GCS_PATH"`
-	ObjectDiskPath         string            `yaml:"object_disk_path" envconfig:"GCS_OBJECT_DISK_PATH"`
-	CompressionLevel       int               `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
-	CompressionFormat      string            `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
-	Debug                  bool              `yaml:"debug" envconfig:"GCS_DEBUG"`
-	ForceHttp              bool              `yaml:"force_http" envconfig:"GCS_FORCE_HTTP"`
-	Endpoint               string            `yaml:"endpoint" envconfig:"GCS_ENDPOINT"`
-	StorageClass           string            `yaml:"storage_class" envconfig:"GCS_STORAGE_CLASS"`
-	ObjectLabels           map[string]string `yaml:"object_labels" envconfig:"GCS_OBJECT_LABELS"`
-	CustomStorageClassMap  map[string]string `yaml:"custom_storage_class_map" envconfig:"GCS_CUSTOM_STORAGE_CLASS_MAP"`
+	CredentialsFile        string `yaml:"credentials_file" envconfig:"GCS_CREDENTIALS_FILE"`
+	CredentialsJSON        string `yaml:"credentials_json" envconfig:"GCS_CREDENTIALS_JSON"`
+	CredentialsJSONEncoded string `yaml:"credentials_json_encoded" envconfig:"GCS_CREDENTIALS_JSON_ENCODED"`
+	SAEmail                string `yaml:"sa_email" envconfig:"GCS_SA_EMAIL"`
+	EmbeddedAccessKey      string `yaml:"embedded_access_key" envconfig:"GCS_EMBEDDED_ACCESS_KEY"`
+	EmbeddedSecretKey      string `yaml:"embedded_secret_key" envconfig:"GCS_EMBEDDED_SECRET_KEY"`
+	SkipCredentials        bool   `yaml:"skip_credentials" envconfig:"GCS_SKIP_CREDENTIALS"`
+	Bucket                 string `yaml:"bucket" envconfig:"GCS_BUCKET"`
+	Path                   string `yaml:"path" envconfig:"GCS_PATH"`
+	ObjectDiskPath         string `yaml:"object_disk_path" envconfig:"GCS_OBJECT_DISK_PATH"`
+	CompressionLevel       int    `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
+	CompressionFormat      string `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
+	Debug                  bool   `yaml:"debug" envconfig:"GCS_DEBUG"`
+	ForceHttp              bool   `yaml:"force_http" envconfig:"GCS_FORCE_HTTP"`
+	// DisableHttp2 forces the GCS client onto an HTTP/1.1 transport over TLS
+	// (ForceAttemptHTTP2=false, NextProtos=["http/1.1"]) WITHOUT downgrading the
+	// request scheme to cleartext (unlike ForceHttp). With HTTP/2, all concurrent
+	// part-download streams are multiplexed onto a small number of TCP connections,
+	// and per-connection flow control caps aggregate throughput at the backup tail.
+	// HTTP/1.1 gives one dedicated TCP connection per in-flight request (up to
+	// MaxIdleConnsPerHost), letting parallel parts saturate the link. The https
+	// scheme is preserved, so TLS and HTTPS_PROXY (CONNECT) continue to work.
+	DisableHttp2          bool              `yaml:"disable_http2" envconfig:"GCS_DISABLE_HTTP2"`
+	Endpoint              string            `yaml:"endpoint" envconfig:"GCS_ENDPOINT"`
+	StorageClass          string            `yaml:"storage_class" envconfig:"GCS_STORAGE_CLASS"`
+	ObjectLabels          map[string]string `yaml:"object_labels" envconfig:"GCS_OBJECT_LABELS"`
+	CustomStorageClassMap map[string]string `yaml:"custom_storage_class_map" envconfig:"GCS_CUSTOM_STORAGE_CLASS_MAP"`
 	// NOTE: ClientPoolSize should be at least 2 times bigger than
 	// 			UploadConcurrency or DownloadConcurrency in each upload and download case
 	ClientPoolSize    int `yaml:"client_pool_size" envconfig:"GCS_CLIENT_POOL_SIZE"`
