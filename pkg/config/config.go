@@ -297,11 +297,19 @@ type ClickHouseConfig struct {
 	CheckReplicasBeforeAttach        bool              `yaml:"check_replicas_before_attach" envconfig:"CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH"`
 	DefaultReplicaPath               string            `yaml:"default_replica_path" envconfig:"CLICKHOUSE_DEFAULT_REPLICA_PATH"`
 	DefaultReplicaName               string            `yaml:"default_replica_name" envconfig:"CLICKHOUSE_DEFAULT_REPLICA_NAME"`
-	TLSKey                           string            `yaml:"tls_key" envconfig:"CLICKHOUSE_TLS_KEY"`
-	TLSCert                          string            `yaml:"tls_cert" envconfig:"CLICKHOUSE_TLS_CERT"`
-	TLSCa                            string            `yaml:"tls_ca" envconfig:"CLICKHOUSE_TLS_CA"`
-	MaxConnections                   int               `yaml:"max_connections" envconfig:"CLICKHOUSE_MAX_CONNECTIONS"`
-	Debug                            bool              `yaml:"debug" envconfig:"CLICKHOUSE_DEBUG"`
+	// RebindReplicaPathIfExists is a fallback for restore: a foreign/renamed table that still occupies our
+	// resolved ZK path on THIS node is detected automatically via system.replicas and rebound to
+	// default_replica_path regardless of this flag (https://github.com/Altinity/clickhouse-backup/issues/849).
+	// This flag only covers the residual case where the ZK path has leftover children but NO local table uses
+	// it — async-stale state after a DROP. That case is observationally identical to a temporarily-offline HA
+	// sibling, so it stays opt-in: MUST be false during a concurrent multi-replica restore or it causes
+	// split-brain (https://github.com/Altinity/clickhouse-backup/issues/1428).
+	RebindReplicaPathIfExists bool   `yaml:"rebind_replica_path_if_exists" envconfig:"CLICKHOUSE_REBIND_REPLICA_PATH_IF_EXISTS"`
+	TLSKey                    string `yaml:"tls_key" envconfig:"CLICKHOUSE_TLS_KEY"`
+	TLSCert                   string `yaml:"tls_cert" envconfig:"CLICKHOUSE_TLS_CERT"`
+	TLSCa                     string `yaml:"tls_ca" envconfig:"CLICKHOUSE_TLS_CA"`
+	MaxConnections            int    `yaml:"max_connections" envconfig:"CLICKHOUSE_MAX_CONNECTIONS"`
+	Debug                     bool   `yaml:"debug" envconfig:"CLICKHOUSE_DEBUG"`
 	// ForceRebalance triggers disk rebalancing during download even when the backup's disk
 	// name exists on the target, allowing distribution across JBOD disks under the same storage policy
 	ForceRebalance bool `yaml:"force_rebalance" envconfig:"CLICKHOUSE_FORCE_REBALANCE"`
@@ -848,6 +856,14 @@ func GetConfigFromCli(ctx *cli.Context) *Config {
 		log.Fatal().Stack().Err(err).Send()
 	}
 	RestoreEnvVars(oldEnvValues)
+	// `restore`/`restore_remote` expose --rebind-replica-path-if-exists to override the config value per invocation.
+	// Only override when explicitly passed, so the flag's default `false` doesn't clobber a `true` from the config file.
+	// IsSet/Bool return false for commands that don't declare the flag, so this is safe to evaluate for every command.
+	// WARNING: never enable this during a concurrent HA multi-replica restore — a path occupied by a live sibling
+	// replica is observationally identical to stale leftovers, so rebinding there causes a split-brain replication group.
+	if ctx.IsSet("rebind-replica-path-if-exists") {
+		cfg.ClickHouse.RebindReplicaPathIfExists = ctx.Bool("rebind-replica-path-if-exists")
+	}
 	return cfg
 }
 
