@@ -179,8 +179,8 @@ def check_tls_handshake(self, node, target, tls_flag, cipher=None, ciphersuites=
         f"timeout 10 openssl s_client -connect {target} -brief "
         f"{tls_flag} {cipher_arg} </dev/null 2>&1"  # `2>&1` redirects stderr to stdout.
     )
-    result = node.cmd(cmd, no_checks=True)
-    output = (result.output or "")
+    res = node.cmd(cmd, no_checks=True)
+    output = (res.output or "")
     output_lower = output.lower()
 
     cipher_unavailable = (
@@ -197,12 +197,12 @@ def check_tls_handshake(self, node, target, tls_flag, cipher=None, ciphersuites=
         assert "connection established" in output_lower and not cipher_unavailable, error(
             f"openssl client refused to offer the cipher; cannot test the positive case.\n{output}"
         )
-        assert result.exitcode == 0, error(
-            f"Expected handshake to succeed, exit={result.exitcode}\n{output}"
+        assert res.exitcode == 0, error(
+            f"Expected handshake to succeed, exit={res.exitcode}\n{output}"
         )
     else:
         assert handshake_failed, error(
-            f"Expected handshake rejection, exit={result.exitcode}\n{output}"
+            f"Expected handshake rejection, exit={res.exitcode}\n{output}"
         )
         assert result.exitcode != 0, error(
             f"Expected handshake to fail, exit={result.exitcode}\n{output}"
@@ -238,8 +238,8 @@ def check_outbound_tls_handshake(self, node, command, expected_success,
     (the S3 `list remote` command always exits 0, even when the walk fails).
     """
     bounded = f"timeout {CLI_CMD_TIMEOUT_SEC} {command}"
-    result = node.cmd(bounded, no_checks=True)
-    output = (result.output or "")
+    res = node.cmd(bounded, no_checks=True)
+    output = (res.output or "")
     output_lower = output.lower()
     debug(f"output_lower: {output_lower}")
 
@@ -493,15 +493,15 @@ def gofips140_build_flags_present(self):
         backup_fips = require_fips_container()
 
     with When("I run `go version -m` against the FIPS binary"):
-        result = backup_fips.cmd(f"env -u GODEBUG go version -m {FIPS_BINARY_IN_CONTAINER}")
-        debug(f"STDOUT:\n{result.output}")
-        debug(f"EXIT CODE: {result.exitcode}")
+        res = backup_fips.cmd(f"env -u GODEBUG go version -m {FIPS_BINARY_IN_CONTAINER}")
+        debug(f"STDOUT:\n{res.output}")
+        debug(f"EXIT CODE: {res.exitcode}")
         debug(f"FIPS_GO_BUILD_SETTING: {FIPS_GO_BUILD_SETTING!r}")
 
     with Then(f"the output contains the build setting `{FIPS_GO_BUILD_SETTING}`"):
-        assert FIPS_GO_BUILD_SETTING in result.output, error(
+        assert FIPS_GO_BUILD_SETTING in res.output, error(
             f"`go version -m {FIPS_BINARY_IN_CONTAINER}` output is missing "
-            f"`{FIPS_GO_BUILD_SETTING}`:\n{result.output}"
+            f"`{FIPS_GO_BUILD_SETTING}`:\n{res.output}"
         )
 
 
@@ -518,13 +518,13 @@ def assert_tables_succeeds(self, backup_fips, *, config, godebug=None):
     env_prefix = f"env GODEBUG={godebug} " if godebug else ""
     cmd = (
         f"timeout {CLI_CMD_TIMEOUT_SEC} {env_prefix}"
-        f"{FIPS_BINARY_IN_CONTAINER} -c {config} tables"
+        f"{FIPS_BINARY_IN_CONTAINER} -c {cfg} tables"
     )
-    result = backup_fips.cmd(cmd, no_checks=True)
+    res = backup_fips.cmd(cmd, no_checks=True)
     label = godebug if godebug else "container-default"
-    assert result.exitcode == 0, error(
-        f"`clickhouse-backup-fips tables` against `{config}` failed "
-        f"(exit={result.exitcode}, GODEBUG={label}):\n{result.output}"
+    assert res.exitcode == 0, error(
+        f"`clickhouse-backup-fips tables` against `{cfg}` failed "
+        f"(exit={res.exitcode}, GODEBUG={label}):\n{res.output}"
     )
 
 
@@ -539,14 +539,14 @@ def assert_tables_fails(self, backup_fips, *, config, reason, godebug=None):
     env_prefix = f"env GODEBUG={godebug} " if godebug else ""
     cmd = (
         f"timeout {CLI_CMD_TIMEOUT_SEC} {env_prefix}"
-        f"{FIPS_BINARY_IN_CONTAINER} -c {config} tables 2>&1"  # `2>&1` redirects stderr to stdout.
+        f"{FIPS_BINARY_IN_CONTAINER} -c {cfg} tables 2>&1"  # `2>&1` redirects stderr to stdout.
     )
-    result = backup_fips.cmd(cmd, no_checks=True)
-    output = result.output or ""
+    res = backup_fips.cmd(cmd, no_checks=True)
+    output = res.output or ""
     label = godebug if godebug else "container-default"
 
-    assert result.exitcode != 0, error(
-        f"`clickhouse-backup-fips tables` unexpectedly succeeded against `{config}` "
+    assert res.exitcode != 0, error(
+        f"`clickhouse-backup-fips tables` unexpectedly succeeded against `{cfg}` "
         f"(GODEBUG={label}). Expected failure reason: {reason}\n{output}"
     )
 
@@ -594,7 +594,7 @@ def connectivity_against_fips_clickhouse_server(self):
         with Then("I run `clickhouse-backup-fips tables` over secure native TCP 9440 and assert it succeeds"):
             assert_tables_succeeds(
                 backup_fips=backup_fips,
-                config=FIPS_CONNECTIVITY_FIPS_CONFIG_PATH,
+                cfg=FIPS_CONNECTIVITY_FIPS_CONFIG_PATH,
             )
 
     finally:
@@ -642,7 +642,7 @@ def connectivity_against_non_fips_clickhouse_server(self):
         ):
             assert_tables_fails(
                 backup_fips=backup_fips,
-                config=FIPS_CONNECTIVITY_NONFIPS_CONFIG_PATH,
+                cfg=FIPS_CONNECTIVITY_NONFIPS_CONFIG_PATH,
                 reason=(
                     "The non-FIPS ClickHouse server runs with image defaults "
                     "and does not expose the secure native TCP port `:9440` "
@@ -763,12 +763,12 @@ def fips_info_values_output(self):
     with Given("I require FIPS backup container"):
         backup_fips = require_fips_container()
 
-    for name, godebug, expected_enabled, expected_enforced in FIPS_GODEBUG_INFO_CASES:
-        with Check(f"GODEBUG mode `{name}` reports "
+    for godebug_info_case, godebug, expected_enabled, expected_enforced in FIPS_GODEBUG_INFO_CASES:
+        with Check(f"GODEBUG mode `{godebug_info_case}` reports "
                    f"enabled={expected_enabled} enforced={expected_enforced}"):
             check_fips_info_values(
                 backup_fips=backup_fips,
-                name=name,
+                godebug_info_case=godebug_info_case,
                 godebug=godebug,
                 expected_enabled=expected_enabled,
                 expected_enforced=expected_enforced,
@@ -797,22 +797,22 @@ def fips_integrity_self_test_failure_on_tampered_binary(self):
         backup_fips = require_fips_container()
 
     with When("I run the FIPS checksum tamper script against the FIPS binary"):
-        result = backup_fips.cmd(
+        res = backup_fips.cmd(
             f"/scripts/tamper_go_fips_checksum.sh {FIPS_BINARY_IN_CONTAINER}",
             no_checks=True,
         )
-        output = result.output or ""
+        output = res.output or ""
 
     with Then("the tampered binary output includes `panic: fips140: verification mismatch`"):
         assert "panic: fips140: verification mismatch" in output, error(
             f"tamper script did not capture "
             f"`panic: fips140: verification mismatch` in tampered binary output "
-            f"(script exit={result.exitcode}).\n{output}"
+            f"(script exit={res.exitcode}).\n{output}"
         )
 
     with Then("the tamper script exits 0 (its success contract)"):
-        assert result.exitcode == 0, error(
-            f"tamper script exit={result.exitcode} (expected 0). See script docstring "
+        assert res.exitcode == 0, error(
+            f"tamper script exit={res.exitcode} (expected 0). See script docstring "
             f"for the meaning of non-zero exit codes.\n{output}"
         )
 
@@ -1167,16 +1167,16 @@ def connection_to_fips_clickhouse_with_nonfips_config(self):
                 f"{FIPS_BINARY_IN_CONTAINER} "
                 f"-c {FIPS_CONNECTIVITY_FIPS_MISCONFIG_PATH} tables 2>&1"  # `2>&1` redirects stderr to stdout.
             )
-            result = backup_fips.cmd(cmd, no_checks=True)
-            output = result.output or ""
+            res = backup_fips.cmd(cmd, no_checks=True)
+            output = res.output or ""
 
-        with Then("the command fails (non-zero exit)"):
-            assert result.exitcode != 0, error(
-                f"`clickhouse-backup-fips tables` unexpectedly succeeded with the "
-                f"non-FIPS misconfig (`secure: false`) against the FIPS CH server's "
-                f"TLS-only :9440 listener. A FIPS-deployed CH server MUST NOT be "
-                f"reachable via plain native TCP.\n{output}"
-            )
+            with Then("the command fails (non-zero exit)"):
+                assert res.exitcode != 0, error(
+                    f"`clickhouse-backup-fips tables` unexpectedly succeeded with the "
+                    f"non-FIPS misconfig (`secure: false`) against the FIPS CH server's "
+                    f"TLS-only :9440 listener. A FIPS-deployed CH server MUST NOT be "
+                    f"reachable via plain native TCP.\n{output}"
+                )
 
         with Then("the output does not include the list-of-tables success marker"):
             output_lower = output.lower()
@@ -1470,15 +1470,15 @@ def acvp_tests(self):
     host.timeout = FIPS_ACVP_TIMEOUT_SEC
     try:
         with When(f"I run `bash {script_path}` on the host"):
-            result = host(f"bash {script_path} 2>&1")  # `2>&1` redirects stderr to stdout.
+            res = host(f"bash {script_path} 2>&1")  # `2>&1` redirects stderr to stdout.
     finally:
         host.timeout = prev_timeout
 
-    output = result.output or ""
+    output = res.output or ""
 
     with Then("the script exits 0"):
-        assert result.exitcode == 0, error(
-            f"`bash {script_path}` exit={result.exitcode}.\n{output}"
+        assert res.exitcode == 0, error(
+            f"`bash {script_path}` exit={res.exitcode}.\n{output}"
         )
 
     with Then(f"output contains `{FIPS_ACVP_EXPECTED_OUTPUT}`"):

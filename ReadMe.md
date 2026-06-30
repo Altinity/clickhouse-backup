@@ -166,7 +166,7 @@ general:
   io_nice_priority: "idle" # IO niceness priority, to allow throttling DISK intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/ionice.1.html
   
   rbac_backup_always: true # always backup RBAC objects
-  rbac_resolve_conflicts: "recreate"  # action, when RBAC object with the same name already exists, allow "recreate", "ignore", "fail" values
+  rbac_conflict_resolution: "recreate"  # RBAC_CONFLICT_RESOLUTION, action when RBAC object with the same name already exists during restore, allowed values "recreate", "ignore", "fail"
 
   config_backup_always: false # always backup CONFIGS, disabled by default cause configuration shall be manage via Infrastructure as Code approach
   named_collections_backup_always: false # always backup Named Collections, disabled by default cause configuration shall be manage via Infrastructure as Code approach 
@@ -231,6 +231,11 @@ clickhouse:
   check_replicas_before_attach: true # CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH, helps avoiding concurrent ATTACH PART execution when restoring ReplicatedMergeTree tables
   default_replica_path: "/clickhouse/tables/{cluster}/{shard}/{database}/{table}" # CLICKHOUSE_DEFAULT_REPLICA_PATH, will use during restore Replicated tables without macros in replication_path if replica already exists, to avoid restoring conflicts
   default_replica_name: "{replica}" # CLICKHOUSE_DEFAULT_REPLICA_NAME, will use during restore Replicated tables without macros in replica_name if replica already exists, to avoid restoring conflicts
+  # CLICKHOUSE_REBIND_REPLICA_PATH_IF_EXISTS, opt-in fallback for restoring ReplicatedMergeTree tables (https://github.com/Altinity/clickhouse-backup/issues/1428).
+  # A foreign/renamed table that still occupies our resolved ZK replica path on THIS node is always detected via system.replicas and rebound to default_replica_path regardless of this flag (https://github.com/Altinity/clickhouse-backup/issues/849).
+  # This flag ONLY covers the residual case where the ZK path has leftover children but NO local table uses it (async-stale state after a DROP). That case is observationally identical to a temporarily-offline HA sibling replica, so it stays opt-in and defaults to false.
+  # WARNING: MUST be false during a concurrent multi-replica (HA) restore, otherwise rebinding a path held by a live sibling causes split-brain. Can be overridden per invocation with the `--rebind-replica-path-if-exists` flag of `restore`/`restore_remote`.
+  rebind_replica_path_if_exists: false # CLICKHOUSE_REBIND_REPLICA_PATH_IF_EXISTS
   use_embedded_backup_restore: false # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE, use BACKUP / RESTORE SQL statements instead of regular SQL queries to use features of modern ClickHouse server versions
   use_embedded_backup_restore_cluster: "" # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE_CLUSTER, add ON CLUSTER clause to BACKUP / RESTORE SQL statements when `use_embedded_backup_restore: true`, value is cluster name from system.clusters, e.g. "{cluster}"
   embedded_backup_disk: ""  # CLICKHOUSE_EMBEDDED_BACKUP_DISK - disk from system.disks which will use when `use_embedded_backup_restore: true`
@@ -616,6 +621,7 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 - Optional string query argument `restore_schema_as_attach` or `restore-schema-as-attach` works the same as the `--restore-schema-as-attach` CLI argument.
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
 - Optional boolean query argument `skip_empty_tables` or `skip-empty-tables` works the same as the `--skip-empty-tables` CLI argument (skip restoring tables that have no data).
+- Optional boolean query argument `rebind_replica_path_if_exists` or `rebind-replica-path-if-exists` works the same as the `--rebind-replica-path-if-exists` CLI argument (overrides `clickhouse.rebind_replica_path_if_exists` for this request, rebind a restored ReplicatedMergeTree to `default_replica_path` when the original ZK path still has leftover state but our replica entry is absent). WARNING: never set during a concurrent HA multi-replica restore.
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
@@ -642,6 +648,7 @@ Download and restore data from remote backup: `curl -s localhost:7171/backup/res
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
 - Optional boolean query argument `hardlink_exists_files` or `hardlink-exists-files` works the same as the `--hardlink-exists-files` CLI argument (Create hardlinks for existing files instead of downloading).
 - Optional boolean query argument `skip_empty_tables` or `skip-empty-tables` works the same as the `--skip-empty-tables` CLI argument (skip restoring tables that have no data).
+- Optional boolean query argument `rebind_replica_path_if_exists` or `rebind-replica-path-if-exists` works the same as the `--rebind-replica-path-if-exists` CLI argument (overrides `clickhouse.rebind_replica_path_if_exists` for this request, rebind a restored ReplicatedMergeTree to `default_replica_path` when the original ZK path still has leftover state but our replica entry is absent). WARNING: never set during a concurrent HA multi-replica restore.
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
@@ -897,6 +904,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --restore-schema-as-attach                                                        Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --replicated-copy-to-detached                                                     Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step
    --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
+   --rebind-replica-path-if-exists                                                   Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent
    
 ```
 ### CLI command - restore_remote
@@ -935,6 +943,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --restore-schema-as-attach                                                        Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --hardlink-exists-files                                                           Create hardlinks for existing files instead of downloading
    --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
+   --rebind-replica-path-if-exists                                                   Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent
    
 ```
 ### CLI command - delete
