@@ -334,7 +334,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	// Fetch in-progress mutations ONCE for the whole backup. system.mutations scans all tables on
 	// every query, so the previous per-table GetInProgressMutations call was O(N^2) and dominated
 	// create time on installations with many tables. We now do a single scan and look up per table.
-	var allInProgressMutations map[string][]metadata.MutationMetadata
+	var allInProgressMutations map[metadata.TableTitle][]metadata.MutationMetadata
 	if b.cfg.ClickHouse.BackupMutations && !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
 		var allInProgressMutationsErr error
 		allInProgressMutations, allInProgressMutationsErr = b.ch.GetInProgressMutationsBatch(ctx)
@@ -386,7 +386,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 			if b.cfg.ClickHouse.BackupMutations && !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
 				// looked up from the single GetInProgressMutationsBatch query above — avoids the
 				// O(N^2) per-table system.mutations scan.
-				inProgressMutations = allInProgressMutations[table.Database+"."+table.Name]
+				inProgressMutations = allInProgressMutations[metadata.TableTitle{Database: table.Database, Table: table.Name}]
 			}
 			logger.Debug().Msg("create metadata")
 			if schemaOnly || doBackupData {

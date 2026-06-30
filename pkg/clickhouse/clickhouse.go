@@ -1364,11 +1364,12 @@ func (ch *ClickHouse) GetInProgressMutations(ctx context.Context, database strin
 }
 
 // GetInProgressMutationsBatch returns all in-progress mutations across the whole server in a
-// SINGLE query, keyed by "database.table". system.mutations is an expensive virtual table — every
-// query against it enumerates all tables on the server — so calling GetInProgressMutations once per
-// table is O(N^2) and dominates `create` wall-clock on installations with many tables (observed:
-// ~240ms/call * tens of thousands of tables). Fetching the whole in-progress set once per backup
-// turns that into a single O(N) scan; per-table lookup is then an in-memory map access.
+// SINGLE query, keyed by metadata.TableTitle{Database, Table}. system.mutations is an expensive
+// virtual table — every query against it enumerates all tables on the server — so calling
+// GetInProgressMutations once per table is O(N^2) and dominates `create` wall-clock on
+// installations with many tables (observed: ~240ms/call * tens of thousands of tables). Fetching
+// the whole in-progress set once per backup turns that into a single O(N) scan; per-table lookup is
+// then an in-memory map access.
 type inProgressMutationRow struct {
 	Database   string `ch:"database"`
 	Table      string `ch:"table"`
@@ -1377,17 +1378,19 @@ type inProgressMutationRow struct {
 }
 
 // groupMutationsByTable buckets flat mutation rows into per-table lists keyed by
-// "database.table". Pure (no I/O) so it is unit-testable without a ClickHouse server.
-func groupMutationsByTable(rows []inProgressMutationRow) map[string][]metadata.MutationMetadata {
-	result := make(map[string][]metadata.MutationMetadata, len(rows))
+// metadata.TableTitle{Database, Table}. A struct key avoids the corner cases of a "database.table"
+// string key (dots are legal in database/table names, so concatenation is ambiguous). Pure (no I/O)
+// so it is unit-testable without a ClickHouse server.
+func groupMutationsByTable(rows []inProgressMutationRow) map[metadata.TableTitle][]metadata.MutationMetadata {
+	result := make(map[metadata.TableTitle][]metadata.MutationMetadata, len(rows))
 	for _, r := range rows {
-		key := r.Database + "." + r.Table
+		key := metadata.TableTitle{Database: r.Database, Table: r.Table}
 		result[key] = append(result[key], metadata.MutationMetadata{MutationId: r.MutationId, Command: r.Command})
 	}
 	return result
 }
 
-func (ch *ClickHouse) GetInProgressMutationsBatch(ctx context.Context) (map[string][]metadata.MutationMetadata, error) {
+func (ch *ClickHouse) GetInProgressMutationsBatch(ctx context.Context) (map[metadata.TableTitle][]metadata.MutationMetadata, error) {
 	var rows []inProgressMutationRow
 	query := "SELECT database, table, mutation_id, command FROM system.mutations WHERE is_done=0"
 	if err := ch.SelectContext(ctx, &rows, query); err != nil {
