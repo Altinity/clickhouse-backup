@@ -434,12 +434,12 @@ def clickhouse_backup_fips_version_output(self):
     with When("I run `clickhouse-backup-fips --version`"):
         status, output = read_fips_status(node=backup_fips, binary=FIPS_BINARY_IN_CONTAINER)
 
-    with Then(f"`{FIPS_VERSION_LABEL}` line is present"):
+    with Then(f"`{FIPS_VERSION_LABEL}` line is found"):
         assert status is not None, error(
             f"`{FIPS_VERSION_LABEL}` line missing from `--version`:\n{output}"
         )
 
-    with And(f"`{FIPS_VERSION_LABEL}` reports `{FIPS_VERSION_TRUE}`"):
+    with And(f"its value is `{FIPS_VERSION_TRUE}`"):
         assert status == FIPS_VERSION_TRUE, error(
             f"Expected `{FIPS_VERSION_LABEL} {FIPS_VERSION_TRUE}`, got `{status}`.\n{output}"
         )
