@@ -342,18 +342,28 @@ func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout 
 		}
 		time.Sleep(2 * time.Second)
 	}
-	tc.dumpContainerInfo(ctx, name)
+	tc.dumpContainerInfo(ctx, name, testName)
 	if name == "clickhouse" && strings.HasPrefix(testName, "TestAzure") {
 		if _, ok := tc.containers["azure"]; ok {
-			tc.dumpContainerInfo(ctx, "azure")
+			tc.dumpContainerInfo(ctx, "azure", testName)
 		}
 	}
 	return fmt.Errorf("container %s not healthy after %v", name, timeout)
 }
 
+// testLogPrefix returns a "[TestName] " prefix for dump banners so that, under
+// parallel execution, interleaved container dumps can be attributed to the test
+// that triggered them. Empty when the dump happens outside a test (e.g. startup).
+func testLogPrefix(testName string) string {
+	if testName == "" {
+		return ""
+	}
+	return "[" + testName + "] "
+}
+
 // DumpAllContainerLogs dumps state and last 50 log lines for all containers.
 // Called when a test fails to aid debugging.
-func (tc *TestContainers) DumpAllContainerLogs(ctx context.Context) {
+func (tc *TestContainers) DumpAllContainerLogs(ctx context.Context, testName string) {
 	tc.mu.Lock()
 	names := make([]string, 0, len(tc.containers))
 	for name := range tc.containers {
@@ -361,7 +371,7 @@ func (tc *TestContainers) DumpAllContainerLogs(ctx context.Context) {
 	}
 	tc.mu.Unlock()
 	for _, name := range names {
-		tc.dumpContainerInfo(ctx, name)
+		tc.dumpContainerInfo(ctx, name, testName)
 	}
 }
 
@@ -369,7 +379,7 @@ func (tc *TestContainers) DumpAllContainerLogs(ctx context.Context) {
 // Used to provide focused diagnostics when a query fails — we only want logs from the moment the
 // query started, not the entire test history. A small look-back buffer is added to catch
 // shutdown/restart messages that may precede the failure.
-func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name string, since time.Time) {
+func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name string, since time.Time, testName string) {
 	info := tc.containers[name]
 	if info == nil {
 		return
@@ -402,7 +412,7 @@ func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name strin
 		since = time.Now()
 	}
 	since = since.Add(-30 * time.Second)
-	log.Error().Msgf("=== container %s (%s) state: %s ===", name, info.ID[:12], state)
+	log.Error().Msgf("=== %scontainer %s (%s) state: %s ===", testLogPrefix(testName), name, info.ID[:12], state)
 
 	logOpts := container.LogsOptions{
 		ShowStdout: true,
@@ -421,10 +431,10 @@ func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name strin
 		}
 	}()
 	logBytes, _ := io.ReadAll(reader)
-	log.Error().Msgf("=== %s logs since %s ===\n%s", name, since.Format(time.RFC3339), string(logBytes))
+	log.Error().Msgf("=== %s%s logs since %s ===\n%s", testLogPrefix(testName), name, since.Format(time.RFC3339), string(logBytes))
 }
 
-func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
+func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string, testName string) {
 	info := tc.containers[name]
 	if info == nil {
 		return
@@ -447,7 +457,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 			state += ", OOMKilled"
 		}
 	}
-	log.Error().Msgf("=== container %s (%s) state: %s ===", name, info.ID[:12], state)
+	log.Error().Msgf("=== %scontainer %s (%s) state: %s ===", testLogPrefix(testName), name, info.ID[:12], state)
 
 	logOpts := container.LogsOptions{ShowStdout: true, ShowStderr: true}
 	reader, logErr := tc.client.ContainerLogs(ctx, info.ID, logOpts)
@@ -461,7 +471,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 		}
 	}()
 	logBytes, _ := io.ReadAll(reader)
-	log.Error().Msgf("=== full %s logs ===\n%s", name, string(logBytes))
+	log.Error().Msgf("=== %sfull %s logs ===\n%s", testLogPrefix(testName), name, string(logBytes))
 
 	// For the clickhouse-server container, healthcheck failures may leave
 	// nothing in stdout/stderr because clickhouse-server writes auth/config
@@ -477,7 +487,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 			if execErr != nil {
 				log.Error().Err(execErr).Msgf("can't cat %s in %s: %s", logPath, name, string(errOut))
 			} else {
-				log.Error().Msgf("=== full %s:%s ===\n%s", name, logPath, string(errOut))
+				log.Error().Msgf("=== %sfull %s:%s ===\n%s", testLogPrefix(testName), name, logPath, string(errOut))
 			}
 		}
 	}
@@ -493,7 +503,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 		if execErr != nil {
 			log.Error().Err(execErr).Msgf("can't cat %s in %s: %s", serverLogPath, name, string(serverOut))
 		} else {
-			log.Error().Msgf("=== full %s:%s ===\n%s", name, serverLogPath, string(serverOut))
+			log.Error().Msgf("=== %sfull %s:%s ===\n%s", testLogPrefix(testName), name, serverLogPath, string(serverOut))
 		}
 	}
 }
