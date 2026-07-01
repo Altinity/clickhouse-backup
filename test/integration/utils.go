@@ -95,6 +95,7 @@ type TestEnvironment struct {
 	ch          *clickhouse.ClickHouse
 	ProjectName string
 	tc          *TestContainers
+	testName    string
 }
 
 func defaultTestData() []TestDataStruct {
@@ -483,6 +484,7 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 	if env.ch == nil {
 		env.ch = clickhouse.NewClickHouse(&config.ClickHouseConfig{})
 	}
+	env.testName = t.Name()
 	t.Logf("%s acquired env %s", t.Name(), env.ProjectName)
 	envUsage.acquire(env.ProjectName, t.Name())
 
@@ -498,7 +500,7 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	// Dump container logs when test fails to aid debugging
 	if t.Failed() && os.Getenv("DUMP_FAILED_TEST_CONTAINER_LOGS") != "" {
 		t.Logf("=== %s FAILED, dumping container logs ===", t.Name())
-		env.tc.DumpAllContainerLogs(t.Context())
+		env.tc.DumpAllContainerLogs(t.Context(), t.Name())
 	}
 
 	env.ch.Close()
@@ -705,7 +707,7 @@ func (env *TestEnvironment) queryWithNoError(r *require.Assertions, query string
 	if err != nil {
 		log.Error().Err(err).Msgf("queryWithNoError(%s) error", query)
 		if env.tc != nil {
-			env.tc.DumpContainerLogsSince(context.Background(), "clickhouse", startedAt)
+			env.tc.DumpContainerLogsSince(context.Background(), "clickhouse", startedAt, env.testName)
 		}
 	}
 	r.NoError(err)
