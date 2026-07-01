@@ -23,7 +23,7 @@ func TestSkipDisk(t *testing.T) {
 	}
 
 	// Setup test environment
-	setupTestSkipDisks(r, env)
+	setupTestSkipDisks(t, r, env)
 
 	// Test skipping disk by name during create
 	testSkipDiskByNameCreate(r, env)
@@ -51,22 +51,22 @@ func TestSkipDisk(t *testing.T) {
 }
 
 // setupTestSkipDisks creates test database and tables on different disks
-func setupTestSkipDisks(r *require.Assertions, env *TestEnvironment) {
+func setupTestSkipDisks(t *testing.T, r *require.Assertions, env *TestEnvironment) {
 	// Create test database and tables on different disks
-	env.queryWithNoError(r, "CREATE DATABASE test_skip_disks")
-	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_disks.table_default (id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_disks.table_hdd1 (id UInt64) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy = 'hdd1_only'")
+	env.queryWithNoError(t, r, "CREATE DATABASE test_skip_disks")
+	env.queryWithNoError(t, r, "CREATE TABLE IF NOT EXISTS test_skip_disks.table_default (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "CREATE TABLE IF NOT EXISTS test_skip_disks.table_hdd1 (id UInt64) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy = 'hdd1_only'")
 
 	// Create tables on S3 disk if available in this version
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
-		env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_disks.table_s3 (id UInt64) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy = 's3_only'")
+		env.queryWithNoError(t, r, "CREATE TABLE IF NOT EXISTS test_skip_disks.table_s3 (id UInt64) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy = 's3_only'")
 	}
 
 	// Insert some data
-	env.queryWithNoError(r, "INSERT INTO test_skip_disks.table_default SELECT number FROM numbers(10)")
-	env.queryWithNoError(r, "INSERT INTO test_skip_disks.table_hdd1 SELECT number FROM numbers(10)")
+	env.queryWithNoError(t, r, "INSERT INTO test_skip_disks.table_default SELECT number FROM numbers(10)")
+	env.queryWithNoError(t, r, "INSERT INTO test_skip_disks.table_hdd1 SELECT number FROM numbers(10)")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
-		env.queryWithNoError(r, "INSERT INTO test_skip_disks.table_s3 SELECT number FROM numbers(10)")
+		env.queryWithNoError(t, r, "INSERT INTO test_skip_disks.table_s3 SELECT number FROM numbers(10)")
 	}
 }
 

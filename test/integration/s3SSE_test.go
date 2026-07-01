@@ -38,13 +38,13 @@ func TestS3SSEC(t *testing.T) {
 	dbName := "test_s3_ssec"
 	tableName := "data"
 
-	env.queryWithNoError(r, "DROP DATABASE IF EXISTS "+dbName+" SYNC")
-	env.queryWithNoError(r, "CREATE DATABASE "+dbName)
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, "DROP DATABASE IF EXISTS "+dbName+" SYNC")
+	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE %s.%s (id UInt64, payload String) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy='s3_only_ssec'",
 		dbName, tableName,
 	))
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"INSERT INTO %s.%s SELECT number, repeat('x', 1024) FROM numbers(2000)",
 		dbName, tableName,
 	))
@@ -60,8 +60,8 @@ func TestS3SSEC(t *testing.T) {
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c",
 		"/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
-	env.queryWithNoError(r, fmt.Sprintf("DROP TABLE %s.%s SYNC", dbName, tableName))
-	env.queryWithNoError(r, "DROP DATABASE "+dbName+" SYNC")
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE %s.%s SYNC", dbName, tableName))
+	env.queryWithNoError(t, r, "DROP DATABASE "+dbName+" SYNC")
 
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce",
 		"clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore_remote "+backupName)

@@ -53,15 +53,15 @@ func TestRBAC(t *testing.T) {
 	testRBACScenario := func(config string) {
 		env.connectWithWait(t, r, 1*time.Second, 1*time.Second, 1*time.Minute)
 
-		env.queryWithNoError(r, "CREATE DATABASE test_rbac")
+		env.queryWithNoError(t, r, "CREATE DATABASE test_rbac")
 		createTableSQL := "CREATE TABLE test_rbac.test_rbac (v UInt64) ENGINE=MergeTree() ORDER BY tuple()"
-		env.queryWithNoError(r, createTableSQL)
-		env.queryWithNoError(r, "INSERT INTO test_rbac.test_rbac SELECT number FROM numbers(10)")
-		env.queryWithNoError(r, "DROP SETTINGS PROFILE IF EXISTS `test.rbac-name`")
-		env.queryWithNoError(r, "DROP QUOTA IF EXISTS `test.rbac-name`")
-		env.queryWithNoError(r, "DROP ROW POLICY IF EXISTS `test.rbac-name` ON test_rbac.test_rbac")
-		env.queryWithNoError(r, "DROP ROLE IF EXISTS `test.rbac-name`")
-		env.queryWithNoError(r, "DROP USER IF EXISTS `test.rbac-name`")
+		env.queryWithNoError(t, r, createTableSQL)
+		env.queryWithNoError(t, r, "INSERT INTO test_rbac.test_rbac SELECT number FROM numbers(10)")
+		env.queryWithNoError(t, r, "DROP SETTINGS PROFILE IF EXISTS `test.rbac-name`")
+		env.queryWithNoError(t, r, "DROP QUOTA IF EXISTS `test.rbac-name`")
+		env.queryWithNoError(t, r, "DROP ROW POLICY IF EXISTS `test.rbac-name` ON test_rbac.test_rbac")
+		env.queryWithNoError(t, r, "DROP ROLE IF EXISTS `test.rbac-name`")
+		env.queryWithNoError(t, r, "DROP USER IF EXISTS `test.rbac-name`")
 
 		// ClickHouse `<replicated>` access storage (RBAC in Keeper) has a race:
 		// a freshly created role/profile can be transiently evicted from the
@@ -85,11 +85,11 @@ func TestRBAC(t *testing.T) {
 		createRBACObjects := func(drop bool) {
 			if drop {
 				log.Debug().Msg("drop all RBAC related objects")
-				env.queryWithNoError(r, "DROP SETTINGS PROFILE `test.rbac-name`")
-				env.queryWithNoError(r, "DROP QUOTA `test.rbac-name`")
-				env.queryWithNoError(r, "DROP ROW POLICY `test.rbac-name` ON test_rbac.test_rbac")
-				env.queryWithNoError(r, "DROP ROLE `test.rbac-name`")
-				env.queryWithNoError(r, "DROP USER `test.rbac-name`")
+				env.queryWithNoError(t, r, "DROP SETTINGS PROFILE `test.rbac-name`")
+				env.queryWithNoError(t, r, "DROP QUOTA `test.rbac-name`")
+				env.queryWithNoError(t, r, "DROP ROW POLICY `test.rbac-name` ON test_rbac.test_rbac")
+				env.queryWithNoError(t, r, "DROP ROLE `test.rbac-name`")
+				env.queryWithNoError(t, r, "DROP USER `test.rbac-name`")
 			}
 			log.Debug().Msg("create RBAC related objects")
 			createRBACQuery("CREATE SETTINGS PROFILE `test.rbac-name` SETTINGS max_execution_time=60")
@@ -106,7 +106,7 @@ func TestRBAC(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup restore_remote --rm --rbac test_rbac_backup_with_data")
 		env.ch.Close()
 		env.connectWithWait(t, r, 2*time.Second, 2*time.Second, 1*time.Minute)
-		env.queryWithNoError(r, "CREATE ROW POLICY `test_rbac_for_default` ON test_rbac.test_rbac USING v>=0 TO `default`")
+		env.queryWithNoError(t, r, "CREATE ROW POLICY `test_rbac_for_default` ON test_rbac.test_rbac USING v>=0 TO `default`")
 		env.checkCount(r, 1, 10, "SELECT count() FROM test_rbac.test_rbac")
 
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup delete remote test_rbac_backup_with_data")
@@ -189,13 +189,13 @@ func TestRBAC(t *testing.T) {
 
 		env.checkCount(r, 1, 0, "SELECT count() FROM system.tables WHERE database='default' AND name='test_rbac' SETTINGS empty_result_for_aggregation_by_empty_set=0")
 
-		env.queryWithNoError(r, "DROP SETTINGS PROFILE `test.rbac-name`")
-		env.queryWithNoError(r, "DROP QUOTA `test.rbac-name`")
-		env.queryWithNoError(r, "DROP ROW POLICY `test.rbac-name` ON test_rbac.test_rbac")
-		env.queryWithNoError(r, "DROP ROLE `test.rbac-name`")
-		env.queryWithNoError(r, "DROP USER `test.rbac-name`")
-		env.queryWithNoError(r, "DROP TABLE IF EXISTS test_rbac.test_rbac")
-		env.queryWithNoError(r, "DROP ROW POLICY `test_rbac_for_default` ON test_rbac.test_rbac")
+		env.queryWithNoError(t, r, "DROP SETTINGS PROFILE `test.rbac-name`")
+		env.queryWithNoError(t, r, "DROP QUOTA `test.rbac-name`")
+		env.queryWithNoError(t, r, "DROP ROW POLICY `test.rbac-name` ON test_rbac.test_rbac")
+		env.queryWithNoError(t, r, "DROP ROLE `test.rbac-name`")
+		env.queryWithNoError(t, r, "DROP USER `test.rbac-name`")
+		env.queryWithNoError(t, r, "DROP TABLE IF EXISTS test_rbac.test_rbac")
+		env.queryWithNoError(t, r, "DROP ROW POLICY `test_rbac_for_default` ON test_rbac.test_rbac")
 
 		r.NoError(env.dropDatabase("test_rbac", true))
 		env.ch.Close()

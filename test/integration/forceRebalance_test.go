@@ -31,13 +31,13 @@ func TestForceRebalance(t *testing.T) {
 
 	// Step 1: Create a table on the default disk (no explicit storage_policy)
 	// and insert enough data to produce multiple parts
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE %s.%s (id UInt64, dt DateTime) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY id",
 		dbName, tableName,
 	))
 	for _, month := range []string{"2024-01-01", "2024-02-01", "2024-03-01", "2024-04-01"} {
-		env.queryWithNoError(r, fmt.Sprintf(
+		env.queryWithNoError(t, r, fmt.Sprintf(
 			"INSERT INTO %s.%s SELECT number, toDateTime('%s 00:00:00') + number FROM numbers(1000)",
 			dbName, tableName, month,
 		))
@@ -60,7 +60,7 @@ func TestForceRebalance(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.1") >= 0 {
 		dropSQL += " SYNC"
 	}
-	env.queryWithNoError(r, dropSQL)
+	env.queryWithNoError(t, r, dropSQL)
 
 	// Step 4: Reconfigure ClickHouse so the "default" storage policy includes
 	// hdd1 and hdd2 as JBOD disks, simulating a multi-disk target
@@ -116,8 +116,8 @@ XML
 	r.NotEmpty(hdd2Out, "hdd2 should contain some backup data")
 
 	// Step 7: Restore and verify data integrity
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE %s.%s (id UInt64, dt DateTime) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY id",
 		dbName, tableName,
 	))
