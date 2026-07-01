@@ -109,24 +109,33 @@ type GeneralConfig struct {
 
 // GCSConfig - GCS settings section
 type GCSConfig struct {
-	CredentialsFile        string            `yaml:"credentials_file" envconfig:"GCS_CREDENTIALS_FILE"`
-	CredentialsJSON        string            `yaml:"credentials_json" envconfig:"GCS_CREDENTIALS_JSON"`
-	CredentialsJSONEncoded string            `yaml:"credentials_json_encoded" envconfig:"GCS_CREDENTIALS_JSON_ENCODED"`
-	SAEmail                string            `yaml:"sa_email" envconfig:"GCS_SA_EMAIL"`
-	EmbeddedAccessKey      string            `yaml:"embedded_access_key" envconfig:"GCS_EMBEDDED_ACCESS_KEY"`
-	EmbeddedSecretKey      string            `yaml:"embedded_secret_key" envconfig:"GCS_EMBEDDED_SECRET_KEY"`
-	SkipCredentials        bool              `yaml:"skip_credentials" envconfig:"GCS_SKIP_CREDENTIALS"`
-	Bucket                 string            `yaml:"bucket" envconfig:"GCS_BUCKET"`
-	Path                   string            `yaml:"path" envconfig:"GCS_PATH"`
-	ObjectDiskPath         string            `yaml:"object_disk_path" envconfig:"GCS_OBJECT_DISK_PATH"`
-	CompressionLevel       int               `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
-	CompressionFormat      string            `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
-	Debug                  bool              `yaml:"debug" envconfig:"GCS_DEBUG"`
-	ForceHttp              bool              `yaml:"force_http" envconfig:"GCS_FORCE_HTTP"`
-	Endpoint               string            `yaml:"endpoint" envconfig:"GCS_ENDPOINT"`
-	StorageClass           string            `yaml:"storage_class" envconfig:"GCS_STORAGE_CLASS"`
-	ObjectLabels           map[string]string `yaml:"object_labels" envconfig:"GCS_OBJECT_LABELS"`
-	CustomStorageClassMap  map[string]string `yaml:"custom_storage_class_map" envconfig:"GCS_CUSTOM_STORAGE_CLASS_MAP"`
+	CredentialsFile        string `yaml:"credentials_file" envconfig:"GCS_CREDENTIALS_FILE"`
+	CredentialsJSON        string `yaml:"credentials_json" envconfig:"GCS_CREDENTIALS_JSON"`
+	CredentialsJSONEncoded string `yaml:"credentials_json_encoded" envconfig:"GCS_CREDENTIALS_JSON_ENCODED"`
+	SAEmail                string `yaml:"sa_email" envconfig:"GCS_SA_EMAIL"`
+	EmbeddedAccessKey      string `yaml:"embedded_access_key" envconfig:"GCS_EMBEDDED_ACCESS_KEY"`
+	EmbeddedSecretKey      string `yaml:"embedded_secret_key" envconfig:"GCS_EMBEDDED_SECRET_KEY"`
+	SkipCredentials        bool   `yaml:"skip_credentials" envconfig:"GCS_SKIP_CREDENTIALS"`
+	Bucket                 string `yaml:"bucket" envconfig:"GCS_BUCKET"`
+	Path                   string `yaml:"path" envconfig:"GCS_PATH"`
+	ObjectDiskPath         string `yaml:"object_disk_path" envconfig:"GCS_OBJECT_DISK_PATH"`
+	CompressionLevel       int    `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
+	CompressionFormat      string `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
+	Debug                  bool   `yaml:"debug" envconfig:"GCS_DEBUG"`
+	ForceHttp              bool   `yaml:"force_http" envconfig:"GCS_FORCE_HTTP"`
+	// DisableHttp2 forces the GCS client onto an HTTP/1.1 transport over TLS
+	// (ForceAttemptHTTP2=false, NextProtos=["http/1.1"]) WITHOUT downgrading the
+	// request scheme to cleartext (unlike ForceHttp). With HTTP/2, all concurrent
+	// part-download streams are multiplexed onto a small number of TCP connections,
+	// and per-connection flow control caps aggregate throughput at the backup tail.
+	// HTTP/1.1 gives one dedicated TCP connection per in-flight request (up to
+	// MaxIdleConnsPerHost), letting parallel parts saturate the link. The https
+	// scheme is preserved, so TLS and HTTPS_PROXY (CONNECT) continue to work.
+	DisableHttp2          bool              `yaml:"disable_http2" envconfig:"GCS_DISABLE_HTTP2"`
+	Endpoint              string            `yaml:"endpoint" envconfig:"GCS_ENDPOINT"`
+	StorageClass          string            `yaml:"storage_class" envconfig:"GCS_STORAGE_CLASS"`
+	ObjectLabels          map[string]string `yaml:"object_labels" envconfig:"GCS_OBJECT_LABELS"`
+	CustomStorageClassMap map[string]string `yaml:"custom_storage_class_map" envconfig:"GCS_CUSTOM_STORAGE_CLASS_MAP"`
 	// NOTE: ClientPoolSize should be at least 2 times bigger than
 	// 			UploadConcurrency or DownloadConcurrency in each upload and download case
 	ClientPoolSize    int `yaml:"client_pool_size" envconfig:"GCS_CLIENT_POOL_SIZE"`
@@ -304,11 +313,19 @@ type ClickHouseConfig struct {
 	CheckReplicasBeforeAttach        bool              `yaml:"check_replicas_before_attach" envconfig:"CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH"`
 	DefaultReplicaPath               string            `yaml:"default_replica_path" envconfig:"CLICKHOUSE_DEFAULT_REPLICA_PATH"`
 	DefaultReplicaName               string            `yaml:"default_replica_name" envconfig:"CLICKHOUSE_DEFAULT_REPLICA_NAME"`
-	TLSKey                           string            `yaml:"tls_key" envconfig:"CLICKHOUSE_TLS_KEY"`
-	TLSCert                          string            `yaml:"tls_cert" envconfig:"CLICKHOUSE_TLS_CERT"`
-	TLSCa                            string            `yaml:"tls_ca" envconfig:"CLICKHOUSE_TLS_CA"`
-	MaxConnections                   int               `yaml:"max_connections" envconfig:"CLICKHOUSE_MAX_CONNECTIONS"`
-	Debug                            bool              `yaml:"debug" envconfig:"CLICKHOUSE_DEBUG"`
+	// RebindReplicaPathIfExists is a fallback for restore: a foreign/renamed table that still occupies our
+	// resolved ZK path on THIS node is detected automatically via system.replicas and rebound to
+	// default_replica_path regardless of this flag (https://github.com/Altinity/clickhouse-backup/issues/849).
+	// This flag only covers the residual case where the ZK path has leftover children but NO local table uses
+	// it — async-stale state after a DROP. That case is observationally identical to a temporarily-offline HA
+	// sibling, so it stays opt-in: MUST be false during a concurrent multi-replica restore or it causes
+	// split-brain (https://github.com/Altinity/clickhouse-backup/issues/1428).
+	RebindReplicaPathIfExists bool   `yaml:"rebind_replica_path_if_exists" envconfig:"CLICKHOUSE_REBIND_REPLICA_PATH_IF_EXISTS"`
+	TLSKey                    string `yaml:"tls_key" envconfig:"CLICKHOUSE_TLS_KEY"`
+	TLSCert                   string `yaml:"tls_cert" envconfig:"CLICKHOUSE_TLS_CERT"`
+	TLSCa                     string `yaml:"tls_ca" envconfig:"CLICKHOUSE_TLS_CA"`
+	MaxConnections            int    `yaml:"max_connections" envconfig:"CLICKHOUSE_MAX_CONNECTIONS"`
+	Debug                     bool   `yaml:"debug" envconfig:"CLICKHOUSE_DEBUG"`
 	// ForceRebalance triggers disk rebalancing during download even when the backup's disk
 	// name exists on the target, allowing distribution across JBOD disks under the same storage policy
 	ForceRebalance bool `yaml:"force_rebalance" envconfig:"CLICKHOUSE_FORCE_REBALANCE"`
@@ -875,6 +892,14 @@ func GetConfigFromCli(ctx *cli.Context) *Config {
 		log.Fatal().Stack().Err(err).Send()
 	}
 	RestoreEnvVars(oldEnvValues)
+	// `restore`/`restore_remote` expose --rebind-replica-path-if-exists to override the config value per invocation.
+	// Only override when explicitly passed, so the flag's default `false` doesn't clobber a `true` from the config file.
+	// IsSet/Bool return false for commands that don't declare the flag, so this is safe to evaluate for every command.
+	// WARNING: never enable this during a concurrent HA multi-replica restore — a path occupied by a live sibling
+	// replica is observationally identical to stale leftovers, so rebinding there causes a split-brain replication group.
+	if ctx.IsSet("rebind-replica-path-if-exists") {
+		cfg.ClickHouse.RebindReplicaPathIfExists = ctx.Bool("rebind-replica-path-if-exists")
+	}
 	return cfg
 }
 
