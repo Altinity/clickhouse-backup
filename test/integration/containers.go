@@ -343,9 +343,14 @@ func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout 
 		time.Sleep(2 * time.Second)
 	}
 	tc.dumpContainerInfo(ctx, name, testName)
-	if name == "clickhouse" && strings.HasPrefix(testName, "TestAzure") {
-		if _, ok := tc.containers["azure"]; ok {
-			tc.dumpContainerInfo(ctx, "azure", testName)
+	if name == "clickhouse" {
+		// ClickHouse depends on Keeper; a "not healthy" clickhouse is frequently a
+		// symptom of an unresponsive/restarted keeper, so dump it too.
+		tc.dumpContainerInfo(ctx, "zookeeper", testName)
+		if strings.HasPrefix(testName, "TestAzure") {
+			if _, ok := tc.containers["azure"]; ok {
+				tc.dumpContainerInfo(ctx, "azure", testName)
+			}
 		}
 	}
 	return fmt.Errorf("container %s not healthy after %v", name, timeout)
@@ -359,6 +364,40 @@ func testLogPrefix(testName string) string {
 		return ""
 	}
 	return "[" + testName + "] "
+}
+
+// containerStateSummary builds a one-line human-readable summary of a container's
+// state for dump banners.
+//
+// RestartCount is included because it is the only signal that survives a Docker
+// auto-restart: when a container crashes (e.g. OOM under high RUN_PARALLEL load)
+// Docker restarts it and inspect reports status=running, exitCode=0, OOMKilled=false
+// again, so restartCount>0 (or a startedAt later than the test start) is often the
+// only remaining evidence that the container died mid-test.
+func containerStateSummary(inspect container.InspectResponse) string {
+	if inspect.State == nil {
+		return "unknown"
+	}
+	state := inspect.State.Status
+	if inspect.State.Health != nil {
+		state += ", health=" + inspect.State.Health.Status
+	}
+	if inspect.State.ExitCode != 0 {
+		state += fmt.Sprintf(", exitCode=%d", inspect.State.ExitCode)
+	}
+	if inspect.State.OOMKilled {
+		state += ", OOMKilled"
+	}
+	if inspect.RestartCount != 0 {
+		state += fmt.Sprintf(", restartCount=%d", inspect.RestartCount)
+	}
+	if inspect.State.StartedAt != "" {
+		state += ", startedAt=" + inspect.State.StartedAt
+	}
+	if inspect.State.FinishedAt != "" && inspect.State.FinishedAt != "0001-01-01T00:00:00Z" {
+		state += ", finishedAt=" + inspect.State.FinishedAt
+	}
+	return state
 }
 
 // DumpAllContainerLogs dumps state and last 50 log lines for all containers.
@@ -389,30 +428,11 @@ func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name strin
 		log.Error().Err(err).Msgf("can't inspect container %s (%s)", name, info.ID[:12])
 		return
 	}
-	state := "unknown"
-	if inspect.State != nil {
-		state = inspect.State.Status
-		if inspect.State.Health != nil {
-			state += ", health=" + inspect.State.Health.Status
-		}
-		if inspect.State.ExitCode != 0 {
-			state += fmt.Sprintf(", exitCode=%d", inspect.State.ExitCode)
-		}
-		if inspect.State.OOMKilled {
-			state += ", OOMKilled"
-		}
-		if inspect.State.StartedAt != "" {
-			state += ", startedAt=" + inspect.State.StartedAt
-		}
-		if inspect.State.FinishedAt != "" && inspect.State.FinishedAt != "0001-01-01T00:00:00Z" {
-			state += ", finishedAt=" + inspect.State.FinishedAt
-		}
-	}
 	if since.IsZero() {
 		since = time.Now()
 	}
 	since = since.Add(-30 * time.Second)
-	log.Error().Msgf("=== %scontainer %s (%s) state: %s ===", testLogPrefix(testName), name, info.ID[:12], state)
+	log.Error().Msgf("=== %scontainer %s (%s) state: %s ===", testLogPrefix(testName), name, info.ID[:12], containerStateSummary(inspect))
 
 	logOpts := container.LogsOptions{
 		ShowStdout: true,
@@ -444,20 +464,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string, te
 		log.Error().Err(err).Msgf("can't inspect container %s (%s)", name, info.ID[:12])
 		return
 	}
-	state := "unknown"
-	if inspect.State != nil {
-		state = inspect.State.Status
-		if inspect.State.Health != nil {
-			state += ", health=" + inspect.State.Health.Status
-		}
-		if inspect.State.ExitCode != 0 {
-			state += fmt.Sprintf(", exitCode=%d", inspect.State.ExitCode)
-		}
-		if inspect.State.OOMKilled {
-			state += ", OOMKilled"
-		}
-	}
-	log.Error().Msgf("=== %scontainer %s (%s) state: %s ===", testLogPrefix(testName), name, info.ID[:12], state)
+	log.Error().Msgf("=== %scontainer %s (%s) state: %s ===", testLogPrefix(testName), name, info.ID[:12], containerStateSummary(inspect))
 
 	logOpts := container.LogsOptions{ShowStdout: true, ShowStderr: true}
 	reader, logErr := tc.client.ContainerLogs(ctx, info.ID, logOpts)

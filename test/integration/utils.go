@@ -708,6 +708,7 @@ func (env *TestEnvironment) queryWithNoError(r *require.Assertions, query string
 		log.Error().Err(err).Msgf("queryWithNoError(%s) error", query)
 		if env.tc != nil {
 			env.tc.DumpContainerLogsSince(context.Background(), "clickhouse", startedAt, env.testName)
+			env.tc.DumpContainerLogsSince(context.Background(), "zookeeper", startedAt, env.testName)
 		}
 	}
 	r.NoError(err)
@@ -939,7 +940,16 @@ func (env *TestEnvironment) dropDatabase(database string, ifExists bool) (err er
 		}
 		dropDatabaseSQL += " SYNC"
 	}
+	startedAt := time.Now()
 	dropErr := env.ch.Query(dropDatabaseSQL)
+	// ON CLUSTER DROP DATABASE routes through DDLWorker -> Keeper; a Keeper timeout
+	// (Code: 999 Coordination::Exception) surfaces here. Dump both clickhouse and
+	// keeper logs so such failures are diagnosable without re-running.
+	if dropErr != nil && env.tc != nil {
+		log.Error().Err(dropErr).Msgf("dropDatabase(%s) error", database)
+		env.tc.DumpContainerLogsSince(context.Background(), "clickhouse", startedAt, env.testName)
+		env.tc.DumpContainerLogsSince(context.Background(), "zookeeper", startedAt, env.testName)
+	}
 	// On ClickHouse < 20.10 with Ordinary engine, DROP DATABASE may not be fully synchronous
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.10") < 0 {
 		time.Sleep(1 * time.Second)
