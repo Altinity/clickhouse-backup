@@ -1,7 +1,12 @@
 import os
 import sys
 
-from testflows.core import *
+from testflows.core import (
+    TestStep, TestScenario, TestFeature,
+    Given, When, Then, And, Check, Finally, Example,
+    Requirements, Examples, Name,
+    Scenario, skip, note, debug, main, TE, append_path,
+)
 from testflows.asserts import error
 append_path(sys.path, "../..")
 from clickhouse_backup.requirements.fips.requirements import *
