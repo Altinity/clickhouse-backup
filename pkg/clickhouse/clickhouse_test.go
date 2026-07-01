@@ -191,11 +191,25 @@ func TestEnrichQueryWithOnCluster(t *testing.T) {
 			ExpectedQuery: "CREATE VIEW feature_data.insert_price_history_it_az UUID '12a40994-ff52-4a14-8f0b-bccdf1a3a4ba' ON CLUSTER 'my_cluster'  AS WITH a AS (SELECT {input_timestamp:DateTime} AS entity_timestamp, concat(it.provider, '_', z.name, '_', it.instance_type) AS entity_id_cloud_az_it, it.provider AS cloud, z.name AS availability_zone, it.instance_type AS instance_type, ph.is_spot AS is_spot, CAST(ph.price, 'float') AS price, now() AS created_timestamp, row_number() OVER (PARTITION BY entity_id_cloud_az_it ORDER BY ph.effective_from DESC) AS rn FROM raw_data.price_history AS ph INNER JOIN raw_data.zones AS z ON z.id = ph.availability_zone INNER JOIN raw_data.instance_types AS it ON it.id = ph.instance_type WHERE (ph.effective_to < {input_timestamp:DateTime}) AND z.latest_value AND it.latest_value) SELECT entity_timestamp, entity_id_cloud_az_it, cloud, availability_zone, instance_type, is_spot, price, created_timestamp FROM a WHERE rn = 1 SETTINGS final = 1",
 		},
 		{
-			Name:          "OnCluster provided, version >= 19000000, ATTACH VIEW with UUID and column definitions",
+			Name:          "OnCluster provided, version >= 19000000, ATTACH LIVE VIEW with UUID and column definitions, https://github.com/Altinity/clickhouse-backup/issues/1423",
 			Query:         "ATTACH LIVE VIEW test.daily_sales_live UUID '8190d585-7a31-4920-808a-be163dc164d8' (`event_date` UInt32, `sku_id` String, `total_sales` Decimal(38, 2)) AS SELECT toYYYYMMDD(create_time) AS event_date, sku_id, sum(total_amount) AS total_sales FROM test.my_table GROUP BY toYYYYMMDD(create_time), sku_id",
 			OnCluster:     "my_cluster",
 			Version:       19000001,
-			ExpectedQuery: "ATTACH LIVE VIEW test.daily_sales_live UUID '8190d585-7a31-4920-808a-be163dc164d8' (`event_date` UInt32, `sku_id` String, `total_sales` Decimal(38, 2)) ON CLUSTER 'my_cluster'  AS SELECT toYYYYMMDD(create_time) AS event_date, sku_id, sum(total_amount) AS total_sales FROM test.my_table GROUP BY toYYYYMMDD(create_time), sku_id",
+			ExpectedQuery: "ATTACH LIVE VIEW test.daily_sales_live UUID '8190d585-7a31-4920-808a-be163dc164d8'  ON CLUSTER 'my_cluster' (`event_date` UInt32, `sku_id` String, `total_sales` Decimal(38, 2)) AS SELECT toYYYYMMDD(create_time) AS event_date, sku_id, sum(total_amount) AS total_sales FROM test.my_table GROUP BY toYYYYMMDD(create_time), sku_id",
+		},
+		{
+			Name:          "OnCluster provided, version >= 19000000, ATTACH WINDOW VIEW with UUID, column definitions and ENGINE, https://github.com/Altinity/clickhouse-backup/issues/1423",
+			Query:         "ATTACH WINDOW VIEW test.wv UUID '6b87827c-f223-40d6-9cff-252a7f41655f' (`total` Decimal(38, 2), `w_start` DateTime) ENGINE = MergeTree ORDER BY total SETTINGS index_granularity = 8192 AS SELECT sum(total_amount) AS total, tumbleStart(w_id) AS w_start FROM test.my_table GROUP BY tumble(create_time, toIntervalDay('1')) AS w_id",
+			OnCluster:     "my_cluster",
+			Version:       19000001,
+			ExpectedQuery: "ATTACH WINDOW VIEW test.wv UUID '6b87827c-f223-40d6-9cff-252a7f41655f'  ON CLUSTER 'my_cluster' (`total` Decimal(38, 2), `w_start` DateTime) ENGINE = MergeTree ORDER BY total SETTINGS index_granularity = 8192 AS SELECT sum(total_amount) AS total, tumbleStart(w_id) AS w_start FROM test.my_table GROUP BY tumble(create_time, toIntervalDay('1')) AS w_id",
+		},
+		{
+			Name:          "OnCluster provided, version >= 19000000, CREATE VIEW with explicit column definitions, https://github.com/Altinity/clickhouse-backup/issues/1423",
+			Query:         "CREATE VIEW test.test_view (`cnt` UInt64) AS SELECT count() AS cnt FROM test.src_table",
+			OnCluster:     "my_cluster",
+			Version:       19000001,
+			ExpectedQuery: "CREATE VIEW test.test_view  ON CLUSTER 'my_cluster' (`cnt` UInt64) AS SELECT count() AS cnt FROM test.src_table",
 		},
 	}
 
