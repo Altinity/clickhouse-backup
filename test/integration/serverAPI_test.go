@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"path"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
@@ -60,6 +62,8 @@ func TestServerAPI(t *testing.T) {
 
 	testAPIBackupRestoreRemote(r, env)
 
+	testAPIRebindReplicaPath(r, env)
+
 	testAPIBackupStatus(r, env)
 
 	testAPIBackupList(t, r, env)
@@ -83,6 +87,141 @@ func TestServerAPI(t *testing.T) {
 	testAPIBackupActionsSkipCommands(r, env)
 
 	env.DockerExecNoError(r, "clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
+}
+
+// TestWatchIncrementalSkipDisks reproduces the Slack-reported scenario where a
+// tiered table moves a partition from the hot (default) disk to a cold object
+// disk listed in clickhouse.skip_disks, and the next incremental backup must
+// skip the now-cold partition instead of attempting an object-disk server-side
+// blob copy (which, for the reporter, failed with Azure 404 Container Not Found
+// and eventually tripped the watch loop's "too many errors" circuit breaker).
+//
+// The cold tier here is a cache disk wrapping an s3 object disk, mirroring the
+// reporter's azure_cold + azure_cold_cache topology: both disks share one
+// metadata_path, so GetDisks collapses them to the underlying name. The
+// increment is created with --diff-from-remote, the exact CreateToRemote path
+// the `watch` loop uses for increment backups (pkg/backup/watch.go).
+func TestWatchIncrementalSkipDisks(t *testing.T) {
+	version := os.Getenv("CLICKHOUSE_VERSION")
+	if compareVersion(version, "22.8") < 0 {
+		t.Skipf("requires ClickHouse >= 22.8 for `type: cache` disk over s3, current version %s", version)
+	}
+
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+
+	// Cold tier = cache disk wrapping an s3 object disk (azure_cold + azure_cold_cache analogue).
+	env.DockerExecNoError(r, "clickhouse", "bash", "-xc", `
+cat > /etc/clickhouse-server/config.d/skip_disk_tiered.xml <<'XML'
+<clickhouse>
+  <storage_configuration>
+    <disks>
+      <s3_cold>
+        <type>s3</type>
+        <endpoint>https://minio:9000/clickhouse/skip_disk_cold/</endpoint>
+        <access_key_id>access_key</access_key_id>
+        <secret_access_key>it_is_my_super_secret_key</secret_access_key>
+        <skip_access_check>true</skip_access_check>
+      </s3_cold>
+      <s3_cold_cache>
+        <type>cache</type>
+        <disk>s3_cold</disk>
+        <path>/var/lib/clickhouse/filesystem_caches/s3_cold_cache_test/</path>
+        <max_size>1073741824</max_size>
+      </s3_cold_cache>
+    </disks>
+    <policies>
+      <skip_disk_tiered>
+        <volumes>
+          <hot><disk>default</disk></hot>
+          <cold><disk>s3_cold_cache</disk></cold>
+        </volumes>
+      </skip_disk_tiered>
+    </policies>
+  </storage_configuration>
+</clickhouse>
+XML
+`)
+	env.ch.Close()
+	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
+	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
+
+	dbName := "test_watch_incr_skip"
+	tableName := "tiered"
+	fullBackup := "test_watch_incr_skip_full"
+	incrBackup := "test_watch_incr_skip_increment"
+
+	// Clean any leftovers from previous runs.
+	for _, b := range []string{incrBackup, fullBackup} {
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote "+b+" 2>/dev/null || true")
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local "+b+" 2>/dev/null || true")
+	}
+	r.NoError(env.dropDatabase(dbName, true))
+
+	env.queryWithNoError(r, "CREATE DATABASE "+dbName)
+	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64, p UInt8) ENGINE=MergeTree() PARTITION BY p ORDER BY id SETTINGS storage_policy='skip_disk_tiered'")
+	// Partition 1 lands on the hot (default) disk.
+	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number, 1 FROM numbers(100)")
+
+	// Parent (full) backup: partition 1 is on hot, captured normally. No parent => skip_disks bug can't fire here.
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--tables="+dbName+".*", fullBackup)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", fullBackup)
+
+	// Move partition 1 to the cold (skipped) object disk, as past-TTL tiering would.
+	env.queryWithNoError(r, "ALTER TABLE "+dbName+"."+tableName+" MOVE PARTITION 1 TO VOLUME 'cold'")
+	var coldParts uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&coldParts, "SELECT count() FROM system.parts WHERE active AND database='"+dbName+"' AND `table`='"+tableName+"' AND disk_name LIKE 's3_cold%'"))
+	r.Equal(uint64(1), coldParts, "partition 1 should live on the cold s3 disk after MOVE PARTITION TO VOLUME 'cold'")
+
+	// A new partition lands on hot, giving the increment real work on a non-skipped disk.
+	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number, 2 FROM numbers(50)")
+
+	// Incremental backup with the cold disk skipped — same CreateToRemote(diffFromRemote) path `watch` uses.
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
+		"CLICKHOUSE_SKIP_DISKS=s3_cold,s3_cold_cache clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create_remote --diff-from-remote="+fullBackup+" --tables="+dbName+".* "+incrBackup)
+	r.NoError(err, "incremental create_remote must not fail when a moved partition lives on a skipped object disk:\n%s", out)
+
+	// The increment metadata must NOT contain any parts on the skipped cold disk,
+	// but must still back up the new hot partition on `default`.
+	type partMeta struct {
+		Name string `json:"name"`
+	}
+	type tableMetaJSON struct {
+		Parts map[string][]partMeta `json:"parts"`
+	}
+	metaPath := path.Join("/var/lib/clickhouse/backup", incrBackup, "metadata", common.TablePathEncode(dbName), common.TablePathEncode(tableName)+".json")
+	metaOut, err := env.DockerExecOut("clickhouse-backup", "cat", metaPath)
+	r.NoError(err, "cat %s: %s", metaPath, metaOut)
+	var tm tableMetaJSON
+	r.NoError(json.Unmarshal([]byte(metaOut), &tm))
+	for _, coldDisk := range []string{"s3_cold", "s3_cold_cache"} {
+		_, found := tm.Parts[coldDisk]
+		r.Falsef(found, "increment must not back up parts on skipped disk %s; metadata=%s", coldDisk, metaOut)
+	}
+	r.NotEmptyf(tm.Parts["default"], "increment should back up the new hot partition on default; metadata=%s", metaOut)
+
+	// End-to-end: restoring the increment chain yields ONLY the hot partition (50
+	// rows). skip_disks=cold means "cold data is not part of the backup": the
+	// partition that moved to the skipped cold disk is intentionally absent from
+	// the increment and is NOT inherited from the parent (full) backup on restore.
+	// This is the desired semantics — the cold tier is expected to stay durable in
+	// its own object storage, outside clickhouse-backup.
+	env.queryWithNoError(r, "DROP TABLE "+dbName+"."+tableName+" SYNC")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", incrBackup)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore_remote", "--rm", incrBackup)
+	env.checkCount(r, 1, 50, "SELECT count() FROM "+dbName+"."+tableName)
+
+	// Cleanup and restore the default ClickHouse storage configuration.
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", incrBackup)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", fullBackup)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", incrBackup)
+	r.NoError(env.dropDatabase(dbName, true))
+	env.DockerExecNoError(r, "clickhouse", "rm", "-f", "/etc/clickhouse-server/config.d/skip_disk_tiered.xml")
+	env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/skip_disk_cold")
+	env.ch.Close()
+	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
+	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 }
 
 func testAPIRestart(r *require.Assertions, env *TestEnvironment) {
@@ -633,6 +772,85 @@ func testAPIBackupTablesLocal(r *require.Assertions, env *TestEnvironment) {
 	r.NoError(err, "%s\nunexpected GET /backup/tables?local_backup=z_backup_1&table=long_schema.t0 error: %v", out, err)
 	r.Contains(out, `"table":"t0"`)
 	r.NotContains(out, `"table":"t1"`)
+}
+
+// testAPIRebindReplicaPath verifies the rebind_replica_path_if_exists query parameter for the
+// /backup/restore endpoint (https://github.com/Altinity/clickhouse-backup/issues/1428).
+//
+// It reproduces the opt-in "stale leftovers" scenario from the CLI-level TestRebindReplicaPathIfExists:
+// an occupant ReplicatedMergeTree holds a shared ZK path, DETACH-ing it keeps the path alive but removes
+// it from node-local system.replicas (simulating a remote HA sibling / stale state). Then:
+//
+//	flag off => restore JOINS the existing shared path (HA-safe default)
+//	flag on  => restore REBINDS to clickhouse.default_replica_path
+func testAPIRebindReplicaPath(r *require.Assertions, env *TestEnvironment) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") < 0 {
+		log.Info().Msgf("testAPIRebindReplicaPath skipped, requires ClickHouse >= 20.8 for synchronous `DROP TABLE ... NO DELAY`, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
+		return
+	}
+	log.Debug().Msg("Check /backup/restore with rebind_replica_path_if_exists parameter")
+
+	// `DROP TABLE ... NO DELAY` (synchronous drop) is available from 20.8; the `SYNC` keyword only lands in 21.x.
+	const dropSuffix = " NO DELAY"
+
+	const sharedPath = "/clickhouse/tables/api_rebind_path"
+	const backupName = "api_rebind_backup"
+
+	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE default.api_rebind_occupant (id UInt64) ENGINE=ReplicatedMergeTree('%s','other-replica') ORDER BY id", sharedPath))
+	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE default.api_test_rebind_path (id UInt64) ENGINE=ReplicatedMergeTree('%s','{replica}') ORDER BY id", sharedPath))
+	env.queryWithNoError(r, "INSERT INTO default.api_test_rebind_path SELECT number FROM numbers(10)")
+
+	expectedDefaultPath := "/clickhouse/tables/{cluster}/{shard}/{database}/{table}"
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") < 0 || compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") > 0 {
+		expectedDefaultPath = strings.NewReplacer("{database}", "default", "{table}", "api_test_rebind_path").Replace(expectedDefaultPath)
+	}
+
+	engineFull := func() string {
+		out := ""
+		r.NoError(env.ch.SelectSingleRowNoCtx(&out, "SELECT engine_full FROM system.tables WHERE database=? AND name=?", "default", "api_test_rebind_path"))
+		return out
+	}
+
+	// Create a local backup of the table via API.
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/create?table=default.api_test_rebind_path&name=%s'", backupName))
+	r.NoError(err, "%s\nunexpected POST /backup/create error: %v", out, err)
+	r.Contains(out, "acknowledged")
+	waitForAPIOperationStatus(r, env, parseAPIOperationID(r, out), "create", 60*time.Second)
+
+	// DETACH the occupant: it leaves system.replicas but its ZK path/replica entry stays alive,
+	// so no local table occupies sharedPath (the remote-sibling / stale-leftovers state).
+	env.queryWithNoError(r, "DETACH TABLE default.api_rebind_occupant")
+
+	restoreSchemaViaAPI := func(extraQuery string) {
+		env.queryWithNoError(r, "DROP TABLE default.api_test_rebind_path"+dropSuffix)
+		url := fmt.Sprintf("http://localhost:7171/backup/restore/%s?schema=1&table=default.api_test_rebind_path%s", backupName, extraQuery)
+		restoreOut, restoreErr := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST '%s'", url))
+		r.NoError(restoreErr, "%s\nunexpected POST /backup/restore error: %v", restoreOut, restoreErr)
+		r.Contains(restoreOut, "acknowledged")
+		waitForAPIOperationStatus(r, env, parseAPIOperationID(r, restoreOut), "restore", 60*time.Second)
+	}
+
+	// Case B: flag off => join the existing shared path, no rebind (HA-safe default).
+	restoreSchemaViaAPI("")
+	r.Contains(engineFull(), sharedPath, "without rebind_replica_path_if_exists the table must join the existing shared ZK path")
+
+	// Case C: flag on => rebind to clickhouse.default_replica_path.
+	restoreSchemaViaAPI("&rebind_replica_path_if_exists=true")
+	r.Contains(engineFull(), expectedDefaultPath, "with rebind_replica_path_if_exists=true the table must rebind to default_replica_path")
+	r.NotContains(engineFull(), sharedPath, "with rebind_replica_path_if_exists=true the table must not keep the shared ZK path")
+
+	// The API must record the overriding flag in system.backup_actions for the restore command.
+	var rebindActions uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&rebindActions, "SELECT count() FROM system.backup_actions WHERE command LIKE '%--rebind-replica-path-if-exists%' AND status=?", status.SuccessStatus))
+	r.Greater(rebindActions, uint64(0), "restore with rebind_replica_path_if_exists must be recorded in system.backup_actions")
+
+	// cleanup: drop the restored table, re-attach the occupant so the synchronous drop can deregister its ZK entry,
+	// then drop the occupant and the local backup.
+	env.queryWithNoError(r, "DROP TABLE default.api_test_rebind_path"+dropSuffix)
+	env.queryWithNoError(r, "ATTACH TABLE default.api_rebind_occupant")
+	env.queryWithNoError(r, "DROP TABLE default.api_rebind_occupant"+dropSuffix)
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/local/%s'", backupName))
+	r.NoError(err, "%s\nunexpected POST /backup/delete/local error: %v", out, err)
 }
 
 func testAPIBackupVersion(r *require.Assertions, env *TestEnvironment) {
