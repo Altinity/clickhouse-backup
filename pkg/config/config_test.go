@@ -43,6 +43,83 @@ func TestMaskSensitiveEnvValue(t *testing.T) {
 	}
 }
 
+func TestMaskEnvOverrideCommand(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{"no env flag", "create my_backup", "create my_backup"},
+		{
+			"sensitive --env=",
+			"create --env=S3_SECRET_KEY=super-secret my_backup",
+			"create --env=S3_SECRET_KEY=[MASKED] my_backup",
+		},
+		{
+			"sensitive --env space",
+			"create --env S3_SECRET_KEY=super-secret my_backup",
+			"create --env S3_SECRET_KEY=[MASKED] my_backup",
+		},
+		{
+			"sensitive --environment-override=",
+			"upload --environment-override=CLICKHOUSE_PASSWORD=p@ss backup",
+			"upload --environment-override=CLICKHOUSE_PASSWORD=[MASKED] backup",
+		},
+		{
+			"non-sensitive left intact",
+			"create --env=REMOTE_STORAGE=s3 my_backup",
+			"create --env=REMOTE_STORAGE=s3 my_backup",
+		},
+		{
+			"mixed sensitive and non-sensitive",
+			"create --env=REMOTE_STORAGE=s3 --env=S3_SECRET_KEY=abc123 my_backup",
+			"create --env=REMOTE_STORAGE=s3 --env=S3_SECRET_KEY=[MASKED] my_backup",
+		},
+		{
+			"quoted sensitive value",
+			`create --env="AZBLOB_ACCOUNT_KEY=a b c" my_backup`,
+			`create --env="AZBLOB_ACCOUNT_KEY=[MASKED]" my_backup`,
+		},
+		{
+			`double-quoted --env="VAR=value"`,
+			`create --env="S3_SECRET_KEY=super-secret" my_backup`,
+			`create --env="S3_SECRET_KEY=[MASKED]" my_backup`,
+		},
+		{
+			`single-quoted --env='VAR=value'`,
+			`create --env='S3_SECRET_KEY=super-secret' my_backup`,
+			`create --env='S3_SECRET_KEY=[MASKED]' my_backup`,
+		},
+		{
+			`quoted non-sensitive left intact`,
+			`create --env="REMOTE_STORAGE=s3" my_backup`,
+			`create --env="REMOTE_STORAGE=s3" my_backup`,
+		},
+		{
+			`double-quoted space form --env "VAR=value"`,
+			`create --env "S3_SECRET_KEY=super-secret" my_backup`,
+			`create --env "S3_SECRET_KEY=[MASKED]" my_backup`,
+		},
+		{
+			"empty value not masked",
+			"create --env=S3_SECRET_KEY= my_backup",
+			"create --env=S3_SECRET_KEY= my_backup",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MaskEnvOverrideCommand(tc.command)
+			if got != tc.want {
+				t.Fatalf("expected %q, got %q", tc.want, got)
+			}
+			if strings.Contains(got, "super-secret") || strings.Contains(got, "p@ss") || strings.Contains(got, "abc123") || strings.Contains(got, "a b c") {
+				t.Fatalf("sensitive value leaked in masked command: %q", got)
+			}
+		})
+	}
+}
+
 func TestOverrideEnvVarsMasksSensitiveValuesOnlyInLogs(t *testing.T) {
 	const (
 		sensitiveName     = "CLICKHOUSE_BACKUP_TEST_SECRET_KEY"
