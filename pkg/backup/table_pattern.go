@@ -35,18 +35,23 @@ func (lt ListOfTables) Sort(dropTable bool) {
 	})
 }
 
-func addTableToListIfNotExistsOrEnrichQueryAndParts(tables ListOfTables, table metadata.TableMetadata) ListOfTables {
-	for i, t := range tables {
-		if (t.Database == table.Database) && (t.Table == table.Table) {
-			if t.Query == "" && table.Query != "" {
-				tables[i].Query = table.Query
-			}
-			if len(t.Parts) == 0 && len(table.Parts) > 0 {
-				tables[i].Parts = table.Parts
-			}
-			return tables
+// addTableToListIfNotExistsOrEnrichQueryAndParts appends table to tables, or, if a table with the
+// same Database+Table already exists, enriches its empty Query/Parts from table (e.g. merging the
+// .sql file that carries Query with the .json file that carries Parts in embedded backups).
+// tableIndex maps TableTitle to the table's position in tables and keeps the lookup O(1), so the
+// caller stays O(N) instead of O(N^2) over large table lists (see issue #1430).
+func addTableToListIfNotExistsOrEnrichQueryAndParts(tables ListOfTables, tableIndex map[metadata.TableTitle]int, table metadata.TableMetadata) ListOfTables {
+	key := metadata.TableTitle{Database: table.Database, Table: table.Table}
+	if idx, exists := tableIndex[key]; exists {
+		if tables[idx].Query == "" && table.Query != "" {
+			tables[idx].Query = table.Query
 		}
+		if len(tables[idx].Parts) == 0 && len(table.Parts) > 0 {
+			tables[idx].Parts = table.Parts
+		}
+		return tables
 	}
+	tableIndex[key] = len(tables)
 	return append(tables, &table)
 }
 
@@ -67,21 +72,6 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 	}
 	// https://github.com/Altinity/clickhouse-backup/issues/1091
 	replacer := strings.NewReplacer(`/`, "_", `\`, "_")
-
-	addToResult := func(t metadata.TableMetadata) {
-		key := metadata.TableTitle{Database: t.Database, Table: t.Table}
-		if idx, exists := tableIndex[key]; exists {
-			if result[idx].Query == "" && t.Query != "" {
-				result[idx].Query = t.Query
-			}
-			if len(result[idx].Parts) == 0 && len(t.Parts) > 0 {
-				result[idx].Parts = t.Parts
-			}
-		} else {
-			tableIndex[key] = len(result)
-			result = append(result, &t)
-		}
-	}
 
 	if err := filepath.Walk(metadataPath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -122,7 +112,7 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 				// .sql file will enrich Query
 				partitionsIdMap, _ := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&t}, partitions)
 				filterPartsAndFilesByPartitionsFilter(t, partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}])
-				addToResult(t)
+				result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, tableIndex, t)
 				return nil
 			}
 			var t metadata.TableMetadata
@@ -131,7 +121,7 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 			}
 			partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&t}, partitions)
 			filterPartsAndFilesByPartitionsFilter(t, partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}])
-			addToResult(t)
+			result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, tableIndex, t)
 			for tt := range partitionsNameList {
 				if _, exists := resultPartitionNames[tt]; !exists {
 					resultPartitionNames[tt] = []string{}
@@ -582,6 +572,7 @@ func filterPartsAndFilesByPartitionsFilter(tableMetadata metadata.TableMetadata,
 
 func getTableListByPatternRemote(ctx context.Context, b *Backuper, remoteBackupMetadata *metadata.BackupMetadata, tablePattern string, dropTable bool) (ListOfTables, error) {
 	result := ListOfTables{}
+	tableIndex := make(map[metadata.TableTitle]int)
 	tablePatterns := []string{"*"}
 
 	if tablePattern != "" {
@@ -625,7 +616,7 @@ func getTableListByPatternRemote(ctx context.Context, b *Backuper, remoteBackupM
 				if err = json.Unmarshal(data, &t); err != nil {
 					return nil, errors.Wrapf(err, "json.Unmarshal(%s) error", data)
 				}
-				result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
+				result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, tableIndex, t)
 				break tablePatterns
 			}
 		}
