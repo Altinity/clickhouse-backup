@@ -705,7 +705,7 @@ func (env *TestEnvironment) queryWithNoError(r *require.Assertions, query string
 	if err != nil {
 		log.Error().Err(err).Msgf("queryWithNoError(%s) error", query)
 		if env.tc != nil {
-			env.tc.DumpContainerLogsSince(context.Background(), "clickhouse", startedAt)
+			env.tc.DumpContainerLogsSince(context.Background(), "clickhouse", "", startedAt)
 		}
 	}
 	r.NoError(err)
