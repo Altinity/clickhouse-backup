@@ -18,9 +18,7 @@ from helpers.argparser import argparser
 
 from clickhouse_backup.requirements.requirements import *
 
-from clickhouse_backup.requirements.fips.requirements import (
-    QA_SRS013_ClickHouse_Backup_Utility_FIPS_Compatibility,
-)
+from clickhouse_backup.requirements.fips.requirements import *
 from clickhouse_backup.tests.common import simple_data_types_columns
 
 # `--fips-godebug` choices mapped to the `GODEBUG` value exported on
@@ -31,6 +29,7 @@ from clickhouse_backup.tests.common import simple_data_types_columns
 #   * `only`  - FIPS active with strict enforcement (default).
 #   * `off`   - FIPS disabled at runtime.
 FIPS_GODEBUG_VALUES = {
+    "empty": "",
     "unset": None,
     "on": "fips140=on",
     "only": "fips140=only",
@@ -105,6 +104,9 @@ def regression(self, local, stress=False, fips=True, fips_godebug="only"):
             self.context.backup_config_origin = origin_path
             self.context.backup_config_file = config_path
             self.context.cluster = cluster
+            # `--stress` widens the FIPS cipher/suite coverage (see tests/fips_140_3.py).
+            # Default runs keep the documented minimum so they stay fast.
+            self.context.stress = stress
             self.context.nodes = [self.context.cluster.node(n) for n in ["clickhouse1", "clickhouse2"]]
             self.context.backup = self.context.cluster.node("clickhouse_backup")
             self.context.kafka = self.context.cluster.node("kafka")

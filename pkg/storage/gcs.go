@@ -125,16 +125,16 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		clientOptions = append(clientOptions, credOption)
 	}
 
-	// 3. For ForceHttp or Debug we need a custom HTTP client;
+	// 3. For ForceHttp, DisableHttp2, or Debug we need a custom HTTP client;
 	//    otherwise let storage.NewClient create its own optimized transport.
-	if gcs.Config.ForceHttp || gcs.Config.Debug {
+	if gcs.Config.ForceHttp || gcs.Config.DisableHttp2 || gcs.Config.Debug {
 		// Scopes are required when dialing manually
 		if !gcs.Config.SkipCredentials {
 			clientOptions = append(clientOptions, option.WithScopes(storage.ScopeFullControl))
 		}
 
 		var httpClient *http.Client
-		if gcs.Config.ForceHttp {
+		if gcs.Config.ForceHttp || gcs.Config.DisableHttp2 {
 			customTransport := &http.Transport{
 				WriteBufferSize: 128 * 1024,
 				Proxy:           http.ProxyFromEnvironment,
@@ -148,14 +148,29 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 				TLSHandshakeTimeout:   10 * time.Second,
 				ExpectContinueTimeout: 1 * time.Second,
 			}
+			if gcs.Config.DisableHttp2 {
+				// DisableHttp2 is designed for high-concurrency downloads — raise
+				// connection limits so each parallel part gets its own TCP stream.
+				customTransport.MaxIdleConns = 0
+				customTransport.MaxIdleConnsPerHost = 64
+			}
 			// must set ForceAttemptHTTP2 to false so that when a custom TLSClientConfig
 			// is provided Golang does not setup HTTP/2 transport
 			customTransport.ForceAttemptHTTP2 = false
 			customTransport.TLSClientConfig = &tls.Config{
 				NextProtos: []string{"http/1.1"},
 			}
-			customRoundTripper := &rewriteTransport{base: customTransport}
-			transport, err := googleHTTPTransport.NewTransport(ctx, customRoundTripper, clientOptions...)
+			// ForceHttp downgrades the request scheme to cleartext http:// via
+			// rewriteTransport (needed only for internal caches like varnish).
+			// DisableHttp2 keeps the original https:// scheme so TLS and
+			// HTTPS_PROXY continue to work — it only suppresses HTTP/2 so that
+			// concurrent transfers use separate TCP connections instead of being
+			// multiplexed onto one. When both are set, ForceHttp wins.
+			var roundTripper http.RoundTripper = customTransport
+			if gcs.Config.ForceHttp {
+				roundTripper = &rewriteTransport{base: customTransport}
+			}
+			transport, err := googleHTTPTransport.NewTransport(ctx, roundTripper, clientOptions...)
 			if err != nil {
 				return errors.Wrap(err, "failed to create GCP transport")
 			}
