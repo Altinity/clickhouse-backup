@@ -293,7 +293,7 @@ def check_outbound_tls_handshake(self, node, command, expected_success,
 
 
 @TestStep(Then)
-def assert_s_server_logs_match_outcome(self, cluster, aux_name, expected_success):
+def assert_s_server_logs_match_outcome(self, cluster, aux_name, expected_success, log_tail_length=1000):
     """CHeck the client-side outcome against the s_server's own log.
 
     This is an independent, server-side confirmation of what the FIPS client
@@ -340,7 +340,7 @@ def assert_s_server_logs_match_outcome(self, cluster, aux_name, expected_success
     or "no cipher match" in log_lower
 )
 
-    log_tail = s_server_log[-1000:] if s_server_log else "<empty>"
+    log_tail = s_server_log[:-log_tail_length] if s_server_log else "<empty>"
 
     if expected_success:
         assert not has_rejection_marker, error(
@@ -586,7 +586,7 @@ def connectivity_against_fips_clickhouse_server(self):
     )
 
     try:
-        with Given("a dedicated FIPS-compatible Altinity ClickHouse server"):
+        with When("I bring up a dedicated FIPS-compatible Altinity ClickHouse server"):
             cluster.start_clickhouse_server_container(
                 name=FIPS_CH_SERVER_NAME,
                 image_tag=FIPS_CH_SERVER_IMAGE,
@@ -633,8 +633,7 @@ def connectivity_against_non_fips_clickhouse_server(self):
     cluster = self.context.cluster
 
     try:
-        with Given(
-            "a non-FIPS Altinity ClickHouse server running with image defaults",
+        with When("I bring up a non-FIPS Altinity ClickHouse server running with image defaults",
             description="no `tcp_port_secure` listener; only plain `:9000` / `:8123` are bound",
         ):
             cluster.start_clickhouse_server_container(
@@ -769,7 +768,7 @@ def fips_info_values_output(self):
         backup_fips = require_fips_container()
 
     for name, godebug, expected_enabled, expected_enforced in FIPS_GODEBUG_INFO_CASES:
-        with Check(f"GODEBUG mode `{name}` reports "
+        with Then(f"GODEBUG mode `{name}` reports "
                    f"enabled={expected_enabled} enforced={expected_enforced}"):
             check_fips_info_values(
                 backup_fips=backup_fips,
@@ -877,8 +876,8 @@ def inbound_tls_cipher_negotiation(self):
     target = f"localhost:{FIPS_TLS_LISTEN_PORT}"
 
     try:
-        with Given(
-            "I start clickhouse-backup-fips server with the TLS API config",
+        with When(
+            "I start a clickhouse-backup-fips server with the TLS API config",
             description=f"config={FIPS_TLS_CONFIG_PATH} listen=:{FIPS_TLS_LISTEN_PORT}",
         ):
             backup_fips.start_server(
@@ -890,43 +889,43 @@ def inbound_tls_cipher_negotiation(self):
 
         with When("I try to connect using each FIPS-approved TLSv1.3 cipher suite"):
             for ciphersuite in FIPS_TLS13_APPROVED:  # shared with outbound scenario
-                with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be accepted"):
+                with Then(f"TLSv1.3 ciphersuite {ciphersuite} should be accepted"):
                     check_tls_handshake(
                         node=backup_fips, target=target, tls_flag="-tls1_3",
                         ciphersuites=ciphersuite, expected_success=True,
                     )
 
-        with And("I try to connect using each FIPS-approved TLSv1.2 cipher"):
+        with When("I try to connect using each FIPS-approved TLSv1.2 cipher"):
             for cipher in FIPS_TLS12_APPROVED:  # shared with outbound scenario
-                with Check(f"TLSv1.2 cipher {cipher} should be accepted"):
+                with Then(f"TLSv1.2 cipher {cipher} should be accepted"):
                     check_tls_handshake(
                         node=backup_fips, target=target, tls_flag="-tls1_2",
                         cipher=cipher, expected_success=True,
                     )
 
-        with And("I try to connect using each non-FIPS TLSv1.3 cipher suite"):
+        with When("I try to connect using each non-FIPS TLSv1.3 cipher suite"):
             for ciphersuite in non_fips_tls13:
-                with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
+                with Then(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
                     check_tls_handshake(
                         node=backup_fips, target=target, tls_flag="-tls1_3",
                         ciphersuites=ciphersuite, expected_success=False,
                     )
 
-        with And("I try to connect using each non-FIPS TLSv1.2 cipher"):
+        with When("I try to connect using each non-FIPS TLSv1.2 cipher"):
             for cipher in non_fips_tls12:
-                with Check(f"TLSv1.2 cipher {cipher} should be rejected"):
+                with Then(f"TLSv1.2 cipher {cipher} should be rejected"):
                     check_tls_handshake(
                         node=backup_fips, target=target, tls_flag="-tls1_2",
                         cipher=cipher, expected_success=False,
                     )
 
-        with And("I try to connect using legacy TLSv1.0 / TLSv1.1 protocols and assert they are rejected"):
-            with Check("TLSv1.0 handshake should be rejected"):
+        with When("I try to connect using legacy TLSv1.0 / TLSv1.1 protocols and assert they are rejected"):
+            with Then("TLSv1.0 handshake should be rejected"):
                 check_tls_handshake(
                     node=backup_fips, target=target, tls_flag="-tls1",
                     expected_success=False,
                 )
-            with Check("TLSv1.1 handshake should be rejected"):
+            with Then("TLSv1.1 handshake should be rejected"):
                 check_tls_handshake(
                     node=backup_fips, target=target, tls_flag="-tls1_1",
                     expected_success=False,
@@ -983,7 +982,7 @@ def outbound_tls_cipher_negotiation(self):
 
     with When("I try each FIPS-approved TLSv1.3 cipher suite on the CH endpoint"):
         for ciphersuite in FIPS_TLS13_APPROVED:
-            with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be accepted"):
+            with Then(f"TLSv1.3 ciphersuite {ciphersuite} should be accepted"):
                 check_outbound_tls_with_cipher(
                     cluster=cluster, backup_fips=backup_fips,
                     listen=FIPS_OUTBOUND_CH_TLS_PORT, tls_version="-tls1_3",
@@ -992,7 +991,7 @@ def outbound_tls_cipher_negotiation(self):
 
     with And("I try each FIPS-approved TLSv1.2 cipher on the CH endpoint"):
         for cipher in FIPS_TLS12_APPROVED:
-            with Check(f"TLSv1.2 cipher {cipher} should be accepted"):
+            with Then(f"TLSv1.2 cipher {cipher} should be accepted"):
                 check_outbound_tls_with_cipher(
                     cluster=cluster, backup_fips=backup_fips,
                     listen=FIPS_OUTBOUND_CH_TLS_PORT, tls_version="-tls1_2",
@@ -1001,7 +1000,7 @@ def outbound_tls_cipher_negotiation(self):
 
     with And("I try each non-FIPS TLSv1.3 cipher suite on the CH endpoint"):
         for ciphersuite in non_fips_tls13:
-            with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
+            with Then(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
                 check_outbound_tls_with_cipher(
                     cluster=cluster, backup_fips=backup_fips,
                     listen=FIPS_OUTBOUND_CH_TLS_PORT, tls_version="-tls1_3",
@@ -1010,7 +1009,7 @@ def outbound_tls_cipher_negotiation(self):
 
     with And("I try each non-FIPS TLSv1.2 cipher on the CH endpoint"):
         for cipher in non_fips_tls12:
-            with Check(f"TLSv1.2 cipher {cipher} should be rejected"):
+            with Then(f"TLSv1.2 cipher {cipher} should be rejected"):
                 check_outbound_tls_with_cipher(
                     cluster=cluster, backup_fips=backup_fips,
                     listen=FIPS_OUTBOUND_CH_TLS_PORT, tls_version="-tls1_2",
@@ -1068,9 +1067,9 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
     non_fips_tls13 = NON_FIPS_TLS13_STRESS if self.context.stress else NON_FIPS_TLS13
     non_fips_tls12 = NON_FIPS_TLS12_OUTBOUND_STRESS if self.context.stress else NON_FIPS_TLS12_OUTBOUND
 
-    with Check("I try each FIPS-approved TLSv1.3 cipher suite on the S3 endpoint"):
+    with When("I try each FIPS-approved TLSv1.3 cipher suite on the S3 endpoint"):
         for ciphersuite in FIPS_TLS13_APPROVED:
-            with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be accepted"):
+            with Then(f"TLSv1.3 ciphersuite {ciphersuite} should be accepted"):
                 check_outbound_tls_with_cipher(
                     cluster=cluster, backup_fips=backup_fips,
                     aux_name=OPENSSL_S3_FIPS_AUX_NAME,
@@ -1079,9 +1078,9 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
                     require_native_handshake_marker=False,
                 )
 
-    with Check("I try each FIPS-approved TLSv1.2 cipher on the S3 endpoint"):
+    with When("I try each FIPS-approved TLSv1.2 cipher on the S3 endpoint"):
         for cipher in FIPS_TLS12_APPROVED:
-            with Check(f"TLSv1.2 cipher {cipher} should be accepted"):
+            with Then(f"TLSv1.2 cipher {cipher} should be accepted"):
                 check_outbound_tls_with_cipher(
                     cluster=cluster, backup_fips=backup_fips,
                     aux_name=OPENSSL_S3_FIPS_AUX_NAME,
@@ -1090,9 +1089,9 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
                     require_native_handshake_marker=False,
                 )
 
-    with Check("I try each non-FIPS TLSv1.3 cipher suite on the S3 endpoint"):
+    with When("I try each non-FIPS TLSv1.3 cipher suite on the S3 endpoint"):
         for ciphersuite in non_fips_tls13:
-            with Check(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
+            with Then(f"TLSv1.3 ciphersuite {ciphersuite} should be rejected"):
                 check_outbound_tls_with_cipher(
                     cluster=cluster, backup_fips=backup_fips,
                     aux_name=OPENSSL_S3_FIPS_AUX_NAME,
@@ -1102,9 +1101,9 @@ def outbound_tls_to_s3_endpoint_with_openssl_s_server(self):
                     require_native_handshake_marker=False,
                 )
 
-    with Check("I try each non-FIPS TLSv1.2 cipher on the S3 endpoint"):
+    with When("I try each non-FIPS TLSv1.2 cipher on the S3 endpoint"):
         for cipher in non_fips_tls12:
-            with Check(f"TLSv1.2 cipher {cipher} should be rejected"):
+            with Then(f"TLSv1.2 cipher {cipher} should be rejected"):
                 check_outbound_tls_with_cipher(
                     cluster=cluster, backup_fips=backup_fips,
                     aux_name=OPENSSL_S3_FIPS_AUX_NAME,
@@ -1153,7 +1152,7 @@ def connection_to_fips_clickhouse_with_nonfips_config(self):
     )
 
     try:
-        with Given("a dedicated FIPS-compatible Altinity ClickHouse server"):
+        with When("I bring up a dedicated FIPS-compatible Altinity ClickHouse server"):
             cluster.start_clickhouse_server_container(
                 name=FIPS_CH_SERVER_NAME,
                 image_tag=FIPS_CH_SERVER_IMAGE,
@@ -1212,7 +1211,7 @@ def server_listens_only_on_fips_api_port(self):
         backup_fips = require_fips_container()
 
     try:
-        with Given("clickhouse-backup-fips server is started"):
+        with When("I start a clickhouse-backup-fips server"):
             backup_fips.start_server(
                 binary=FIPS_BINARY_IN_CONTAINER,
                 config=FIPS_TLS_CONFIG_PATH,
