@@ -5,7 +5,7 @@ from testflows.core import (
     TestStep, TestScenario, TestFeature,
     Given, When, Then, And, Check, Finally, Example,
     Requirements, Examples, Name,
-    Scenario, skip, note, debug, main, TE, append_path,
+    Scenario, skip, fail, note, debug, main, TE, append_path,
 )
 from testflows.asserts import error
 append_path(sys.path, "../..")
@@ -1307,42 +1307,6 @@ def outbound_tls_to_nonfips_clickhouse_with_cipher_profile(self):
     finally:
         cluster.stop_auxiliary_container(NON_FIPS_CH_SERVER_NAME)
 
-# Startup/core CASTs used during `clickhouse-backup-fips --version`. Forcing
-# any of these via `failfipscast` must abort startup deterministically.
-# Source: Go FIPS `allCASTs` in `crypto/internal/fips140test/cast_test.go`.
-FIPS_FAILFIPSCAST_STARTUP_CASTS = (
-    "AES-CBC",
-    "CTR_DRBG",
-    "CounterKDF",
-    "HKDF-SHA2-256",
-    "HMAC-SHA2-256",
-    "PBKDF2",
-    "SHA2-256",
-    "SHA2-512",
-    "TLSv1.2-SHA2-256",
-    "TLSv1.3-SHA2-256",
-    "cSHAKE128",
-)
-
-# First-use CASTs run lazily, the first time their algorithm is used. `clickhouse-backup-fips --version`
-# may or may not exercise them, so forcing one is only expected to fail when it
-# happens to be reached.
-FIPS_FAILFIPSCAST_FIRST_USE_CASTS = (
-    "DetECDSA P-256 SHA2-512 sign",
-    "ECDH PCT",
-    "ECDSA P-256 SHA2-512 sign and verify",
-    "ECDSA PCT",
-    "Ed25519 sign and verify",
-    "Ed25519 sign and verify PCT",
-    "KAS-ECC-SSC P-256",
-    "ML-DSA sign and verify PCT",
-    "ML-DSA-44",
-    "ML-KEM PCT",
-    "ML-KEM-768",
-    "RSA sign and verify PCT",
-    "RSASSA-PKCS-v1.5 2048-bit sign and verify",
-)
-
 
 @TestScenario
 @Requirements(
@@ -1350,9 +1314,40 @@ FIPS_FAILFIPSCAST_FIRST_USE_CASTS = (
     RQ_SRS_013_ClickHouse_BackupUtility_FIPS_SelfTest_CAST_Coverage("1.0"),
 )
 @Examples(
-    "cast must_fail",
-    [(cast, True) for cast in FIPS_FAILFIPSCAST_STARTUP_CASTS]
-    + [(cast, False) for cast in FIPS_FAILFIPSCAST_FIRST_USE_CASTS],
+    "cast startup",
+    [
+        # Startup/core CASTs used during `clickhouse-backup-fips --version`. Forcing
+        # any of these via `failfipscast` must abort startup deterministically.
+        # Source: Go FIPS `allCASTs` in `crypto/internal/fips140test/cast_test.go`.
+        ("AES-CBC", True),
+        ("CTR_DRBG", True),
+        ("CounterKDF", True),
+        ("HKDF-SHA2-256", True),
+        ("HMAC-SHA2-256", True),
+        ("PBKDF2", True),
+        ("SHA2-256", True),
+        ("SHA2-512", True),
+        ("TLSv1.2-SHA2-256", True),
+        ("TLSv1.3-SHA2-256", True),
+        ("cSHAKE128", True),
+
+        # First-use CASTs run lazily, the first time their algorithm is used. `clickhouse-backup-fips --version`
+        # may or may not exercise them, so forcing one is only expected to fail when it
+        # happens to be reached.
+        ("DetECDSA P-256 SHA2-512 sign", False),
+        ("ECDH PCT", False),
+        ("ECDSA P-256 SHA2-512 sign and verify", False),
+        ("ECDSA PCT", False),
+        ("Ed25519 sign and verify", False),
+        ("Ed25519 sign and verify PCT", False),
+        ("KAS-ECC-SSC P-256", False),
+        ("ML-DSA sign and verify PCT", False),
+        ("ML-DSA-44", False),
+        ("ML-KEM PCT", False),
+        ("ML-KEM-768", False),
+        ("RSA sign and verify PCT", False),
+        ("RSASSA-PKCS-v1.5 2048-bit sign and verify", False),
+    ],
 )
 def forced_cast_failures(self):
     """Force each CAST via `failfipscast` and check `--version` behavior.
@@ -1363,11 +1358,6 @@ def forced_cast_failures(self):
     abort only happens when the CAST is actually reached; otherwise startup
     stays clean without the marker.
     """
-
-    # On a forced CAST, Go's FIPS module aborts with the stderr line:
-    # `fatal error: FIPS 140-3 self-test failed: <NAME>: simulated CAST failure`.
-    FIPS_FAILFIPSCAST_MARKER = "simulated CAST failure"
-    FIPS_FAILFIPSCAST_SELFTEST_PREFIX = "self-test failed: "
     
     with Given("a FIPS backup container is available"):
         backup_fips = require_fips_container()
@@ -1388,37 +1378,39 @@ def forced_cast_failures(self):
                 result = backup_fips.cmd(cmd, no_checks=True)
                 output = result.output or ""
 
-            with And("I parse CAST-failure markers from the command output"):
-                marker_present = FIPS_FAILFIPSCAST_MARKER in output
-                selftest_present = f"{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}" in output
+            with And("I look for the forced-CAST failure in the output"):
+                # A forced CAST aborts with Go FIPS's fatal line:
+                #   `FIPS 140-3 self-test failed: <NAME>: simulated CAST failure`.
+                cast_failed = (
+                    "simulated CAST failure" in output
+                    and f"self-test failed: {cast}" in output
+                )
 
-            # Startup CASTs must always abort; first-use CASTs abort only when
-            # `--version` happens to reach them. A forced failure is therefore
-            # expected when the CAST is a startup one or the process exited non-zero.
-            if must_fail or result.exitcode != 0:
-                with Then(f"the forced failure is reported for `{cast}`"):
-                    if must_fail:
-                        assert result.exitcode != 0, error(
-                            f"forced CAST failure expected non-zero exit for `{cast}`.\n{output}"
-                        )
-                    assert marker_present, error(
-                        f"forced CAST failure output missing "
-                        f"`{FIPS_FAILFIPSCAST_MARKER}` for `{cast}`.\n{output}"
+            # Design-time expectation: startup CASTs are always exercised by
+            # `--version`, so forcing one must report its self-test failure.
+            # We can make no claim about whether first-use CAST are reached.
+            if must_fail:
+                with Then(f"forcing startup CAST `{cast}` reports a self-test failure"):
+                    assert cast_failed, error(
+                        f"startup CAST `{cast}` was forced but no CAST failure was reported.\n{output}"
                     )
-                    assert selftest_present, error(
-                        f"forced CAST failure output missing "
-                        f"`{FIPS_FAILFIPSCAST_SELFTEST_PREFIX}{cast}`.\n{output}"
+
+            # Consistency: the failure marker and the exit code must agree. A
+            # reported failure must abort; a clean run must exit 0 and mention no
+            # CAST failure at all.
+            if cast_failed:
+                with Then(f"the forced failure for `{cast}` aborts `--version`"):
+                    assert result.exitcode != 0, error(
+                        f"`{cast}` reported a CAST failure but `--version` exited 0.\n{output}"
                     )
             else:
-                with Then(f"`{cast}` was not exercised and startup stayed clean"):
+                with Then(f"`{cast}` did not fail and startup stayed clean"):
                     assert result.exitcode == 0, error(
-                    f"first-use CAST `{cast}` exited non-zero unexpectedly.\n{output}"
+                        f"`{cast}` reported no CAST failure yet `--version` exited "
+                        f"{result.exitcode}; unexpected non-CAST abort.\n{output}"
                     )
-
-                    # first-use CASTs abort only when the CAST is actually reached; otherwise startup stays clean without the marker.
-                    assert not marker_present, error(
-                        f"first-use CAST `{cast}` showed "
-                        f"`{FIPS_FAILFIPSCAST_MARKER}` but exited 0.\n{output}"
+                    assert "simulated CAST failure" not in output, error(
+                        f"`{cast}` did not fail yet the CAST-failure marker appeared.\n{output}"
                     )
 
 
@@ -1436,11 +1428,9 @@ def acvp_tests(self):
     Opt-in: skipped unless `RUN_ACVP_TESTS=1` is set or the suite runs
     with `--stress` option.
     """
-    # ACVP wrapper scenario opt-in.
     # Set `RUN_ACVP_TESTS=1` locally or in the CI workflow to enable it.
 
     FIPS_ACVP_ENV_FLAG          = "RUN_ACVP_TESTS"
-    FIPS_ACVP_ENV_FLAG_VALUES   = ("1", "true", "yes", "on")
     # Path to the wrapper script, relative to `cluster.tests_dir`
     # (`test/testflows/clickhouse_backup`). The script is part of the ACVP wrapper 
     # and lives at the repository root.
@@ -1454,7 +1444,7 @@ def acvp_tests(self):
     flag = os.environ.get(FIPS_ACVP_ENV_FLAG, "").strip().lower()
     # `--stress` runs the full FIPS coverage, so enable ACVP tests automatically
     # there even when `RUN_ACVP_TESTS` is unset.
-    if flag not in FIPS_ACVP_ENV_FLAG_VALUES and not self.context.stress:
+    if flag != "1" and not self.context.stress:
         skip(
             f"set {FIPS_ACVP_ENV_FLAG}=1 (or run with `--stress`) to enable; "
             f"the wrapper pulls Docker images and clones upstream repos."
@@ -1464,7 +1454,7 @@ def acvp_tests(self):
     script_path = os.path.normpath(os.path.join(cluster.tests_dir, FIPS_ACVP_SCRIPT_RELPATH))
 
     if not os.path.isfile(script_path):
-        skip(f"ACVP wrapper script not found at {script_path}")
+        fail(f"ACVP wrapper script not found at {script_path}")
 
     # The wrapper drives `docker run` itself, so it must execute on the
     # host, not inside a cluster container. The first invocation pulls
