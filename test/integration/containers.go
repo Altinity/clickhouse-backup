@@ -347,10 +347,14 @@ func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout 
 		// ClickHouse depends on Keeper; a "not healthy" clickhouse is frequently a
 		// symptom of an unresponsive/restarted keeper, so dump it too.
 		tc.dumpContainerInfo(ctx, "zookeeper", testName)
-		if strings.HasPrefix(testName, "TestAzure") {
-			if _, ok := tc.containers["azure"]; ok {
-				tc.dumpContainerInfo(ctx, "azure", testName)
-			}
+		// clickhouse always mounts Azure-backed disks (disk_azblob/backups_azure) from the shared
+		// config, so ANY test that (re)starts clickhouse - not only TestAzure* - can fail to become
+		// healthy when azurite is unresponsive: clickhouse reads the disk format version over the
+		// network at table-load time and aborts startup on an Azure timeout. When the failure looks
+		// Azure-related, dump the azurite logs scoped to clickhouse's last (re)start so the azurite
+		// side of the timeout is visible (the 12m healthcheck window means "recent" logs would miss it).
+		if _, ok := tc.containers["azure"]; ok && (strings.HasPrefix(testName, "TestAzure") || tc.clickhouseFailedOnAzure(ctx)) {
+			tc.DumpContainerLogsSince(ctx, "azure", tc.containerStartedAt(ctx, "clickhouse"), testName)
 		}
 	}
 	return fmt.Errorf("container %s not healthy after %v", name, timeout)
@@ -398,6 +402,50 @@ func containerStateSummary(inspect container.InspectResponse) string {
 		state += ", finishedAt=" + inspect.State.FinishedAt
 	}
 	return state
+}
+
+// clickhouseFailedOnAzure reports whether the clickhouse container logs contain an Azure SDK
+// failure signature, meaning the unhealthy state was caused by an unresponsive azurite rather
+// than clickhouse itself. The signatures only appear in exception stack traces, never during
+// normal startup/shutdown, so this stays quiet for genuine clickhouse-only failures.
+func (tc *TestContainers) clickhouseFailedOnAzure(ctx context.Context) bool {
+	info := tc.containers["clickhouse"]
+	if info == nil {
+		return false
+	}
+	reader, err := tc.client.ContainerLogs(ctx, info.ID, container.LogsOptions{
+		ShowStdout: true, ShowStderr: true, Tail: "500",
+	})
+	if err != nil {
+		return false
+	}
+	defer func() { _ = reader.Close() }()
+	logBytes, _ := io.ReadAll(reader)
+	logs := string(logBytes)
+	for _, sig := range []string{"Azure::Core::Http", "TransportException"} {
+		if strings.Contains(logs, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+// containerStartedAt returns the container's last start time from docker inspect,
+// or the zero time if it can't be determined.
+func (tc *TestContainers) containerStartedAt(ctx context.Context, name string) time.Time {
+	info := tc.containers[name]
+	if info == nil {
+		return time.Time{}
+	}
+	inspect, err := tc.client.ContainerInspect(ctx, info.ID)
+	if err != nil || inspect.State == nil || inspect.State.StartedAt == "" {
+		return time.Time{}
+	}
+	started, err := time.Parse(time.RFC3339Nano, inspect.State.StartedAt)
+	if err != nil {
+		return time.Time{}
+	}
+	return started
 }
 
 // DumpAllContainerLogs dumps state and last 50 log lines for all containers.
