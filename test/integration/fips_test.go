@@ -88,10 +88,10 @@ func TestFIPS(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse", "bash", "-xec", "cat /etc/clickhouse-backup/config-s3-fips.yml.template | envsubst > /etc/clickhouse-backup/config-s3-fips.yml")
 
 	generateCerts("rsa", "4096", "")
-	env.queryWithNoError(r, "CREATE DATABASE "+t.Name())
+	env.queryWithNoError(t, r, "CREATE DATABASE "+t.Name())
 	createSQL := "CREATE TABLE " + t.Name() + ".fips_table (v UInt64) ENGINE=MergeTree() ORDER BY tuple()"
-	env.queryWithNoError(r, createSQL)
-	env.queryWithNoError(r, "INSERT INTO "+t.Name()+".fips_table SELECT number FROM numbers(1000)")
+	env.queryWithNoError(t, r, createSQL)
+	env.queryWithNoError(t, r, "INSERT INTO "+t.Name()+".fips_table SELECT number FROM numbers(1000)")
 	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml create_remote --tables="+t.Name()+".fips_table "+fipsBackupName)
 	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete local "+fipsBackupName)
 	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml restore_remote --tables="+t.Name()+".fips_table "+fipsBackupName)

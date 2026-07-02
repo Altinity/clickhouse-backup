@@ -14,10 +14,10 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	version, err := env.ch.GetVersion(t.Context())
 	r.NoError(err)
-	env.queryWithNoError(r, "CREATE DATABASE test_skip_tables")
-	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_tables.test_merge_tree (id UInt64, s String) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_tables.test_memory (id UInt64) ENGINE=Memory")
-	env.queryWithNoError(r, "CREATE MATERIALIZED VIEW IF NOT EXISTS test_skip_tables.test_mv (id UInt64) ENGINE=MergeTree() ORDER BY id AS SELECT id FROM test_skip_tables.test_merge_tree")
+	env.queryWithNoError(t, r, "CREATE DATABASE test_skip_tables")
+	env.queryWithNoError(t, r, "CREATE TABLE IF NOT EXISTS test_skip_tables.test_merge_tree (id UInt64, s String) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "CREATE TABLE IF NOT EXISTS test_skip_tables.test_memory (id UInt64) ENGINE=Memory")
+	env.queryWithNoError(t, r, "CREATE MATERIALIZED VIEW IF NOT EXISTS test_skip_tables.test_mv (id UInt64) ENGINE=MergeTree() ORDER BY id AS SELECT id FROM test_skip_tables.test_merge_tree")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") < 0 {
 		query := "CREATE LIVE VIEW IF NOT EXISTS test_skip_tables.test_live_view AS SELECT count() FROM test_skip_tables.test_merge_tree"
 		ctx := env.ch.AnalyzerOffContextIfNecessary(version, query)

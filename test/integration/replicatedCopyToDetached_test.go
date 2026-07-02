@@ -22,7 +22,7 @@ func TestReplicatedCopyToDetached(t *testing.T) {
 	// Create test database and table
 	dbName := "test_replicated_copy_to_detached"
 	tableName := "test_table"
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
 
 	// Create a replicated table
 	zkPath := "/clickhouse/tables/{shard}/{database}/{table}"
@@ -33,7 +33,7 @@ func TestReplicatedCopyToDetached(t *testing.T) {
 	r.NoError(env.ch.CreateTable(clickhouse.Table{Database: dbName, Name: tableName}, createSQL, false, false, "", version, "/var/lib/clickhouse", false, ""))
 
 	// Insert test data
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO %s.%s SELECT number, toString(number) FROM numbers(100)", dbName, tableName))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO %s.%s SELECT number, toString(number) FROM numbers(100)", dbName, tableName))
 
 	// Create backup
 	backupName := "test_replicated_copy_to_detached_backup"

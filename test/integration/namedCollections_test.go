@@ -84,10 +84,10 @@ func TestNamedCollections(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			backupArg := backupName + "_" + tc.name
 			// setup
-			env.queryWithNoError(r, "CREATE NAMED COLLECTION test_named_collection AS access_key_id = 'access_key', secret_access_key = 'it_is_my_super_secret_key', format = 'CSV', url = 'https://minio:9000/clickhouse/test_named_collection.csv'")
-			env.queryWithNoError(r, "CREATE DATABASE test_named_collection")
-			env.queryWithNoError(r, "CREATE TABLE test_named_collection.test_named_collection (id UInt64) ENGINE=S3(test_named_collection)")
-			env.queryWithNoError(r, "INSERT INTO test_named_collection.test_named_collection SELECT number FROM numbers(10) SETTINGS s3_truncate_on_insert=1")
+			env.queryWithNoError(t, r, "CREATE NAMED COLLECTION test_named_collection AS access_key_id = 'access_key', secret_access_key = 'it_is_my_super_secret_key', format = 'CSV', url = 'https://minio:9000/clickhouse/test_named_collection.csv'")
+			env.queryWithNoError(t, r, "CREATE DATABASE test_named_collection")
+			env.queryWithNoError(t, r, "CREATE TABLE test_named_collection.test_named_collection (id UInt64) ENGINE=S3(test_named_collection)")
+			env.queryWithNoError(t, r, "INSERT INTO test_named_collection.test_named_collection SELECT number FROM numbers(10) SETTINGS s3_truncate_on_insert=1")
 
 			envVar := ""
 			if tc.namedCollectionsEnvVar != "" {
@@ -118,7 +118,7 @@ func TestNamedCollections(t *testing.T) {
 			// cleanup before restore — drop database first because CH 26.3+ forbids
 			// DROP NAMED COLLECTION while tables referencing it exist
 			r.NoError(env.dropDatabase("test_named_collection", false))
-			env.queryWithNoError(r, "DROP NAMED COLLECTION IF EXISTS test_named_collection")
+			env.queryWithNoError(t, r, "DROP NAMED COLLECTION IF EXISTS test_named_collection")
 
 			// restore backup
 			restoreArgs := []string{"-c", "/etc/clickhouse-backup/config-s3.yml"}
@@ -162,7 +162,7 @@ func TestNamedCollections(t *testing.T) {
 			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupArg)
 			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", backupArg)
 			r.NoError(env.dropDatabase("test_named_collection", true))
-			env.queryWithNoError(r, "DROP NAMED COLLECTION IF EXISTS test_named_collection")
+			env.queryWithNoError(t, r, "DROP NAMED COLLECTION IF EXISTS test_named_collection")
 		})
 	}
 	env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/test_named_collection.csv")

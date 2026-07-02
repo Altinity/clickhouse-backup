@@ -22,7 +22,7 @@ func TestMySQLMaterialized(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.9") == -1 {
 		engine = "MaterializeMySQL"
 	}
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE ch_mysql_repl ENGINE=%s('mysql:3306','ch_mysql_repl','root','root')", engine))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE ch_mysql_repl ENGINE=%s('mysql:3306','ch_mysql_repl','root','root')", engine))
 	env.DockerExecNoError(r, "mysql", "mysql", "-u", "root", "--password=root", "-v", "-e", "CREATE TABLE ch_mysql_repl.t1 (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, s VARCHAR(255)); INSERT INTO ch_mysql_repl.t1(s) VALUES('s1'),('s2'),('s3')")
 	time.Sleep(1 * time.Second)
 

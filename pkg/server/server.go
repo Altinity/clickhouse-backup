@@ -352,12 +352,18 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			api.writeError(w, http.StatusBadRequest, string(line), err)
 			return
 		}
-		log.Info().Str("version", api.cliApp.Version).Msgf("/backup/actions call: %s", row.Command)
+		// Parse args from the raw command first so the real (unmasked) --env
+		// values are still applied on execution, then redact the command used
+		// for logging, async status storage, and API responses so sensitive
+		// --env overrides (passwords, keys, tokens) never leak.
+		//See https://github.com/Altinity/clickhouse-backup/issues/1429
 		args, err := shlex.Split(row.Command)
 		if err != nil {
 			api.writeError(w, http.StatusBadRequest, "", err)
 			return
 		}
+		row.Command = config.MaskEnvOverrideCommand(row.Command)
+		log.Info().Str("version", api.cliApp.Version).Msgf("/backup/actions call: %s", row.Command)
 		command := args[0]
 		switch command {
 		// watch command can't be run via cli app.Run, need parsing args
