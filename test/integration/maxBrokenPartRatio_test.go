@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -233,12 +234,13 @@ func maxBrokenPartRatioS3Case() maxBrokenPartRatioCase {
 		policy:       "s3_only",
 		minCHVersion: "21.8",
 		deleteObjects: func(env *TestEnvironment, r *require.Assertions, objectPaths []string) {
-			// disk_s3 endpoint is https://minio:9000/clickhouse/disk_s3/{cluster}/{shard}/
-			prefix, err := env.ch.ApplyMacros(context.Background(), "disk_s3/{cluster}/{shard}")
-			r.NoError(err, "ApplyMacros(disk_s3 prefix)")
+			// disk_s3 endpoint is https://minio:9000/clickhouse/disk_s3/{cluster}/{shard}/ but old
+			// ClickHouse (e.g. 21.8) keeps the {cluster}/{shard} endpoint macros literal, so locate each
+			// object by its unique random basename instead of constructing the prefix; `test -n` makes a
+			// missing object fail loudly instead of silently keeping the part healthy
 			cmds := []string{mcAliasCmd}
 			for _, objectPath := range objectPaths {
-				cmds = append(cmds, fmt.Sprintf("mc rm --force 'local/clickhouse/%s/%s'", prefix, objectPath))
+				cmds = append(cmds, fmt.Sprintf(`k=$(mc find local/clickhouse --name '%s') && test -n "$k" && mc rm --force $k`, path.Base(objectPath)))
 			}
 			env.DockerExecNoError(r, "minio", "bash", "-ce", strings.Join(cmds, " && "))
 		},
@@ -263,22 +265,28 @@ func maxBrokenPartRatioGCSCase() maxBrokenPartRatioCase {
 		deleteObjects: func(env *TestEnvironment, r *require.Assertions, objectPaths []string) {
 			// disk_gcs endpoint is
 			// https://storage.googleapis.com/${QA_GCS_OVER_S3_BUCKET}/clickhouse_backup_disk_gcs_over_s3/${HOSTNAME}/{cluster}/{shard}/
-			// where HOSTNAME is the clickhouse container hostname at dynamic_settings.sh time.
+			// where HOSTNAME is the clickhouse container hostname at dynamic_settings.sh time. Old
+			// ClickHouse keeps the {cluster}/{shard} endpoint macros literal, so list the host-scoped
+			// prefix once and resolve each object by its unique basename (gsutil `**` wildcards are
+			// unusably slow here), then remove the exact URLs.
 			bucket := os.Getenv("QA_GCS_OVER_S3_BUCKET")
 			hostname, err := env.DockerExecOut("clickhouse", "hostname")
 			r.NoError(err, "can't resolve clickhouse container hostname")
-			prefix, err := env.ch.ApplyMacros(context.Background(),
-				fmt.Sprintf("clickhouse_backup_disk_gcs_over_s3/%s/{cluster}/{shard}", strings.TrimSpace(hostname)))
-			r.NoError(err, "ApplyMacros(disk_gcs prefix)")
-			gsURLs := make([]string, 0, len(objectPaths))
+			expandedMacros, err := env.ch.ApplyMacros(context.Background(), "{cluster}/{shard}")
+			r.NoError(err, "ApplyMacros({cluster}/{shard})")
+			root := fmt.Sprintf("gs://%s/clickhouse_backup_disk_gcs_over_s3/%s", bucket, strings.TrimSpace(hostname))
+			// the shared QA prefix accumulates blobs from every CI run, so listing it is unusably slow;
+			// remove exact URLs instead, trying the expanded macros first and the literal ones as fallback
+			cmds := make([]string, 0, len(objectPaths))
 			for _, objectPath := range objectPaths {
-				gsURLs = append(gsURLs, fmt.Sprintf("'gs://%s/%s/%s'", bucket, prefix, objectPath))
+				cmds = append(cmds, fmt.Sprintf("{ gsutil -q rm '%s/%s/%s' || gsutil -q rm '%s/{cluster}/{shard}/%s'; }",
+					root, expandedMacros, objectPath, root, objectPath))
 			}
 			out, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker",
 				"run", "--rm", "--network", env.tc.networkName,
 				"--volumes-from", env.tc.GetContainerID("clickhouse-backup"),
 				"-e", "GOOGLE_APPLICATION_CREDENTIALS=/etc/clickhouse-backup/credentials.json",
-				image, "bash", "-c", authPrefix+"gsutil -q rm "+strings.Join(gsURLs, " "),
+				image, "bash", "-ce", authPrefix+strings.Join(cmds, " && "),
 			)
 			r.NoError(err, "gsutil rm failed: %s", out)
 		},
