@@ -259,6 +259,8 @@ func testAPIBackupActions(r *require.Assertions, env *TestEnvironment) {
 		"clickhouse_backup_last_create_remote_status 1",
 		"clickhouse_backup_last_create_status 1",
 		"clickhouse_backup_last_upload_status 1",
+		// no broken parts tolerated in this backup, see https://github.com/Altinity/clickhouse-backup/issues/1418
+		"clickhouse_backup_failed_parts_count 0",
 	)
 
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{"delete local actions_backup1", "restore_remote --rm actions_backup1"}, true)
