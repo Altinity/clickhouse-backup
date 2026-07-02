@@ -35,7 +35,7 @@ func TestServerAPI(t *testing.T) {
 	maxTables := 10
 	minFields := 10
 	randFields := 10
-	fillDatabaseForAPIServer(maxTables, minFields, randFields, env, r, fieldTypes)
+	fillDatabaseForAPIServer(t, maxTables, minFields, randFields, env, r, fieldTypes)
 	// drop long_schema even if the test fails midway, otherwise the leaked tables
 	// poison the pooled env for the next test (e.g. TestForceRebalance startup load)
 	defer func() {
@@ -62,15 +62,15 @@ func TestServerAPI(t *testing.T) {
 
 	testAPIBackupRestoreRemote(r, env)
 
-	testAPIRebindReplicaPath(r, env)
+	testAPIRebindReplicaPath(t, r, env)
 
-	testAPIBackupStatus(r, env)
+	testAPIBackupStatus(t, r, env)
 
 	testAPIBackupList(t, r, env)
 
 	testAPIDeleteLocalDownloadRestore(r, env)
 
-	testAPISkipEmptyTables(r, env)
+	testAPISkipEmptyTables(t, r, env)
 
 	testAPIMetrics(r, env)
 
@@ -84,7 +84,7 @@ func TestServerAPI(t *testing.T) {
 
 	testAPIBackupClean(r, env)
 
-	testAPIBackupActionsSkipCommands(r, env)
+	testAPIBackupActionsSkipCommands(t, r, env)
 
 	env.DockerExecNoError(r, "clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
 }
@@ -159,23 +159,23 @@ XML
 	}
 	r.NoError(env.dropDatabase(dbName, true))
 
-	env.queryWithNoError(r, "CREATE DATABASE "+dbName)
-	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64, p UInt8) ENGINE=MergeTree() PARTITION BY p ORDER BY id SETTINGS storage_policy='skip_disk_tiered'")
+	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
+	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64, p UInt8) ENGINE=MergeTree() PARTITION BY p ORDER BY id SETTINGS storage_policy='skip_disk_tiered'")
 	// Partition 1 lands on the hot (default) disk.
-	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number, 1 FROM numbers(100)")
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+"."+tableName+" SELECT number, 1 FROM numbers(100)")
 
 	// Parent (full) backup: partition 1 is on hot, captured normally. No parent => skip_disks bug can't fire here.
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--tables="+dbName+".*", fullBackup)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", fullBackup)
 
 	// Move partition 1 to the cold (skipped) object disk, as past-TTL tiering would.
-	env.queryWithNoError(r, "ALTER TABLE "+dbName+"."+tableName+" MOVE PARTITION 1 TO VOLUME 'cold'")
+	env.queryWithNoError(t, r, "ALTER TABLE "+dbName+"."+tableName+" MOVE PARTITION 1 TO VOLUME 'cold'")
 	var coldParts uint64
 	r.NoError(env.ch.SelectSingleRowNoCtx(&coldParts, "SELECT count() FROM system.parts WHERE active AND database='"+dbName+"' AND `table`='"+tableName+"' AND disk_name LIKE 's3_cold%'"))
 	r.Equal(uint64(1), coldParts, "partition 1 should live on the cold s3 disk after MOVE PARTITION TO VOLUME 'cold'")
 
 	// A new partition lands on hot, giving the increment real work on a non-skipped disk.
-	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number, 2 FROM numbers(50)")
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+"."+tableName+" SELECT number, 2 FROM numbers(50)")
 
 	// Incremental backup with the cold disk skipped — same CreateToRemote(diffFromRemote) path `watch` uses.
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
@@ -207,7 +207,7 @@ XML
 	// the increment and is NOT inherited from the parent (full) backup on restore.
 	// This is the desired semantics — the cold tier is expected to stay durable in
 	// its own object storage, outside clickhouse-backup.
-	env.queryWithNoError(r, "DROP TABLE "+dbName+"."+tableName+" SYNC")
+	env.queryWithNoError(t, r, "DROP TABLE "+dbName+"."+tableName+" SYNC")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", incrBackup)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore_remote", "--rm", incrBackup)
 	env.checkCount(r, 1, 50, "SELECT count() FROM "+dbName+"."+tableName)
@@ -238,9 +238,9 @@ func testAPIRestart(r *require.Assertions, env *TestEnvironment) {
 	r.Equal(uint64(0), inProgressActions)
 }
 
-func testAPIBackupStatus(r *require.Assertions, env *TestEnvironment) {
+func testAPIBackupStatus(t *testing.T, r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Check system.backup_actions with /backup/actions call")
-	env.queryWithNoError(r, "SELECT count() FROM system.backup_actions")
+	env.queryWithNoError(t, r, "SELECT count() FROM system.backup_actions")
 
 	out, err := env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/backup/status")
 	r.NoError(err, "/backup/status unexpected error: %v", err)
@@ -400,7 +400,7 @@ func testAPIBackupClean(r *require.Assertions, env *TestEnvironment) {
 // testAPIBackupActionsSkipCommands verifies https://github.com/Altinity/clickhouse-backup/issues/1359
 // when api.backup_actions_skip_commands contains "list", neither GET /backup/list nor
 // INSERT INTO system.backup_actions ('list ...') must produce rows in system.backup_actions.
-func testAPIBackupActionsSkipCommands(r *require.Assertions, env *TestEnvironment) {
+func testAPIBackupActionsSkipCommands(t *testing.T, r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Check api.backup_actions_skip_commands excludes 'list' from system.backup_actions")
 
 	// Restart deterministically: kill the previous `server --watch`, wait until it
@@ -428,7 +428,7 @@ func testAPIBackupActionsSkipCommands(r *require.Assertions, env *TestEnvironmen
 	// system.backup_list is a URL table engine pointing at GET /backup/list,
 	// so this also exercises the skip path through ClickHouse itself.
 	for i := 0; i < 3; i++ {
-		env.queryWithNoError(r, "SELECT * FROM system.backup_list FORMAT Null")
+		env.queryWithNoError(t, r, "SELECT * FROM system.backup_list FORMAT Null")
 	}
 	time.Sleep(2 * time.Second)
 
@@ -567,16 +567,16 @@ func testAPIDeleteLocalDownloadRestore(r *require.Assertions, env *TestEnvironme
 
 // testAPISkipEmptyTables tests the skip-empty-tables query parameter for restore and restore_remote API endpoints
 // https://github.com/Altinity/clickhouse-backup/issues/1265
-func testAPISkipEmptyTables(r *require.Assertions, env *TestEnvironment) {
+func testAPISkipEmptyTables(t *testing.T, r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Check /backup/restore and /backup/restore_remote with skip-empty-tables parameter")
 
 	backupName := "api_skip_empty_backup"
 
 	// Create test database with tables - one with data and one empty
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS test_api_skip_empty")
-	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_api_skip_empty.table_with_data (id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_api_skip_empty.empty_table (id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "INSERT INTO test_api_skip_empty.table_with_data SELECT number FROM numbers(50)")
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS test_api_skip_empty")
+	env.queryWithNoError(t, r, "CREATE TABLE IF NOT EXISTS test_api_skip_empty.table_with_data (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "CREATE TABLE IF NOT EXISTS test_api_skip_empty.empty_table (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "INSERT INTO test_api_skip_empty.table_with_data SELECT number FROM numbers(50)")
 
 	// Create and upload backup via API
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/create?name=%s'", backupName))
@@ -783,7 +783,7 @@ func testAPIBackupTablesLocal(r *require.Assertions, env *TestEnvironment) {
 //
 //	flag off => restore JOINS the existing shared path (HA-safe default)
 //	flag on  => restore REBINDS to clickhouse.default_replica_path
-func testAPIRebindReplicaPath(r *require.Assertions, env *TestEnvironment) {
+func testAPIRebindReplicaPath(t *testing.T, r *require.Assertions, env *TestEnvironment) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") < 0 {
 		log.Info().Msgf("testAPIRebindReplicaPath skipped, requires ClickHouse >= 20.8 for synchronous `DROP TABLE ... NO DELAY`, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
 		return
@@ -796,9 +796,9 @@ func testAPIRebindReplicaPath(r *require.Assertions, env *TestEnvironment) {
 	const sharedPath = "/clickhouse/tables/api_rebind_path"
 	const backupName = "api_rebind_backup"
 
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE default.api_rebind_occupant (id UInt64) ENGINE=ReplicatedMergeTree('%s','other-replica') ORDER BY id", sharedPath))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE default.api_test_rebind_path (id UInt64) ENGINE=ReplicatedMergeTree('%s','{replica}') ORDER BY id", sharedPath))
-	env.queryWithNoError(r, "INSERT INTO default.api_test_rebind_path SELECT number FROM numbers(10)")
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE default.api_rebind_occupant (id UInt64) ENGINE=ReplicatedMergeTree('%s','other-replica') ORDER BY id", sharedPath))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE default.api_test_rebind_path (id UInt64) ENGINE=ReplicatedMergeTree('%s','{replica}') ORDER BY id", sharedPath))
+	env.queryWithNoError(t, r, "INSERT INTO default.api_test_rebind_path SELECT number FROM numbers(10)")
 
 	expectedDefaultPath := "/clickhouse/tables/{cluster}/{shard}/{database}/{table}"
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") < 0 || compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") > 0 {
@@ -819,10 +819,10 @@ func testAPIRebindReplicaPath(r *require.Assertions, env *TestEnvironment) {
 
 	// DETACH the occupant: it leaves system.replicas but its ZK path/replica entry stays alive,
 	// so no local table occupies sharedPath (the remote-sibling / stale-leftovers state).
-	env.queryWithNoError(r, "DETACH TABLE default.api_rebind_occupant")
+	env.queryWithNoError(t, r, "DETACH TABLE default.api_rebind_occupant")
 
 	restoreSchemaViaAPI := func(extraQuery string) {
-		env.queryWithNoError(r, "DROP TABLE default.api_test_rebind_path"+dropSuffix)
+		env.queryWithNoError(t, r, "DROP TABLE default.api_test_rebind_path"+dropSuffix)
 		url := fmt.Sprintf("http://localhost:7171/backup/restore/%s?schema=1&table=default.api_test_rebind_path%s", backupName, extraQuery)
 		restoreOut, restoreErr := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST '%s'", url))
 		r.NoError(restoreErr, "%s\nunexpected POST /backup/restore error: %v", restoreOut, restoreErr)
@@ -846,9 +846,9 @@ func testAPIRebindReplicaPath(r *require.Assertions, env *TestEnvironment) {
 
 	// cleanup: drop the restored table, re-attach the occupant so the synchronous drop can deregister its ZK entry,
 	// then drop the occupant and the local backup.
-	env.queryWithNoError(r, "DROP TABLE default.api_test_rebind_path"+dropSuffix)
-	env.queryWithNoError(r, "ATTACH TABLE default.api_rebind_occupant")
-	env.queryWithNoError(r, "DROP TABLE default.api_rebind_occupant"+dropSuffix)
+	env.queryWithNoError(t, r, "DROP TABLE default.api_test_rebind_path"+dropSuffix)
+	env.queryWithNoError(t, r, "ATTACH TABLE default.api_rebind_occupant")
+	env.queryWithNoError(t, r, "DROP TABLE default.api_rebind_occupant"+dropSuffix)
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/local/%s'", backupName))
 	r.NoError(err, "%s\nunexpected POST /backup/delete/local error: %v", out, err)
 }
@@ -956,9 +956,9 @@ func waitForAPIMetricsContains(r *require.Assertions, env *TestEnvironment, time
 	}
 }
 
-func fillDatabaseForAPIServer(maxTables int, minFields int, randFields int, ch *TestEnvironment, r *require.Assertions, fieldTypes []string) {
+func fillDatabaseForAPIServer(t *testing.T, maxTables int, minFields int, randFields int, ch *TestEnvironment, r *require.Assertions, fieldTypes []string) {
 	log.Debug().Msgf("Create %d `long_schema`.`t%%d` tables with with %d..%d fields...", maxTables, minFields, minFields+randFields)
-	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS long_schema")
+	ch.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS long_schema")
 	for i := 0; i < maxTables; i++ {
 		sql := fmt.Sprintf("CREATE TABLE long_schema.t%d (id UInt64", i)
 		fieldsCount := minFields + rand.Intn(randFields)
@@ -967,9 +967,9 @@ func fillDatabaseForAPIServer(maxTables int, minFields int, randFields int, ch *
 			sql += fmt.Sprintf(", f%d %s", j, fieldType)
 		}
 		sql += ") ENGINE=MergeTree() ORDER BY id"
-		ch.queryWithNoError(r, sql)
+		ch.queryWithNoError(t, r, sql)
 		sql = fmt.Sprintf("INSERT INTO long_schema.t%d(id) SELECT number FROM numbers(100)", i)
-		ch.queryWithNoError(r, sql)
+		ch.queryWithNoError(t, r, sql)
 	}
 	log.Debug().Msg("...DONE")
 }

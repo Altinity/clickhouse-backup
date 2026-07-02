@@ -27,13 +27,13 @@ func TestRestoreMutationInProgress(t *testing.T) {
 		onCluster = " ON CLUSTER '{cluster}'"
 	}
 	createDbSQL := "CREATE DATABASE IF NOT EXISTS " + t.Name()
-	env.queryWithNoError(r, createDbSQL)
+	env.queryWithNoError(t, r, createDbSQL)
 	version, err := env.ch.GetVersion(t.Context())
 	r.NoError(err)
 
 	createSQL := fmt.Sprintf("CREATE TABLE %s.test_restore_mutation_in_progress %s (id UInt64, attr String) ENGINE=ReplicatedMergeTree('%s','{replica}') PARTITION BY id ORDER BY id", t.Name(), onCluster, zkPath)
-	env.queryWithNoError(r, createSQL)
-	env.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_restore_mutation_in_progress SELECT number, if(number>0,'a',toString(number)) FROM numbers(2)")
+	env.queryWithNoError(t, r, createSQL)
+	env.queryWithNoError(t, r, "INSERT INTO "+t.Name()+".test_restore_mutation_in_progress SELECT number, if(number>0,'a',toString(number)) FROM numbers(2)")
 
 	mutationSQL := "ALTER TABLE " + t.Name() + ".test_restore_mutation_in_progress MODIFY COLUMN attr UInt64"
 	err = env.ch.QueryContext(t.Context(), mutationSQL)

@@ -19,9 +19,9 @@ func TestRestoreAsAttach(t *testing.T) {
 	// Create test database and table
 	dbName := "test_restore_as_attach"
 	tableName := "test_table"
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
-	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64, value String) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number, toString(number) FROM numbers(100)")
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64, value String) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+"."+tableName+" SELECT number, toString(number) FROM numbers(100)")
 
 	// Create backup
 	backupName := "test_restore_as_attach_backup"
@@ -33,7 +33,7 @@ func TestRestoreAsAttach(t *testing.T) {
 	r.Equal(uint64(100), rowCount)
 
 	// Drop table and database
-	env.queryWithNoError(r, "DROP TABLE "+dbName+"."+tableName+" SYNC")
+	env.queryWithNoError(t, r, "DROP TABLE "+dbName+"."+tableName+" SYNC")
 	r.NoError(env.dropDatabase(dbName, false))
 
 	// Restore using --restore-schema-as-attach + restore_schema_on_cluster

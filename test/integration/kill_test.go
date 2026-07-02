@@ -32,14 +32,14 @@ func TestKill(t *testing.T) {
 	const backupName = "kill_test_backup"
 
 	r.NoError(env.dropDatabase(dbName, true))
-	env.queryWithNoError(r, "CREATE DATABASE "+dbName)
+	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
 	// Many partitions => many upload chunks => upload stays in-progress
 	// long enough for the test to observe and kill it.
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE %s.t1 (id UInt64, s String) ENGINE=MergeTree() PARTITION BY (id %% 64) ORDER BY id",
 		dbName))
 	payload := strings.Repeat("x", 2048)
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"INSERT INTO %s.t1 SELECT number, '%s' FROM numbers(800000)", dbName, payload))
 
 	log.Debug().Msg("start clickhouse-backup server with UPLOAD_CONCURRENCY=1 in background")
@@ -155,7 +155,7 @@ func TestKillDownload(t *testing.T) {
 	const dbName = "kill_download_db"
 	const backupName = "kill_download_backup"
 
-	killSetupTable(r, env, dbName)
+	killSetupTable(t, r, env, dbName)
 
 	log.Debug().Msg("start clickhouse-backup server for TestKillDownload")
 	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce",
@@ -202,7 +202,7 @@ func TestKillCreate(t *testing.T) {
 	const dbName = "kill_create_db"
 	const backupName = "kill_create_backup"
 
-	killSetupTable(r, env, dbName)
+	killSetupTable(t, r, env, dbName)
 
 	log.Debug().Msg("start clickhouse-backup server for TestKillCreate")
 	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce",
@@ -239,7 +239,7 @@ func TestKillRestore(t *testing.T) {
 	const dbName = "kill_restore_db"
 	const backupName = "kill_restore_backup"
 
-	killSetupTable(r, env, dbName)
+	killSetupTable(t, r, env, dbName)
 
 	log.Debug().Msg("start clickhouse-backup server for TestKillRestore")
 	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce",
@@ -262,7 +262,7 @@ func TestKillRestore(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.1") >= 0 {
 		dropSQL += " SYNC"
 	}
-	env.queryWithNoError(r, dropSQL)
+	env.queryWithNoError(t, r, dropSQL)
 
 	// start happens inside observeInProgressAndKill so a fast restore cannot
 	// finish before the kill is issued.
@@ -339,15 +339,15 @@ func runActionWait(r *require.Assertions, env *TestEnvironment, command, cmdPref
 // payload generated on the Go side keeps the tar archive large enough that
 // create/upload/download/restore remain observably in-progress long enough to
 // be killed mid-flight.
-func killSetupTable(r *require.Assertions, env *TestEnvironment, dbName string) {
+func killSetupTable(t *testing.T, r *require.Assertions, env *TestEnvironment, dbName string) {
 	r.NoError(env.dropDatabase(dbName, true))
-	env.queryWithNoError(r, "CREATE DATABASE "+dbName)
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE %s.t1 (id UInt64, s String) ENGINE=MergeTree() PARTITION BY (id %% 100) ORDER BY id",
 		dbName))
 	// 10000 rows / 100 partitions = 100 rows per partition * 1KiB ≈ 100KiB each.
 	payload := strings.Repeat("x", 1024)
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"INSERT INTO %s.t1 SELECT number, '%s' FROM numbers(10000)", dbName, payload))
 }
 

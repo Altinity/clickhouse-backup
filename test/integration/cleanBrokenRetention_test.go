@@ -110,7 +110,7 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 	}
 
 	tableName := fmt.Sprintf("default.clean_broken_retention_%s", strings.ToLower(tc.name))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s(id UInt64) ENGINE=MergeTree() ORDER BY id", tableName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s(id UInt64) ENGINE=MergeTree() ORDER BY id", tableName))
 	t.Cleanup(func() {
 		dropQ := "DROP TABLE IF EXISTS " + tableName
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") > 0 {
@@ -120,7 +120,7 @@ func runCleanBrokenRetentionScenario(t *testing.T, tc cleanBrokenRetentionCase) 
 			log.Warn().Err(err).Str("table", tableName).Msg("t.Cleanup: failed to drop table")
 		}
 	})
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO %s SELECT number FROM numbers(50)", tableName))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO %s SELECT number FROM numbers(50)", tableName))
 
 	suffix := time.Now().UnixNano()
 	keepBackup := fmt.Sprintf("cbr_keep_%s_%d", chVer, suffix)
