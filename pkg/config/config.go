@@ -14,6 +14,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/google/shlex"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
@@ -23,7 +24,24 @@ import (
 
 const (
 	DefaultConfigPath = "/etc/clickhouse-backup/config.yml"
+	maskedEnvValue    = "[MASKED]"
 )
+
+var sensitiveEnvNameTokens = []string{
+	"PASSWORD",
+	"SECRET",
+	"ACCESS_KEY",
+	"SECRET_KEY",
+	"ACCOUNT_KEY",
+	"SSE_KEY",
+	"SSE_CUSTOMER_KEY",
+	"ENCRYPTION_KEY",
+	"TOKEN",
+	"CREDENTIAL",
+	"PRIVATE_KEY",
+	"SAS",
+	"CONNECTION_STRING",
+}
 
 // Config - config file format
 type Config struct {
@@ -921,6 +939,74 @@ type oldEnvValues struct {
 	WasPresent bool
 }
 
+func maskSensitiveEnvValue(name, value string) string {
+	upperName := strings.ToUpper(name)
+	for _, token := range sensitiveEnvNameTokens {
+		if strings.Contains(upperName, token) {
+			return maskedEnvValue
+		}
+	}
+	return value
+}
+
+var envOverrideFlagPrefixes = []string{
+	"--environment-override=",
+	"--env=",
+	"-environment-override=",
+	"-env=",
+}
+
+var envOverrideFlagNames = []string{
+	"--environment-override",
+	"--env",
+	"-environment-override",
+	"-env",
+}
+
+// MaskEnvOverrideCommand redacts sensitive values embedded in a command string
+// via the global --env/--environment-override flag before it is logged, stored
+// in the async status list, or echoed back in an API response. Only the value
+// part of a sensitive NAME=VALUE override is replaced; the rest of the command
+// (including non-sensitive overrides and positional arguments) is preserved
+// verbatim. The returned string is display-only and must not be re-executed.
+func MaskEnvOverrideCommand(command string) string {
+	args, err := shlex.Split(command)
+	if err != nil {
+		return command
+	}
+	masked := command
+	for i := 0; i < len(args); i++ {
+		payload, ok := "", false
+		for _, prefix := range envOverrideFlagPrefixes {
+			if strings.HasPrefix(args[i], prefix) {
+				payload, ok = args[i][len(prefix):], true
+				break
+			}
+		}
+		if !ok {
+			for _, name := range envOverrideFlagNames {
+				if args[i] == name && i+1 < len(args) {
+					payload, ok = args[i+1], true
+					break
+				}
+			}
+		}
+		if !ok {
+			continue
+		}
+		eq := strings.Index(payload, "=")
+		if eq <= 0 {
+			continue
+		}
+		name, value := payload[:eq], payload[eq+1:]
+		if value == "" || maskSensitiveEnvValue(name, value) != maskedEnvValue {
+			continue
+		}
+		masked = strings.Replace(masked, payload, name+"="+maskedEnvValue, 1)
+	}
+	return masked
+}
+
 func OverrideEnvVars(ctx *cli.Context) map[string]oldEnvValues {
 	env := ctx.StringSlice("env")
 	oldValues := map[string]oldEnvValues{}
@@ -947,14 +1033,14 @@ func OverrideEnvVars(ctx *cli.Context) map[string]oldEnvValues {
 		})
 
 		processEnvFromCli(func(envVariable []string) {
-			log.Info().Msgf("override %s=%s", envVariable[0], envVariable[1])
+			log.Info().Msgf("override %s=%s", envVariable[0], maskSensitiveEnvValue(envVariable[0], envVariable[1]))
 			oldValue, wasPresent := os.LookupEnv(envVariable[0])
 			oldValues[envVariable[0]] = oldEnvValues{
 				OldValue:   oldValue,
 				WasPresent: wasPresent,
 			}
 			if err := os.Setenv(envVariable[0], envVariable[1]); err != nil {
-				log.Warn().Msgf("can't override %s=%s, error: %v", envVariable[0], envVariable[1], err)
+				log.Warn().Msgf("can't override %s=%s, error: %v", envVariable[0], maskSensitiveEnvValue(envVariable[0], envVariable[1]), err)
 			}
 		})
 	}

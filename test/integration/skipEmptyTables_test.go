@@ -18,10 +18,10 @@ func TestSkipEmptyTables(t *testing.T) {
 	_ = env.dropDatabase("test_skip_empty", true)
 
 	// Create test database with tables - one with data and one empty
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS test_skip_empty")
-	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_empty.table_with_data (id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_empty.empty_table (id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "INSERT INTO test_skip_empty.table_with_data SELECT number FROM numbers(100)")
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS test_skip_empty")
+	env.queryWithNoError(t, r, "CREATE TABLE IF NOT EXISTS test_skip_empty.table_with_data (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "CREATE TABLE IF NOT EXISTS test_skip_empty.empty_table (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "INSERT INTO test_skip_empty.table_with_data SELECT number FROM numbers(100)")
 
 	// Create backup
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "test_skip_empty_backup")

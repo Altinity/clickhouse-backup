@@ -81,10 +81,10 @@ func runRestoreResolveIncrementScenario(t *testing.T, r *require.Assertions, env
 	}
 	r.NoError(env.dropDatabase(dbName, true))
 
-	env.queryWithNoError(r, "CREATE DATABASE "+dbName)
-	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "SYSTEM STOP MERGES "+dbName+"."+tableName)
-	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number FROM numbers(100)")
+	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
+	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "SYSTEM STOP MERGES "+dbName+"."+tableName)
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+"."+tableName+" SELECT number FROM numbers(100)")
 
 	if fullRemote {
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+tc.configFile, "create_remote", "--delete-source", "--tables="+dbName+".*", fullBackup)
@@ -92,14 +92,14 @@ func runRestoreResolveIncrementScenario(t *testing.T, r *require.Assertions, env
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+tc.configFile, "create", "--tables="+dbName+".*", fullBackup)
 	}
 
-	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number+100 FROM numbers(100)")
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+"."+tableName+" SELECT number+100 FROM numbers(100)")
 	if fullRemote {
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+tc.configFile, "create_remote", "--delete-source", "--diff-from-remote="+fullBackup, "--tables="+dbName+".*", increment1Backup)
 	} else {
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+tc.configFile, "create_remote", "--delete-source", "--diff-from="+fullBackup, "--tables="+dbName+".*", increment1Backup)
 	}
 
-	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number+200 FROM numbers(100)")
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+"."+tableName+" SELECT number+200 FROM numbers(100)")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+tc.configFile, "create_remote", "--delete-source", "--diff-from-remote="+increment1Backup, "--tables="+dbName+".*", increment2Backup)
 
 	tc.copyRemote(t, r, env, tc.configFile, increment2Backup)
@@ -109,7 +109,7 @@ func runRestoreResolveIncrementScenario(t *testing.T, r *require.Assertions, env
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.1") >= 0 {
 		dropSQL += " SYNC"
 	}
-	env.queryWithNoError(r, dropSQL)
+	env.queryWithNoError(t, r, dropSQL)
 	restoreOut, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("LOG_LEVEL=debug clickhouse-backup -c /etc/clickhouse-backup/%s restore --rm --tables=%s.%s %s 2>&1", tc.configFile, dbName, tableName, increment2Backup))
 	r.NoError(err, restoreOut)
 	r.Contains(restoreOut, "restore required part download")

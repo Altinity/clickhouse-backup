@@ -699,13 +699,14 @@ func (env *TestEnvironment) connect(t *testing.T, timeOut string) error {
 
 // Query and data methods
 
-func (env *TestEnvironment) queryWithNoError(r *require.Assertions, query string, args ...interface{}) {
+func (env *TestEnvironment) queryWithNoError(t *testing.T, r *require.Assertions, query string, args ...interface{}) {
+	t.Helper()
 	startedAt := time.Now()
 	err := env.ch.Query(query, args...)
 	if err != nil {
 		log.Error().Err(err).Msgf("queryWithNoError(%s) error", query)
 		if env.tc != nil {
-			env.tc.DumpContainerLogsSince(context.Background(), "clickhouse", startedAt)
+			env.tc.DumpContainerLogsSince(context.Background(), "clickhouse", t.Name(), startedAt)
 		}
 	}
 	r.NoError(err)
@@ -1392,17 +1393,17 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	}()
 	fillTables := func(partitions []string) {
 		for _, dt := range partitions {
-			env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t1(dt, v) SELECT '%s', number FROM numbers(10)", dt))
-			env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t2(dt, v) SELECT '%s', number FROM numbers(10)", dt))
+			env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO "+dbName+".t1(dt, v) SELECT '%s', number FROM numbers(10)", dt))
+			env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO "+dbName+".t2(dt, v) SELECT '%s', number FROM numbers(10)", dt))
 		}
 	}
 	createAndFillTables := func() {
 		log.Debug().Msg("Create and fill tables")
-		env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
-		env.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t1")
-		env.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t2")
-		env.queryWithNoError(r, "CREATE TABLE "+dbName+".t1 (dt Date, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, toYYYYMMDD(dt)) ORDER BY dt")
-		env.queryWithNoError(r, "CREATE TABLE "+dbName+".t2 (dt String, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, dt) ORDER BY dt")
+		env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+		env.queryWithNoError(t, r, "DROP TABLE IF EXISTS "+dbName+".t1")
+		env.queryWithNoError(t, r, "DROP TABLE IF EXISTS "+dbName+".t2")
+		env.queryWithNoError(t, r, "CREATE TABLE "+dbName+".t1 (dt Date, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, toYYYYMMDD(dt)) ORDER BY dt")
+		env.queryWithNoError(t, r, "CREATE TABLE "+dbName+".t2 (dt String, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, dt) ORDER BY dt")
 		fillTables([]string{"2022-01-01", "2022-01-02", "2022-01-03", "2022-01-04"})
 	}
 	createAndFillTables()

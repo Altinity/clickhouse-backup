@@ -343,12 +343,62 @@ func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout 
 		time.Sleep(2 * time.Second)
 	}
 	tc.dumpContainerInfo(ctx, name)
-	if name == "clickhouse" && strings.HasPrefix(testName, "TestAzure") {
-		if _, ok := tc.containers["azure"]; ok {
-			tc.dumpContainerInfo(ctx, "azure")
+	// clickhouse always mounts Azure-backed disks (disk_azblob/backups_azure) from the shared
+	// config, so ANY test that (re)starts clickhouse - not only TestAzure* - can fail to become
+	// healthy when azurite is unresponsive: clickhouse reads the disk format version over the
+	// network at table-load time and aborts startup on an Azure timeout. When the failure looks
+	// Azure-related, dump the azurite logs scoped to clickhouse's last (re)start so the azurite
+	// side of the timeout is visible (the 12m healthcheck window means "recent" logs would miss it).
+	if name == "clickhouse" {
+		if _, ok := tc.containers["azure"]; ok && (strings.HasPrefix(testName, "TestAzure") || tc.clickhouseFailedOnAzure(ctx)) {
+			tc.DumpContainerLogsSince(ctx, "azure", testName, tc.containerStartedAt(ctx, "clickhouse"))
 		}
 	}
 	return fmt.Errorf("container %s not healthy after %v", name, timeout)
+}
+
+// clickhouseFailedOnAzure reports whether the clickhouse container logs contain an Azure SDK
+// failure signature, meaning the unhealthy state was caused by an unresponsive azurite rather
+// than clickhouse itself. The signatures only appear in exception stack traces, never during
+// normal startup/shutdown, so this stays quiet for genuine clickhouse-only failures.
+func (tc *TestContainers) clickhouseFailedOnAzure(ctx context.Context) bool {
+	info := tc.containers["clickhouse"]
+	if info == nil {
+		return false
+	}
+	reader, err := tc.client.ContainerLogs(ctx, info.ID, container.LogsOptions{
+		ShowStdout: true, ShowStderr: true, Tail: "500",
+	})
+	if err != nil {
+		return false
+	}
+	defer func() { _ = reader.Close() }()
+	logBytes, _ := io.ReadAll(reader)
+	logs := string(logBytes)
+	for _, sig := range []string{"Azure::Core::Http", "TransportException"} {
+		if strings.Contains(logs, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+// containerStartedAt returns the container's last start time from docker inspect,
+// or the zero time if it can't be determined.
+func (tc *TestContainers) containerStartedAt(ctx context.Context, name string) time.Time {
+	info := tc.containers[name]
+	if info == nil {
+		return time.Time{}
+	}
+	inspect, err := tc.client.ContainerInspect(ctx, info.ID)
+	if err != nil || inspect.State == nil || inspect.State.StartedAt == "" {
+		return time.Time{}
+	}
+	started, err := time.Parse(time.RFC3339Nano, inspect.State.StartedAt)
+	if err != nil {
+		return time.Time{}
+	}
+	return started
 }
 
 // DumpAllContainerLogs dumps state and last 50 log lines for all containers.
@@ -368,8 +418,14 @@ func (tc *TestContainers) DumpAllContainerLogs(ctx context.Context) {
 // DumpContainerLogsSince dumps state and logs for a single container limited to a time window.
 // Used to provide focused diagnostics when a query fails — we only want logs from the moment the
 // query started, not the entire test history. A small look-back buffer is added to catch
-// shutdown/restart messages that may precede the failure.
-func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name string, since time.Time) {
+// shutdown/restart messages that may precede the failure. testName prefixes every emitted line so
+// the dump is attributable to the failing test in interleaved parallel CI output (pass "" when the
+// caller has no test name to hand).
+func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name, testName string, since time.Time) {
+	prefix := ""
+	if testName != "" {
+		prefix = "[" + testName + "] "
+	}
 	info := tc.containers[name]
 	if info == nil {
 		return
@@ -402,7 +458,7 @@ func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name strin
 		since = time.Now()
 	}
 	since = since.Add(-30 * time.Second)
-	log.Error().Msgf("=== container %s (%s) state: %s ===", name, info.ID[:12], state)
+	log.Error().Msgf("=== %scontainer %s (%s) state: %s ===", prefix, name, info.ID[:12], state)
 
 	logOpts := container.LogsOptions{
 		ShowStdout: true,
@@ -421,7 +477,38 @@ func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name strin
 		}
 	}()
 	logBytes, _ := io.ReadAll(reader)
-	log.Error().Msgf("=== %s logs since %s ===\n%s", name, since.Format(time.RFC3339), string(logBytes))
+	logText := string(logBytes)
+	if name == "azure" {
+		logText = filterAzuriteNoise(logText)
+	}
+	log.Error().Msgf("=== %s%s logs since %s ===\n%s", prefix, name, since.Format(time.RFC3339), logText)
+}
+
+// filterAzuriteNoise drops azurite's idle background-maintenance chatter (blob/queue GC mark-sweep
+// loops, per-extent skip lines, account re-init) so the request/error lines that explain a
+// clickhouse-to-azurite timeout are not buried under thousands of debug lines. Non-azurite logs
+// never contain these markers, so this is a no-op for them.
+func filterAzuriteNoise(logText string) string {
+	noise := []string{
+		"GCManager",
+		"FSExtentStore:deleteExtents",
+		"AccountDataStore:init",
+	}
+	lines := strings.Split(logText, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		drop := false
+		for _, marker := range noise {
+			if strings.Contains(line, marker) {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
 }
 
 func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {

@@ -29,8 +29,8 @@ func TestSlashesInDatabaseAndTableNamesAndTableQuery(t *testing.T) {
 	tableName := `z\z2/z3`
 	createSchemaSQL := "(`s`" + ` String DEFAULT replaceRegexpAll('test', '(\\\\=|\\\\\\\\)', '\\\\\\\\\\\\1')) ENGINE = MergeTree ORDER BY s`
 	createTableSQL := fmt.Sprintf("CREATE TABLE `%s`.`%s` "+createSchemaSQL, dbName, tableName)
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, createTableSQL)
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, createTableSQL)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create", "--env", "CLICKHOUSE_HOST=clickhouse", "--tables", dbName+".*", t.Name())
 
 	backupTableFile := fmt.Sprintf("/var/lib/clickhouse/backup/%s/metadata/%s/%s.json", t.Name(), common.TablePathEncode(dbName), common.TablePathEncode(tableName))

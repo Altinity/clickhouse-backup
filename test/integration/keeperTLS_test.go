@@ -63,7 +63,7 @@ func TestKeeperTLS(t *testing.T) {
 
 	// create table using ZooKeeper
 	dbName := "test_keeper_tls"
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
 	tableName := "test_table_tls"
 	zkPath := "/clickhouse/tables/{shard}/{database}/{table}"
 	onCluster := ""
@@ -73,14 +73,14 @@ func TestKeeperTLS(t *testing.T) {
 	}
 	createSQL := fmt.Sprintf("CREATE TABLE %s.%s %s (id UInt64) ENGINE=ReplicatedMergeTree('%s', '{replica}') ORDER BY id",
 		dbName, tableName, onCluster, zkPath)
-	env.queryWithNoError(r, createSQL)
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO %s.%s SELECT number FROM numbers(100)", dbName, tableName))
+	env.queryWithNoError(t, r, createSQL)
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO %s.%s SELECT number FROM numbers(100)", dbName, tableName))
 
 	// create RBAC User
 	rbacUser := "test_keeper_tls_user"
-	env.queryWithNoError(r, fmt.Sprintf("DROP USER IF EXISTS %s %s", rbacUser, onCluster))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE USER %s %s IDENTIFIED WITH sha256_password BY '123'", rbacUser, onCluster))
-	defer env.queryWithNoError(r, fmt.Sprintf("DROP USER IF EXISTS %s %s", rbacUser, onCluster))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP USER IF EXISTS %s %s", rbacUser, onCluster))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE USER %s %s IDENTIFIED WITH sha256_password BY '123'", rbacUser, onCluster))
+	defer env.queryWithNoError(t, r, fmt.Sprintf("DROP USER IF EXISTS %s %s", rbacUser, onCluster))
 
 	// backup with RBAC
 	backupName := "test_keeper_tls_backup"
@@ -90,7 +90,7 @@ func TestKeeperTLS(t *testing.T) {
 
 	// clean and restore
 	r.NoError(env.dropDatabase(dbName, false))
-	env.queryWithNoError(r, fmt.Sprintf("DROP USER IF EXISTS %s %s", rbacUser, onCluster))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP USER IF EXISTS %s %s", rbacUser, onCluster))
 	env.ch.Close()
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rbac", backupName)
 

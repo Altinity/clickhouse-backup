@@ -24,7 +24,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
 	log.Debug().Msg("Check skip not exist errors")
-	env.queryWithNoError(r, "CREATE DATABASE freeze_not_exists")
+	env.queryWithNoError(t, r, "CREATE DATABASE freeze_not_exists")
 	ifNotExistsCreateSQL := "CREATE TABLE IF NOT EXISTS freeze_not_exists.freeze_not_exists (id UInt64) ENGINE=MergeTree() ORDER BY id"
 	ifNotExistsInsertSQL := "INSERT INTO freeze_not_exists.freeze_not_exists SELECT number FROM numbers(1000)"
 	chVersion, err := env.ch.GetVersion(t.Context())
