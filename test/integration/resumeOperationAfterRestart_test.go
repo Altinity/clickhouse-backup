@@ -232,7 +232,7 @@ exit 1
 	r.NoError(err, "%s\nserver process is still alive after SIGKILL during %s %s", out, command, backupName)
 
 	startResumeAfterRestartServer(t, r, env, configFile)
-	waitResumeAssertion(t, r, assertResumed)
+	waitResumeAssertion(t, r, env, assertResumed)
 	removeResumeState(t, r, env, backupName, command)
 }
 
@@ -254,7 +254,7 @@ exit 1
 	r.NoError(err, "%s", out)
 }
 
-func waitResumeAssertion(t *testing.T, r *require.Assertions, assertResumed func() (bool, string)) {
+func waitResumeAssertion(t *testing.T, r *require.Assertions, env *TestEnvironment, assertResumed func() (bool, string)) {
 	t.Helper()
 	lastDetail := ""
 	for i := 0; i < 180; i++ {
@@ -265,7 +265,8 @@ func waitResumeAssertion(t *testing.T, r *require.Assertions, assertResumed func
 		lastDetail = detail
 		time.Sleep(1 * time.Second)
 	}
-	r.FailNow("timeout waiting for resumed operation", lastDetail)
+	serverLog, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "tail -n 200 "+resumeAfterRestartServerLog+" || true")
+	r.FailNow("timeout waiting for resumed operation", "%s\nserver log tail:\n%s", lastDetail, serverLog)
 }
 
 func backupListed(env *TestEnvironment, configFile, location, backupName string) (bool, string) {
