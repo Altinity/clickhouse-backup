@@ -30,7 +30,9 @@ import (
 //   - MAX_BROKEN_PART_RATIO=0.1 < observed ratio 1/4 must abort with the explicit
 //     "backup aborted ... exceeds max_broken_part_ratio" error,
 //   - MAX_BROKEN_PART_RATIO=0.5 >= 1/4 must produce a successful partial backup that
-//     drops ONLY the broken part; restore must bring back the 3 healthy parts.
+//     drops ONLY the broken part; upload -> delete local -> download must preserve
+//     broken_parts in the table metadata; restore of the downloaded backup must bring
+//     back the 3 healthy parts.
 //
 // Each backend is its own top-level test so they can be run independently
 // (e.g. `RUN_TESTS=TestMaxBrokenPartRatioS3 ./test/integration/run.sh`).
@@ -125,13 +127,16 @@ func runMaxBrokenPartRatioCase(t *testing.T, tc maxBrokenPartRatioCase) {
 	tc.deleteObjects(env, r, objectPaths)
 
 	// best-effort teardown: aborted creates auto-remove their local backup, but don't
-	// leak the partial one if an assertion fails mid-test
+	// leak the partial one (local or remote) if an assertion fails mid-test
 	partialBackup := backupPrefix + "_partial"
 	defer func() {
 		for _, name := range []string{backupPrefix + "_abort_default", backupPrefix + "_abort_low", partialBackup} {
 			if out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", name); err != nil {
 				log.Debug().Err(err).Msgf("maxBrokenPartRatio teardown: %s", out)
 			}
+		}
+		if out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "remote", partialBackup); err != nil {
+			log.Debug().Err(err).Msgf("maxBrokenPartRatio teardown: %s", out)
 		}
 	}()
 
@@ -160,28 +165,41 @@ func runMaxBrokenPartRatioCase(t *testing.T, tc maxBrokenPartRatioCase) {
 	r.NoError(err, "create must succeed with max_broken_part_ratio=0.5, output: %s", out)
 	r.Contains(out, "partial backup", "create must warn about the partial backup, output: %s", out)
 
-	log.Debug().Str("backend", tc.name).Msg("table metadata must list the broken part under broken_parts, not parts")
-	out, err = env.DockerExecOut("clickhouse", "cat",
-		fmt.Sprintf("/var/lib/clickhouse/backup/%s/metadata/%s/broken_parts.json", partialBackup, dbName))
-	r.NoError(err, "can't read table metadata json: %s", out)
-	var tm metadata.TableMetadata
-	r.NoError(json.Unmarshal([]byte(out), &tm), "can't parse table metadata json: %s", out)
-	var metaParts, metaBrokenParts []string
-	for _, diskParts := range tm.Parts {
-		for _, p := range diskParts {
-			metaParts = append(metaParts, p.Name)
+	// the test table is named broken_parts, so its metadata file is metadata/<db>/broken_parts.json
+	checkBrokenPartsMetadata := func(stage string) {
+		metaOut, metaErr := env.DockerExecOut("clickhouse", "cat",
+			fmt.Sprintf("/var/lib/clickhouse/backup/%s/metadata/%s/broken_parts.json", partialBackup, dbName))
+		r.NoError(metaErr, "%s: can't read table metadata json: %s", stage, metaOut)
+		var tm metadata.TableMetadata
+		r.NoError(json.Unmarshal([]byte(metaOut), &tm), "%s: can't parse table metadata json: %s", stage, metaOut)
+		var metaParts, metaBrokenParts []string
+		for _, diskParts := range tm.Parts {
+			for _, p := range diskParts {
+				metaParts = append(metaParts, p.Name)
+			}
 		}
-	}
-	for _, diskParts := range tm.BrokenParts {
-		for _, p := range diskParts {
-			metaBrokenParts = append(metaBrokenParts, p.Name)
+		for _, diskParts := range tm.BrokenParts {
+			for _, p := range diskParts {
+				metaBrokenParts = append(metaBrokenParts, p.Name)
+			}
 		}
+		r.Equal([]string{brokenPartName}, metaBrokenParts, "%s: broken_parts must contain exactly the broken part", stage)
+		r.Len(metaParts, 3, "%s: parts must contain only the 3 healthy parts", stage)
+		r.NotContains(metaParts, brokenPartName, "%s: the broken part must not be listed under parts", stage)
 	}
-	r.Equal([]string{brokenPartName}, metaBrokenParts, "broken_parts must contain exactly the broken part")
-	r.Len(metaParts, 3, "parts must contain only the 3 healthy parts")
-	r.NotContains(metaParts, brokenPartName, "the broken part must not be listed under parts")
 
-	log.Debug().Str("backend", tc.name).Msg("restore the partial backup and verify only the broken part is lost")
+	log.Debug().Str("backend", tc.name).Msg("table metadata must list the broken part under broken_parts, not parts")
+	checkBrokenPartsMetadata("after create")
+
+	log.Debug().Str("backend", tc.name).Msg("upload -> delete local -> download must preserve broken_parts")
+	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", config, "upload", partialBackup)
+	r.NoError(err, "upload must succeed, output: %s", out)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", partialBackup)
+	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", config, "download", partialBackup)
+	r.NoError(err, "download must succeed, output: %s", out)
+	checkBrokenPartsMetadata("after download")
+
+	log.Debug().Str("backend", tc.name).Msg("restore the downloaded partial backup and verify only the broken part is lost")
 	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", config, "restore", "--rm", "--tables="+dbName+".*", partialBackup)
 	r.NoError(err, "restore must succeed, output: %s", out)
 
@@ -198,6 +216,7 @@ func runMaxBrokenPartRatioCase(t *testing.T, tc maxBrokenPartRatioCase) {
 	r.Equal(uint64(0), brokenPartitionRows, "the broken partition must contain no rows after restore")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", partialBackup)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "remote", partialBackup)
 }
 
 // collectPartObjectPaths cats every metadata stub file of the given data part inside the
