@@ -120,6 +120,10 @@ general:
   # When `clickhouse->use_embedded_backup_restore: true`, throttling is delegated to the ClickHouse server via the `max_backup_bandwidth` query setting passed in the BACKUP/RESTORE SETTINGS clause (requires ClickHouse 25.1+); upload_max_bytes_per_second applies to BACKUP, download_max_bytes_per_second to RESTORE. On older ClickHouse versions embedded transfers are not throttled.
   download_max_bytes_per_second: 0  # DOWNLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling 
   upload_max_bytes_per_second: 0    # UPLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling
+  # MAX_BROKEN_PART_RATIO, maximum allowed fraction (0..1) of broken data parts (e.g. caused by S3-disk or filesystem failures) that still produces a successful but partial backup during backup creation (`create`, and the create stage of `create_remote`).
+  # 0 (default) preserves legacy behavior where any broken part stops the backup completely. When >0 and the broken/total part ratio stays at or below this value, creation skips the broken parts, logs a warning, and the backup is marked successful.
+  # Skipped parts are recorded in the `broken_parts` section of the table metadata json (next to `parts`) and counted in the `clickhouse_backup_failed_parts_count` prometheus metric in server mode, see https://github.com/Altinity/clickhouse-backup/issues/1418
+  max_broken_part_ratio: 0          # MAX_BROKEN_PART_RATIO
 
   # Buffer tuning for high-bandwidth (10Gbit+) networks, see https://github.com/Altinity/clickhouse-backup/issues/1376 and Examples.md#tuning-for-high-bandwidth-10gbit-networks
   pipe_buffer_size: 131072          # PIPE_BUFFER_SIZE, size in bytes of the in-memory ring buffer between the compression and the upload/download stream handlers, default 128KB; raise (e.g. 8388608 = 8MB) to let compression run ahead of uploads on fast networks
