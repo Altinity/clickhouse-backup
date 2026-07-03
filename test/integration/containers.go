@@ -342,19 +342,66 @@ func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout 
 		}
 		time.Sleep(2 * time.Second)
 	}
-	tc.dumpContainerInfo(ctx, name)
-	// clickhouse always mounts Azure-backed disks (disk_azblob/backups_azure) from the shared
-	// config, so ANY test that (re)starts clickhouse - not only TestAzure* - can fail to become
-	// healthy when azurite is unresponsive: clickhouse reads the disk format version over the
-	// network at table-load time and aborts startup on an Azure timeout. When the failure looks
-	// Azure-related, dump the azurite logs scoped to clickhouse's last (re)start so the azurite
-	// side of the timeout is visible (the 12m healthcheck window means "recent" logs would miss it).
+	tc.dumpContainerInfo(ctx, name, testName)
 	if name == "clickhouse" {
+		// ClickHouse depends on Keeper; a "not healthy" clickhouse is frequently a
+		// symptom of an unresponsive/restarted keeper, so dump it too.
+		tc.dumpContainerInfo(ctx, "zookeeper", testName)
+		// clickhouse always mounts Azure-backed disks (disk_azblob/backups_azure) from the shared
+		// config, so ANY test that (re)starts clickhouse - not only TestAzure* - can fail to become
+		// healthy when azurite is unresponsive: clickhouse reads the disk format version over the
+		// network at table-load time and aborts startup on an Azure timeout. When the failure looks
+		// Azure-related, dump the azurite logs scoped to clickhouse's last (re)start so the azurite
+		// side of the timeout is visible (the 12m healthcheck window means "recent" logs would miss it).
 		if _, ok := tc.containers["azure"]; ok && (strings.HasPrefix(testName, "TestAzure") || tc.clickhouseFailedOnAzure(ctx)) {
-			tc.DumpContainerLogsSince(ctx, "azure", testName, tc.containerStartedAt(ctx, "clickhouse"))
+			tc.DumpContainerLogsSince(ctx, "azure", tc.containerStartedAt(ctx, "clickhouse"), testName)
 		}
 	}
 	return fmt.Errorf("container %s not healthy after %v", name, timeout)
+}
+
+// testLogPrefix returns a "[TestName] " prefix for dump banners so that, under
+// parallel execution, interleaved container dumps can be attributed to the test
+// that triggered them. Empty when the dump happens outside a test (e.g. startup).
+func testLogPrefix(testName string) string {
+	if testName == "" {
+		return ""
+	}
+	return "[" + testName + "] "
+}
+
+// containerStateSummary builds a one-line human-readable summary of a container's
+// state for dump banners.
+//
+// RestartCount is included because it is the only signal that survives a Docker
+// auto-restart: when a container crashes (e.g. OOM under high RUN_PARALLEL load)
+// Docker restarts it and inspect reports status=running, exitCode=0, OOMKilled=false
+// again, so restartCount>0 (or a startedAt later than the test start) is often the
+// only remaining evidence that the container died mid-test.
+func containerStateSummary(inspect container.InspectResponse) string {
+	if inspect.State == nil {
+		return "unknown"
+	}
+	state := inspect.State.Status
+	if inspect.State.Health != nil {
+		state += ", health=" + inspect.State.Health.Status
+	}
+	if inspect.State.ExitCode != 0 {
+		state += fmt.Sprintf(", exitCode=%d", inspect.State.ExitCode)
+	}
+	if inspect.State.OOMKilled {
+		state += ", OOMKilled"
+	}
+	if inspect.RestartCount != 0 {
+		state += fmt.Sprintf(", restartCount=%d", inspect.RestartCount)
+	}
+	if inspect.State.StartedAt != "" {
+		state += ", startedAt=" + inspect.State.StartedAt
+	}
+	if inspect.State.FinishedAt != "" && inspect.State.FinishedAt != "0001-01-01T00:00:00Z" {
+		state += ", finishedAt=" + inspect.State.FinishedAt
+	}
+	return state
 }
 
 // clickhouseFailedOnAzure reports whether the clickhouse container logs contain an Azure SDK
@@ -403,7 +450,7 @@ func (tc *TestContainers) containerStartedAt(ctx context.Context, name string) t
 
 // DumpAllContainerLogs dumps state and last 50 log lines for all containers.
 // Called when a test fails to aid debugging.
-func (tc *TestContainers) DumpAllContainerLogs(ctx context.Context) {
+func (tc *TestContainers) DumpAllContainerLogs(ctx context.Context, testName string) {
 	tc.mu.Lock()
 	names := make([]string, 0, len(tc.containers))
 	for name := range tc.containers {
@@ -411,7 +458,7 @@ func (tc *TestContainers) DumpAllContainerLogs(ctx context.Context) {
 	}
 	tc.mu.Unlock()
 	for _, name := range names {
-		tc.dumpContainerInfo(ctx, name)
+		tc.dumpContainerInfo(ctx, name, testName)
 	}
 }
 
@@ -421,11 +468,7 @@ func (tc *TestContainers) DumpAllContainerLogs(ctx context.Context) {
 // shutdown/restart messages that may precede the failure. testName prefixes every emitted line so
 // the dump is attributable to the failing test in interleaved parallel CI output (pass "" when the
 // caller has no test name to hand).
-func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name, testName string, since time.Time) {
-	prefix := ""
-	if testName != "" {
-		prefix = "[" + testName + "] "
-	}
+func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name string, since time.Time, testName string) {
 	info := tc.containers[name]
 	if info == nil {
 		return
@@ -435,30 +478,11 @@ func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name, test
 		log.Error().Err(err).Msgf("can't inspect container %s (%s)", name, info.ID[:12])
 		return
 	}
-	state := "unknown"
-	if inspect.State != nil {
-		state = inspect.State.Status
-		if inspect.State.Health != nil {
-			state += ", health=" + inspect.State.Health.Status
-		}
-		if inspect.State.ExitCode != 0 {
-			state += fmt.Sprintf(", exitCode=%d", inspect.State.ExitCode)
-		}
-		if inspect.State.OOMKilled {
-			state += ", OOMKilled"
-		}
-		if inspect.State.StartedAt != "" {
-			state += ", startedAt=" + inspect.State.StartedAt
-		}
-		if inspect.State.FinishedAt != "" && inspect.State.FinishedAt != "0001-01-01T00:00:00Z" {
-			state += ", finishedAt=" + inspect.State.FinishedAt
-		}
-	}
 	if since.IsZero() {
 		since = time.Now()
 	}
 	since = since.Add(-30 * time.Second)
-	log.Error().Msgf("=== %scontainer %s (%s) state: %s ===", prefix, name, info.ID[:12], state)
+	log.Error().Msgf("=== %scontainer %s (%s) state: %s ===", testLogPrefix(testName), name, info.ID[:12], containerStateSummary(inspect))
 
 	logOpts := container.LogsOptions{
 		ShowStdout: true,
@@ -481,7 +505,7 @@ func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name, test
 	if name == "azure" {
 		logText = filterAzuriteNoise(logText)
 	}
-	log.Error().Msgf("=== %s%s logs since %s ===\n%s", prefix, name, since.Format(time.RFC3339), logText)
+	log.Error().Msgf("=== %s%s logs since %s ===\n%s", testLogPrefix(testName), name, since.Format(time.RFC3339), logText)
 }
 
 // filterAzuriteNoise drops azurite's idle background-maintenance chatter (blob/queue GC mark-sweep
@@ -511,7 +535,7 @@ func filterAzuriteNoise(logText string) string {
 	return strings.Join(kept, "\n")
 }
 
-func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
+func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string, testName string) {
 	info := tc.containers[name]
 	if info == nil {
 		return
@@ -521,20 +545,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 		log.Error().Err(err).Msgf("can't inspect container %s (%s)", name, info.ID[:12])
 		return
 	}
-	state := "unknown"
-	if inspect.State != nil {
-		state = inspect.State.Status
-		if inspect.State.Health != nil {
-			state += ", health=" + inspect.State.Health.Status
-		}
-		if inspect.State.ExitCode != 0 {
-			state += fmt.Sprintf(", exitCode=%d", inspect.State.ExitCode)
-		}
-		if inspect.State.OOMKilled {
-			state += ", OOMKilled"
-		}
-	}
-	log.Error().Msgf("=== container %s (%s) state: %s ===", name, info.ID[:12], state)
+	log.Error().Msgf("=== %scontainer %s (%s) state: %s ===", testLogPrefix(testName), name, info.ID[:12], containerStateSummary(inspect))
 
 	logOpts := container.LogsOptions{ShowStdout: true, ShowStderr: true}
 	reader, logErr := tc.client.ContainerLogs(ctx, info.ID, logOpts)
@@ -548,7 +559,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 		}
 	}()
 	logBytes, _ := io.ReadAll(reader)
-	log.Error().Msgf("=== full %s logs ===\n%s", name, string(logBytes))
+	log.Error().Msgf("=== %sfull %s logs ===\n%s", testLogPrefix(testName), name, string(logBytes))
 
 	// For the clickhouse-server container, healthcheck failures may leave
 	// nothing in stdout/stderr because clickhouse-server writes auth/config
@@ -564,7 +575,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 			if execErr != nil {
 				log.Error().Err(execErr).Msgf("can't cat %s in %s: %s", logPath, name, string(errOut))
 			} else {
-				log.Error().Msgf("=== full %s:%s ===\n%s", name, logPath, string(errOut))
+				log.Error().Msgf("=== %sfull %s:%s ===\n%s", testLogPrefix(testName), name, logPath, string(errOut))
 			}
 		}
 	}
@@ -580,7 +591,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 		if execErr != nil {
 			log.Error().Err(execErr).Msgf("can't cat %s in %s: %s", serverLogPath, name, string(serverOut))
 		} else {
-			log.Error().Msgf("=== full %s:%s ===\n%s", name, serverLogPath, string(serverOut))
+			log.Error().Msgf("=== %sfull %s:%s ===\n%s", testLogPrefix(testName), name, serverLogPath, string(serverOut))
 		}
 	}
 }

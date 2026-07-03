@@ -502,8 +502,8 @@ func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {
 		listOut, listErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "local")
 		r.NoError(listErr)
 		log.Error().Msg(listOut)
-		env.tc.dumpContainerInfo(context.Background(), "clickhouse-backup")
-		env.tc.dumpContainerInfo(context.Background(), "clickhouse")
+		env.tc.dumpContainerInfo(context.Background(), "clickhouse-backup", env.testName)
+		env.tc.dumpContainerInfo(context.Background(), "clickhouse", env.testName)
 	}
 	r.Contains(out, expectedNumberLocal)
 
@@ -511,8 +511,8 @@ func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {
 		listOut, listErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "remote")
 		r.NoError(listErr)
 		log.Error().Msg(listOut)
-		env.tc.dumpContainerInfo(context.Background(), "clickhouse-backup")
-		env.tc.dumpContainerInfo(context.Background(), "clickhouse")
+		env.tc.dumpContainerInfo(context.Background(), "clickhouse-backup", env.testName)
+		env.tc.dumpContainerInfo(context.Background(), "clickhouse", env.testName)
 	}
 	r.Contains(out, expectedNumberRemote)
 	r.Contains(out, "clickhouse_backup_number_backups_local_expected 0")
