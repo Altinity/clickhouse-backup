@@ -124,6 +124,57 @@ func TestExtractStoragePolicy(t *testing.T) {
 	}
 }
 
+func TestFixAliasEngineQuery(t *testing.T) {
+	testCases := []struct {
+		Name          string
+		Query         string
+		Version       int
+		ExpectedQuery string
+	}{
+		{
+			Name:          "Non-Alias query unchanged",
+			Query:         "CREATE TABLE test (id UInt64) ENGINE = MergeTree ORDER BY id",
+			Version:       26003012,
+			ExpectedQuery: "CREATE TABLE test (id UInt64) ENGINE = MergeTree ORDER BY id",
+		},
+		{
+			Name:          "Strip columns and add setting, 25.11+",
+			Query:         "CREATE TABLE default.alias_t UUID '9083c81b-b5b0-4273-9202-5b8e7460a228' (`id` UInt64, `s` String) ENGINE = Alias('default', 'target')",
+			Version:       26003012,
+			ExpectedQuery: "CREATE TABLE default.alias_t UUID '9083c81b-b5b0-4273-9202-5b8e7460a228' ENGINE = Alias('default', 'target') SETTINGS allow_experimental_alias_table_engine=1",
+		},
+		{
+			Name:          "Strip columns without setting on 25.10 (setting not exists yet)",
+			Query:         "CREATE TABLE default.alias_t (`id` UInt64) ENGINE = Alias('default', 'target')",
+			Version:       25010000,
+			ExpectedQuery: "CREATE TABLE default.alias_t ENGINE = Alias('default', 'target')",
+		},
+		{
+			Name:          "Strip columns with ON CLUSTER",
+			Query:         "CREATE TABLE `db`.`alias_t` UUID '9083c81b-b5b0-4273-9202-5b8e7460a228' ON CLUSTER 'my_cluster' (`id` UInt64, `s` String) ENGINE = Alias('db', 'target')",
+			Version:       25011001,
+			ExpectedQuery: "CREATE TABLE `db`.`alias_t` UUID '9083c81b-b5b0-4273-9202-5b8e7460a228' ON CLUSTER 'my_cluster' ENGINE = Alias('db', 'target') SETTINGS allow_experimental_alias_table_engine=1",
+		},
+		{
+			Name:          "Keep COMMENT, append setting after it",
+			Query:         "CREATE TABLE default.alias_t (`id` UInt64) ENGINE = Alias('default', 'target') COMMENT 'test comment'",
+			Version:       26003012,
+			ExpectedQuery: "CREATE TABLE default.alias_t ENGINE = Alias('default', 'target') COMMENT 'test comment' SETTINGS allow_experimental_alias_table_engine=1",
+		},
+		{
+			Name:          "No columns and setting already present, unchanged",
+			Query:         "CREATE TABLE default.alias_t ENGINE=Alias('default', 'target') SETTINGS allow_experimental_alias_table_engine=1",
+			Version:       26003012,
+			ExpectedQuery: "CREATE TABLE default.alias_t ENGINE=Alias('default', 'target') SETTINGS allow_experimental_alias_table_engine=1",
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			assert.Equal(t, tc.ExpectedQuery, fixAliasEngineQuery(tc.Query, tc.Version))
+		})
+	}
+}
+
 func TestEnrichQueryWithOnCluster(t *testing.T) {
 	ch := ClickHouse{}
 

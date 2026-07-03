@@ -1250,6 +1250,28 @@ func generateTestDataForDifferentServerVersion(remoteStorageType string, offset,
 			OrderBy: "id",
 		})
 	}
+	// ENGINE=Alias, experimental since 25.11, requires allow_experimental_alias_table_engine
+	// https://github.com/Altinity/clickhouse-backup/issues/1426
+	// add only once, alias forwards SELECT to `mv_src_table` which gets rows only for offset == 0
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") >= 0 && offset == 0 {
+		testData = addTestDataIfNotExistsAndReplaceRowsIfExists(testData, TestDataStruct{
+			Database:       dbNameAtomic,
+			DatabaseEngine: "Atomic",
+			Name:           "alias_to_mv_src_table",
+			Schema:         fmt.Sprintf("ENGINE=Alias('%s', 'mv_src_table_{test}') SETTINGS allow_experimental_alias_table_engine=1", dbNameAtomic),
+			SkipInsert:     true,
+			// rows are inherited from `mv_src_table` target table
+			Rows: func() []map[string]interface{} {
+				var result []map[string]interface{}
+				for i := 0; i < 100; i++ {
+					result = append(result, map[string]interface{}{"id": uint64(i)})
+				}
+				return result
+			}(),
+			Fields:  []string{"id"},
+			OrderBy: "id",
+		})
+	}
 	return testData
 }
 

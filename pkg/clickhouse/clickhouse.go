@@ -1051,6 +1051,8 @@ var createObjRe = regexp.MustCompile(`(?is)^(CREATE [^(]+)(\(.+)`)
 var onClusterRe = regexp.MustCompile(`(?im)\s+ON\s+CLUSTER\s+`)
 var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^)]+)\)`)
 var macroRE = regexp.MustCompile(`(?i){[a-z0-9-_]+}`)
+var aliasEngineRe = regexp.MustCompile(`(?i)ENGINE\s*=\s*Alias\s*\(`)
+var aliasEngineColumnsRe = regexp.MustCompile(`(?is)^((?:CREATE|ATTACH)\s+TABLE\s+[^(]+?)\s*\(.+\)\s*(ENGINE\s*=\s*Alias\s*\(.*)$`)
 
 // CreateTable - create ClickHouse table
 func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDependencies bool, onCluster string, version int, defaultDataPath string, asAttach bool, databaseEngine string) error {
@@ -1131,6 +1133,8 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	if (strings.HasPrefix(query, "CREATE MATERIALIZED VIEW") || strings.HasPrefix(query, "ATTACH MATERIALIZED VIEW")) && strings.Contains(query, " REFRESH ") && !strings.Contains(query, " EMPTY ") {
 		query = strings.Replace(query, "DEFINER", "EMPTY DEFINER", 1)
 	}
+	// https://github.com/Altinity/clickhouse-backup/issues/1426
+	query = fixAliasEngineQuery(query, version)
 	// WINDOW VIEW / LIVE VIEW unavailable with analyzer after 24.3
 	// Use per-query settings via clickhouse.Context to avoid connection pool race
 	ctx := ch.AnalyzerOffContextIfNecessary(version, query)
@@ -1138,6 +1142,20 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 		return errors.Wrap(err, "CreateTable: execute create query")
 	}
 	return nil
+}
+
+// fixAliasEngineQuery - ENGINE=Alias doesn't support explicit column definitions (columns inherited from target table)
+// and requires allow_experimental_alias_table_engine=1 since 25.11
+// https://github.com/Altinity/clickhouse-backup/issues/1426
+func fixAliasEngineQuery(query string, version int) string {
+	if !aliasEngineRe.MatchString(query) {
+		return query
+	}
+	query = aliasEngineColumnsRe.ReplaceAllString(query, "$1 $2")
+	if version >= 25011000 && !strings.Contains(query, "allow_experimental_alias_table_engine") {
+		query += " SETTINGS allow_experimental_alias_table_engine=1"
+	}
+	return query
 }
 
 func (ch *ClickHouse) cleanUUIDForReplicatedDatabase(table Table, query string, databaseEngine string) (string, error) {
