@@ -1,10 +1,24 @@
 # v2.7.3
 
+NEW FEATURES
+- add `general.max_broken_part_ratio` (env `MAX_BROKEN_PART_RATIO`, default `0`) — when >0, `create`/`create_remote` skips broken data parts instead of aborting the whole backup as long as the broken/total part ratio stays at or below the configured fraction; skipped parts are logged as warnings and the backup is marked successful but partial; `0` preserves the legacy any-broken-part-fails behavior, fix [#1418](https://github.com/Altinity/clickhouse-backup/issues/1418)
+- add `clickhouse.rebind_replica_path_if_exists` (env `CLICKHOUSE_REBIND_REPLICA_PATH_IF_EXISTS`, CLI `--rebind-replica-path-if-exists`, also accepted by the REST API `POST /backup/restore` endpoint) — opt-in rebind of the replicated table ZK path to `default_replica_path` during `restore` when the resolved path already has leftover children but no local table uses it (async-stale state after DROP); MUST stay `false` during a concurrent multi-replica restore to avoid split-brain, fix [#849](https://github.com/Altinity/clickhouse-backup/issues/849)
+- add `gcs.disable_http2` (env `GCS_DISABLE_HTTP2`) — force HTTP/1.1 for the GCS client to avoid single-TCP-connection HTTP/2 multiplexing becoming the bottleneck for high-throughput parallel downloads, fix [#1437](https://github.com/Altinity/clickhouse-backup/pull/1437)
+
 IMPROVEMENTS
 - switch the S3 client retry mode from `aws.RetryModeStandard` to `aws.RetryModeAdaptive`, so upload/download retries back off with a client-side rate limiter under throttling (`SlowDown`/503) instead of a fixed token bucket
+- support tables with `ENGINE=Alias` during `restore` — strip the explicit column list (Alias inherits columns from the target table) and add `allow_experimental_alias_table_engine=1` for ClickHouse 25.11+, fix [#1426](https://github.com/Altinity/clickhouse-backup/issues/1426)
+- skip tables from databases with engine `DataLakeCatalog` (read-only external catalogs) during backup, in addition to `MySQL`/`PostgreSQL`/`MaterializedPostgreSQL`, fix [#1417](https://github.com/Altinity/clickhouse-backup/issues/1417)
+- speed up `create` on servers with many tables: batch the in-progress `system.mutations` lookup instead of issuing one query per table (O(N^2) -> O(N)), fix [#1431](https://github.com/Altinity/clickhouse-backup/pull/1431)
+- speed up `restore`/`download` table list resolution: eliminate the O(N^2) linear duplicate scan in `getTableListByPatternLocal`/`getTableListByPatternRemote` via a shared O(1) dedup keyed on `metadata.TableTitle`, fix [#1430](https://github.com/Altinity/clickhouse-backup/pull/1430)
+- extend TestFlows FIPS 140-3 test coverage: dedicated test steps, stronger `--fips-info`/version-output and TLS-handshake assertions, updated requirements documentation, fix [#1443](https://github.com/Altinity/clickhouse-backup/pull/1443)
 
 BUG FIXES
 - restore the default `general.compression_use_multi_thread` to `true`: [#1378](https://github.com/Altinity/clickhouse-backup/issues/1378) defaulted it to `false`, which silently dropped gzip/zstd compression from multi-threaded (pre-1378 gzip always used `pgzip`) to single-threaded and caused ~30% slower upload throughput for backups dominated by one large table (where `upload_concurrency` provides no per-stream parallelism); the option is now silently ignored instead of failing config validation for formats other than gzip/zstd
+- fix v2.7.1 regression where `restore --schema` on a second replica rebound the ZK replica path even while the first replica was active and healthy — a foreign/renamed local table occupying the resolved ZK path is still detected automatically via `system.replicas` and rebound to `default_replica_path`, but a non-empty ZK path without a local table now defaults to the HA-safe join and requires the new opt-in `rebind_replica_path_if_exists`, fix [#1428](https://github.com/Altinity/clickhouse-backup/issues/1428)
+- fix inconsistent `--rbac` behavior: `restore --rbac` no longer returns an error when the backup contains no RBAC `access` directory, matching the `download --rbac` behavior, fix [#1432](https://github.com/Altinity/clickhouse-backup/issues/1432)
+- inject `ON CLUSTER` for `LIVE VIEW` and `WINDOW VIEW` restored with explicit column lists when `restore_schema_on_cluster` is set — `enrichQueryWithOnCluster` missed these statements and the views were created only on the local replica, fix [#1433](https://github.com/Altinity/clickhouse-backup/pull/1433)
+- mask sensitive values (passwords, storage credentials, encryption keys) when logging `--env` config overrides, and in the API server action logs and `/backup/status` output, fix [#1441](https://github.com/Altinity/clickhouse-backup/pull/1441)
 
 # v2.7.2
 
