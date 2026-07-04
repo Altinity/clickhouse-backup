@@ -347,6 +347,10 @@ type ClickHouseConfig struct {
 	// ForceRebalance triggers disk rebalancing during download even when the backup's disk
 	// name exists on the target, allowing distribution across JBOD disks under the same storage policy
 	ForceRebalance bool `yaml:"force_rebalance" envconfig:"CLICKHOUSE_FORCE_REBALANCE"`
+	// Memory caps injected into the system.parts_columns check query (https://github.com/Altinity/clickhouse-backup/issues/1420).
+	// 0 means don't inject the corresponding setting (pre-2.7.2 behavior).
+	PartsColumnsMaxBytesBeforeExternalGroupBy int64 `yaml:"parts_columns_max_bytes_before_external_group_by" envconfig:"CLICKHOUSE_PARTS_COLUMNS_MAX_BYTES_BEFORE_EXTERNAL_GROUP_BY"`
+	PartsColumnsMaxMemoryUsage                int64 `yaml:"parts_columns_max_memory_usage" envconfig:"CLICKHOUSE_PARTS_COLUMNS_MAX_MEMORY_USAGE"`
 }
 
 type APIConfig struct {
@@ -822,9 +826,11 @@ func DefaultConfig() *Config {
 			RestoreAsAttach:                  false,
 			CheckPartsColumns:                true,
 			PartsColumnsBatchSize:            25,
-			DefaultReplicaPath:               "/clickhouse/tables/{cluster}/{shard}/{database}/{table}",
-			DefaultReplicaName:               "{replica}",
-			MaxConnections:                   int(downloadConcurrency),
+			PartsColumnsMaxBytesBeforeExternalGroupBy: 100000000,
+			PartsColumnsMaxMemoryUsage:                200000000,
+			DefaultReplicaPath:                        "/clickhouse/tables/{cluster}/{shard}/{database}/{table}",
+			DefaultReplicaName:                        "{replica}",
+			MaxConnections:                            int(downloadConcurrency),
 		},
 		AzureBlob: AzureBlobConfig{
 			EndpointSchema:    "https",

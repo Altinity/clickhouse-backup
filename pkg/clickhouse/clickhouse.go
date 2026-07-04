@@ -1538,8 +1538,27 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 	// https://github.com/Altinity/clickhouse-backup/issues/1360
 	// Batch the WHERE OR-list to keep per-query memory bounded on instances with thousands of tables.
 	partsColumnsBatchSize := 25
-	if ch.Config != nil && ch.Config.PartsColumnsBatchSize > 0 {
-		partsColumnsBatchSize = ch.Config.PartsColumnsBatchSize
+	// https://github.com/Altinity/clickhouse-backup/issues/1420
+	// Memory caps are configurable, 0 means don't inject the corresponding setting.
+	maxBytesBeforeExternalGroupBy := int64(100000000)
+	maxMemoryUsage := int64(200000000)
+	if ch.Config != nil {
+		if ch.Config.PartsColumnsBatchSize > 0 {
+			partsColumnsBatchSize = ch.Config.PartsColumnsBatchSize
+		}
+		maxBytesBeforeExternalGroupBy = ch.Config.PartsColumnsMaxBytesBeforeExternalGroupBy
+		maxMemoryUsage = ch.Config.PartsColumnsMaxMemoryUsage
+	}
+	var querySettings []string
+	if maxBytesBeforeExternalGroupBy > 0 {
+		querySettings = append(querySettings, fmt.Sprintf("max_bytes_before_external_group_by=%d", maxBytesBeforeExternalGroupBy))
+	}
+	if maxMemoryUsage > 0 {
+		querySettings = append(querySettings, fmt.Sprintf("max_memory_usage=%d", maxMemoryUsage))
+	}
+	settingsClause := ""
+	if len(querySettings) > 0 {
+		settingsClause = " SETTINGS " + strings.Join(querySettings, ", ")
 	}
 	tableDataTypes := make(map[string][]ColumnDataTypes)
 	for start := 0; start < len(conditions); start += partsColumnsBatchSize {
@@ -1555,8 +1574,8 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 			"WHERE active AND (" + strings.Join(batchConditions, " OR ") + ") " +
 			"AND type NOT LIKE 'Enum%(%' AND type NOT LIKE 'Tuple(%' AND type NOT LIKE 'Nullable(Enum%(%' " +
 			"AND type NOT LIKE 'Nullable(Tuple(%' AND type NOT LIKE 'Array(Tuple(%' AND type NOT LIKE 'Nullable(Array(Tuple(%' " +
-			"GROUP BY database, table, column HAVING min_type != max_type " +
-			"SETTINGS max_bytes_before_external_group_by=100000000, max_memory_usage=200000000"
+			"GROUP BY database, table, column HAVING min_type != max_type" +
+			settingsClause
 
 		if err := ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL); err != nil {
 			return errors.Wrap(err, "CheckSystemPartsColumnsForTables: select parts columns")

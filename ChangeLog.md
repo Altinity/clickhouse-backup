@@ -1,3 +1,8 @@
+# v2.7.4
+
+NEW FEATURES
+- add `clickhouse.parts_columns_max_bytes_before_external_group_by` (env `CLICKHOUSE_PARTS_COLUMNS_MAX_BYTES_BEFORE_EXTERNAL_GROUP_BY`, default `100000000`) and `clickhouse.parts_columns_max_memory_usage` (env `CLICKHOUSE_PARTS_COLUMNS_MAX_MEMORY_USAGE`, default `200000000`) — make the memory caps injected into the `system.parts_columns` check query configurable instead of hardcoded, `0` means don't inject the corresponding setting (pre-2.7.2 behavior), fix [#1420](https://github.com/Altinity/clickhouse-backup/issues/1420)
+
 # v2.7.3
 
 NEW FEATURES
