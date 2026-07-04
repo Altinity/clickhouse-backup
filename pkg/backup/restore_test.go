@@ -193,6 +193,21 @@ func TestChangeTablePatternFromRestoreMapping(t *testing.T) {
 			restoreTableMapping: map[string]string{"t1": "t2", "t3": "t4"},
 			expected:            "db1.t2,db2.t4",
 		},
+		// https://github.com/Altinity/clickhouse-backup/issues/1421
+		{
+			name:                   "database mapping with same source database repeated in comma-separated patterns",
+			tablePattern:           "dwh.events,dwh.events_invalid",
+			objType:                "database",
+			restoreDatabaseMapping: map[string]string{"dwh": "sandbox"},
+			expected:               "sandbox.*,sandbox.*",
+		},
+		{
+			name:                "table mapping with same table name repeated in different databases",
+			tablePattern:        "db1.t1,db2.t1",
+			objType:             "table",
+			restoreTableMapping: map[string]string{"t1": "t2"},
+			expected:            "db1.t2,db2.t2",
+		},
 		// Empty mapping tests
 		{
 			name:                   "empty database mapping returns pattern unchanged",

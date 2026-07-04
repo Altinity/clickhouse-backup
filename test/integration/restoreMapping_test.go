@@ -267,6 +267,38 @@ func TestRestoreMapping(t *testing.T) {
 
 	fullCleanup(t, r, env, []string{testBackupName6}, []string{"local"}, databaseList6, false, true, true, "config-database-mapping.yml")
 
+	// Corner case 7: comma-separated --tables from the same database with --restore-database-mapping
+	// https://github.com/Altinity/clickhouse-backup/issues/1421
+	log.Debug().Msg("Corner case 7: comma-separated --tables with --restore-database-mapping")
+	testBackupName8 := "test_comma_separated_tables_mapping"
+	databaseList8 := []string{"dwh", "sandbox"}
+	fullCleanup(t, r, env, []string{testBackupName8}, []string{"local"}, databaseList8, false, false, false, "config-database-mapping.yml")
+
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS `dwh`")
+	env.queryWithNoError(t, r, "CREATE TABLE `dwh`.events (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "CREATE TABLE `dwh`.events_invalid (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "INSERT INTO `dwh`.events SELECT number FROM numbers(10)")
+	env.queryWithNoError(t, r, "INSERT INTO `dwh`.events_invalid SELECT number FROM numbers(5)")
+
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName8)
+
+	log.Debug().Msg("Restore --schema --data with comma-separated --tables and database mapping")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--data", "--rm", "--restore-database-mapping", "dwh:sandbox", "--tables", "dwh.events,dwh.events_invalid", testBackupName8)
+
+	env.checkCount(r, 1, 10, "SELECT count() FROM `sandbox`.events")
+	env.checkCount(r, 1, 5, "SELECT count() FROM `sandbox`.events_invalid")
+
+	// same corner case with --restore-table-mapping for the same table name in different databases
+	// second comma-separated pattern element shall keep its own database name after mapping
+	log.Debug().Msg("Restore --schema --data with comma-separated --tables and database+table mapping")
+	r.NoError(env.dropDatabase("sandbox", false))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--data", "--rm", "--restore-database-mapping", "dwh:sandbox", "--restore-table-mapping", "events:events_mapped,events_invalid:events_invalid_mapped", "--tables", "dwh.events,dwh.events_invalid", testBackupName8)
+
+	env.checkCount(r, 1, 10, "SELECT count() FROM `sandbox`.events_mapped")
+	env.checkCount(r, 1, 5, "SELECT count() FROM `sandbox`.events_invalid_mapped")
+
+	fullCleanup(t, r, env, []string{testBackupName8}, []string{"local"}, databaseList8, false, true, true, "config-database-mapping.yml")
+
 	// Corner case 6: Object disk tables with mapping - verify key rewriting
 	// https://github.com/Altinity/clickhouse-backup/issues/1265
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 && isAdvancedMode() {

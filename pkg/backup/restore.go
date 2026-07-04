@@ -3062,74 +3062,52 @@ func (b *Backuper) changeTablePatternFromRestoreMapping(tablePattern, objType st
 	}
 	isDatabase := objType == "database"
 	for sourceObj, targetObj := range mapping {
+		// process each comma-separated pattern item independently,
+		// https://github.com/Altinity/clickhouse-backup/issues/1421
+		matched := false
 		if tablePattern != "" {
-			var sourceObjRE *regexp.Regexp
-			if isDatabase {
-				sourceObjRE = regexp.MustCompile(fmt.Sprintf("(^%s\\.[^,]*)|(,%s\\.[^,]*)", sourceObj, sourceObj))
-			} else {
-				// Check if sourceObj is a full qualified name (db.table)
-				if strings.Contains(sourceObj, ".") {
-					// Full qualified mapping: source_db.table -> target_db.new_table
-					escapedSource := regexp.QuoteMeta(sourceObj)
-					sourceObjRE = regexp.MustCompile(fmt.Sprintf("(^%s)|(,%s)", escapedSource, escapedSource))
-				} else {
-					sourceObjRE = regexp.MustCompile(fmt.Sprintf("(^([^\\.]+)\\.%s)|(,([^\\.]+)\\.%s)", sourceObj, sourceObj))
-				}
-			}
-
-			if sourceObjRE.MatchString(tablePattern) {
-				matches := sourceObjRE.FindAllStringSubmatch(tablePattern, -1)
-				var substitution string
+			items := strings.Split(tablePattern, ",")
+			for i, item := range items {
 				if isDatabase {
-					substitution = targetObj + ".*"
-				} else {
-					// Check if sourceObj is full qualified
-					if strings.Contains(sourceObj, ".") {
-						// Use targetObj as-is (may contain database)
-						substitution = targetObj
-					} else {
-						// matches[0][2] has database name when first alternative matches (^...)
-						// matches[0][4] has database name when second alternative matches (,...)
-						dbName := matches[0][2]
-						if dbName == "" && len(matches[0]) > 4 {
-							dbName = matches[0][4]
-						}
-						// Check if targetObj contains database
-						if strings.Contains(targetObj, ".") {
-							substitution = targetObj
-						} else {
-							substitution = dbName + "." + targetObj
-						}
+					if db, _, found := strings.Cut(item, "."); found && db == sourceObj {
+						items[i] = targetObj + ".*"
+						matched = true
 					}
-				}
-				if strings.HasPrefix(matches[0][0], ",") {
-					substitution = "," + substitution
-				}
-
-				tablePattern = sourceObjRE.ReplaceAllString(tablePattern, substitution)
-			} else {
-				if isDatabase {
-					tablePattern += "," + targetObj + ".*"
-				} else {
+				} else if strings.Contains(sourceObj, ".") {
+					// Full qualified mapping: source_db.table -> target_db.new_table
+					if item == sourceObj {
+						// Use targetObj as-is (may contain database)
+						items[i] = targetObj
+						matched = true
+					}
+				} else if db, table, found := strings.Cut(item, "."); found && table == sourceObj {
 					// Check if targetObj contains database
 					if strings.Contains(targetObj, ".") {
-						tablePattern += "," + targetObj
+						items[i] = targetObj
 					} else {
-						tablePattern += ",*." + targetObj
+						items[i] = db + "." + targetObj
 					}
+					matched = true
 				}
 			}
-		} else {
+			if matched {
+				tablePattern = strings.Join(items, ",")
+			}
+		}
+		if !matched {
+			var appendix string
 			if isDatabase {
-				tablePattern += targetObj + ".*"
+				appendix = targetObj + ".*"
+			} else if strings.Contains(targetObj, ".") {
+				// targetObj contains database
+				appendix = targetObj
 			} else {
-				// Check if targetObj contains database
-				if strings.Contains(targetObj, ".") {
-					tablePattern += targetObj
-				} else {
-					tablePattern += "*." + targetObj
-				}
+				appendix = "*." + targetObj
 			}
+			if tablePattern != "" {
+				tablePattern += ","
+			}
+			tablePattern += appendix
 		}
 	}
 	return tablePattern
