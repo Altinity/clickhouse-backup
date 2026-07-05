@@ -3,6 +3,9 @@
 NEW FEATURES
 - add `clickhouse.parts_columns_max_bytes_before_external_group_by` (env `CLICKHOUSE_PARTS_COLUMNS_MAX_BYTES_BEFORE_EXTERNAL_GROUP_BY`, default `100000000`) and `clickhouse.parts_columns_max_memory_usage` (env `CLICKHOUSE_PARTS_COLUMNS_MAX_MEMORY_USAGE`, default `200000000`) — make the memory caps injected into the `system.parts_columns` check query configurable instead of hardcoded, `0` means don't inject the corresponding setting (pre-2.7.2 behavior), fix [#1420](https://github.com/Altinity/clickhouse-backup/issues/1420)
 
+BUG FIXES
+- fix `--restore-database-mapping`/`--restore-table-mapping` losing unrelated comma-separated `--tables` pattern items, or applying the mapping to the wrong item when the same source database/table name was repeated across items — each comma-separated pattern item is now matched and substituted independently, fix [#1421](https://github.com/Altinity/clickhouse-backup/issues/1421)
+
 # v2.7.3
 
 NEW FEATURES
