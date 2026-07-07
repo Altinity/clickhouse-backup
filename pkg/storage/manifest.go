@@ -8,9 +8,11 @@ import (
 	"os"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/bwlimit"
 	"github.com/eapache/go-resiliency/retrier"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
@@ -52,8 +54,8 @@ type manifestFile struct {
 	lastModified time.Time
 }
 
-func (mf *manifestFile) Name() string           { return mf.name }
-func (mf *manifestFile) Size() int64            { return mf.size }
+func (mf *manifestFile) Name() string            { return mf.name }
+func (mf *manifestFile) Size() int64             { return mf.size }
 func (mf *manifestFile) LastModified() time.Time { return mf.lastModified }
 
 // ManifestEntryToRemoteFile converts a ManifestEntry to a RemoteFile,
@@ -186,6 +188,7 @@ func (bd *BackupDestination) DownloadManifest(ctx context.Context, backupName st
 // "shadow/default/my_table/default/part1").
 func (bd *BackupDestination) DownloadPathWithManifest(ctx context.Context, remotePath string, localPath string, manifestFiles []ManifestEntry, prefixInManifest string, RetriesOnFailure int, RetriesDuration time.Duration, RetriesJitter int8, RetrierClassifier retrier.Classifier, maxSpeed uint64) (int64, error) {
 	downloadedBytes := int64(0)
+	limiter := bd.DownloadLimiter(maxSpeed)
 
 	for _, entry := range manifestFiles {
 		// Compute the relative name within remotePath
@@ -197,12 +200,28 @@ func (bd *BackupDestination) DownloadPathWithManifest(ctx context.Context, remot
 		f := ManifestEntryToRemoteFile(entry, prefixInManifest)
 		retry := retrier.New(retrier.ExponentialBackoff(RetriesOnFailure, common.AddRandomJitter(RetriesDuration, RetriesJitter)), RetrierClassifier)
 		err := retry.RunCtx(ctx, func(ctx context.Context) error {
-			startTime := time.Now()
 			r, err := bd.GetFileReader(ctx, path.Join(remotePath, f.Name()))
 			if err != nil {
 				log.Error().Err(err).Send()
 				return errors.WithMessage(err, "DownloadPathWithManifest GetFileReader")
 			}
+			r = bwlimit.ReadCloser(ctx, r, limiter)
+			var closeSrcOnce sync.Once
+			var srcCloseErr error
+			closeSrc := func() { closeSrcOnce.Do(func() { srcCloseErr = r.Close() }) }
+			// A stalled read is not interruptible by context alone: copyWithBuffer
+			// blocks in Read and never re-checks ctx, so /backup/kill cancels the
+			// context but the copy keeps running. Force-close the source reader on
+			// cancellation so the blocked read returns and the copy unwinds.
+			watchDone := make(chan struct{})
+			go func() {
+				select {
+				case <-ctx.Done():
+					closeSrc()
+				case <-watchDone:
+				}
+			}()
+			defer close(watchDone)
 			dstFilePath := path.Join(localPath, f.Name())
 			dstDirPath, _ := path.Split(dstFilePath)
 			if err := os.MkdirAll(dstDirPath, 0750); err != nil {
@@ -224,14 +243,9 @@ func (bd *BackupDestination) DownloadPathWithManifest(ctx context.Context, remot
 				log.Error().Err(dstCloseErr).Send()
 				return errors.WithMessage(dstCloseErr, "DownloadPathWithManifest dst.Close")
 			}
-			if srcCloseErr := r.Close(); srcCloseErr != nil {
+			if closeSrc(); srcCloseErr != nil {
 				log.Error().Err(srcCloseErr).Send()
 				return errors.WithMessage(srcCloseErr, "DownloadPathWithManifest r.Close")
-			}
-			if dstFileInfo, statErr := os.Stat(dstFilePath); statErr == nil {
-				bd.throttleSpeed(startTime, dstFileInfo.Size(), maxSpeed)
-			} else {
-				return errors.WithMessage(statErr, "DownloadPathWithManifest Stat")
 			}
 			return nil
 		})
