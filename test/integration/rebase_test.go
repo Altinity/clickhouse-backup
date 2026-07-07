@@ -50,7 +50,12 @@ func TestRebase(t *testing.T) {
 
 	runRebaseScenario(t, r, env, "test_rebase_s3", "/etc/clickhouse-backup/config-s3.yml", s3Policy)
 	runRebaseScenario(t, r, env, "test_rebase_sftp", "/etc/clickhouse-backup/config-sftp-auth-password.yaml", "")
-	runRebaseScenario(t, r, env, "test_rebase_ftp", "/etc/clickhouse-backup/config-ftp.yaml", "")
+	// old versions can't execute SYSTEM RESTORE REPLICA, so restore_as_attach must stay disabled (config-ftp-old.yaml)
+	ftpConfig := "/etc/clickhouse-backup/config-ftp.yaml"
+	if compareVersion(version, "21.8") < 0 {
+		ftpConfig = "/etc/clickhouse-backup/config-ftp-old.yaml"
+	}
+	runRebaseScenario(t, r, env, "test_rebase_ftp", ftpConfig, "")
 	runRebaseScenario(t, r, env, "test_rebase_gcs_emulator", "/etc/clickhouse-backup/config-gcs-custom-endpoint.yml", gcsPolicy)
 	if !isTestShouldSkip("AZURE_TESTS") {
 		runRebaseScenario(t, r, env, "test_rebase_azblob", "/etc/clickhouse-backup/config-azblob.yml", azurePolicy)
@@ -126,8 +131,13 @@ func runRebaseScenario(t *testing.T, r *require.Assertions, env *TestEnvironment
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", configFile, "delete", "remote", inc1Backup)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", configFile, "delete", "remote", fullBackup)
 
+	// synchronous `DROP TABLE ... NO DELAY` is available after 20.3, older versions use a plain DROP
+	dropSuffix := ""
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") > 0 {
+		dropSuffix = " NO DELAY"
+	}
 	for _, table := range tables {
-		env.queryWithNoError(t, r, "DROP TABLE "+dbName+"."+table+" SYNC")
+		env.queryWithNoError(t, r, "DROP TABLE "+dbName+"."+table+dropSuffix)
 	}
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", configFile, "restore_remote", "--rm", inc2Backup)
 	for _, table := range tables {
