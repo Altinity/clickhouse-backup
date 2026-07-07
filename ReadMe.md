@@ -114,13 +114,25 @@ general:
   download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is floor(AVAILABLE_CPU_CORES / 2). If result is < 1, then 1.
   upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2)). If result is < 1, then 1.
   
-  # Throttling speed for upload and download, calculates on part level, not the socket level, it means short period for high traffic values and then time to sleep 
+  # Throttling speed for upload and download, enforced inline via a token-bucket rate limiter shared across all concurrent workers, so the value is an aggregate cap with smooth (non-bursty) throughput.
+  # Throttling does NOT apply to server-side object disk copy (`CopyObject`, e.g. S3 server-side copy / Azure copy-blob), because those bytes move inside the cloud provider and never pass through clickhouse-backup. When server-side copy is unavailable (incompatible src/dst `remote_storage`, or a failed `CopyObject` falling back to streaming through local memory), the streaming copy IS throttled.
+  # Throttling does NOT apply to `remote_storage: custom`, because data transfer happens inside your external upload/download command, not through clickhouse-backup.
+  # When `clickhouse->use_embedded_backup_restore: true`, throttling is delegated to the ClickHouse server via the `max_backup_bandwidth` query setting passed in the BACKUP/RESTORE SETTINGS clause (requires ClickHouse 25.1+); upload_max_bytes_per_second applies to BACKUP, download_max_bytes_per_second to RESTORE. On older ClickHouse versions embedded transfers are not throttled.
   download_max_bytes_per_second: 0  # DOWNLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling 
   upload_max_bytes_per_second: 0    # UPLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling
+  # MAX_BROKEN_PART_RATIO, maximum allowed fraction (0..1) of broken data parts (e.g. caused by S3-disk or filesystem failures) that still produces a successful but partial backup during backup creation (`create`, and the create stage of `create_remote`).
+  # 0 (default) preserves legacy behavior where any broken part stops the backup completely. When >0 and the broken/total part ratio stays at or below this value, creation skips the broken parts, logs a warning, and the backup is marked successful.
+  # Skipped parts are recorded in the `broken_parts` section of the table metadata json (next to `parts`) and counted in the `clickhouse_backup_failed_parts_count` prometheus metric in server mode, see https://github.com/Altinity/clickhouse-backup/issues/1418
+  max_broken_part_ratio: 0          # MAX_BROKEN_PART_RATIO
 
   # Buffer tuning for high-bandwidth (10Gbit+) networks, see https://github.com/Altinity/clickhouse-backup/issues/1376 and Examples.md#tuning-for-high-bandwidth-10gbit-networks
   pipe_buffer_size: 131072          # PIPE_BUFFER_SIZE, size in bytes of the in-memory ring buffer between the compression and the upload/download stream handlers, default 128KB; raise (e.g. 8388608 = 8MB) to let compression run ahead of uploads on fast networks
   download_copy_buffer_size: 0      # DOWNLOAD_COPY_BUFFER_SIZE, explicit buffer size in bytes for io.CopyBuffer during download/extract, 0 means use the Go default (32KB); raise (e.g. 1048576 = 1MB) to reduce syscalls per file on fast networks
+
+  # zstd/gzip compression tuning, see https://github.com/Altinity/clickhouse-backup/issues/1378 and Examples.md#multi-threaded-zstdgzip-compression
+  compression_use_multi_thread: true # COMPRESSION_USE_MULTI_THREAD, enable per-stream multi-threaded zstd/gzip compression and decompression; default true to match pre-1378 behavior (gzip always used pgzip). A single large table dominating a backup is gated by per-stream compression speed and gets no benefit from upload_concurrency/download_concurrency. Set false to save CPU when many tables upload in parallel. Only affects compression_format: zstd and gzip (silently ignored for other formats)
+  compression_threads: 0            # COMPRESSION_THREADS, number of per-stream compression threads when compression_use_multi_thread is enabled (zstd concurrency / pgzip block workers), 0 means auto (GOMAXPROCS); must be unset/0 when compression_use_multi_thread is false
+  compression_buffer_size: 0        # COMPRESSION_BUFFER_SIZE, compression buffer size in bytes, 0 keeps library defaults. Meaning and valid range depend on compression_format and compression_use_multi_thread: zstd = encoder window (power of two, 1024..536870912, e.g. 4194304 = 4MB); single-threaded gzip = DEFLATE window (32..32768); multi-threaded gzip = pgzip block size (>16384). Other formats reject it
   
   # when table data contains in system.disks with type=ObjectStorage, then we need execute remote copy object in object storage service provider, this parameter can restrict how many files will copied in parallel  for each table 
   object_disk_server_side_copy_concurrency: 32
@@ -158,7 +170,7 @@ general:
   io_nice_priority: "idle" # IO niceness priority, to allow throttling DISK intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/ionice.1.html
   
   rbac_backup_always: true # always backup RBAC objects
-  rbac_resolve_conflicts: "recreate"  # action, when RBAC object with the same name already exists, allow "recreate", "ignore", "fail" values
+  rbac_conflict_resolution: "recreate"  # RBAC_CONFLICT_RESOLUTION, action when RBAC object with the same name already exists during restore, allowed values "recreate", "ignore", "fail"
 
   config_backup_always: false # always backup CONFIGS, disabled by default cause configuration shall be manage via Infrastructure as Code approach
   named_collections_backup_always: false # always backup Named Collections, disabled by default cause configuration shall be manage via Infrastructure as Code approach 
@@ -223,6 +235,11 @@ clickhouse:
   check_replicas_before_attach: true # CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH, helps avoiding concurrent ATTACH PART execution when restoring ReplicatedMergeTree tables
   default_replica_path: "/clickhouse/tables/{cluster}/{shard}/{database}/{table}" # CLICKHOUSE_DEFAULT_REPLICA_PATH, will use during restore Replicated tables without macros in replication_path if replica already exists, to avoid restoring conflicts
   default_replica_name: "{replica}" # CLICKHOUSE_DEFAULT_REPLICA_NAME, will use during restore Replicated tables without macros in replica_name if replica already exists, to avoid restoring conflicts
+  # CLICKHOUSE_REBIND_REPLICA_PATH_IF_EXISTS, opt-in fallback for restoring ReplicatedMergeTree tables (https://github.com/Altinity/clickhouse-backup/issues/1428).
+  # A foreign/renamed table that still occupies our resolved ZK replica path on THIS node is always detected via system.replicas and rebound to default_replica_path regardless of this flag (https://github.com/Altinity/clickhouse-backup/issues/849).
+  # This flag ONLY covers the residual case where the ZK path has leftover children but NO local table uses it (async-stale state after a DROP). That case is observationally identical to a temporarily-offline HA sibling replica, so it stays opt-in and defaults to false.
+  # WARNING: MUST be false during a concurrent multi-replica (HA) restore, otherwise rebinding a path held by a live sibling causes split-brain. Can be overridden per invocation with the `--rebind-replica-path-if-exists` flag of `restore`/`restore_remote`.
+  rebind_replica_path_if_exists: false # CLICKHOUSE_REBIND_REPLICA_PATH_IF_EXISTS
   use_embedded_backup_restore: false # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE, use BACKUP / RESTORE SQL statements instead of regular SQL queries to use features of modern ClickHouse server versions
   use_embedded_backup_restore_cluster: "" # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE_CLUSTER, add ON CLUSTER clause to BACKUP / RESTORE SQL statements when `use_embedded_backup_restore: true`, value is cluster name from system.clusters, e.g. "{cluster}"
   embedded_backup_disk: ""  # CLICKHOUSE_EMBEDDED_BACKUP_DISK - disk from system.disks which will use when `use_embedded_backup_restore: true`
@@ -230,6 +247,9 @@ clickhouse:
   restore_as_attach: false # CLICKHOUSE_RESTORE_AS_ATTACH, allow restore tables which have inconsistent data parts structure and mutations in progress
   restore_distributed_cluster: "" # CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER, cluster name (can use macros) which will use during restore `engine=Distributed` tables, when cluster defined in backup table definition not exists in `system.clusters`
   check_parts_columns: true # CLICKHOUSE_CHECK_PARTS_COLUMNS, check data types from system.parts_columns during create backup to guarantee mutation is complete
+  parts_columns_batch_size: 25 # CLICKHOUSE_PARTS_COLUMNS_BATCH_SIZE, batch size for system.parts_columns checks
+  parts_columns_max_bytes_before_external_group_by: 100000000 # CLICKHOUSE_PARTS_COLUMNS_MAX_BYTES_BEFORE_EXTERNAL_GROUP_BY, `max_bytes_before_external_group_by` setting injected into the system.parts_columns check query, 0 means don't inject the setting
+  parts_columns_max_memory_usage: 200000000 # CLICKHOUSE_PARTS_COLUMNS_MAX_MEMORY_USAGE, `max_memory_usage` setting injected into the system.parts_columns check query, 0 means don't inject the setting
   max_connections: 0 # CLICKHOUSE_MAX_CONNECTIONS, how many parallel connections could be opened during operations
 azblob:
   endpoint_schema: "https"            # AZBLOB_ENDPOINT_SCHEMA, URL scheme used to build the AZBLOB endpoint (e.g. http for Azurite emulator)
@@ -291,7 +311,6 @@ s3:
   delete_concurrency: 10           # S3_DELETE_CONCURRENCY, how many parallel DeleteObjects requests during clean/delete operations
 
   # HTTP transport and buffer tuning for high-bandwidth (10Gbit+) networks, see https://github.com/Altinity/clickhouse-backup/issues/1376 and Examples.md#tuning-for-high-bandwidth-10gbit-networks
-  buffer_size: 65536                  # S3_BUFFER_SIZE, per-part buffer in bytes for the s3manager up/downloader, default 64KB; raise (e.g. 1048576 = 1MB) on fast networks
   http_max_idle_conns: 0              # S3_HTTP_MAX_IDLE_CONNS, http.Transport.MaxIdleConns, 0 keeps the AWS SDK default
   http_max_idle_conns_per_host: 0     # S3_HTTP_MAX_IDLE_CONNS_PER_HOST, http.Transport.MaxIdleConnsPerHost, 0 keeps the Go default (2); raise (e.g. 128) to avoid serializing parallel up/downloads to the same endpoint when concurrency is high
   http_max_conns_per_host: 0          # S3_HTTP_MAX_CONNS_PER_HOST, http.Transport.MaxConnsPerHost, 0 means unlimited
@@ -400,7 +419,8 @@ api:
   integration_tables_host: ""  # API_INTEGRATION_TABLES_HOST, allow using DNS name to connect in `system.backup_list` and `system.backup_actions`
   allow_parallel: false        # API_ALLOW_PARALLEL, enable parallel operations, this allows for significant memory allocation and spawns go-routines, don't enable it if you are not sure
   create_integration_tables: false # API_CREATE_INTEGRATION_TABLES, create `system.backup_list` and `system.backup_actions`
-  complete_resumable_after_restart: true # API_COMPLETE_RESUMABLE_AFTER_RESTART, after API server startup, if `/var/lib/clickhouse/backup/*/(upload|download).state2` present, then operation will continue in the background
+  complete_resumable_after_restart: true # API_COMPLETE_RESUMABLE_AFTER_RESTART, after API server startup, if `/var/lib/clickhouse/backup/*/{command}.state2` present and command is allowed by complete_resumable_after_restart_commands, then operation will continue in the background
+  complete_resumable_after_restart_commands: [upload, download] # API_COMPLETE_RESUMABLE_AFTER_RESTART_COMMANDS, commands allowed for automatic resume after API server restart
   watch_is_main_process: false # WATCH_IS_MAIN_PROCESS, treats 'watch' command as a main api process, if it is stopped unexpectedly, api server is also stopped. Does not stop api server if 'watch' command canceled by the user. 
   backup_actions_skip_commands: [] # API_BACKUP_ACTIONS_SKIP_COMMANDS, list of commands that must NOT be recorded into the in-memory async status exposed via `system.backup_actions` and `/backup/actions`. Useful to keep high-frequency monitoring calls (typically `list`) from growing the actions state and consuming RAM during long-running backups. Example: `[list]`
   cancel_operation_timeout: "1800s" # API_CANCEL_OPERATION_TIMEOUT, how long `/backup/kill` (and server stop/restart) waits for the underlying command goroutine to actually return after the context is canceled. If the goroutine is stuck on an IO without timeout, kill returns once this timeout elapses. See https://github.com/Altinity/clickhouse-backup/issues/1365
@@ -607,6 +627,7 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 - Optional string query argument `restore_schema_as_attach` or `restore-schema-as-attach` works the same as the `--restore-schema-as-attach` CLI argument.
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
 - Optional boolean query argument `skip_empty_tables` or `skip-empty-tables` works the same as the `--skip-empty-tables` CLI argument (skip restoring tables that have no data).
+- Optional boolean query argument `rebind_replica_path_if_exists` or `rebind-replica-path-if-exists` works the same as the `--rebind-replica-path-if-exists` CLI argument (overrides `clickhouse.rebind_replica_path_if_exists` for this request, rebind a restored ReplicatedMergeTree to `default_replica_path` when the original ZK path still has leftover state but our replica entry is absent). WARNING: never set during a concurrent HA multi-replica restore.
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
@@ -633,6 +654,7 @@ Download and restore data from remote backup: `curl -s localhost:7171/backup/res
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
 - Optional boolean query argument `hardlink_exists_files` or `hardlink-exists-files` works the same as the `--hardlink-exists-files` CLI argument (Create hardlinks for existing files instead of downloading).
 - Optional boolean query argument `skip_empty_tables` or `skip-empty-tables` works the same as the `--skip-empty-tables` CLI argument (skip restoring tables that have no data).
+- Optional boolean query argument `rebind_replica_path_if_exists` or `rebind-replica-path-if-exists` works the same as the `--rebind-replica-path-if-exists` CLI argument (overrides `clickhouse.rebind_replica_path_if_exists` for this request, rebind a restored ReplicatedMergeTree to `default_replica_path` when the original ZK path still has leftover state but our replica entry is absent). WARNING: never set during a concurrent HA multi-replica restore.
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
@@ -681,6 +703,7 @@ Display a list of all operations from start of API server: `curl -s localhost:71
 - [How to restore object disks to s3 with s3:CopyObject](Examples.md#how-to-restore-object-disks-to-s3-with-s3copyobject)
 - [How to use AWS IRSA and IAM to allow S3 backup without Explicit credentials](Examples.md#how-to-use-aws-irsa-and-iam-to-allow-s3-backup-without-explicit-credentials)
 - [How to use Azure AD Workload Identity to allow AZBLOB backup without Explicit credentials](Examples.md#how-to-use-azure-ad-workload-identity-to-allow-azblob-backup-without-explicit-credentials)
+- [How to use GCP Workload Identity to allow GCS backup without Explicit credentials](Examples.md#how-to-use-gcp-workload-identity-to-allow-gcs-backup-without-explicit-credentials)
 - [How incremental backups work with remote storage](Examples.md#how-incremental-backups-work-with-remote-storage)
 - [How to watch backups work](Examples.md#how-to-watch-backups-work)
 - [How to track operation status with operation_id](Examples.md#How-to-track-operation-status-with-operation_id)
@@ -887,6 +910,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --restore-schema-as-attach                                                        Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --replicated-copy-to-detached                                                     Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step
    --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
+   --rebind-replica-path-if-exists                                                   Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent
    
 ```
 ### CLI command - restore_remote
@@ -925,6 +949,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --restore-schema-as-attach                                                        Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --hardlink-exists-files                                                           Create hardlinks for existing files instead of downloading
    --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
+   --rebind-replica-path-if-exists                                                   Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent
    
 ```
 ### CLI command - delete

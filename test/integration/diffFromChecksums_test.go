@@ -22,6 +22,7 @@ import (
 // object_disk CopyObject path is covered too.
 func TestDiffFromChecksums(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	if !isAdvancedMode() {
 		t.Skip("requires advanced mode with storage policies")
@@ -38,8 +39,6 @@ func TestDiffFromChecksums(t *testing.T) {
 	// Case 2: same part name, SAME content → Required must be true and no
 	// part files should be linked into the local backup directory.
 	runDiffFromChecksumsCase(t, r, env, "test_diff_cksum_match", true)
-
-	env.Cleanup(t, r)
 }
 
 func runDiffFromChecksumsCase(t *testing.T, r *require.Assertions, env *TestEnvironment, dbName string, sameData bool) {
@@ -65,30 +64,30 @@ func runDiffFromChecksumsCase(t *testing.T, r *require.Assertions, env *TestEnvi
 	}
 	r.NoError(env.dropDatabase(dbName, true))
 
-	env.queryWithNoError(r, "CREATE DATABASE "+dbName)
-	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableLocal+" (id UInt64, v String) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableS3+" (id UInt64, v String) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy='s3_only'")
+	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
+	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+"."+tableLocal+" (id UInt64, v String) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+"."+tableS3+" (id UInt64, v String) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy='s3_only'")
 
 	// First insert: deterministic part `all_1_1_0` on each disk
-	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableLocal+" SELECT number, 'A' FROM numbers(100)")
-	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableS3+" SELECT number, 'A' FROM numbers(100)")
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+"."+tableLocal+" SELECT number, 'A' FROM numbers(100)")
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+"."+tableS3+" SELECT number, 'A' FROM numbers(100)")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--tables="+dbName+".*", fullBackup)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", fullBackup)
 
 	// DROP+recreate resets the non-replicated MergeTree block counter so the
 	// re-inserted part lands under the same `all_1_1_0` name as before.
-	env.queryWithNoError(r, "DROP TABLE "+dbName+"."+tableLocal+" SYNC")
-	env.queryWithNoError(r, "DROP TABLE "+dbName+"."+tableS3+" SYNC")
-	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableLocal+" (id UInt64, v String) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableS3+" (id UInt64, v String) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy='s3_only'")
+	env.queryWithNoError(t, r, "DROP TABLE "+dbName+"."+tableLocal+" SYNC")
+	env.queryWithNoError(t, r, "DROP TABLE "+dbName+"."+tableS3+" SYNC")
+	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+"."+tableLocal+" (id UInt64, v String) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+"."+tableS3+" (id UInt64, v String) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy='s3_only'")
 
 	payload := "A"
 	if !sameData {
 		payload = "B"
 	}
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO %s.%s SELECT number, '%s' FROM numbers(100)", dbName, tableLocal, payload))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO %s.%s SELECT number, '%s' FROM numbers(100)", dbName, tableS3, payload))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO %s.%s SELECT number, '%s' FROM numbers(100)", dbName, tableLocal, payload))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO %s.%s SELECT number, '%s' FROM numbers(100)", dbName, tableS3, payload))
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--tables="+dbName+".*", "--diff-from-remote="+fullBackup, incrementBackup)
 
@@ -122,8 +121,8 @@ func runDiffFromChecksumsCase(t *testing.T, r *require.Assertions, env *TestEnvi
 
 	// End-to-end: restore the increment and verify the data round-trips for
 	// both the local-disk table and the s3 object-disk table.
-	env.queryWithNoError(r, "DROP TABLE "+dbName+"."+tableLocal+" SYNC")
-	env.queryWithNoError(r, "DROP TABLE "+dbName+"."+tableS3+" SYNC")
+	env.queryWithNoError(t, r, "DROP TABLE "+dbName+"."+tableLocal+" SYNC")
+	env.queryWithNoError(t, r, "DROP TABLE "+dbName+"."+tableS3+" SYNC")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", incrementBackup)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore_remote", "--rm", incrementBackup)
 	env.checkCount(r, 1, 100, "SELECT count() FROM "+dbName+"."+tableLocal)

@@ -32,6 +32,7 @@ func TestCacheDiskBackup(t *testing.T) {
 	}
 
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
 	backupName := fmt.Sprintf("test_cache_disk_%d", rand.Int())
@@ -87,8 +88,8 @@ XML
 
 	// Step 2: Create a table using the s3_tiered policy and insert data.
 	// Use TTL to move some data to the cold (S3) volume, and keep some on default (local).
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE %s.%s (id UInt64, dt Date, value String) "+
 			"ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY id "+
 			"TTL dt + INTERVAL 1 DAY TO VOLUME 'cold' "+
@@ -97,20 +98,20 @@ XML
 	))
 
 	// Insert old data (will move to S3 via TTL) and recent data (stays on local)
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"INSERT INTO %s.%s SELECT number, toDate('2020-01-01'), toString(number) FROM numbers(1000)",
 		dbName, tableName,
 	))
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"INSERT INTO %s.%s SELECT number+1000, today(), toString(number+1000) FROM numbers(500)",
 		dbName, tableName,
 	))
 
 	// Force TTL to move old data to S3
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"OPTIMIZE TABLE %s.%s FINAL", dbName, tableName,
 	))
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"ALTER TABLE %s.%s MATERIALIZE TTL", dbName, tableName,
 	))
 
@@ -162,7 +163,7 @@ XML
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c",
 		"/etc/clickhouse-backup/config-s3.yml",
 		"delete", "local", backupName)
-	env.queryWithNoError(r, fmt.Sprintf("DROP TABLE IF EXISTS %s.%s SYNC", dbName, tableName))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE IF EXISTS %s.%s SYNC", dbName, tableName))
 
 	// Step 6: Download and restore
 	log.Debug().Msg("Downloading backup")
@@ -186,5 +187,4 @@ XML
 	env.ch.Close()
 	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
 	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
-	env.Cleanup(t, r)
 }

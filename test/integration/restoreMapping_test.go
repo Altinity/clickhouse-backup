@@ -13,6 +13,7 @@ import (
 
 func TestRestoreMapping(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 
 	testBackupName := "test_restore_database_mapping"
@@ -31,17 +32,17 @@ func TestRestoreMapping(t *testing.T) {
 		expectedDbEngine = "Replicated"
 	}
 
-	env.queryWithNoError(r, createSQL)
-	env.queryWithNoError(r, "CREATE TABLE `database-1`.t1 (dt DateTime, v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/{shard}/database-1/t1','{replica}') PARTITION BY v % 10 ORDER BY dt")
+	env.queryWithNoError(t, r, createSQL)
+	env.queryWithNoError(t, r, "CREATE TABLE `database-1`.t1 (dt DateTime, v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/{shard}/database-1/t1','{replica}') PARTITION BY v % 10 ORDER BY dt")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.3") < 0 {
-		env.queryWithNoError(r, "CREATE TABLE `database-1`.t2 AS `database-1`.t1 ENGINE=ReplicatedMergeTree('/clickhouse/tables/{shard}/database-1/t2','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
+		env.queryWithNoError(t, r, "CREATE TABLE `database-1`.t2 AS `database-1`.t1 ENGINE=ReplicatedMergeTree('/clickhouse/tables/{shard}/database-1/t2','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
 	} else {
-		env.queryWithNoError(r, "CREATE TABLE `database-1`.t2 AS `database-1`.t1 ENGINE=ReplicatedMergeTree('/clickhouse/tables/{shard}/{database}/{table}','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
+		env.queryWithNoError(t, r, "CREATE TABLE `database-1`.t2 AS `database-1`.t1 ENGINE=ReplicatedMergeTree('/clickhouse/tables/{shard}/{database}/{table}','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
 	}
-	env.queryWithNoError(r, "CREATE TABLE `database-1`.`t-d1` AS `database-1`.t1 ENGINE=Distributed('{cluster}', 'database-1', 't1')")
-	env.queryWithNoError(r, "CREATE MATERIALIZED VIEW `database-1`.mv1 TO `database-1`.t2 AS SELECT * FROM `database-1`.t1")
-	env.queryWithNoError(r, "CREATE VIEW `database-1`.v1 AS SELECT * FROM `database-1`.t1")
-	env.queryWithNoError(r, "INSERT INTO `database-1`.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
+	env.queryWithNoError(t, r, "CREATE TABLE `database-1`.`t-d1` AS `database-1`.t1 ENGINE=Distributed('{cluster}', 'database-1', 't1')")
+	env.queryWithNoError(t, r, "CREATE MATERIALIZED VIEW `database-1`.mv1 TO `database-1`.t2 AS SELECT * FROM `database-1`.t1")
+	env.queryWithNoError(t, r, "CREATE VIEW `database-1`.v1 AS SELECT * FROM `database-1`.t1")
+	env.queryWithNoError(t, r, "INSERT INTO `database-1`.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
 
 	log.Debug().Msg("Create backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName)
@@ -53,7 +54,7 @@ func TestRestoreMapping(t *testing.T) {
 	}
 
 	log.Debug().Msg("Check result database-1")
-	env.queryWithNoError(r, "INSERT INTO `database-1`.t1 SELECT '2023-01-01 00:00:00', number FROM numbers(10)")
+	env.queryWithNoError(t, r, "INSERT INTO `database-1`.t1 SELECT '2023-01-01 00:00:00', number FROM numbers(10)")
 	env.checkCount(r, 1, 20, "SELECT count() FROM `database-1`.t1")
 	env.checkCount(r, 1, 20, "SELECT count() FROM `database-1`.t2")
 	env.checkCount(r, 1, 20, "SELECT count() FROM `database-1`.`t-d1`")
@@ -118,9 +119,9 @@ func TestRestoreMapping(t *testing.T) {
 	databaseList2 := []string{"database-3"}
 	fullCleanup(t, r, env, []string{testBackupName2}, []string{"local"}, databaseList2, false, false, false, "config-database-mapping.yml")
 
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `database-3`")
-	env.queryWithNoError(r, "CREATE TABLE `database-3`.src_table (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
-	env.queryWithNoError(r, "INSERT INTO `database-3`.src_table SELECT '2022-01-01 00:00:00', number FROM numbers(5)")
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS `database-3`")
+	env.queryWithNoError(t, r, "CREATE TABLE `database-3`.src_table (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	env.queryWithNoError(t, r, "INSERT INTO `database-3`.src_table SELECT '2022-01-01 00:00:00', number FROM numbers(5)")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName2)
 
@@ -140,12 +141,12 @@ func TestRestoreMapping(t *testing.T) {
 	databaseList3 := []string{"db_a", "db_b", "db_c", "db_d"}
 	fullCleanup(t, r, env, []string{testBackupName3}, []string{"local"}, databaseList3, false, false, false, "config-database-mapping.yml")
 
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `db_a`")
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `db_b`")
-	env.queryWithNoError(r, "CREATE TABLE `db_a`.t1 (id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "CREATE TABLE `db_b`.t1 (id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "INSERT INTO `db_a`.t1 SELECT number FROM numbers(3)")
-	env.queryWithNoError(r, "INSERT INTO `db_b`.t1 SELECT number FROM numbers(7)")
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS `db_a`")
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS `db_b`")
+	env.queryWithNoError(t, r, "CREATE TABLE `db_a`.t1 (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "CREATE TABLE `db_b`.t1 (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "INSERT INTO `db_a`.t1 SELECT number FROM numbers(3)")
+	env.queryWithNoError(t, r, "INSERT INTO `db_b`.t1 SELECT number FROM numbers(7)")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName3)
 
@@ -168,12 +169,12 @@ func TestRestoreMapping(t *testing.T) {
 	databaseList4 := []string{"src_db1", "src_db2", "dst_db1", "dst_db2"}
 	fullCleanup(t, r, env, []string{testBackupName4}, []string{"local"}, databaseList4, false, false, false, "config-database-mapping.yml")
 
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `src_db1`")
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `src_db2`")
-	env.queryWithNoError(r, "CREATE TABLE `src_db1`.old_name (id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "CREATE TABLE `src_db2`.old_name (id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "INSERT INTO `src_db1`.old_name SELECT number FROM numbers(4)")
-	env.queryWithNoError(r, "INSERT INTO `src_db2`.old_name SELECT number + 100 FROM numbers(6)")
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS `src_db1`")
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS `src_db2`")
+	env.queryWithNoError(t, r, "CREATE TABLE `src_db1`.old_name (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "CREATE TABLE `src_db2`.old_name (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "INSERT INTO `src_db1`.old_name SELECT number FROM numbers(4)")
+	env.queryWithNoError(t, r, "INSERT INTO `src_db2`.old_name SELECT number + 100 FROM numbers(6)")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName4)
 
@@ -193,11 +194,11 @@ func TestRestoreMapping(t *testing.T) {
 	databaseList5 := []string{"alpha", "beta"}
 	fullCleanup(t, r, env, []string{testBackupName5}, []string{"local"}, databaseList5, false, false, false, "config-database-mapping.yml")
 
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `alpha`")
-	env.queryWithNoError(r, "CREATE TABLE `alpha`.common (id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "CREATE TABLE `alpha`.unique_a (id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "INSERT INTO `alpha`.common SELECT number FROM numbers(2)")
-	env.queryWithNoError(r, "INSERT INTO `alpha`.unique_a SELECT number FROM numbers(3)")
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS `alpha`")
+	env.queryWithNoError(t, r, "CREATE TABLE `alpha`.common (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "CREATE TABLE `alpha`.unique_a (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "INSERT INTO `alpha`.common SELECT number FROM numbers(2)")
+	env.queryWithNoError(t, r, "INSERT INTO `alpha`.unique_a SELECT number FROM numbers(3)")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName5)
 
@@ -220,18 +221,18 @@ func TestRestoreMapping(t *testing.T) {
 	databaseList6 := []string{"db-5", "source_db", "target_db"}
 	fullCleanup(t, r, env, []string{testBackupName6}, []string{"local"}, databaseList6, false, false, false, "config-database-mapping.yml")
 
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `source_db`")
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `target_db`")
-	env.queryWithNoError(r, "CREATE TABLE `source_db`.original_table (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
-	env.queryWithNoError(r, "INSERT INTO `source_db`.original_table SELECT '2022-01-01 00:00:00', number FROM numbers(5)")
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `db-5`")
-	env.queryWithNoError(r, "CREATE TABLE `db-5`.table (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
-	env.queryWithNoError(r, "INSERT INTO `db-5`.table SELECT '2022-01-01 00:00:00', number FROM numbers(5)")
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS `source_db`")
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS `target_db`")
+	env.queryWithNoError(t, r, "CREATE TABLE `source_db`.original_table (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	env.queryWithNoError(t, r, "INSERT INTO `source_db`.original_table SELECT '2022-01-01 00:00:00', number FROM numbers(5)")
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS `db-5`")
+	env.queryWithNoError(t, r, "CREATE TABLE `db-5`.table (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	env.queryWithNoError(t, r, "INSERT INTO `db-5`.table SELECT '2022-01-01 00:00:00', number FROM numbers(5)")
 	// Create target table to verify DROP operates on correct table
-	env.queryWithNoError(r, "CREATE TABLE `target_db`.renamed_table_v2 (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
-	env.queryWithNoError(r, "INSERT INTO `target_db`.renamed_table_v2 SELECT '2023-01-01 00:00:00', number FROM numbers(3)")
-	env.queryWithNoError(r, "CREATE TABLE `db-5`.table_v2 (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
-	env.queryWithNoError(r, "INSERT INTO `db-5`.table_v2 SELECT '2023-01-01 00:00:00', number FROM numbers(3)")
+	env.queryWithNoError(t, r, "CREATE TABLE `target_db`.renamed_table_v2 (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	env.queryWithNoError(t, r, "INSERT INTO `target_db`.renamed_table_v2 SELECT '2023-01-01 00:00:00', number FROM numbers(3)")
+	env.queryWithNoError(t, r, "CREATE TABLE `db-5`.table_v2 (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	env.queryWithNoError(t, r, "INSERT INTO `db-5`.table_v2 SELECT '2023-01-01 00:00:00', number FROM numbers(3)")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName6)
 
@@ -266,6 +267,38 @@ func TestRestoreMapping(t *testing.T) {
 
 	fullCleanup(t, r, env, []string{testBackupName6}, []string{"local"}, databaseList6, false, true, true, "config-database-mapping.yml")
 
+	// Corner case 7: comma-separated --tables from the same database with --restore-database-mapping
+	// https://github.com/Altinity/clickhouse-backup/issues/1421
+	log.Debug().Msg("Corner case 7: comma-separated --tables with --restore-database-mapping")
+	testBackupName8 := "test_comma_separated_tables_mapping"
+	databaseList8 := []string{"dwh", "sandbox"}
+	fullCleanup(t, r, env, []string{testBackupName8}, []string{"local"}, databaseList8, false, false, false, "config-database-mapping.yml")
+
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS `dwh`")
+	env.queryWithNoError(t, r, "CREATE TABLE `dwh`.events (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "CREATE TABLE `dwh`.events_invalid (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "INSERT INTO `dwh`.events SELECT number FROM numbers(10)")
+	env.queryWithNoError(t, r, "INSERT INTO `dwh`.events_invalid SELECT number FROM numbers(5)")
+
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName8)
+
+	log.Debug().Msg("Restore --schema --data with comma-separated --tables and database mapping")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--data", "--rm", "--restore-database-mapping", "dwh:sandbox", "--tables", "dwh.events,dwh.events_invalid", testBackupName8)
+
+	env.checkCount(r, 1, 10, "SELECT count() FROM `sandbox`.events")
+	env.checkCount(r, 1, 5, "SELECT count() FROM `sandbox`.events_invalid")
+
+	// same corner case with --restore-table-mapping for the same table name in different databases
+	// second comma-separated pattern element shall keep its own database name after mapping
+	log.Debug().Msg("Restore --schema --data with comma-separated --tables and database+table mapping")
+	r.NoError(env.dropDatabase("sandbox", false))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--data", "--rm", "--restore-database-mapping", "dwh:sandbox", "--restore-table-mapping", "events:events_mapped,events_invalid:events_invalid_mapped", "--tables", "dwh.events,dwh.events_invalid", testBackupName8)
+
+	env.checkCount(r, 1, 10, "SELECT count() FROM `sandbox`.events_mapped")
+	env.checkCount(r, 1, 5, "SELECT count() FROM `sandbox`.events_invalid_mapped")
+
+	fullCleanup(t, r, env, []string{testBackupName8}, []string{"local"}, databaseList8, false, true, true, "config-database-mapping.yml")
+
 	// Corner case 6: Object disk tables with mapping - verify key rewriting
 	// https://github.com/Altinity/clickhouse-backup/issues/1265
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 && isAdvancedMode() {
@@ -274,16 +307,16 @@ func TestRestoreMapping(t *testing.T) {
 		databaseList7 := []string{"db_object_src", "db_object_dst"}
 		fullCleanup(t, r, env, []string{testBackupName7}, []string{"local", "remote"}, databaseList7, false, false, false, "config-s3.yml")
 
-		env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `db_object_src`")
-		env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `db_object_dst`")
+		env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS `db_object_src`")
+		env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS `db_object_dst`")
 
 		// Create table with object disk (S3)
-		env.queryWithNoError(r, "CREATE TABLE `db_object_src`.table_s3 (id UInt64, dt DateTime) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY id SETTINGS storage_policy='s3_only'")
-		env.queryWithNoError(r, "INSERT INTO `db_object_src`.table_s3 SELECT number, '2024-01-01 00:00:00' FROM numbers(100)")
+		env.queryWithNoError(t, r, "CREATE TABLE `db_object_src`.table_s3 (id UInt64, dt DateTime) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY id SETTINGS storage_policy='s3_only'")
+		env.queryWithNoError(t, r, "INSERT INTO `db_object_src`.table_s3 SELECT number, '2024-01-01 00:00:00' FROM numbers(100)")
 
 		// Create target table that already exists (simulating the conflict scenario)
-		env.queryWithNoError(r, "CREATE TABLE `db_object_dst`.table_s3_mapped (id UInt64, dt DateTime) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY id SETTINGS storage_policy='s3_only'")
-		env.queryWithNoError(r, "INSERT INTO `db_object_dst`.table_s3_mapped SELECT number+1000, '2024-02-01 00:00:00' FROM numbers(50)")
+		env.queryWithNoError(t, r, "CREATE TABLE `db_object_dst`.table_s3_mapped (id UInt64, dt DateTime) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY id SETTINGS storage_policy='s3_only'")
+		env.queryWithNoError(t, r, "INSERT INTO `db_object_dst`.table_s3_mapped SELECT number+1000, '2024-02-01 00:00:00' FROM numbers(50)")
 
 		// Create backup
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", testBackupName7)
@@ -308,11 +341,11 @@ func TestRestoreMapping(t *testing.T) {
 
 		// Verify original target table data is preserved (no corruption)
 		// Drop the restored table and check if we can still read the original data
-		env.queryWithNoError(r, "DROP TABLE `db_object_dst`.table_s3_mapped SYNC")
+		env.queryWithNoError(t, r, "DROP TABLE `db_object_dst`.table_s3_mapped SYNC")
 
 		// Recreate original target table and verify its object keys are intact
-		env.queryWithNoError(r, "CREATE TABLE `db_object_dst`.table_s3_original (id UInt64, dt DateTime) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY id SETTINGS storage_policy='s3_only'")
-		env.queryWithNoError(r, "INSERT INTO `db_object_dst`.table_s3_original SELECT number+2000, '2024-03-01 00:00:00' FROM numbers(75)")
+		env.queryWithNoError(t, r, "CREATE TABLE `db_object_dst`.table_s3_original (id UInt64, dt DateTime) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY id SETTINGS storage_policy='s3_only'")
+		env.queryWithNoError(t, r, "INSERT INTO `db_object_dst`.table_s3_original SELECT number+2000, '2024-03-01 00:00:00' FROM numbers(75)")
 
 		// This insert should work - verifying object storage is not corrupted
 		var srcCount uint64
@@ -322,6 +355,4 @@ func TestRestoreMapping(t *testing.T) {
 		// Clean up
 		fullCleanup(t, r, env, []string{testBackupName7}, []string{"local", "remote"}, databaseList7, false, true, true, "config-s3.yml")
 	}
-
-	env.Cleanup(t, r)
 }

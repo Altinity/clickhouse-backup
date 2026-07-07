@@ -20,6 +20,7 @@ func TestSlashesInDatabaseAndTableNamesAndTableQuery(t *testing.T) {
 		t.Skipf("version %s is too old for this test", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	version, err := env.ch.GetVersion(t.Context())
 	r.NoError(err)
@@ -28,8 +29,8 @@ func TestSlashesInDatabaseAndTableNamesAndTableQuery(t *testing.T) {
 	tableName := `z\z2/z3`
 	createSchemaSQL := "(`s`" + ` String DEFAULT replaceRegexpAll('test', '(\\\\=|\\\\\\\\)', '\\\\\\\\\\\\1')) ENGINE = MergeTree ORDER BY s`
 	createTableSQL := fmt.Sprintf("CREATE TABLE `%s`.`%s` "+createSchemaSQL, dbName, tableName)
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, createTableSQL)
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, createTableSQL)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create", "--env", "CLICKHOUSE_HOST=clickhouse", "--tables", dbName+".*", t.Name())
 
 	backupTableFile := fmt.Sprintf("/var/lib/clickhouse/backup/%s/metadata/%s/%s.json", t.Name(), common.TablePathEncode(dbName), common.TablePathEncode(tableName))
@@ -55,5 +56,4 @@ func TestSlashesInDatabaseAndTableNamesAndTableQuery(t *testing.T) {
 
 	r.NoError(env.dropDatabase(dbName, false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "--env", "CLICKHOUSE_HOST=clickhouse", t.Name())
-	env.Cleanup(t, r)
 }

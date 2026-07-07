@@ -46,10 +46,10 @@ func Download(ctx context.Context, retrierClassifier retrier.Classifier, cfg *co
 			Str("duration", utils.HumanizeDuration(time.Since(startCustomDownload))).
 			Msg("done")
 		return nil
-	} else {
-		log.Error().
-			Str("operation", "download_custom").
-			Err(err).Send()
-		return errors.WithMessage(err, "Download custom")
 	}
+
+	log.Error().
+		Str("operation", "download_custom").
+		Err(err).Send()
+	return errors.Wrap(err, "Download custom")
 }

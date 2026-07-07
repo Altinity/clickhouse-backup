@@ -8,6 +8,16 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// FailedPartsCount counts data parts skipped as broken during backup creation when
+// general.max_broken_part_ratio > 0 tolerated them. It is a package-level counter because it is
+// incremented from pkg/backup (which has no APIMetrics instance) and registered in RegisterMetrics,
+// see https://github.com/Altinity/clickhouse-backup/issues/1418
+var FailedPartsCount = prometheus.NewCounter(prometheus.CounterOpts{
+	Namespace: "clickhouse_backup",
+	Name:      "failed_parts_count",
+	Help:      "Counter of data parts skipped as broken during backup creation with max_broken_part_ratio > 0",
+})
+
 type APIMetrics struct {
 	SuccessfulCounter map[string]prometheus.Counter
 	FailedCounter     map[string]prometheus.Counter
@@ -155,6 +165,7 @@ func (m *APIMetrics) RegisterMetrics() {
 	}
 
 	prometheus.MustRegister(
+		FailedPartsCount,
 		m.LastBackupSizeLocal,
 		m.LastBackupSizeRemote,
 		m.NumberBackupsRemote,
@@ -214,6 +225,13 @@ func (m *APIMetrics) Success(command string) {
 	} else {
 		log.Warn().Msgf("%s not found in LastStatus metrics", command)
 	}
+	if subCommands, subCommandsExists := m.SubCommands[command]; subCommandsExists {
+		for _, subCommand := range subCommands {
+			if _, exists := m.LastStatus[subCommand]; exists {
+				m.LastStatus[subCommand].Set(1)
+			}
+		}
+	}
 }
 
 func (m *APIMetrics) Failure(command string) {
@@ -226,6 +244,13 @@ func (m *APIMetrics) Failure(command string) {
 		m.LastStatus[command].Set(0)
 	} else {
 		log.Warn().Msgf("%s not found in LastStatus metrics", command)
+	}
+	if subCommands, subCommandsExists := m.SubCommands[command]; subCommandsExists {
+		for _, subCommand := range subCommands {
+			if _, exists := m.LastStatus[subCommand]; exists {
+				m.LastStatus[subCommand].Set(0)
+			}
+		}
 	}
 }
 

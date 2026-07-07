@@ -14,6 +14,7 @@ func TestRestoreDistributedCluster(t *testing.T) {
 		t.Skipf("system.clusters not cleanup properly in version %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	xml := `
 <yandex>
@@ -34,12 +35,12 @@ func TestRestoreDistributedCluster(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse", "bash", "-c", fmt.Sprintf("echo -n '%s' > /etc/clickhouse-server/config.d/new-cluster.xml", xml))
 	// auto-detection of config.d/*.xml is unreliable across ClickHouse versions (esp. 26.x), trigger explicit reload
 	for j := 0; j < 3; j++ {
-		env.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
+		env.queryWithNoError(t, r, "SYSTEM RELOAD CONFIG")
 		time.Sleep(1 * time.Second)
 	}
 	var clusterExists string
 	for i := 0; i < 60 && clusterExists != "new_cluster"; i++ {
-		env.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
+		env.queryWithNoError(t, r, "SYSTEM RELOAD CONFIG")
 		r.NoError(env.ch.SelectSingleRowNoCtx(&clusterExists, "SELECT cluster FROM system.clusters WHERE cluster='new_cluster'"))
 		if clusterExists == "new_cluster" {
 			break
@@ -51,10 +52,10 @@ func TestRestoreDistributedCluster(t *testing.T) {
 	// Create test database and table
 	dbName := "test_restore_distributed_cluster"
 	tableName := "test_table"
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
-	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64, value String) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableName+"_dist (id UInt64, value String) ENGINE=Distributed('new_cluster',"+dbName+","+tableName+")")
-	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+"_dist SELECT number, toString(number) FROM numbers(100)")
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64, value String) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+"."+tableName+"_dist (id UInt64, value String) ENGINE=Distributed('new_cluster',"+dbName+","+tableName+")")
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+"."+tableName+"_dist SELECT number, toString(number) FROM numbers(100)")
 
 	// Create backup
 	backupName := "test_restore_distributed_cluster"
@@ -81,12 +82,12 @@ func TestRestoreDistributedCluster(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse", "bash", "-c", "echo '<yandex><remote_servers></remote_servers></yandex>' > /etc/clickhouse-server/config.d/new-cluster.xml")
 		// reload config multiple times to ensure ClickHouse picks up the change
 		for j := 0; j < 3; j++ {
-			env.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
+			env.queryWithNoError(t, r, "SYSTEM RELOAD CONFIG")
 			time.Sleep(1 * time.Second)
 		}
 		newClusterExists := uint64(1)
 		for i := 0; i < 60 && newClusterExists == 1; i++ {
-			env.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
+			env.queryWithNoError(t, r, "SYSTEM RELOAD CONFIG")
 			r.NoError(env.ch.SelectSingleRowNoCtx(&newClusterExists, "SELECT count() FROM system.clusters WHERE cluster='new_cluster'"))
 			if newClusterExists == 0 {
 				break
@@ -120,6 +121,4 @@ func TestRestoreDistributedCluster(t *testing.T) {
 	r.NoError(env.dropDatabase(dbName, false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
 	env.DockerExecNoError(r, "clickhouse", "bash", "-c", "rm -fv /etc/clickhouse-server/config.d/new-cluster.xml")
-
-	env.Cleanup(t, r)
 }

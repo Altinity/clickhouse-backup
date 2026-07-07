@@ -13,8 +13,8 @@ func TestAlibabaOverS3(t *testing.T) {
 		return
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "gettext-base")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-s3-alibabacloud.yml.template | envsubst > /etc/clickhouse-backup/config-s3-alibabacloud.yml")
 	env.runMainIntegrationScenario(t, "S3", "config-s3-alibabacloud.yml")
-	env.Cleanup(t, r)
 }

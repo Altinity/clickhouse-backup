@@ -14,6 +14,7 @@ func TestEmbeddedS3(t *testing.T) {
 	}
 	t.Logf("@TODO RESTORE Ordinary with old syntax still not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971", os.Getenv("CLICKHOUSE_VERSION"))
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 
 	// === S3 ===
 	// CUSTOM backup creates folder in each disk, need to clear
@@ -34,5 +35,4 @@ func TestEmbeddedS3(t *testing.T) {
 	//@TODO think about how to implements embedded backup for s3_plain disks
 	//env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup/")
 	//runMainIntegrationScenario(t, "EMBEDDED_S3_PLAIN", "config-s3-plain-embedded.yml")
-	env.Cleanup(t, r)
 }

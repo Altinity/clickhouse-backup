@@ -15,6 +15,7 @@ import (
 
 func TestHardlinksExistsFiles(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	for _, compression := range []string{"tar", "none"} {
 		baseBackupName := "test_hardlinks_base_" + compression
@@ -29,9 +30,9 @@ func TestHardlinksExistsFiles(t *testing.T) {
 			settings = " SETTINGS storage_policy='hot_and_cold'"
 		}
 
-		env.queryWithNoError(r, "CREATE DATABASE "+dbNameFull)
-		env.queryWithNoError(r, "CREATE TABLE "+dbNameFull+"."+tableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id"+settings)
-		env.queryWithNoError(r, "INSERT INTO "+dbNameFull+"."+tableName+" SELECT number FROM numbers(100)")
+		env.queryWithNoError(t, r, "CREATE DATABASE "+dbNameFull)
+		env.queryWithNoError(t, r, "CREATE TABLE "+dbNameFull+"."+tableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id"+settings)
+		env.queryWithNoError(t, r, "INSERT INTO "+dbNameFull+"."+tableName+" SELECT number FROM numbers(100)")
 
 		// Create base backup
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables="+dbNameFull+".*", baseBackupName)
@@ -87,7 +88,7 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "S3_COMPRESSION_FORMAT="+compression+" clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload "+baseBackupName)
 
 		// Add more data for increment
-		env.queryWithNoError(r, "INSERT INTO "+dbNameFull+"."+tableName+" SELECT number+100 FROM numbers(100)")
+		env.queryWithNoError(t, r, "INSERT INTO "+dbNameFull+"."+tableName+" SELECT number+100 FROM numbers(100)")
 
 		// Create increment backup
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables="+dbNameFull+".*", "--diff-from-remote="+baseBackupName, incrementBackupName)
@@ -97,8 +98,8 @@ func TestHardlinksExistsFiles(t *testing.T) {
 
 		// move parts to another disk
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.1") >= 0 {
-			env.queryWithNoError(r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART 'all_1_1_0' TO DISK 'hdd2'")
-			env.queryWithNoError(r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART 'all_2_2_0' TO DISK 'hdd1'")
+			env.queryWithNoError(t, r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART 'all_1_1_0' TO DISK 'hdd2'")
+			env.queryWithNoError(t, r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART 'all_2_2_0' TO DISK 'hdd1'")
 		}
 
 		// Delete local backups
@@ -144,8 +145,8 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		if useHashOfAllFiles {
 			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", baseBackupName)
 
-			env.queryWithNoError(r, "TRUNCATE TABLE "+dbNameFull+"."+tableName)
-			env.queryWithNoError(r, "INSERT INTO "+dbNameFull+"."+tableName+" SELECT number FROM numbers(100)")
+			env.queryWithNoError(t, r, "TRUNCATE TABLE "+dbNameFull+"."+tableName)
+			env.queryWithNoError(t, r, "INSERT INTO "+dbNameFull+"."+tableName+" SELECT number FROM numbers(100)")
 			var renamedPart string
 			r.NoError(env.ch.SelectSingleRowNoCtx(&renamedPart, "SELECT name FROM system.parts WHERE database=? AND `table`=? AND active ORDER BY name LIMIT 1", dbNameFull, tableName))
 			r.NotEqual("all_1_1_0", renamedPart, "expected new part name after TRUNCATE+INSERT but got %q", renamedPart)
@@ -168,9 +169,9 @@ func TestHardlinksExistsFiles(t *testing.T) {
 			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", baseBackupName)
 
 			cloneTableName := tableName + "_clone"
-			env.queryWithNoError(r, "TRUNCATE TABLE "+dbNameFull+"."+tableName)
-			env.queryWithNoError(r, "CREATE TABLE "+dbNameFull+"."+cloneTableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id"+settings)
-			env.queryWithNoError(r, "INSERT INTO "+dbNameFull+"."+cloneTableName+" SELECT number FROM numbers(100)")
+			env.queryWithNoError(t, r, "TRUNCATE TABLE "+dbNameFull+"."+tableName)
+			env.queryWithNoError(t, r, "CREATE TABLE "+dbNameFull+"."+cloneTableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id"+settings)
+			env.queryWithNoError(t, r, "INSERT INTO "+dbNameFull+"."+cloneTableName+" SELECT number FROM numbers(100)")
 
 			downloadOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", "--hardlink-exists-files", baseBackupName)
 			log.Debug().Msg(downloadOut)
@@ -182,11 +183,10 @@ func TestHardlinksExistsFiles(t *testing.T) {
 			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables="+dbNameFull+"."+tableName, baseBackupName)
 			env.checkCount(r, 1, 100, "SELECT count() FROM "+dbNameFull+"."+tableName)
 
-			env.queryWithNoError(r, "DROP TABLE "+dbNameFull+"."+cloneTableName)
+			env.queryWithNoError(t, r, "DROP TABLE "+dbNameFull+"."+cloneTableName)
 		}
 
 		// Cleanup after test
 		fullCleanup(t, r, env, []string{baseBackupName, incrementBackupName}, []string{"remote", "local"}, []string{dbNameShort}, true, true, true, "config-s3.yml")
 	}
-	env.Cleanup(t, r)
 }

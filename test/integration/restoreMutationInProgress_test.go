@@ -15,6 +15,7 @@ import (
 
 func TestRestoreMutationInProgress(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	zkPath := "/clickhouse/tables/{shard}/" + t.Name() + "/test_restore_mutation_in_progress"
 	onCluster := ""
@@ -26,13 +27,13 @@ func TestRestoreMutationInProgress(t *testing.T) {
 		onCluster = " ON CLUSTER '{cluster}'"
 	}
 	createDbSQL := "CREATE DATABASE IF NOT EXISTS " + t.Name()
-	env.queryWithNoError(r, createDbSQL)
+	env.queryWithNoError(t, r, createDbSQL)
 	version, err := env.ch.GetVersion(t.Context())
 	r.NoError(err)
 
 	createSQL := fmt.Sprintf("CREATE TABLE %s.test_restore_mutation_in_progress %s (id UInt64, attr String) ENGINE=ReplicatedMergeTree('%s','{replica}') PARTITION BY id ORDER BY id", t.Name(), onCluster, zkPath)
-	env.queryWithNoError(r, createSQL)
-	env.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_restore_mutation_in_progress SELECT number, if(number>0,'a',toString(number)) FROM numbers(2)")
+	env.queryWithNoError(t, r, createSQL)
+	env.queryWithNoError(t, r, "INSERT INTO "+t.Name()+".test_restore_mutation_in_progress SELECT number, if(number>0,'a',toString(number)) FROM numbers(2)")
 
 	mutationSQL := "ALTER TABLE " + t.Name() + ".test_restore_mutation_in_progress MODIFY COLUMN attr UInt64"
 	err = env.ch.QueryContext(t.Context(), mutationSQL)
@@ -135,5 +136,4 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version, "", false, ""))
 	r.NoError(env.dropDatabase(t.Name(), false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_restore_mutation_in_progress")
-	env.Cleanup(t, r)
 }

@@ -15,13 +15,14 @@ import (
 
 func TestReplicatedCopyToDetached(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	version, versionErr := env.ch.GetVersion(t.Context())
 	r.NoError(versionErr)
 	// Create test database and table
 	dbName := "test_replicated_copy_to_detached"
 	tableName := "test_table"
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
 
 	// Create a replicated table
 	zkPath := "/clickhouse/tables/{shard}/{database}/{table}"
@@ -32,7 +33,7 @@ func TestReplicatedCopyToDetached(t *testing.T) {
 	r.NoError(env.ch.CreateTable(clickhouse.Table{Database: dbName, Name: tableName}, createSQL, false, false, "", version, "/var/lib/clickhouse", false, ""))
 
 	// Insert test data
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO %s.%s SELECT number, toString(number) FROM numbers(100)", dbName, tableName))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO %s.%s SELECT number, toString(number) FROM numbers(100)", dbName, tableName))
 
 	// Create backup
 	backupName := "test_replicated_copy_to_detached_backup"
@@ -92,6 +93,4 @@ func TestReplicatedCopyToDetached(t *testing.T) {
 	// Clean up
 	r.NoError(env.dropDatabase(dbName, false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
-
-	env.Cleanup(t, r)
 }

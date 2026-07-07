@@ -14,13 +14,20 @@ import (
 
 func TestLongListRemote(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	totalCacheCount := 20
 	testBackupName := "test_list_remote"
 
+	testListRemoteAllBackups := make([]string, totalCacheCount)
 	for i := 0; i < totalCacheCount; i++ {
+		testListRemoteAllBackups[i] = fmt.Sprintf("%s_%d", testBackupName, i)
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml ALLOW_EMPTY_BACKUPS=true RBAC_BACKUP_ALWAYS=false clickhouse-backup create_remote %s_%d", testBackupName, i))
 	}
+	// clean up even if an assertion below fails midway, otherwise these 20 remote
+	// backups leak into shared minio and break later checkRemoteNoFiles assertions
+	// (e.g. TestTablesCommand / TestTablePatterns)
+	defer fullCleanup(t, r, env, testListRemoteAllBackups, []string{"remote", "local"}, nil, false, true, true, "config-s3.yml")
 
 	r.NoError(env.tc.RestartContainer(t, "minio"))
 	time.Sleep(2 * time.Second)
@@ -66,7 +73,17 @@ func TestLongListRemote(t *testing.T) {
 
 	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-Rfv", "/tmp/.clickhouse-backup-metadata.cache.S3")
 	clearCacheOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
+	r.NoError(err)
 	cacheClearDuration := extractListTimeMs(clearCacheOut)
+	// On shared environments parallel tests may add IO jitter, retry measurement if needed
+	for retry := 0; retry < 3 && cacheClearDuration < cachedDuration; retry++ {
+		log.Warn().Msgf("cacheClearDuration %f < cachedDuration %f, retry %d", cacheClearDuration, cachedDuration, retry+1)
+		time.Sleep(2 * time.Second)
+		env.DockerExecNoError(r, "clickhouse-backup", "rm", "-Rfv", "/tmp/.clickhouse-backup-metadata.cache.S3")
+		clearCacheOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
+		r.NoError(err)
+		cacheClearDuration = extractListTimeMs(clearCacheOut)
+	}
 
 	if noCacheDuration <= cacheClearDuration {
 		log.Debug().Msg("===== NON CACHED OUT ======")
@@ -77,11 +94,4 @@ func TestLongListRemote(t *testing.T) {
 
 	r.GreaterOrEqualf(cacheClearDuration, cachedDuration, "cacheClearDuration=%f ms shall be greater cachedDuration=%f ms", cacheClearDuration, cachedDuration)
 	log.Debug().Msgf("noCacheDuration=%f cachedDuration=%f cacheClearDuration=%f", noCacheDuration, cachedDuration, cacheClearDuration)
-
-	testListRemoteAllBackups := make([]string, totalCacheCount)
-	for i := 0; i < totalCacheCount; i++ {
-		testListRemoteAllBackups[i] = fmt.Sprintf("%s_%d", testBackupName, i)
-	}
-	fullCleanup(t, r, env, testListRemoteAllBackups, []string{"remote", "local"}, nil, false, true, true, "config-s3.yml")
-	env.Cleanup(t, r)
 }

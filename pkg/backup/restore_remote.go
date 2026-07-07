@@ -13,7 +13,7 @@ func (b *Backuper) RestoreFromRemote(backupName, tablePattern string, databaseMa
 	if err := b.Download(backupName, tablePattern, partitions, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, hardlinkExistsFiles, version, commandId); err != nil {
 		// https://github.com/Altinity/clickhouse-backup/issues/625
 		if !errors.Is(err, ErrBackupIsAlreadyExists) {
-			return pkgerrors.WithMessage(err, "RestoreFromRemote Download")
+			return pkgerrors.Wrap(err, "RestoreFromRemote Download")
 		}
 	}
 	pidlock.RemovePidFile(backupName)

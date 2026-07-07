@@ -23,6 +23,7 @@ import (
 
 	stdlog "log"
 
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/rs/zerolog/pkgerrors"
@@ -94,6 +95,7 @@ type TestEnvironment struct {
 	ch          *clickhouse.ClickHouse
 	ProjectName string
 	tc          *TestContainers
+	testName    string
 }
 
 func defaultTestData() []TestDataStruct {
@@ -482,7 +484,9 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 	if env.ch == nil {
 		env.ch = clickhouse.NewClickHouse(&config.ClickHouseConfig{})
 	}
+	env.testName = t.Name()
 	t.Logf("%s acquired env %s", t.Name(), env.ProjectName)
+	envUsage.acquire(env.ProjectName, t.Name())
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") <= 0 {
 		r := require.New(&testing.T{})
@@ -496,10 +500,14 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	// Dump container logs when test fails to aid debugging
 	if t.Failed() && os.Getenv("DUMP_FAILED_TEST_CONTAINER_LOGS") != "" {
 		t.Logf("=== %s FAILED, dumping container logs ===", t.Name())
-		env.tc.DumpAllContainerLogs(t.Context())
+		env.tc.DumpAllContainerLogs(t.Context(), t.Name())
 	}
 
 	env.ch.Close()
+
+	// Kill any `clickhouse-backup server` left running by the test so it does not leak into the
+	// pooled env and collide on :7171 with the next test that acquires this environment.
+	_ = env.DockerExec("clickhouse-backup", "bash", "-ce", "pkill -9 -f '[c]lickhouse-backup server' || true")
 
 	// Clean shared state between test runs so the next test gets a fresh environment
 	_ = env.DockerExec("minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3")
@@ -518,6 +526,7 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	}
 
 	t.Logf("%s returning env %s to pool", t.Name(), env.ProjectName)
+	envUsage.release(env.ProjectName, t.Name())
 	envPool <- env
 }
 
@@ -535,8 +544,10 @@ func (env *TestEnvironment) DockerExecNoError(r *require.Assertions, container s
 	out, err := env.DockerExecOut(container, cmd...)
 	if err == nil {
 		log.Debug().Msg(out)
+	} else {
+		err = errors.WithStack(err)
 	}
-	r.NoError(err, "%s\n\n%s\n[ERROR]\n%v", strings.Join(append(env.GetExecDockerCommand(container), cmd...), " "), out, err)
+	r.NoError(err, "%s\n\n%s\n[ERROR]\n%+v", strings.Join(append(env.GetExecDockerCommand(container), cmd...), " "), out, err)
 }
 
 func (env *TestEnvironment) DockerExec(container string, cmd ...string) error {
@@ -690,13 +701,15 @@ func (env *TestEnvironment) connect(t *testing.T, timeOut string) error {
 
 // Query and data methods
 
-func (env *TestEnvironment) queryWithNoError(r *require.Assertions, query string, args ...interface{}) {
+func (env *TestEnvironment) queryWithNoError(t *testing.T, r *require.Assertions, query string, args ...interface{}) {
+	t.Helper()
 	startedAt := time.Now()
 	err := env.ch.Query(query, args...)
 	if err != nil {
 		log.Error().Err(err).Msgf("queryWithNoError(%s) error", query)
 		if env.tc != nil {
-			env.tc.DumpContainerLogsSince(context.Background(), "clickhouse", startedAt)
+			env.tc.DumpContainerLogsSince(context.Background(), "clickhouse", startedAt, env.testName)
+			env.tc.DumpContainerLogsSince(context.Background(), "zookeeper", startedAt, env.testName)
 		}
 	}
 	r.NoError(err)
@@ -928,7 +941,16 @@ func (env *TestEnvironment) dropDatabase(database string, ifExists bool) (err er
 		}
 		dropDatabaseSQL += " SYNC"
 	}
+	startedAt := time.Now()
 	dropErr := env.ch.Query(dropDatabaseSQL)
+	// ON CLUSTER DROP DATABASE routes through DDLWorker -> Keeper; a Keeper timeout
+	// (Code: 999 Coordination::Exception) surfaces here. Dump both clickhouse and
+	// keeper logs so such failures are diagnosable without re-running.
+	if dropErr != nil && env.tc != nil {
+		log.Error().Err(dropErr).Msgf("dropDatabase(%s) error", database)
+		env.tc.DumpContainerLogsSince(context.Background(), "clickhouse", startedAt, env.testName)
+		env.tc.DumpContainerLogsSince(context.Background(), "zookeeper", startedAt, env.testName)
+	}
 	// On ClickHouse < 20.10 with Ordinary engine, DROP DATABASE may not be fully synchronous
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.10") < 0 {
 		time.Sleep(1 * time.Second)
@@ -1228,6 +1250,28 @@ func generateTestDataForDifferentServerVersion(remoteStorageType string, offset,
 			OrderBy: "id",
 		})
 	}
+	// ENGINE=Alias, experimental since 25.11, requires allow_experimental_alias_table_engine
+	// https://github.com/Altinity/clickhouse-backup/issues/1426
+	// add only once, alias forwards SELECT to `mv_src_table` which gets rows only for offset == 0
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") >= 0 && offset == 0 {
+		testData = addTestDataIfNotExistsAndReplaceRowsIfExists(testData, TestDataStruct{
+			Database:       dbNameAtomic,
+			DatabaseEngine: "Atomic",
+			Name:           "alias_to_mv_src_table",
+			Schema:         fmt.Sprintf("ENGINE=Alias('%s', 'mv_src_table_{test}') SETTINGS allow_experimental_alias_table_engine=1", dbNameAtomic),
+			SkipInsert:     true,
+			// rows are inherited from `mv_src_table` target table
+			Rows: func() []map[string]interface{} {
+				var result []map[string]interface{}
+				for i := 0; i < 100; i++ {
+					result = append(result, map[string]interface{}{"id": uint64(i)})
+				}
+				return result
+			}(),
+			Fields:  []string{"id"},
+			OrderBy: "id",
+		})
+	}
 	return testData
 }
 
@@ -1377,19 +1421,23 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	fullBackupName := fmt.Sprintf("full_backup_%d", rand.Int())
 	incrementBackupName := fmt.Sprintf("increment_backup_%d", rand.Int())
 	dbName := "test_partitions_" + t.Name()
+	// drop the test database even if an assertion below fails
+	defer func() {
+		_ = env.dropDatabase(dbName, true)
+	}()
 	fillTables := func(partitions []string) {
 		for _, dt := range partitions {
-			env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t1(dt, v) SELECT '%s', number FROM numbers(10)", dt))
-			env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t2(dt, v) SELECT '%s', number FROM numbers(10)", dt))
+			env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO "+dbName+".t1(dt, v) SELECT '%s', number FROM numbers(10)", dt))
+			env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO "+dbName+".t2(dt, v) SELECT '%s', number FROM numbers(10)", dt))
 		}
 	}
 	createAndFillTables := func() {
 		log.Debug().Msg("Create and fill tables")
-		env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
-		env.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t1")
-		env.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t2")
-		env.queryWithNoError(r, "CREATE TABLE "+dbName+".t1 (dt Date, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, toYYYYMMDD(dt)) ORDER BY dt")
-		env.queryWithNoError(r, "CREATE TABLE "+dbName+".t2 (dt String, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, dt) ORDER BY dt")
+		env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+		env.queryWithNoError(t, r, "DROP TABLE IF EXISTS "+dbName+".t1")
+		env.queryWithNoError(t, r, "DROP TABLE IF EXISTS "+dbName+".t2")
+		env.queryWithNoError(t, r, "CREATE TABLE "+dbName+".t1 (dt Date, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, toYYYYMMDD(dt)) ORDER BY dt")
+		env.queryWithNoError(t, r, "CREATE TABLE "+dbName+".t2 (dt String, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, dt) ORDER BY dt")
 		fillTables([]string{"2022-01-01", "2022-01-02", "2022-01-03", "2022-01-04"})
 	}
 	createAndFillTables()
@@ -1572,9 +1620,6 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", incrementBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName)
 
-	if err = env.dropDatabase(dbName, true); err != nil {
-		t.Fatal(err)
-	}
 	log.Debug().Msg("testBackupSpecifiedPartitions finish")
 }
 

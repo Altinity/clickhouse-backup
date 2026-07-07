@@ -15,6 +15,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 		return
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 
 	backupNames := make([]string, 5)
@@ -72,5 +73,4 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	fullCleanup(t, r, env, []string{latestIncrementBackup}, []string{"local"}, nil, false, true, true, "config-s3.yml")
 	fullCleanup(t, r, env, backupNames, []string{"remote"}, databaseList, true, true, true, "config-s3.yml")
 	env.checkObjectStorageIsEmpty(t, r, "S3", "config-s3.yml")
-	env.Cleanup(t, r)
 }

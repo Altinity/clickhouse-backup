@@ -64,6 +64,7 @@ func TestMain(m *testing.M) {
 	}
 
 	code := m.Run()
+	envUsage.printGantt()
 
 	cleanupOnFail := os.Getenv("CLEANUP_ON_FAIL") != "0"
 	if code == 0 || cleanupOnFail {

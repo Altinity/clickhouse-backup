@@ -9,6 +9,7 @@ import (
 
 func TestListFormat(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
 	// Create a test backup to have something to list
@@ -51,5 +52,4 @@ func TestListFormat(t *testing.T) {
 
 	// Clean up
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_list_format_backup")
-	env.Cleanup(t, r)
 }

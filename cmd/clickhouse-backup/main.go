@@ -553,6 +553,11 @@ func main() {
 					Hidden: false,
 					Usage:  "Skip restoring tables that have no data (empty tables with only schema)",
 				},
+				cli.BoolFlag{
+					Name:   "rebind-replica-path-if-exists",
+					Hidden: false,
+					Usage:  "Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent",
+				},
 			),
 		},
 		{
@@ -664,6 +669,11 @@ func main() {
 					Name:   "skip-empty-tables",
 					Hidden: false,
 					Usage:  "Skip restoring tables that have no data (empty tables with only schema)",
+				},
+				cli.BoolFlag{
+					Name:   "rebind-replica-path-if-exists",
+					Hidden: false,
+					Usage:  "Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent",
 				},
 			),
 		},

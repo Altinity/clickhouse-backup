@@ -54,7 +54,7 @@ func (w debugGCSTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	resp, err := w.base.RoundTrip(r)
 	if err != nil {
 		log.Error().Msgf("GCS_ERROR: %v", err)
-		return resp, errors.WithMessage(err, "GCS debugTransport RoundTrip")
+		return resp, errors.Wrap(err, "GCS debugTransport RoundTrip")
 	}
 	logMsg = fmt.Sprintf("<<< [GCS_RESPONSE: %s] <<< %v %v\n", resp.Status, r.Method, r.URL.String())
 	for h, values := range resp.Header {
@@ -125,16 +125,16 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		clientOptions = append(clientOptions, credOption)
 	}
 
-	// 3. For ForceHttp or Debug we need a custom HTTP client;
+	// 3. For ForceHttp, DisableHttp2, or Debug we need a custom HTTP client;
 	//    otherwise let storage.NewClient create its own optimized transport.
-	if gcs.Config.ForceHttp || gcs.Config.Debug {
+	if gcs.Config.ForceHttp || gcs.Config.DisableHttp2 || gcs.Config.Debug {
 		// Scopes are required when dialing manually
 		if !gcs.Config.SkipCredentials {
 			clientOptions = append(clientOptions, option.WithScopes(storage.ScopeFullControl))
 		}
 
 		var httpClient *http.Client
-		if gcs.Config.ForceHttp {
+		if gcs.Config.ForceHttp || gcs.Config.DisableHttp2 {
 			customTransport := &http.Transport{
 				WriteBufferSize: 128 * 1024,
 				Proxy:           http.ProxyFromEnvironment,
@@ -148,14 +148,29 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 				TLSHandshakeTimeout:   10 * time.Second,
 				ExpectContinueTimeout: 1 * time.Second,
 			}
+			if gcs.Config.DisableHttp2 {
+				// DisableHttp2 is designed for high-concurrency downloads — raise
+				// connection limits so each parallel part gets its own TCP stream.
+				customTransport.MaxIdleConns = 0
+				customTransport.MaxIdleConnsPerHost = 64
+			}
 			// must set ForceAttemptHTTP2 to false so that when a custom TLSClientConfig
 			// is provided Golang does not setup HTTP/2 transport
 			customTransport.ForceAttemptHTTP2 = false
 			customTransport.TLSClientConfig = &tls.Config{
 				NextProtos: []string{"http/1.1"},
 			}
-			customRoundTripper := &rewriteTransport{base: customTransport}
-			transport, err := googleHTTPTransport.NewTransport(ctx, customRoundTripper, clientOptions...)
+			// ForceHttp downgrades the request scheme to cleartext http:// via
+			// rewriteTransport (needed only for internal caches like varnish).
+			// DisableHttp2 keeps the original https:// scheme so TLS and
+			// HTTPS_PROXY continue to work — it only suppresses HTTP/2 so that
+			// concurrent transfers use separate TCP connections instead of being
+			// multiplexed onto one. When both are set, ForceHttp wins.
+			var roundTripper http.RoundTripper = customTransport
+			if gcs.Config.ForceHttp {
+				roundTripper = &rewriteTransport{base: customTransport}
+			}
+			transport, err := googleHTTPTransport.NewTransport(ctx, roundTripper, clientOptions...)
 			if err != nil {
 				return errors.Wrap(err, "failed to create GCP transport")
 			}
@@ -193,7 +208,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 	gcs.clientPool.Config.MaxTotal = gcs.Config.ClientPoolSize * 3
 	gcs.client, err = storage.NewClient(ctx, clientOptions...)
 	if err != nil {
-		return errors.WithMessage(err, "GCS Connect storage.NewClient")
+		return errors.Wrap(err, "GCS Connect storage.NewClient")
 	}
 
 	// Validate and decode the encryption key if provided
@@ -215,7 +230,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 func (gcs *GCS) Close(ctx context.Context) error {
 	gcs.clientPool.Close(ctx)
 	if err := gcs.client.Close(); err != nil {
-		return errors.WithMessage(err, "GCS Close")
+		return errors.Wrap(err, "GCS Close")
 	}
 	return nil
 }
@@ -262,7 +277,7 @@ func (gcs *GCS) WalkAbsolute(ctx context.Context, rootPath string, recursive boo
 				if err := process(ctx, &gcsFile{
 					name: strings.TrimPrefix(object.Prefix, rootPath),
 				}); err != nil {
-					return errors.WithMessage(err, "GCS WalkAbsolute process prefix")
+					return errors.Wrap(err, "GCS WalkAbsolute process prefix")
 				}
 				continue
 			}
@@ -271,12 +286,12 @@ func (gcs *GCS) WalkAbsolute(ctx context.Context, rootPath string, recursive boo
 				lastModified: object.Updated,
 				name:         strings.TrimPrefix(object.Name, rootPath),
 			}); err != nil {
-				return errors.WithMessage(err, "GCS WalkAbsolute process object")
+				return errors.Wrap(err, "GCS WalkAbsolute process object")
 			}
 		case errors.Is(err, iterator.Done):
 			return nil
 		default:
-			return errors.WithMessage(err, "GCS WalkAbsolute iterator.Next")
+			return errors.Wrap(err, "GCS WalkAbsolute iterator.Next")
 		}
 	}
 }
@@ -289,7 +304,7 @@ func (gcs *GCS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadC
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
 		log.Error().Msgf("gcs.GetFileReader: gcs.clientPool.BorrowObject error: %+v", err)
-		return nil, errors.WithMessage(err, "GCS GetFileReaderAbsolute BorrowObject")
+		return nil, errors.Wrap(err, "GCS GetFileReaderAbsolute BorrowObject")
 	}
 	pClient := pClientObj.(*clientObject).Client
 	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
@@ -321,7 +336,7 @@ func (gcs *GCS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadC
 			if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
 				log.Warn().Msgf("gcs.GetFileReader: gcs.clientPool.InvalidateObject error: %v ", pErr)
 			}
-			return nil, errors.WithMessage(err, "GCS GetFileReaderAbsolute NewReader")
+			return nil, errors.Wrap(err, "GCS GetFileReaderAbsolute NewReader")
 		}
 	}
 	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
@@ -342,7 +357,7 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
 		log.Error().Msgf("gcs.PutFile: gcs.clientPool.BorrowObject error: %+v", err)
-		return errors.WithMessage(err, "GCS PutFileAbsolute BorrowObject")
+		return errors.Wrap(err, "GCS PutFileAbsolute BorrowObject")
 	}
 	pClient := pClientObj.(*clientObject).Client
 	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
@@ -373,11 +388,11 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 	_, err = io.CopyBuffer(writer, r, buffer)
 	if err != nil {
 		log.Warn().Msgf("gcs.PutFile: can't copy buffer: %+v", err)
-		return errors.WithMessage(err, "GCS PutFileAbsolute CopyBuffer")
+		return errors.Wrap(err, "GCS PutFileAbsolute CopyBuffer")
 	}
 	if err = writer.Close(); err != nil {
 		log.Warn().Msgf("gcs.PutFile: can't close writer: %+v", err)
-		return errors.WithMessage(err, "GCS PutFileAbsolute writer.Close")
+		return errors.Wrap(err, "GCS PutFileAbsolute writer.Close")
 	}
 	return nil
 }
@@ -407,7 +422,7 @@ func (gcs *GCS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, e
 			if errors.Is(err, storage.ErrObjectNotExist) {
 				return nil, NewErrNotFound(key)
 			}
-			return nil, errors.WithMessage(err, "GCS StatFileAbsolute Attrs")
+			return nil, errors.Wrap(err, "GCS StatFileAbsolute Attrs")
 		}
 	}
 	return &gcsFile{
@@ -421,7 +436,7 @@ func (gcs *GCS) deleteKey(ctx context.Context, key string) error {
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
 		log.Error().Msgf("gcs.deleteKey: gcs.clientPool.BorrowObject error: %+v", err)
-		return errors.WithMessage(err, "GCS deleteKey BorrowObject")
+		return errors.Wrap(err, "GCS deleteKey BorrowObject")
 	}
 	pClient := pClientObj.(*clientObject).Client
 	object := pClient.Bucket(gcs.Config.Bucket).Object(key)
@@ -430,7 +445,7 @@ func (gcs *GCS) deleteKey(ctx context.Context, key string) error {
 		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
 			log.Warn().Msgf("gcs.deleteKey: gcs.clientPool.InvalidateObject error: %+v", pErr)
 		}
-		return errors.WithMessage(err, "GCS deleteKey Delete")
+		return errors.Wrap(err, "GCS deleteKey Delete")
 	}
 	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
 		log.Warn().Msgf("gcs.deleteKey: gcs.clientPool.ReturnObject error: %+v", pErr)
@@ -551,7 +566,7 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
 		log.Error().Msgf("gcs.CopyObject: gcs.clientPool.BorrowObject error: %+v", err)
-		return 0, errors.WithMessage(err, "GCS CopyObject BorrowObject")
+		return 0, errors.Wrap(err, "GCS CopyObject BorrowObject")
 	}
 	pClient := pClientObj.(*clientObject).Client
 	src := pClient.Bucket(srcBucket).Object(srcKey)
@@ -565,7 +580,7 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey
 		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
 			log.Warn().Msgf("gcs.CopyObject: gcs.clientPool.InvalidateObject error: %+v", pErr)
 		}
-		return 0, errors.WithMessage(err, "GCS CopyObject src.Attrs")
+		return 0, errors.Wrap(err, "GCS CopyObject src.Attrs")
 	}
 	copier := dst.CopierFrom(src)
 	// Note: source and destination objects for object disks are not encrypted
@@ -574,7 +589,7 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey
 		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
 			log.Warn().Msgf("gcs.CopyObject: gcs.clientPool.InvalidateObject error: %+v", pErr)
 		}
-		return 0, errors.WithMessage(err, "GCS CopyObject copier.Run")
+		return 0, errors.Wrap(err, "GCS CopyObject copier.Run")
 	}
 	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
 		log.Warn().Msgf("gcs.CopyObject: gcs.clientPool.ReturnObject error: %+v", pErr)

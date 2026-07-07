@@ -71,16 +71,20 @@ func runRestoreResolveIncrementScenario(t *testing.T, r *require.Assertions, env
 	increment2Backup := dbName + "_increment2"
 	backups := []string{fullBackup, increment1Backup, increment2Backup}
 
+	defer func() {
+		fullCleanup(t, r, env, backups, []string{"remote", "local"}, []string{dbName}, false, false, false, tc.configFile)
+	}()
+
 	for _, backupName := range backups {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+tc.configFile+" delete remote "+backupName+" 2>/dev/null || true")
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+tc.configFile+" delete local "+backupName+" 2>/dev/null || true")
 	}
 	r.NoError(env.dropDatabase(dbName, true))
 
-	env.queryWithNoError(r, "CREATE DATABASE "+dbName)
-	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "SYSTEM STOP MERGES "+dbName+"."+tableName)
-	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number FROM numbers(100)")
+	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
+	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "SYSTEM STOP MERGES "+dbName+"."+tableName)
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+"."+tableName+" SELECT number FROM numbers(100)")
 
 	if fullRemote {
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+tc.configFile, "create_remote", "--delete-source", "--tables="+dbName+".*", fullBackup)
@@ -88,20 +92,24 @@ func runRestoreResolveIncrementScenario(t *testing.T, r *require.Assertions, env
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+tc.configFile, "create", "--tables="+dbName+".*", fullBackup)
 	}
 
-	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number+100 FROM numbers(100)")
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+"."+tableName+" SELECT number+100 FROM numbers(100)")
 	if fullRemote {
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+tc.configFile, "create_remote", "--delete-source", "--diff-from-remote="+fullBackup, "--tables="+dbName+".*", increment1Backup)
 	} else {
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+tc.configFile, "create_remote", "--delete-source", "--diff-from="+fullBackup, "--tables="+dbName+".*", increment1Backup)
 	}
 
-	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number+200 FROM numbers(100)")
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+"."+tableName+" SELECT number+200 FROM numbers(100)")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+tc.configFile, "create_remote", "--delete-source", "--diff-from-remote="+increment1Backup, "--tables="+dbName+".*", increment2Backup)
 
 	tc.copyRemote(t, r, env, tc.configFile, increment2Backup)
 	verifyRestoreResolveRequiredMetadata(r, env, increment2Backup, increment1Backup, dbName, tableName)
 
-	env.queryWithNoError(r, "DROP TABLE "+dbName+"."+tableName+" SYNC")
+	dropSQL := "DROP TABLE " + dbName + "." + tableName
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.1") >= 0 {
+		dropSQL += " SYNC"
+	}
+	env.queryWithNoError(t, r, dropSQL)
 	restoreOut, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("LOG_LEVEL=debug clickhouse-backup -c /etc/clickhouse-backup/%s restore --rm --tables=%s.%s %s 2>&1", tc.configFile, dbName, tableName, increment2Backup))
 	r.NoError(err, restoreOut)
 	r.Contains(restoreOut, "restore required part download")
@@ -114,7 +122,7 @@ func runRestoreResolveIncrementScenario(t *testing.T, r *require.Assertions, env
 	}
 	env.checkCount(r, 1, 300, "SELECT count() FROM "+dbName+"."+tableName)
 
-	fullCleanup(t, r, env, backups, []string{"remote", "local"}, []string{dbName}, true, false, true, tc.configFile)
+	fullCleanup(t, r, env, backups, []string{"remote", "local"}, []string{dbName}, false, false, true, tc.configFile)
 }
 
 func verifyRestoreResolveRequiredMetadata(r *require.Assertions, env *TestEnvironment, backupName, requiredBackup, dbName, tableName string) {
@@ -177,17 +185,36 @@ func ftpRestoreResolveIncrementCase() restoreResolveIncrementCase {
 	if isAdvancedMode() {
 		home = "/home/ftpusers/test_backup"
 	}
+	configFile := "config-ftp.yaml"
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") < 0 {
+		configFile = "config-ftp-old.yaml"
+	}
 	return restoreResolveIncrementCase{
 		name:       "ftp",
-		configFile: "config-ftp.yaml",
-		skip:       func() bool { return compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") <= 0 },
-		skipReason: "FTP scenario only validated on ClickHouse > 21.8",
+		configFile: configFile,
 		setup: func(env *TestEnvironment, r *require.Assertions) {
 			env.DockerExecNoError(r, "ftp", "sh", "-c", fmt.Sprintf("chown -R 1000:1000 %s && chmod -R 0777 %s", home, home))
+			env.InstallDebIfNotExists(r, "clickhouse-backup", "lftp")
 		},
 		copyRemote: func(t *testing.T, r *require.Assertions, env *TestEnvironment, configFile, backupName string) {
 			cfgPath, _ := env.resolveConfigPaths(r, configFile)
-			copyRemoteBackupFromContainerFS(r, env, "ftp", home+cfgPath, backupName)
+			remotePath := path.Join(cfgPath, backupName)
+			localPath := path.Join("/var/lib/clickhouse/backup", backupName)
+			env.DockerExecNoError(r, "clickhouse-backup", "rm", "-rf", localPath)
+			env.DockerExecNoError(r, "clickhouse-backup", "mkdir", "-p", localPath)
+			env.DockerExecNoError(r, "clickhouse-backup", "sh", "-ce", fmt.Sprintf(`
+lftp -d -u test_backup,test_backup ftp://ftp -e '
+debug -o /dev/stderr 10
+set cmd:trace yes
+set ftp:ssl-allow no
+set ftp:prefer-epsv yes
+set net:timeout 30
+set net:max-retries 3
+set cmd:fail-exit yes
+mirror --verbose --only-missing --parallel=1 %[1]s %[2]s
+bye
+'
+`, remotePath, localPath))
 		},
 	}
 }
@@ -214,19 +241,17 @@ func gcsEmulatorRestoreResolveIncrementCase() restoreResolveIncrementCase {
 			env.DockerExecNoError(r, "gcs", "apk", "add", "-q", "curl", "jq")
 		},
 		copyRemote: func(t *testing.T, r *require.Assertions, env *TestEnvironment, configFile, backupName string) {
-			cfgPath, _ := env.resolveConfigPaths(r, configFile)
-			prefix := strings.TrimPrefix(path.Join(cfgPath, backupName), "/")
 			tmpPath := path.Join("/tmp/restore-resolve-increment-gcs", backupName)
 			env.DockerExecNoError(r, "gcs", "sh", "-ce", fmt.Sprintf(`
 rm -rf %[2]s
 mkdir -p %[2]s
-curl -s 'http://localhost:8080/storage/v1/b/altinity-qa-test/o?prefix=%[1]s/' | jq -r '.items[].name | [. , @uri] | @tsv' |
+curl -s 'http://localhost:8080/storage/v1/b/altinity-qa-test/o' | jq -r '.items[] | select(.name | contains("/%[1]s/")) | .name | [. , @uri] | @tsv' |
 while IFS='	' read -r name encoded; do
-  rel="${name#%[1]s/}"
+  rel="${name#*/%[1]s/}"
   mkdir -p "%[2]s/$(dirname "$rel")"
   curl -s -o "%[2]s/$rel" "http://localhost:8080/download/storage/v1/b/altinity-qa-test/o/$encoded?alt=media"
 done
-`, prefix, tmpPath))
+`, backupName, tmpPath))
 			copyRemoteBackupFromContainerFS(r, env, "gcs", "/tmp/restore-resolve-increment-gcs", backupName)
 		},
 	}

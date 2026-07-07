@@ -1,3 +1,70 @@
+# v2.7.4
+
+NEW FEATURES
+- add `clickhouse.parts_columns_max_bytes_before_external_group_by` (env `CLICKHOUSE_PARTS_COLUMNS_MAX_BYTES_BEFORE_EXTERNAL_GROUP_BY`, default `100000000`) and `clickhouse.parts_columns_max_memory_usage` (env `CLICKHOUSE_PARTS_COLUMNS_MAX_MEMORY_USAGE`, default `200000000`) — make the memory caps injected into the `system.parts_columns` check query configurable instead of hardcoded, `0` means don't inject the corresponding setting (pre-2.7.2 behavior), fix [#1420](https://github.com/Altinity/clickhouse-backup/issues/1420)
+
+BUG FIXES
+- fix `--restore-database-mapping`/`--restore-table-mapping` losing unrelated comma-separated `--tables` pattern items, or applying the mapping to the wrong item when the same source database/table name was repeated across items — each comma-separated pattern item is now matched and substituted independently, fix [#1421](https://github.com/Altinity/clickhouse-backup/issues/1421)
+
+# v2.7.3
+
+NEW FEATURES
+- add `general.max_broken_part_ratio` (env `MAX_BROKEN_PART_RATIO`, default `0`) — when >0, `create`/`create_remote` skips broken data parts instead of aborting the whole backup as long as the broken/total part ratio stays at or below the configured fraction; skipped parts are logged as warnings and the backup is marked successful but partial; `0` preserves the legacy any-broken-part-fails behavior, fix [#1418](https://github.com/Altinity/clickhouse-backup/issues/1418)
+- add `clickhouse.rebind_replica_path_if_exists` (env `CLICKHOUSE_REBIND_REPLICA_PATH_IF_EXISTS`, CLI `--rebind-replica-path-if-exists`, also accepted by the REST API `POST /backup/restore` endpoint) — opt-in rebind of the replicated table ZK path to `default_replica_path` during `restore` when the resolved path already has leftover children but no local table uses it (async-stale state after DROP); MUST stay `false` during a concurrent multi-replica restore to avoid split-brain, fix [#849](https://github.com/Altinity/clickhouse-backup/issues/849)
+- add `gcs.disable_http2` (env `GCS_DISABLE_HTTP2`) — force HTTP/1.1 for the GCS client to avoid single-TCP-connection HTTP/2 multiplexing becoming the bottleneck for high-throughput parallel downloads, fix [#1437](https://github.com/Altinity/clickhouse-backup/pull/1437)
+
+IMPROVEMENTS
+- switch the S3 client retry mode from `aws.RetryModeStandard` to `aws.RetryModeAdaptive`, so upload/download retries back off with a client-side rate limiter under throttling (`SlowDown`/503) instead of a fixed token bucket
+- support tables with `ENGINE=Alias` during `restore` — strip the explicit column list (Alias inherits columns from the target table) and add `allow_experimental_alias_table_engine=1` for ClickHouse 25.11+, fix [#1426](https://github.com/Altinity/clickhouse-backup/issues/1426)
+- skip tables from databases with engine `DataLakeCatalog` (read-only external catalogs) during backup, in addition to `MySQL`/`PostgreSQL`/`MaterializedPostgreSQL`, fix [#1417](https://github.com/Altinity/clickhouse-backup/issues/1417)
+- speed up `create` on servers with many tables: batch the in-progress `system.mutations` lookup instead of issuing one query per table (O(N^2) -> O(N)), fix [#1431](https://github.com/Altinity/clickhouse-backup/pull/1431)
+- speed up `restore`/`download` table list resolution: eliminate the O(N^2) linear duplicate scan in `getTableListByPatternLocal`/`getTableListByPatternRemote` via a shared O(1) dedup keyed on `metadata.TableTitle`, fix [#1430](https://github.com/Altinity/clickhouse-backup/pull/1430)
+- extend TestFlows FIPS 140-3 test coverage: dedicated test steps, stronger `--fips-info`/version-output and TLS-handshake assertions, updated requirements documentation, fix [#1443](https://github.com/Altinity/clickhouse-backup/pull/1443)
+
+BUG FIXES
+- restore the default `general.compression_use_multi_thread` to `true`: [#1378](https://github.com/Altinity/clickhouse-backup/issues/1378) defaulted it to `false`, which silently dropped gzip/zstd compression from multi-threaded (pre-1378 gzip always used `pgzip`) to single-threaded and caused ~30% slower upload throughput for backups dominated by one large table (where `upload_concurrency` provides no per-stream parallelism); the option is now silently ignored instead of failing config validation for formats other than gzip/zstd
+- fix v2.7.1 regression where `restore --schema` on a second replica rebound the ZK replica path even while the first replica was active and healthy — a foreign/renamed local table occupying the resolved ZK path is still detected automatically via `system.replicas` and rebound to `default_replica_path`, but a non-empty ZK path without a local table now defaults to the HA-safe join and requires the new opt-in `rebind_replica_path_if_exists`, fix [#1428](https://github.com/Altinity/clickhouse-backup/issues/1428)
+- fix inconsistent `--rbac` behavior: `restore --rbac` no longer returns an error when the backup contains no RBAC `access` directory, matching the `download --rbac` behavior, fix [#1432](https://github.com/Altinity/clickhouse-backup/issues/1432)
+- inject `ON CLUSTER` for `LIVE VIEW` and `WINDOW VIEW` restored with explicit column lists when `restore_schema_on_cluster` is set — `enrichQueryWithOnCluster` missed these statements and the views were created only on the local replica, fix [#1433](https://github.com/Altinity/clickhouse-backup/pull/1433)
+- mask sensitive values (passwords, storage credentials, encryption keys) when logging `--env` config overrides, and in the API server action logs and `/backup/status` output, fix [#1441](https://github.com/Altinity/clickhouse-backup/pull/1441)
+
+# v2.7.2
+
+IMPROVEMENTS
+- include the data part file path and source object key (`fPath`, `srcKey`) in `object_disk` `CopyObject`/`CopyObjectStreaming` error messages during `create` and `restore`, so broken `object_disk` data (keys missing on remote storage) points to the exact failing file instead of just the shadow/table name
+- document GCS Workload Identity authentication for the `gcs` remote storage in `Examples.md`
+
+BUG FIXES
+- fix `clickhouse.skip_table_engines` (env `CLICKHOUSE_SKIP_TABLE_ENGINES`) silently keeping some matching tables: the in-place slice removal advanced the cursor past the next element, so adjacent tables sharing a skipped engine were not all skipped; iterate in reverse so every match is dropped, fix [#1416](https://github.com/Altinity/clickhouse-backup/issues/1416)
+- ensure `/backup/kill` (and context cancellation in general) promptly aborts an in-flight `download`/`restore` even when a read is stalled on a slow/half-open network or disk backpressure — the source reader is now force-closed on cancellation so blocked `Read` calls in `DownloadCompressedStream`/`DownloadPath`, the Azure `CopyObject` poll backoff, and `object_disk.CopyObjectStreaming` return instead of running to completion, and the resumable `.pid` file is removed, fix [#1365](https://github.com/Altinity/clickhouse-backup/issues/1365)
+
+# v2.7.1
+
+NEW FEATURES
+- add `--fips-info` app-level flag — prints binary name, version, git commit, build date, Go version, and the FIPS module build/runtime state (`GOFIPS140` build setting, `GODEBUG fips140` default/runtime) then exits, without requiring a Go toolchain, fix [#1402](https://github.com/Altinity/clickhouse-backup/issues/1402)
+- add Azure AD Workload Identity support for `azblob` — when `AZBLOB_USE_MANAGED_IDENTITY=true` and the `AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/`AZURE_FEDERATED_TOKEN_FILE` env vars are injected (e.g. by the AAD Workload Identity webhook), the federated token is used to authenticate; see `Examples.md` for deployment, fix [#1124](https://github.com/Altinity/clickhouse-backup/issues/1124)
+
+IMPROVEMENTS
+- add `general.compression_use_multi_thread` (env `COMPRESSION_USE_MULTI_THREAD`, default `false`), `general.compression_threads` (env `COMPRESSION_THREADS`, default `0` = auto/GOMAXPROCS) and `general.compression_buffer_size` (env `COMPRESSION_BUFFER_SIZE`, default `0`) config options to tune per-stream zstd/gzip threading and the compression buffer (zstd encoder window / gzip DEFLATE window / pgzip block size); per-stream compression is now single-threaded by default to avoid CPU over-subscription, since `upload_concurrency`/`download_concurrency` already parallelize across tables, fix [#1378](https://github.com/Altinity/clickhouse-backup/issues/1378)
+- migrate compression from the archived, frozen `github.com/mholt/archiver/v4 v4.0.0-alpha.8` to its maintained successor `github.com/mholt/archives v0.1.5`, removing the `replace` directive pinned in [archiver#428](https://github.com/mholt/archiver/issues/428)
+- migrate S3 storage from the deprecated `github.com/aws/aws-sdk-go-v2/feature/s3/manager` to `github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager`; the forced CRC32 `aws-chunked` trailer that broke non-AWS S3-compatible providers is now disabled via `RequestChecksumCalculation=WhenRequired`, and the obsolete `s3.buffer_size` / `S3_BUFFER_SIZE` option was removed, fix [#1409](https://github.com/Altinity/clickhouse-backup/pull/1409)
+- add buffer-size and HTTP-transport tuning for high-bandwidth (10Gbps+) S3/GCS transfers: `general.pipe_buffer_size` (env `PIPE_BUFFER_SIZE`, default 128KB), `general.download_copy_buffer_size` (env `DOWNLOAD_COPY_BUFFER_SIZE`), `gcs.upload_buffer_size` (env `GCS_UPLOAD_BUFFER_SIZE`), `s3.http_write_buffer_size` (env `S3_HTTP_WRITE_BUFFER_SIZE`) and `s3.http_read_buffer_size` (env `S3_HTTP_READ_BUFFER_SIZE`), fix [#1376](https://github.com/Altinity/clickhouse-backup/issues/1376)
+- replace post-hoc sleep-based bandwidth throttling with a token-bucket rate limiter wrapped around the storage `Reader`/`Writer` interfaces, so the configured limit is enforced continuously during transfer instead of after each chunk, fix [#934](https://github.com/Altinity/clickhouse-backup/issues/934), [#1377](https://github.com/Altinity/clickhouse-backup/issues/1377)
+- parallelize `ALTER TABLE ... UNFREEZE` after `backup create` instead of running it inline inside each table goroutine, so an UNFREEZE no longer holds an `upload_concurrency` slot and blocks the next table, fix [#1381](https://github.com/Altinity/clickhouse-backup/issues/1381)
+- add `clickhouse.parts_columns_batch_size` (env `CLICKHOUSE_PARTS_COLUMNS_BATCH_SIZE`, default `25`) to batch the `system.parts` lookups when computing `hash_of_all_files`, avoiding `Max query size exceeded` failures on tables with very many parts, fix [#1408](https://github.com/Altinity/clickhouse-backup/issues/1408)
+- resolve `required` data parts during `restore` the same way as during `download` — hardlink from the required backup on local disk when present, otherwise download the part from remote storage, fix [#1023](https://github.com/Altinity/clickhouse-backup/issues/1023)
+- `ResumeOperationsAfterRestart` now ignores `create.state2`/`restore.state2` files instead of failing the API server startup with `unknown command`; only `upload` and `download` are auto-resumed after a server restart, fix [#1083](https://github.com/Altinity/clickhouse-backup/issues/1083)
+- fail fast with a clear error instead of retrying for ~35s when a remote table metadata `.json` is missing during `download` (covers S3 `NoSuchKey`, GCS 404, Azure `BlobNotFound`, FTP/SFTP not-found) — a missing table file is a permanent broken-backup condition, not a transient one, fix [#1379](https://github.com/Altinity/clickhouse-backup/issues/1379)
+- emit a clear error on `--resume download` when the local backup exists but `download.state2` is missing (so it is unknown which parts are complete), instead of crashing or silently resuming on top of partial data, fix [#1383](https://github.com/Altinity/clickhouse-backup/issues/1383)
+- harden FIPS 140-3 verification: native Go `GOFIPS140=v1.0.0` checks, ACVP reproducibility tests, outbound S3 TLS rejection checks and container cleanup in CI/CD, fix [#1399](https://github.com/Altinity/clickhouse-backup/pull/1399), [#1401](https://github.com/Altinity/clickhouse-backup/pull/1401), [#1404](https://github.com/Altinity/clickhouse-backup/pull/1404)
+
+BUG FIXES
+- don't kill `clickhouse-backup server` with `Fatal`/`os.Exit` when the resumable state DB can't be written or read (e.g. `no space left on device`); the error now propagates so the server stays alive and returns it to the API client, while the CLI exits with a non-zero code, fix [#1172](https://github.com/Altinity/clickhouse-backup/issues/1172)
+- fix `backup create` failing with `part "<name>" not found in system.parts ... after FREEZE` when a ClickHouse cache disk (e.g. `s3_cache`) wraps an underlying S3 object disk — prefer the underlying disk name over the cache wrapper in `getDisksFromSystemDisks`, fix [#1396](https://github.com/Altinity/clickhouse-backup/issues/1396)
+- fix `--hardlink-exists-files` to also match parts whose `hash_of_all_files` is identical but that now live under a renamed table, fix [#1398](https://github.com/Altinity/clickhouse-backup/issues/1398)
+- fix `--table` combined with `--resume` on incremental backups: recursively downloading a required backup closed the parent `b.dst` connection and wiped the resumable state; the connection is now saved/restored, fix [#1384](https://github.com/Altinity/clickhouse-backup/issues/1384)
+- improve detection when `clickhouse-backup` runs on a host whose disks differ from `clickhouse-server`, instead of silently warning `doesn't contain tables for restore`, fix [#1037](https://github.com/Altinity/clickhouse-backup/issues/1037)
+
 # v2.7.0
 
 NEW FEATURES

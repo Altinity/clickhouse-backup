@@ -8,22 +8,25 @@ import (
 )
 
 type TableMetadata struct {
-	Files                map[string][]string `json:"files,omitempty"`
-	RebalancedFiles      map[string]string   `json:"rebalanced_files,omitempty"`
-	Table                string              `json:"table"`
-	Database             string              `json:"database"`
-	UUID                 string              `json:"uuid,omitempty"`
-	Parts                map[string][]Part   `json:"parts"`
-	Query                string              `json:"query"`
-	Size                 map[string]int64    `json:"size"`                  // how much size on each disk
-	TotalBytes           uint64              `json:"total_bytes,omitempty"` // total table size
-	DependenciesTable    string              `json:"dependencies_table,omitempty"`
-	DependenciesDatabase string              `json:"dependencies_database,omitempty"`
-	Mutations            []MutationMetadata  `json:"mutations,omitempty"`
-	MetadataOnly         bool                `json:"metadata_only"`
-	LocalFile            string              `json:"local_file,omitempty"`
-	Checksums            map[string]uint64   `json:"checksums,omitempty"`
-	HashOfAllFiles       map[string]string   `json:"hash_of_all_files,omitempty"`
+	Files           map[string][]string `json:"files,omitempty"`
+	RebalancedFiles map[string]string   `json:"rebalanced_files,omitempty"`
+	Table           string              `json:"table"`
+	Database        string              `json:"database"`
+	UUID            string              `json:"uuid,omitempty"`
+	Parts           map[string][]Part   `json:"parts"`
+	// BrokenParts - per-disk data parts skipped as broken during backup creation because
+	// general.max_broken_part_ratio > 0 tolerated them, see https://github.com/Altinity/clickhouse-backup/issues/1418
+	BrokenParts          map[string][]Part  `json:"broken_parts,omitempty"`
+	Query                string             `json:"query"`
+	Size                 map[string]int64   `json:"size"`                  // how much size on each disk
+	TotalBytes           uint64             `json:"total_bytes,omitempty"` // total table size
+	DependenciesTable    string             `json:"dependencies_table,omitempty"`
+	DependenciesDatabase string             `json:"dependencies_database,omitempty"`
+	Mutations            []MutationMetadata `json:"mutations,omitempty"`
+	MetadataOnly         bool               `json:"metadata_only"`
+	LocalFile            string             `json:"local_file,omitempty"`
+	Checksums            map[string]uint64  `json:"checksums,omitempty"`
+	HashOfAllFiles       map[string]string  `json:"hash_of_all_files,omitempty"`
 }
 
 func (tm *TableMetadata) Save(location string, metadataOnly bool) (uint64, error) {
@@ -40,6 +43,7 @@ func (tm *TableMetadata) Save(location string, metadataOnly bool) (uint64, error
 	if !metadataOnly {
 		newTM.Files = tm.Files
 		newTM.Parts = tm.Parts
+		newTM.BrokenParts = tm.BrokenParts
 		newTM.Checksums = tm.Checksums
 		newTM.HashOfAllFiles = tm.HashOfAllFiles
 		newTM.Size = tm.Size

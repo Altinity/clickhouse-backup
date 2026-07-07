@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
+
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/rs/zerolog/log"
-	"strings"
-	"time"
 )
 
 func List(ctx context.Context, cfg *config.Config) ([]storage.Backup, error) {
@@ -42,10 +43,10 @@ func List(ctx context.Context, cfg *config.Config) ([]storage.Backup, error) {
 			Str("duration", utils.HumanizeDuration(time.Since(startCustomList))).
 			Msg("done")
 		return backupList, nil
-	} else {
-		log.Error().
-			Str("operation", "list_custom").
-			Err(err).Send()
-		return nil, err
 	}
+
+	log.Error().
+		Str("operation", "list_custom").
+		Err(err).Send()
+	return nil, err
 }

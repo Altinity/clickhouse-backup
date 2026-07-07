@@ -25,6 +25,7 @@ func TestSparseSerialization(t *testing.T) {
 		t.Skipf("Test skipped: sparse serialization is default since 23.8, current %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
 	dbName := "test_sparse_serialization_" + t.Name()
@@ -34,7 +35,7 @@ func TestSparseSerialization(t *testing.T) {
 	// Pre-clean state from any prior failed run.
 	_ = env.dropDatabase(dbName, true)
 
-	env.queryWithNoError(r, "CREATE DATABASE "+dbName)
+	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
 
 	// ReplacingMergeTree carries an implicit `_row_exists` / `__is_deleted__` column
 	// that is all-default for inserts without soft-deletes. We additionally add an
@@ -51,12 +52,12 @@ func TestSparseSerialization(t *testing.T) {
 		min_bytes_for_wide_part=0,
 		min_rows_for_wide_part=0,
 		ratio_of_defaults_for_sparse_serialization=0.9`
-	env.queryWithNoError(r, createSQL)
+	env.queryWithNoError(t, r, createSQL)
 
 	// Insert enough rows that zero_col is "mostly default" → sparse kicks in,
 	// and offsets stream is empty → empty .bin metadata file on S3 disk.
-	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" (id, v) SELECT number, number FROM numbers(50000)")
-	env.queryWithNoError(r, "OPTIMIZE TABLE "+dbName+"."+tableName+" FINAL")
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+"."+tableName+" (id, v) SELECT number, number FROM numbers(50000)")
+	env.queryWithNoError(t, r, "OPTIMIZE TABLE "+dbName+"."+tableName+" FINAL")
 
 	// Sanity: column is actually serialized as Sparse.
 	var sparseSubcolumns uint64
@@ -85,5 +86,4 @@ func TestSparseSerialization(t *testing.T) {
 	r.Equal(uint64(0), zeroSum, "zero_col must still be all zeros after restore")
 
 	fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{dbName}, false, true, true, "config-s3.yml")
-	env.Cleanup(t, r)
 }

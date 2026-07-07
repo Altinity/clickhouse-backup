@@ -22,6 +22,7 @@ func TestForceRebalance(t *testing.T) {
 	}
 
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
 	backupName := fmt.Sprintf("test_force_rebalance_%d", rand.Int())
@@ -30,13 +31,13 @@ func TestForceRebalance(t *testing.T) {
 
 	// Step 1: Create a table on the default disk (no explicit storage_policy)
 	// and insert enough data to produce multiple parts
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE %s.%s (id UInt64, dt DateTime) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY id",
 		dbName, tableName,
 	))
 	for _, month := range []string{"2024-01-01", "2024-02-01", "2024-03-01", "2024-04-01"} {
-		env.queryWithNoError(r, fmt.Sprintf(
+		env.queryWithNoError(t, r, fmt.Sprintf(
 			"INSERT INTO %s.%s SELECT number, toDateTime('%s 00:00:00') + number FROM numbers(1000)",
 			dbName, tableName, month,
 		))
@@ -59,7 +60,7 @@ func TestForceRebalance(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.1") >= 0 {
 		dropSQL += " SYNC"
 	}
-	env.queryWithNoError(r, dropSQL)
+	env.queryWithNoError(t, r, dropSQL)
 
 	// Step 4: Reconfigure ClickHouse so the "default" storage policy includes
 	// hdd1 and hdd2 as JBOD disks, simulating a multi-disk target
@@ -85,6 +86,17 @@ XML
 	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
 	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 
+	// Remove the storage-policy override and restart ClickHouse even if an
+	// assertion below fails. Otherwise the modified "default" policy (hdd1+hdd2,
+	// no real "default" disk) stays active in the pooled env and breaks the next
+	// test that inherits it (observed: TestBwLimitSFTP failing fast with UNKNOWN_DISK).
+	defer func() {
+		env.DockerExecNoError(r, "clickhouse", "rm", "-f", "/etc/clickhouse-server/config.d/force_rebalance_test.xml")
+		env.ch.Close()
+		r.NoError(env.tc.RestartContainer(t, "clickhouse"))
+		env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
+	}()
+
 	// Step 5: Download with force_rebalance — parts should be distributed across hdd1 and hdd2
 	downloadOut, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
 		"CLICKHOUSE_FORCE_REBALANCE=true clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml download "+backupName)
@@ -104,8 +116,8 @@ XML
 	r.NotEmpty(hdd2Out, "hdd2 should contain some backup data")
 
 	// Step 7: Restore and verify data integrity
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE %s.%s (id UInt64, dt DateTime) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY id",
 		dbName, tableName,
 	))
@@ -113,11 +125,8 @@ XML
 		"CLICKHOUSE_FORCE_REBALANCE=true clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --data "+backupName)
 	env.checkCount(r, 1, 4000, fmt.Sprintf("SELECT count() FROM %s.%s", dbName, tableName))
 
-	// Step 8: Cleanup — remove the test storage policy override and restart
-	env.DockerExecNoError(r, "clickhouse", "rm", "-f", "/etc/clickhouse-server/config.d/force_rebalance_test.xml")
+	// Step 8: Cleanup — backups and test databases. The storage-policy override
+	// removal + ClickHouse restart is handled by the deferred cleanup registered
+	// in Step 4, so it runs even if an assertion above fails.
 	fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{"test_force_rebalance"}, true, true, true, "config-s3.yml")
-	env.ch.Close()
-	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
-	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
-	env.Cleanup(t, r)
 }
