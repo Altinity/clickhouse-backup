@@ -268,6 +268,8 @@ func sftpCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 	tc := containerFSCase("SFTP", "config-sftp-auth-key.yaml", "sshd", "")
 	tc.setup = func(env *TestEnvironment, r *require.Assertions) {
 		env.uploadSSHKeys(r, "clickhouse-backup")
+		// mkdir -p pathRoot/objRoot ran as root via docker exec; give it back to the SFTP login user
+		env.DockerExecNoError(r, "sshd", "chown", "-R", "sftpuser:sftpuser", "/config")
 	}
 	return tc
 }
