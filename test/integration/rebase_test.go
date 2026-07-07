@@ -14,66 +14,106 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRebase covers the `rebase` command: required parts from the whole
-// `required_backup` chain (full <- inc1 <- inc2) must be copied into the
+// The TestRebase* family covers the `rebase` command: required parts from the
+// whole `required_backup` chain (full <- inc1 <- inc2) must be copied into the
 // rebased increment via server-side CopyObject, `required` attributes and the
 // `required_backup` dependency must be removed, so the increment becomes a
 // full backup restorable after all its ancestors are deleted.
+// Each storage backend is a separate top-level test so they run in parallel
+// (NewTestEnvironment acquires a dedicated env from the pool and calls t.Parallel()).
 // S3 covers the archive (tar) data_format, SFTP covers the `directory`
 // data_format (compression_format: none) and the `copy-data`/hardlink chain,
 // FTP covers the `SITE CPFR`/`SITE CPTO` (ProFTPD mod_copy) / FXP / streaming chain,
 // GCS emulator / AZBLOB (azurite) / real GCS / real COS cover the native server-side copy implementations.
 // Tables with s3_only/gcs_only/azure_only storage policies additionally cover
 // object disk blobs copying under `object_disk_path`.
-func TestRebase(t *testing.T) {
-	env, r := NewTestEnvironment(t)
-	defer env.Cleanup(t, r)
-	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
+// rebaseCHVersion returns the ClickHouse version under test, defaulting to "head".
+func rebaseCHVersion() string {
 	version := os.Getenv("CLICKHOUSE_VERSION")
 	if version == "" {
 		version = "head"
 	}
-	// storage policies for object disks exist only in advanced mode configs, version gates match generateTestData
-	s3Policy, gcsPolicy, azurePolicy := "", "", ""
-	if isAdvancedMode() {
-		if compareVersion(version, "21.8") >= 0 {
-			s3Policy = "s3_only"
-		}
-		if compareVersion(version, "22.6") >= 0 && os.Getenv("QA_GCS_OVER_S3_BUCKET") != "" {
-			gcsPolicy = "gcs_only"
-		}
-		if compareVersion(version, "23.3") >= 0 {
-			azurePolicy = "azure_only"
-		}
-	}
+	return version
+}
 
+func TestRebaseS3(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+
+	// storage policies for object disks exist only in advanced mode configs, version gates match generateTestData
+	s3Policy := ""
+	if isAdvancedMode() && compareVersion(rebaseCHVersion(), "21.8") >= 0 {
+		s3Policy = "s3_only"
+	}
 	runRebaseScenario(t, r, env, "test_rebase_s3", "/etc/clickhouse-backup/config-s3.yml", s3Policy)
+}
+
+func TestRebaseSFTP(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+
 	runRebaseScenario(t, r, env, "test_rebase_sftp", "/etc/clickhouse-backup/config-sftp-auth-password.yaml", "")
+}
+
+func TestRebaseFTP(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+
 	// old versions can't execute SYSTEM RESTORE REPLICA, so restore_as_attach must stay disabled (config-ftp-old.yaml)
 	ftpConfig := "/etc/clickhouse-backup/config-ftp.yaml"
-	if compareVersion(version, "21.8") < 0 {
+	if compareVersion(rebaseCHVersion(), "21.8") < 0 {
 		ftpConfig = "/etc/clickhouse-backup/config-ftp-old.yaml"
 	}
 	runRebaseScenario(t, r, env, "test_rebase_ftp", ftpConfig, "")
-	runRebaseScenario(t, r, env, "test_rebase_gcs_emulator", "/etc/clickhouse-backup/config-gcs-custom-endpoint.yml", gcsPolicy)
-	if !isTestShouldSkip("AZURE_TESTS") {
-		runRebaseScenario(t, r, env, "test_rebase_azblob", "/etc/clickhouse-backup/config-azblob.yml", azurePolicy)
-	} else {
-		t.Log("skip test_rebase_azblob scenario, AZURE_TESTS missing")
+}
+
+func TestRebaseGCS(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+
+	gcsPolicy := ""
+	if isAdvancedMode() && compareVersion(rebaseCHVersion(), "22.6") >= 0 && os.Getenv("QA_GCS_OVER_S3_BUCKET") != "" {
+		gcsPolicy = "gcs_only"
 	}
+	runRebaseScenario(t, r, env, "test_rebase_gcs_emulator", "/etc/clickhouse-backup/config-gcs-custom-endpoint.yml", gcsPolicy)
 	if !isTestShouldSkip("GCS_TESTS") {
 		runRebaseScenario(t, r, env, "test_rebase_gcs", "/etc/clickhouse-backup/config-gcs.yml", gcsPolicy)
 	} else {
 		t.Log("skip test_rebase_gcs scenario, GCS_TESTS missing")
 	}
-	if os.Getenv("QA_TENCENT_SECRET_KEY") != "" {
-		env.InstallDebIfNotExists(r, "clickhouse-backup", "gettext-base")
-		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-cos.yml.template | envsubst > /etc/clickhouse-backup/config-cos.yml")
-		runRebaseScenario(t, r, env, "test_rebase_cos", "/etc/clickhouse-backup/config-cos.yml", "")
-	} else {
-		t.Log("skip test_rebase_cos scenario, QA_TENCENT_SECRET_KEY missing")
+}
+
+func TestRebaseAzblob(t *testing.T) {
+	if isTestShouldSkip("AZURE_TESTS") {
+		t.Skip("skip TestRebaseAzblob, AZURE_TESTS missing")
 	}
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+
+	azurePolicy := ""
+	if isAdvancedMode() && compareVersion(rebaseCHVersion(), "23.3") >= 0 {
+		azurePolicy = "azure_only"
+	}
+	runRebaseScenario(t, r, env, "test_rebase_azblob", "/etc/clickhouse-backup/config-azblob.yml", azurePolicy)
+}
+
+func TestRebaseCOS(t *testing.T) {
+	if os.Getenv("QA_TENCENT_SECRET_KEY") == "" {
+		t.Skip("skip TestRebaseCOS, QA_TENCENT_SECRET_KEY missing")
+	}
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+
+	env.InstallDebIfNotExists(r, "clickhouse-backup", "gettext-base")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-cos.yml.template | envsubst > /etc/clickhouse-backup/config-cos.yml")
+	runRebaseScenario(t, r, env, "test_rebase_cos", "/etc/clickhouse-backup/config-cos.yml", "")
 }
 
 func runRebaseScenario(t *testing.T, r *require.Assertions, env *TestEnvironment, dbName, configFile, objectDiskPolicy string) {

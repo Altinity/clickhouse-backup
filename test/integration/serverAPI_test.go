@@ -89,6 +89,129 @@ func TestServerAPI(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
 }
 
+// TestServerAPIRebase covers the `rebase` command over the REST API: the
+// dedicated POST /backup/rebase/{name} handler (httpRebaseHandler), the generic
+// POST /backup/actions endpoint with a `rebase` command, and the
+// clickhouse_backup_*rebase* Prometheus metrics both endpoints emit via
+// metrics.ExecuteWithMetrics("rebase", ...).
+// The required_backup chains (full <- inc1 <- inc2) are built with the CLI
+// before the server starts, so the short-lived CLI runs never contend with the
+// server for the pid lock.
+func TestServerAPIRebase(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	r.NoError(env.DockerCP("configs/config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
+	env.InstallDebIfNotExists(r, "clickhouse-backup", "curl", "jq")
+
+	dropSuffix := ""
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") > 0 {
+		dropSuffix = " NO DELAY"
+	}
+
+	// build both required_backup chains before the server starts (see doc comment)
+	directDB := "test_api_rebase_direct"
+	directFull, directInc1, directInc2 := buildRebaseChainViaCLI(t, r, env, directDB)
+	actionsDB := "test_api_rebase_actions"
+	actionsFull, actionsInc1, actionsInc2 := buildRebaseChainViaCLI(t, r, env, actionsDB)
+
+	log.Debug().Msg("Run `clickhouse-backup server` in background")
+	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup server &>>/tmp/clickhouse-backup-server.log")
+	defer func() {
+		_ = env.DockerExec("clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
+	}()
+	time.Sleep(3 * time.Second)
+
+	// --- Scenario 1: dedicated POST /backup/rebase/{name} (httpRebaseHandler) ---
+	log.Debug().Msg("Check POST /backup/rebase/{name}")
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/rebase/%s'", directInc2))
+	r.NoError(err, "%s\nunexpected POST /backup/rebase error: %v", out, err)
+	r.Contains(out, "acknowledged")
+	waitForAPIOperationStatus(r, env, parseAPIOperationID(r, out), "rebase", 120*time.Second)
+
+	// rebase metrics must reflect a successful run
+	waitForAPIMetricsContains(r, env, 30*time.Second, "clickhouse_backup_last_rebase_status 1")
+	metricsOut, err := env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/metrics")
+	r.NoError(err, "%s\nunexpected GET /metrics error: %v", metricsOut, err)
+	r.Regexp(regexp.MustCompile(`clickhouse_backup_successful_rebases\s+[1-9]\d*`), metricsOut)
+	r.Regexp(regexp.MustCompile(`clickhouse_backup_last_rebase_duration\s+\d+`), metricsOut)
+
+	// the rebased increment must be restorable after its ancestors are deleted
+	for _, ancestor := range []string{directInc1, directFull} {
+		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/remote/%s'", ancestor))
+		r.NoError(err, "%s\nunexpected POST /backup/delete/remote error: %v", out, err)
+	}
+	env.queryWithNoError(t, r, "DROP TABLE "+directDB+".t1"+dropSuffix)
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/restore_remote/%s?rm=1'", directInc2))
+	r.NoError(err, "%s\nunexpected POST /backup/restore_remote error: %v", out, err)
+	waitForAPIOperationStatus(r, env, parseAPIOperationID(r, out), "restore_remote", 120*time.Second)
+	env.checkCount(r, 1, 300, "SELECT count() FROM "+directDB+".t1")
+
+	// --- Scenario 2: POST /backup/actions with a `rebase` command ---
+	log.Debug().Msg("Check POST /backup/actions with rebase command")
+	rebaseAction := "rebase " + actionsInc2
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST -d '{\"command\":\"%s\"}' 'http://localhost:7171/backup/actions'", rebaseAction))
+	r.NoError(err, "%s\nunexpected POST /backup/actions error: %v", out, err)
+	r.Contains(out, "acknowledged")
+	r.Contains(out, rebaseAction)
+	waitForAPIActionStatus(r, env, rebaseAction, status.SuccessStatus, 120*time.Second)
+
+	// the actions rebase is reflected in /metrics and the GET /backup/actions log
+	waitForAPIMetricsContains(r, env, 30*time.Second, "clickhouse_backup_last_rebase_status 1")
+	actionsLog, err := env.DockerExecOut("clickhouse-backup", "curl", "-sfL", "http://localhost:7171/backup/actions?filter=rebase")
+	r.NoError(err, "%s\nunexpected GET /backup/actions?filter=rebase error: %v", actionsLog, err)
+	r.Contains(actionsLog, rebaseAction)
+	r.NotContains(actionsLog, "\"status\":\"error\"")
+
+	// Cleanup
+	for _, b := range []string{directInc2, actionsInc2, actionsInc1, actionsFull} {
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup delete remote "+b+" 2>/dev/null || true")
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup delete local "+b+" 2>/dev/null || true")
+	}
+	r.NoError(env.dropDatabase(directDB, true))
+	r.NoError(env.dropDatabase(actionsDB, true))
+	env.DockerExecNoError(r, "clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
+}
+
+// buildRebaseChainViaCLI creates a full <- inc1 <- inc2 required_backup chain on
+// the remote configured in the default /etc/clickhouse-backup/config.yml, using
+// the CLI inside the clickhouse-backup container. Merges are stopped so unchanged
+// parts keep stable names and gain the `required` attribute in the increments,
+// which is what `rebase` must copy. Returns the three backup names.
+func buildRebaseChainViaCLI(t *testing.T, r *require.Assertions, env *TestEnvironment, dbName string) (string, string, string) {
+	fullBackup := dbName + "_full"
+	inc1Backup := dbName + "_inc1"
+	inc2Backup := dbName + "_inc2"
+
+	for _, b := range []string{fullBackup, inc1Backup, inc2Backup} {
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup delete remote "+b+" 2>/dev/null || true")
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup delete local "+b+" 2>/dev/null || true")
+	}
+	r.NoError(env.dropDatabase(dbName, true))
+
+	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
+	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+".t1 (id UInt64, v String) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "SYSTEM STOP MERGES "+dbName+".t1")
+
+	insertRound := func(offset int, payload string) {
+		env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO %s.t1 SELECT number+%d, '%s' FROM numbers(100)", dbName, offset, payload))
+	}
+
+	insertRound(0, "full")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create_remote", "--tables="+dbName+".*", fullBackup)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", fullBackup)
+
+	insertRound(100, "inc1")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create_remote", "--tables="+dbName+".*", "--diff-from-remote="+fullBackup, inc1Backup)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", inc1Backup)
+
+	insertRound(200, "inc2")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create_remote", "--tables="+dbName+".*", "--diff-from-remote="+inc1Backup, inc2Backup)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", inc2Backup)
+
+	return fullBackup, inc1Backup, inc2Backup
+}
+
 // TestWatchIncrementalSkipDisks reproduces the Slack-reported scenario where a
 // tiered table moves a partition from the hot (default) disk to a cold object
 // disk listed in clickhouse.skip_disks, and the next incremental backup must
@@ -955,6 +1078,27 @@ func waitForAPIMetricsContains(r *require.Assertions, env *TestEnvironment, time
 	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
 	for _, item := range expected {
 		r.Contains(out, item)
+	}
+}
+
+// waitForAPIActionStatus polls system.backup_actions (an ENGINE=URL table backed
+// by GET /backup/actions) for the given async command until it leaves the
+// in-progress state, then asserts it reached expectedStatus.
+func waitForAPIActionStatus(r *require.Assertions, env *TestEnvironment, command, expectedStatus string, timeout time.Duration) {
+	startTime := time.Now()
+	for {
+		if time.Since(startTime) > timeout {
+			r.FailNowf("timeout waiting for /backup/actions command", "command=%s expected=%s", command, expectedStatus)
+		}
+		rows := make([]struct {
+			Status string `ch:"status"`
+		}, 0)
+		r.NoError(env.ch.StructSelect(&rows, "SELECT status FROM system.backup_actions WHERE command=? ORDER BY start DESC LIMIT 1", command))
+		if len(rows) > 0 && rows[0].Status != status.InProgressStatus {
+			r.Equalf(expectedStatus, rows[0].Status, "/backup/actions command %q finished with status %q", command, rows[0].Status)
+			return
+		}
+		time.Sleep(1 * time.Second)
 	}
 }
 
