@@ -881,8 +881,8 @@ func (s *S3) remotePager(ctx context.Context, s3Path string, recursive bool, pro
 	return nil
 }
 
+// CopyObject server-side copy from srcBucket/srcKey to s.Config.Bucket/dstKey, both keys are absolute inside the bucket
 func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
-	dstKey = path.Join(s.Config.ObjectDiskPath, dstKey)
 	log.Debug().Msgf("S3->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, s.Config.Bucket, dstKey)
 	// just copy object without multipart
 	if srcSize < 5*1024*1024*1024 || strings.Contains(s.Config.Endpoint, "storage.googleapis.com") {

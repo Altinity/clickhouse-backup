@@ -684,16 +684,22 @@ func (tc *TestContainers) startSSHD(ctx context.Context) error {
 
 func (tc *TestContainers) startFTP(ctx context.Context, curDir string) error {
 	if tc.isAdvanced {
+		proftpdEnv := map[string]string{
+			"FTP_USER_NAME":         "test_backup",
+			"FTP_USER_PASS":         "test_backup",
+			"FTP_MASQUERADEADDRESS": "yes",
+			"FTP_PASSIVE_PORTS":     "21100 31100",
+			"FTP_MAX_CONNECTIONS":   "255",
+		}
+		// 23.x+ runs ProFTPD with mod_copy (SITE CPFR/CPTO CopyObject path),
+		// 20.0 <= CLICKHOUSE_VERSION <= 22.12 disables mod_copy to cover the FXP CopyObject path
+		if v := os.Getenv("CLICKHOUSE_VERSION"); v != "" && v != "head" && compareVersion(v, "23.0") < 0 {
+			proftpdEnv["FTP_DISABLE_MOD_COPY"] = "yes"
+		}
 		return tc.startContainer(ctx, "ftp",
 			&container.Config{
 				Image: "docker.io/iradu/proftpd:latest",
-				Env: envMap(map[string]string{
-					"FTP_USER_NAME":         "test_backup",
-					"FTP_USER_PASS":         "test_backup",
-					"FTP_MASQUERADEADDRESS": "yes",
-					"FTP_PASSIVE_PORTS":     "21100 31100",
-					"FTP_MAX_CONNECTIONS":   "255",
-				}),
+				Env:   envMap(proftpdEnv),
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD-SHELL", "echo 1"},
 					Interval: 1 * time.Second,

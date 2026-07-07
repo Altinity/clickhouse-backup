@@ -560,8 +560,8 @@ func (gcs *GCS) deleteKeysConcurrent(ctx context.Context, keys []string) error {
 	return nil
 }
 
+// CopyObject server-side copy from srcBucket/srcKey to gcs.Config.Bucket/dstKey, both keys are absolute inside the bucket
 func (gcs *GCS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
-	dstKey = path.Join(gcs.Config.ObjectDiskPath, dstKey)
 	log.Debug().Msgf("GCS->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, gcs.Config.Bucket, dstKey)
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
@@ -569,27 +569,51 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey
 		return 0, errors.Wrap(err, "GCS CopyObject BorrowObject")
 	}
 	pClient := pClientObj.(*clientObject).Client
-	src := pClient.Bucket(srcBucket).Object(srcKey)
 	// Do NOT apply encryption for object_disks files - they must be readable by ClickHouse
-	// which doesn't have access to the encryption key
+	// which doesn't have access to the encryption key; backup path objects are encrypted with CSEK
+	isSrcObjectDiskPath := gcs.Config.ObjectDiskPath != "" && strings.HasPrefix(srcKey, gcs.Config.ObjectDiskPath)
+	isDstObjectDiskPath := gcs.Config.ObjectDiskPath != "" && strings.HasPrefix(dstKey, gcs.Config.ObjectDiskPath)
+	src := pClient.Bucket(srcBucket).Object(srcKey)
+	if !isSrcObjectDiskPath {
+		src = gcs.applyEncryption(src)
+	}
 	dst := pClient.Bucket(gcs.Config.Bucket).Object(dstKey)
+	if !isDstObjectDiskPath {
+		dst = gcs.applyEncryption(dst)
+	}
 	// always retry transient errors to mitigate retry logic bugs.
 	dst = dst.Retryer(storage.WithPolicy(storage.RetryAlways))
 	attrs, err := src.Attrs(ctx)
 	if err != nil {
-		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
-			log.Warn().Msgf("gcs.CopyObject: gcs.clientPool.InvalidateObject error: %+v", pErr)
+		// If the source is not encrypted but we tried to read it with encryption key,
+		// retry without encryption (for backward compatibility with old backups)
+		if !isSrcObjectDiskPath && gcs.encryptionKey != nil && gcs.isNotEncryptedError(err) {
+			log.Warn().Msgf("gcs.CopyObject: object %s not encrypted, retrying without encryption key", srcKey)
+			src = pClient.Bucket(srcBucket).Object(srcKey)
+			attrs, err = src.Attrs(ctx)
 		}
-		return 0, errors.Wrap(err, "GCS CopyObject src.Attrs")
+		if err != nil {
+			if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
+				log.Warn().Msgf("gcs.CopyObject: gcs.clientPool.InvalidateObject error: %+v", pErr)
+			}
+			return 0, errors.Wrap(err, "GCS CopyObject src.Attrs")
+		}
 	}
 	copier := dst.CopierFrom(src)
-	// Note: source and destination objects for object disks are not encrypted
-	// because ClickHouse needs to read them directly without encryption key
 	if _, err = copier.Run(ctx); err != nil {
-		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
-			log.Warn().Msgf("gcs.CopyObject: gcs.clientPool.InvalidateObject error: %+v", pErr)
+		// If the source is not encrypted but we tried to copy it with encryption key,
+		// retry without encryption (for backward compatibility with old backups)
+		if !isSrcObjectDiskPath && gcs.encryptionKey != nil && gcs.isNotEncryptedError(err) {
+			log.Warn().Msgf("gcs.CopyObject: object %s not encrypted, retrying without encryption key", srcKey)
+			copier = dst.CopierFrom(pClient.Bucket(srcBucket).Object(srcKey))
+			_, err = copier.Run(ctx)
 		}
-		return 0, errors.Wrap(err, "GCS CopyObject copier.Run")
+		if err != nil {
+			if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
+				log.Warn().Msgf("gcs.CopyObject: gcs.clientPool.InvalidateObject error: %+v", pErr)
+			}
+			return 0, errors.Wrap(err, "GCS CopyObject copier.Run")
+		}
 	}
 	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
 		log.Warn().Msgf("gcs.CopyObject: gcs.clientPool.ReturnObject error: %+v", pErr)

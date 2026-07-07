@@ -71,14 +71,16 @@ func (cfg *Config) Unlock() {
 
 // GeneralConfig - general setting section
 type GeneralConfig struct {
-	RemoteStorage             string `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
-	MaxFileSize               int64  `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
-	BackupsToKeepLocal        int    `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
-	BackupsToKeepRemote       int    `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
-	LogLevel                  string `yaml:"log_level" envconfig:"LOG_LEVEL"`
-	AllowEmptyBackups         bool   `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
-	DownloadConcurrency       uint8  `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
-	UploadConcurrency         uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	RemoteStorage       string `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
+	MaxFileSize         int64  `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
+	BackupsToKeepLocal  int    `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
+	BackupsToKeepRemote int    `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
+	LogLevel            string `yaml:"log_level" envconfig:"LOG_LEVEL"`
+	AllowEmptyBackups   bool   `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
+	DownloadConcurrency uint8  `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
+	UploadConcurrency   uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	// RebaseConcurrency - how many tables process in parallel during `rebase` command execution
+	RebaseConcurrency         uint8  `yaml:"rebase_concurrency" envconfig:"REBASE_CONCURRENCY"`
 	UploadMaxBytesPerSecond   uint64 `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
 	DownloadMaxBytesPerSecond uint64 `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
 	// MaxBrokenPartRatio - maximum allowed fraction (0..1) of broken data parts that still produces a
@@ -777,6 +779,7 @@ func DefaultConfig() *Config {
 			LogLevel:                            "info",
 			UploadConcurrency:                   uploadConcurrency,
 			DownloadConcurrency:                 downloadConcurrency,
+			RebaseConcurrency:                   downloadConcurrency,
 			ObjectDiskServerSideCopyConcurrency: objectDiskServerSideCopyConcurrency,
 			RestoreSchemaOnCluster:              "",
 			UploadByPart:                        true,
