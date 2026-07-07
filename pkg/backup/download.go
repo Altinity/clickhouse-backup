@@ -166,8 +166,8 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		return errors.Errorf("'%s' is not found on remote storage", backupName)
 	}
 	// Download file manifest for Walk-free restore (falls back gracefully if not present)
-	var backupManifest *storage.BackupManifest
-	backupManifest, _ = b.dst.DownloadManifest(ctx, backupName)
+	backupManifest := b.dst.DownloadManifest(ctx, backupName)
+	defer backupManifest.Close()
 
 	if len(remoteBackup.Tables) == 0 && remoteBackup.RBACSize == 0 && remoteBackup.ConfigSize == 0 && remoteBackup.NamedCollectionsSize == 0 && !b.cfg.General.AllowEmptyBackups {
 		return errors.Errorf("'%s' is empty backup", backupName)
@@ -744,7 +744,7 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 	return uint64(remoteFileInfo.Size()), nil
 }
 
-func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, disks []clickhouse.Disk, hardlinkExistsFiles bool, manifest *storage.BackupManifest) (uint64, error) {
+func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, disks []clickhouse.Disk, hardlinkExistsFiles bool, manifest *storage.ManifestReader) (uint64, error) {
 	dbAndTableDir := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 	dataGroup, dataCtx := errgroup.WithContext(ctx)
 	dataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
@@ -922,9 +922,12 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 					// Try manifest-based download to avoid Walk (ListObjectsV2)
 					if manifest != nil {
 						manifestPrefix := path.Join("shadow", dbAndTableDir, capturedDisk, capturedPart.Name)
-						manifestFiles := manifest.FilesUnderPrefix(manifestPrefix)
+						manifestFiles, manifestErr := manifest.FilesUnderPrefix(manifestPrefix)
+						if manifestErr != nil {
+							log.Warn().Err(manifestErr).Msgf("manifest lookup failed for %s, will fall back to Walk", manifestPrefix)
+						}
 						if len(manifestFiles) > 0 {
-							pathSize, downloadErr := b.dst.DownloadPathWithManifest(dataCtx, partRemotePath, partLocalPath, manifestFiles, manifestPrefix, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.DownloadMaxBytesPerSecond)
+							pathSize, downloadErr := b.dst.DownloadPathWithManifest(dataCtx, partRemotePath, partLocalPath, manifestFiles, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.DownloadMaxBytesPerSecond)
 							if downloadErr != nil {
 								return errors.WithMessage(downloadErr, "DownloadPathWithManifest")
 							}
