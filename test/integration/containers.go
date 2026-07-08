@@ -1087,6 +1087,22 @@ func (tc *TestContainers) clickHouseBinds(curDir, configsDir string) []string {
 	return binds
 }
 
+// writeMacrosVersionXML - generate the `{version}` macro for the clickhouse-backup config
+// path/object_disk_path, it isolates parallel CI matrix jobs sharing the same remote bucket
+// (real GCS, real S3, COS). Generated on the host and bind-mounted unconditionally because
+// dynamic_settings.sh runs only in advanced mode, while old versions (1.x, 19.x) need the
+// isolation too: with the macro missing `{version}` stays literal, so all simple-mode matrix
+// jobs collide on the same remote path and delete each other's fixed-name backups.
+func (tc *TestContainers) writeMacrosVersionXML() (string, error) {
+	version := strings.ReplaceAll(getEnvDefault("CLICKHOUSE_VERSION", "26.3"), ".", "_")
+	content := fmt.Sprintf("<yandex>\n  <macros>\n    <version>%s</version>\n  </macros>\n</yandex>\n", version)
+	fPath := filepath.Join(os.TempDir(), fmt.Sprintf("clickhouse-backup-macros-version-env%d.xml", tc.envID))
+	if err := os.WriteFile(fPath, []byte(content), 0644); err != nil {
+		return "", fmt.Errorf("writeMacrosVersionXML %s: %w", fPath, err)
+	}
+	return fPath, nil
+}
+
 func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDir string) error {
 	chImage := fmt.Sprintf("docker.io/%s:%s",
 		getEnvDefault("CLICKHOUSE_IMAGE", "clickhouse/clickhouse-server"),
@@ -1098,6 +1114,11 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 	}
 
 	binds := tc.clickHouseBinds(curDir, configsDir)
+	macrosVersionPath, err := tc.writeMacrosVersionXML()
+	if err != nil {
+		return err
+	}
+	binds = append(binds, macrosVersionPath+":/etc/clickhouse-server/config.d/macros_version.xml")
 
 	// Add shared volume mounts
 	for i, vol := range tc.sharedVolumes {
