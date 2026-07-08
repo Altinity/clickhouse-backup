@@ -69,6 +69,20 @@ func (b *Backuper) Rebase(backupName string, commandId int) error {
 	}()
 	b.dst = bd
 
+	if err = b.rebaseBackup(ctx, backupName); err != nil {
+		return err
+	}
+	log.Info().Fields(map[string]interface{}{
+		"backup":    backupName,
+		"operation": "rebase",
+		"duration":  utils.HumanizeDuration(time.Since(startRebase)),
+	}).Msg("done")
+	return nil
+}
+
+// rebaseBackup - read remote backup metadata and dispatch to the embedded/regular implementation,
+// requires connected b.dst (separated from Rebase so unit tests can inject a mock destination)
+func (b *Backuper) rebaseBackup(ctx context.Context, backupName string) error {
 	backupMetadata, err := b.ReadBackupMetadataRemote(ctx, backupName)
 	if err != nil {
 		return errors.Wrap(err, "ReadBackupMetadataRemote")
@@ -81,15 +95,7 @@ func (b *Backuper) Rebase(backupName string, commandId int) error {
 			return err
 		}
 	}
-	if err = b.rebaseBackupRegular(ctx, backupMetadata); err != nil {
-		return err
-	}
-	log.Info().Fields(map[string]interface{}{
-		"backup":    backupName,
-		"operation": "rebase",
-		"duration":  utils.HumanizeDuration(time.Since(startRebase)),
-	}).Msg("done")
-	return nil
+	return b.rebaseBackupRegular(ctx, backupMetadata)
 }
 
 // rebaseBackupEmbedded - rebase is not implemented for embedded backups yet
