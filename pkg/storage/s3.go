@@ -9,6 +9,7 @@ import (
 	"hash/crc32"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"sort"
@@ -881,6 +882,13 @@ func (s *S3) remotePager(ctx context.Context, s3Path string, recursive bool, pro
 	return nil
 }
 
+// s3CopySource - the `x-amz-copy-source` header must be URL-encoded, the SDK passes it as is,
+// otherwise keys containing literal `%` or `#` (e.g. TablePathEncode names in shadow paths)
+// are decoded on the server side into a different key and CopyObject fails with NoSuchKey
+func s3CopySource(srcBucket, srcKey string) string {
+	return (&url.URL{Path: path.Join(srcBucket, srcKey)}).EscapedPath()
+}
+
 // CopyObject server-side copy from srcBucket/srcKey to s.Config.Bucket/dstKey, both keys are absolute inside the bucket
 func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	log.Debug().Msgf("S3->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, s.Config.Bucket, dstKey)
@@ -889,7 +897,7 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 		params := &s3.CopyObjectInput{
 			Bucket:       aws.String(s.Config.Bucket),
 			Key:          aws.String(dstKey),
-			CopySource:   aws.String(path.Join(srcBucket, srcKey)),
+			CopySource:   aws.String(s3CopySource(srcBucket, srcKey)),
 			StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
 		}
 		s.enrichCopyObjectParams(params)
@@ -950,7 +958,7 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 			uploadPartParams := &s3.UploadPartCopyInput{
 				Bucket:          aws.String(s.Config.Bucket),
 				Key:             aws.String(dstKey),
-				CopySource:      aws.String(srcBucket + "/" + srcKey),
+				CopySource:      aws.String(s3CopySource(srcBucket, srcKey)),
 				CopySourceRange: aws.String(fmt.Sprintf("bytes=%d-%d", start, end-1)),
 				UploadId:        uploadID,
 				PartNumber:      aws.Int32(currentPartNumber),

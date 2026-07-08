@@ -80,13 +80,53 @@ func (b *Backuper) Rebase(backupName string, commandId int) error {
 	return nil
 }
 
+// rebaseRequiredLiveBackups - when `general.rebase_before_remove_old_remote: true`, rebase kept backups
+// whose `required_backup` points to a backup outside the `backups_to_keep_remote` window (oldest first),
+// so the whole out-of-window chain becomes deletable by GetBackupsToDeleteRemote,
+// rebase failure is not fatal: the required backups chain just stays protected as before
+func (b *Backuper) rebaseRequiredLiveBackups(ctx context.Context, backupList []storage.Backup) []storage.Backup {
+	keep := b.cfg.General.BackupsToKeepRemote
+	for {
+		candidate := storage.GetOldestLiveBackupToRebase(backupList, keep)
+		if candidate == nil {
+			return backupList
+		}
+		log.Info().Fields(map[string]interface{}{
+			"operation":       "RemoveOldBackupsRemote",
+			"backup":          candidate.BackupName,
+			"required_backup": candidate.RequiredBackup,
+		}).Msg("rebase to allow delete backups outside backups_to_keep_remote")
+		if rebaseErr := b.rebaseBackup(ctx, candidate.BackupName); rebaseErr != nil {
+			log.Warn().Msgf("can't rebase %s, keep required backups chain on remote storage: %v", candidate.BackupName, rebaseErr)
+			return backupList
+		}
+		for i := range backupList {
+			if backupList[i].BackupName == candidate.BackupName {
+				backupList[i].RequiredBackup = ""
+				break
+			}
+		}
+	}
+}
+
 // rebaseBackup - read remote backup metadata and dispatch to the embedded/regular implementation,
 // requires connected b.dst (separated from Rebase so unit tests can inject a mock destination)
 func (b *Backuper) rebaseBackup(ctx context.Context, backupName string) error {
-	backupMetadata, err := b.ReadBackupMetadataRemote(ctx, backupName)
+	backupList, err := b.dst.BackupList(ctx, true, backupName)
 	if err != nil {
-		return errors.Wrap(err, "ReadBackupMetadataRemote")
+		return errors.Wrap(err, "BackupList")
 	}
+	var remoteBackup *storage.Backup
+	for i := range backupList {
+		if backupList[i].BackupName == backupName {
+			remoteBackup = &backupList[i]
+			break
+		}
+	}
+	if remoteBackup == nil {
+		return errors.Errorf("%s not found on remote storage", backupName)
+	}
+	backupMetadata := &remoteBackup.BackupMetadata
 	if backupMetadata.RequiredBackup == "" {
 		return errors.Errorf("backup %s doesn't contain `required_backup`, nothing to rebase", backupName)
 	}
@@ -95,7 +135,7 @@ func (b *Backuper) rebaseBackup(ctx context.Context, backupName string) error {
 			return err
 		}
 	}
-	return b.rebaseBackupRegular(ctx, backupMetadata)
+	return b.rebaseBackupRegular(ctx, backupMetadata, remoteBackup.UploadDate)
 }
 
 // rebaseBackupEmbedded - rebase is not implemented for embedded backups yet
@@ -103,7 +143,10 @@ func (b *Backuper) rebaseBackupEmbedded(_ context.Context, backupMetadata *metad
 	return errors.Errorf("rebase not supported for embedded backup %s", backupMetadata.BackupName)
 }
 
-func (b *Backuper) rebaseBackupRegular(ctx context.Context, backupMetadata *metadata.BackupMetadata) error {
+// uploadDate - the original UploadDate of the rebased backup: rebase rewrites metadata.json (fresh
+// LastModified on remote storage), keeping the original date in the metadata cache preserves the
+// backup position in the UploadDate-ordered retention of RemoveOldBackupsRemote
+func (b *Backuper) rebaseBackupRegular(ctx context.Context, backupMetadata *metadata.BackupMetadata, uploadDate time.Time) error {
 	backupName := backupMetadata.BackupName
 	requiredBackups, err := b.readRequiredBackupsChain(ctx, backupMetadata)
 	if err != nil {
@@ -170,7 +213,7 @@ func (b *Backuper) rebaseBackupRegular(ctx context.Context, backupMetadata *meta
 	}); err != nil {
 		return errors.Wrapf(err, "can't upload %s", remoteBackupMetaFile)
 	}
-	if cacheErr := b.dst.UpdateMetadataCacheEntry(ctx, storage.Backup{BackupMetadata: *backupMetadata, UploadDate: time.Now()}); cacheErr != nil {
+	if cacheErr := b.dst.UpdateMetadataCacheEntry(ctx, storage.Backup{BackupMetadata: *backupMetadata, UploadDate: uploadDate}); cacheErr != nil {
 		log.Warn().Msgf("can't update metadata cache for %s error: %v", backupName, cacheErr)
 	}
 	log.Info().Fields(map[string]interface{}{

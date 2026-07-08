@@ -293,6 +293,36 @@ func TestRebaseBackupErrors(t *testing.T) {
 	})
 }
 
+// TestRebaseRequiredLiveBackups - candidate selection and the non-fatal fallback of the
+// `rebase_before_remove_old_remote` retention path: rebase failure must keep the backup list
+// unchanged so RemoveOldBackupsRemote degrades to the legacy keep-required behavior
+// (the positive retention scenario is covered by test/integration TestKeepBackupRemoteWithRebase)
+func TestRebaseRequiredLiveBackups(t *testing.T) {
+	ctx := context.Background()
+	f := newRebaseFixture(t, DirectoryFormat)
+	backupList := []storage.Backup{
+		{BackupMetadata: *f.full, UploadDate: time.Unix(1000, 0)},
+		{BackupMetadata: *f.inc1, UploadDate: time.Unix(2000, 0)},
+		{BackupMetadata: *f.inc2, UploadDate: time.Unix(3000, 0)},
+	}
+
+	// the whole chain fits into the keep window, nothing to rebase
+	f.b.cfg.General.BackupsToKeepRemote = 3
+	result := f.b.rebaseRequiredLiveBackups(ctx, backupList)
+	require.Len(t, result, 3)
+
+	// inc1 requires the deletable full, but its metadata is absent on remote storage:
+	// rebase fails and the list must stay unchanged
+	f.b.cfg.General.BackupsToKeepRemote = 2
+	result = f.b.rebaseRequiredLiveBackups(ctx, backupList)
+	require.Len(t, result, 3)
+	for _, b := range result {
+		if b.BackupName == "inc1" {
+			require.Equal(t, "full", b.RequiredBackup)
+		}
+	}
+}
+
 func TestRebaseReadRequiredBackupsChain(t *testing.T) {
 	ctx := context.Background()
 

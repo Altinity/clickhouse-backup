@@ -80,9 +80,13 @@ type GeneralConfig struct {
 	DownloadConcurrency uint8  `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
 	UploadConcurrency   uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
 	// RebaseConcurrency - how many tables process in parallel during `rebase` command execution
-	RebaseConcurrency         uint8  `yaml:"rebase_concurrency" envconfig:"REBASE_CONCURRENCY"`
-	UploadMaxBytesPerSecond   uint64 `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
-	DownloadMaxBytesPerSecond uint64 `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
+	RebaseConcurrency uint8 `yaml:"rebase_concurrency" envconfig:"REBASE_CONCURRENCY"`
+	// RebaseBeforeRemoveOldRemote - when `backups_to_keep_remote` deletion is blocked by `required_backup` links from kept backups,
+	// rebase the oldest kept increment (same as the `rebase` command), so the whole out-of-window chain becomes deletable;
+	// rebase failure is not fatal and falls back to the legacy behavior where required backups stay on remote storage
+	RebaseBeforeRemoveOldRemote bool   `yaml:"rebase_before_remove_old_remote" envconfig:"REBASE_BEFORE_REMOVE_OLD_REMOTE"`
+	UploadMaxBytesPerSecond     uint64 `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
+	DownloadMaxBytesPerSecond   uint64 `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
 	// MaxBrokenPartRatio - maximum allowed fraction (0..1) of broken data parts that still produces a
 	// successful but partial backup during backup creation (`create`, and the create stage of
 	// `create_remote`). 0 (default) preserves legacy behavior where any broken part aborts the whole
