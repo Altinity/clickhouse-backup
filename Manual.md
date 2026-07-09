@@ -159,6 +159,19 @@ Look at the system.parts partition and partition_id fields for details https://c
    --hardlink-exists-files                        Create hardlinks for existing files instead of downloading
    
 ```
+### CLI command - rebase
+```
+NAME:
+   clickhouse-backup rebase - Copy required parts from `required_backup` chain into remote backup and remove `required_backup` dependency, so backup becomes full
+
+USAGE:
+   clickhouse-backup rebase <backup_name>
+
+OPTIONS:
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   
+```
 ### CLI command - restore
 ```
 NAME:

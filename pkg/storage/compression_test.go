@@ -135,6 +135,84 @@ func TestGetBackupsToDeleteWithRecursiveRequiredBackups(t *testing.T) {
 	assert.Equal(t, expectedData, GetBackupsToDeleteRemote(testData, 6))
 }
 
+func TestGetBackupsToDeleteAfterRebase(t *testing.T) {
+	// rebase rewrites metadata.json, so UploadDate (remote LastModified) of the rebased backup `1`
+	// jumps ahead of newer backups; retention must order by the immutable CreationDate, otherwise
+	// the rebased backup floats into the keep window and the newer backup `2` gets deleted instead
+	testData := []Backup{
+		{metadata.BackupMetadata{BackupName: "1", CreationDate: timeParse("2019-03-28T19-50-11")}, "", timeParse("2019-03-28T19-50-55")}, // rebased
+		{metadata.BackupMetadata{BackupName: "2", CreationDate: timeParse("2019-03-28T19-50-12")}, "", timeParse("2019-03-28T19-50-12")},
+		{metadata.BackupMetadata{BackupName: "3", CreationDate: timeParse("2019-03-28T19-50-13"), RequiredBackup: "2"}, "", timeParse("2019-03-28T19-50-13")},
+		{metadata.BackupMetadata{BackupName: "4", CreationDate: timeParse("2019-03-28T19-50-14"), RequiredBackup: "3"}, "", timeParse("2019-03-28T19-50-14")},
+	}
+	expectedData := []Backup{
+		{metadata.BackupMetadata{BackupName: "1", CreationDate: timeParse("2019-03-28T19-50-11")}, "", timeParse("2019-03-28T19-50-55")},
+	}
+	assert.Equal(t, expectedData, GetBackupsToDeleteRemote(testData, 3))
+	// and the next increment `2` referencing the deletable rebased `1` must stay the rebase candidate
+	testData = []Backup{
+		{metadata.BackupMetadata{BackupName: "1", CreationDate: timeParse("2019-03-28T19-50-11")}, "", timeParse("2019-03-28T19-50-55")}, // rebased
+		{metadata.BackupMetadata{BackupName: "2", CreationDate: timeParse("2019-03-28T19-50-12"), RequiredBackup: "1"}, "", timeParse("2019-03-28T19-50-12")},
+		{metadata.BackupMetadata{BackupName: "3", CreationDate: timeParse("2019-03-28T19-50-13"), RequiredBackup: "2"}, "", timeParse("2019-03-28T19-50-13")},
+		{metadata.BackupMetadata{BackupName: "4", CreationDate: timeParse("2019-03-28T19-50-14"), RequiredBackup: "3"}, "", timeParse("2019-03-28T19-50-14")},
+	}
+	candidate := GetOldestLiveBackupToRebase(testData, 3)
+	require.NotNil(t, candidate)
+	assert.Equal(t, "2", candidate.BackupName)
+}
+
+func TestGetOldestLiveBackupToRebase(t *testing.T) {
+	// no backups outside the keep window
+	testData := []Backup{
+		{metadata.BackupMetadata{BackupName: "1"}, "", timeParse("2019-03-28T19-50-11")},
+		{metadata.BackupMetadata{BackupName: "2", RequiredBackup: "1"}, "", timeParse("2019-03-28T19-50-12")},
+	}
+	assert.Nil(t, GetOldestLiveBackupToRebase(testData, 3))
+
+	// linear incremental chain crossing the keep window: the oldest kept backup `3` requires deletable `2`
+	testData = []Backup{
+		{metadata.BackupMetadata{BackupName: "3", RequiredBackup: "2"}, "", timeParse("2019-03-28T19-50-13")},
+		{metadata.BackupMetadata{BackupName: "1"}, "", timeParse("2019-03-28T19-50-11")},
+		{metadata.BackupMetadata{BackupName: "5", RequiredBackup: "4"}, "", timeParse("2019-03-28T19-50-15")},
+		{metadata.BackupMetadata{BackupName: "2", RequiredBackup: "1"}, "", timeParse("2019-03-28T19-50-12")},
+		{metadata.BackupMetadata{BackupName: "4", RequiredBackup: "3"}, "", timeParse("2019-03-28T19-50-14")},
+	}
+	candidate := GetOldestLiveBackupToRebase(testData, 3)
+	require.NotNil(t, candidate)
+	assert.Equal(t, "3", candidate.BackupName)
+
+	// after successful rebase of `3` no kept backup references the deletable chain anymore
+	for i := range testData {
+		if testData[i].BackupName == "3" {
+			testData[i].RequiredBackup = ""
+		}
+	}
+	assert.Nil(t, GetOldestLiveBackupToRebase(testData, 3))
+
+	// two kept backups reference deletable backups independently, the oldest kept returned first
+	testData = []Backup{
+		{metadata.BackupMetadata{BackupName: "5", RequiredBackup: "2"}, "", timeParse("2019-03-28T19-50-15")},
+		{metadata.BackupMetadata{BackupName: "4", RequiredBackup: "1"}, "", timeParse("2019-03-28T19-50-14")},
+		{metadata.BackupMetadata{BackupName: "3"}, "", timeParse("2019-03-28T19-50-13")},
+		{metadata.BackupMetadata{BackupName: "2"}, "", timeParse("2019-03-28T19-50-12")},
+		{metadata.BackupMetadata{BackupName: "1"}, "", timeParse("2019-03-28T19-50-11")},
+	}
+	candidate = GetOldestLiveBackupToRebase(testData, 3)
+	require.NotNil(t, candidate)
+	assert.Equal(t, "4", candidate.BackupName)
+
+	// backup with default UploadDate never deleted (multi-shards copy race, https://github.com/Altinity/clickhouse-backup/issues/409),
+	// so the kept backup referencing it must not be rebased
+	testData = []Backup{
+		{metadata.BackupMetadata{BackupName: "3", RequiredBackup: "2"}, "", timeParse("2019-03-28T19-50-13")},
+		{BackupMetadata: metadata.BackupMetadata{BackupName: "2", RequiredBackup: "1"}, Broken: ""}, // UploadDate initialized with default value
+		{metadata.BackupMetadata{BackupName: "1"}, "", timeParse("2019-03-28T19-50-11")},
+		{metadata.BackupMetadata{BackupName: "5", RequiredBackup: "4"}, "", timeParse("2019-03-28T19-50-15")},
+		{metadata.BackupMetadata{BackupName: "4", RequiredBackup: "3"}, "", timeParse("2019-03-28T19-50-14")},
+	}
+	assert.Nil(t, GetOldestLiveBackupToRebase(testData, 3))
+}
+
 func TestGetArchiveWriterReaderRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

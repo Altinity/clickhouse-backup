@@ -239,6 +239,21 @@ func (bd *BackupDestination) saveMetadataCache(ctx context.Context, listCache ma
 	return bd.writeMetadataCacheFile(ctx, listCache)
 }
 
+// UpdateMetadataCacheEntry overwrites one entry in the on-disk metadata cache,
+// need after metadata.json rewrite on remote storage (e.g. `rebase` command),
+// otherwise BackupList fast path returns the stale cached entry
+func (bd *BackupDestination) UpdateMetadataCacheEntry(ctx context.Context, backup Backup) error {
+	listCache, loadErr := bd.loadMetadataCache(ctx)
+	if loadErr != nil && !os.IsNotExist(loadErr) {
+		return errors.Wrap(loadErr, "UpdateMetadataCacheEntry loadMetadataCache")
+	}
+	if listCache == nil {
+		listCache = map[string]Backup{}
+	}
+	listCache[backup.BackupName] = backup
+	return bd.writeMetadataCacheFile(ctx, listCache)
+}
+
 // readBackupMetadataDirect fetches a single backup's metadata.json directly via
 // StatFile+GetFileReader, without listing the whole bucket. Returns nil if the
 // metadata.json does not exist. Returns a "broken" Backup entry on parse errors,
@@ -561,6 +576,45 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		return 0, errors.Wrap(extractErr, "DownloadCompressedStream Extract")
 	}
 	return downloadedBytes, nil
+}
+
+// WalkCompressedStream streams a remote archive and calls handler for every file inside,
+// without writing anything to the local filesystem, need for `rebase` object disk blobs copy
+func (bd *BackupDestination) WalkCompressedStream(ctx context.Context, remotePath string, handler func(ctx context.Context, fileName string, content io.Reader) error) error {
+	reader, err := bd.GetFileReader(ctx, remotePath)
+	if err != nil {
+		return errors.Wrap(err, "WalkCompressedStream GetFileReader")
+	}
+	defer func() {
+		if closeErr := reader.Close(); closeErr != nil {
+			log.Warn().Msgf("WalkCompressedStream can't close reader for %s error: %v", remotePath, closeErr)
+		}
+	}()
+	buf := buffer.New(bd.pipeBufferSize)
+	bufReader := nio.NewReader(reader, buf)
+	compressionFormat := bd.compressionFormat
+	if !checkArchiveExtension(path.Ext(remotePath), compressionFormat) {
+		log.Warn().Msgf("remote file backup extension %s not equal with %s", remotePath, compressionFormat)
+		compressionFormat = strings.Replace(path.Ext(remotePath), ".", "", -1)
+	}
+	z, err := getArchiveReader(compressionFormat, bd.compressionUseMultiThread, bd.compressionThreads, bd.compressionBufferSize)
+	if err != nil {
+		return errors.Wrap(err, "WalkCompressedStream getArchiveReader")
+	}
+	return z.Extract(ctx, bufReader, func(ctx context.Context, file archives.FileInfo) error {
+		if file.IsDir() {
+			return nil
+		}
+		src, openErr := file.Open()
+		if openErr != nil {
+			return errors.Errorf("can't open %s", file.NameInArchive)
+		}
+		handlerErr := handler(ctx, file.NameInArchive, src)
+		if closeErr := src.Close(); closeErr != nil {
+			return errors.Wrapf(closeErr, "WalkCompressedStream can't close %s", file.NameInArchive)
+		}
+		return handlerErr
+	})
 }
 
 func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLocalPath string, files []string, remotePath string, maxSpeed uint64) error {

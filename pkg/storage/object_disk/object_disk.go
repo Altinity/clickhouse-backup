@@ -775,7 +775,7 @@ func CopyObject(ctx context.Context, diskName string, srcSize int64, srcBucket, 
 		return 0, errors.WithStack(fmt.Errorf("can't find %s in object_disk.DiskConnections", diskName))
 	}
 	remoteStorage := connection.GetRemoteStorage()
-	return remoteStorage.CopyObject(ctx, srcSize, srcBucket, srcKey, dstPath)
+	return remoteStorage.CopyObject(ctx, srcSize, srcBucket, srcKey, path.Join(connection.GetRemoteObjectDiskPath(), dstPath))
 }
 
 func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, dstStorage storage.RemoteStorage, srcKey, dstKey string, limiter *bwlimit.Limiter) error {

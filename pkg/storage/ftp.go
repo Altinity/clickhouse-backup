@@ -5,10 +5,14 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
+	"net/textproto"
 	"os"
 	"path"
+	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -24,6 +28,9 @@ type FTP struct {
 	Config        *config.FTPConfig
 	dirCache      map[string]bool
 	dirCacheMutex sync.RWMutex
+	// CopyObject server-side copy methods probed once and remembered when the server replies `command not implemented`
+	siteCopyUnsupported atomic.Bool
+	fxpUnsupported      atomic.Bool
 }
 
 func (f *FTP) Kind() string {
@@ -184,6 +191,10 @@ func (f *FTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, p
 		if entry == nil {
 			continue
 		}
+		// walker emits folder entries while descending, process only files like object storages do
+		if entry.Type == ftp.EntryTypeFolder {
+			continue
+		}
 		if err := process(ctx, &ftpFile{
 			size:         int64(entry.Size),
 			lastModified: entry.Time,
@@ -238,8 +249,218 @@ func (f *FTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 	return nil
 }
 
+// CopyObject copy file inside the same FTP server (like `cp` command), srcBucket is ignored,
+// tries ProFTPD mod_copy `SITE CPFR`/`SITE CPTO` server-side copy first,
+// then FXP (PASV+PORT, server transfers to itself without client bandwidth),
+// falls back to streaming RETR from one pooled connection into STOR on another
 func (f *FTP) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
-	return 0, errors.Errorf("CopyObject not implemented for %s", f.Kind())
+	// non-empty srcBucket means the source lives in a bucket-based storage (object disk),
+	// copy inside the FTP server is impossible, fail fast so callers fall back to streaming
+	if srcBucket != "" {
+		return 0, errors.Errorf("CopyObject from bucket %s not supported for %s", srcBucket, f.Kind())
+	}
+	log.Debug().Msgf("FTP->CopyObject %s -> %s", srcKey, dstKey)
+	where := fmt.Sprintf("CopyObject->%s", dstKey)
+	client, err := f.getConnectionFromPool(ctx, where)
+	if err != nil {
+		return 0, errors.Wrap(err, "FTP CopyObject getConnection")
+	}
+	mkdirErr := f.MkdirAll(path.Dir(dstKey), client)
+	f.returnConnectionToPool(ctx, where, client)
+	if mkdirErr != nil {
+		return 0, errors.Wrap(mkdirErr, "FTP CopyObject MkdirAll")
+	}
+	timeout, err := time.ParseDuration(f.Config.Timeout)
+	if err != nil {
+		return 0, errors.Wrap(err, "FTP CopyObject ParseDuration")
+	}
+	if !f.siteCopyUnsupported.Load() {
+		siteCopyErr := f.copyViaSiteCopy(srcKey, dstKey, timeout)
+		if siteCopyErr == nil {
+			return srcSize, nil
+		}
+		if isFTPCommandUnsupported(siteCopyErr) {
+			f.siteCopyUnsupported.Store(true)
+		}
+		log.Warn().Msgf("FTP CopyObject SITE CPFR/CPTO %s -> %s error: %v, will try FXP", srcKey, dstKey, siteCopyErr)
+	}
+	if !f.fxpUnsupported.Load() {
+		fxpErr := f.copyViaFXP(srcKey, dstKey, timeout)
+		if fxpErr == nil {
+			return srcSize, nil
+		}
+		if isFTPCommandUnsupported(fxpErr) {
+			f.fxpUnsupported.Store(true)
+		}
+		log.Warn().Msgf("FTP CopyObject FXP %s -> %s error: %v, will stream through two pool connections", srcKey, dstKey, fxpErr)
+	}
+	reader, err := f.GetFileReaderAbsolute(ctx, srcKey)
+	if err != nil {
+		return 0, errors.Wrapf(err, "FTP CopyObject GetFileReaderAbsolute(%s)", srcKey)
+	}
+	defer func() {
+		if closeErr := reader.Close(); closeErr != nil {
+			log.Warn().Msgf("FTP CopyObject can't close reader for %s error: %v", srcKey, closeErr)
+		}
+	}()
+	if err = f.PutFileAbsolute(ctx, dstKey, reader, srcSize); err != nil {
+		return 0, errors.Wrapf(err, "FTP CopyObject PutFileAbsolute(%s)", dstKey)
+	}
+	return srcSize, nil
+}
+
+// copyViaSiteCopy server-side copy via ProFTPD mod_copy `SITE CPFR`/`SITE CPTO` commands,
+// jlaffaye/ftp doesn't expose raw commands, so open a dedicated control connection
+func (f *FTP) copyViaSiteCopy(srcKey, dstKey string, timeout time.Duration) error {
+	text, err := f.openRawConn(timeout)
+	if err != nil {
+		return errors.Wrap(err, "openRawConn")
+	}
+	defer func() {
+		if closeErr := text.Close(); closeErr != nil {
+			log.Warn().Msgf("FTP copyViaSiteCopy close error: %v", closeErr)
+		}
+	}()
+	if _, _, err = ftpRawCmd(text, 350, "SITE CPFR %s", srcKey); err != nil {
+		return errors.Wrapf(err, "SITE CPFR %s", srcKey)
+	}
+	if _, _, err = ftpRawCmd(text, 250, "SITE CPTO %s", dstKey); err != nil {
+		return errors.Wrapf(err, "SITE CPTO %s", dstKey)
+	}
+	return nil
+}
+
+var ftpPasvRE = regexp.MustCompile(`\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\)`)
+
+// copyViaFXP server-to-itself transfer: PASV on the dst control connection opens a data listener,
+// PORT points the src control connection at it, then RETR/STOR make the server move the data internally
+func (f *FTP) copyViaFXP(srcKey, dstKey string, timeout time.Duration) error {
+	srcText, err := f.openRawConn(timeout)
+	if err != nil {
+		return errors.Wrap(err, "openRawConn src")
+	}
+	defer func() {
+		if closeErr := srcText.Close(); closeErr != nil {
+			log.Warn().Msgf("FTP copyViaFXP close src error: %v", closeErr)
+		}
+	}()
+	dstText, err := f.openRawConn(timeout)
+	if err != nil {
+		return errors.Wrap(err, "openRawConn dst")
+	}
+	defer func() {
+		if closeErr := dstText.Close(); closeErr != nil {
+			log.Warn().Msgf("FTP copyViaFXP close dst error: %v", closeErr)
+		}
+	}()
+	if _, _, err = ftpRawCmd(srcText, 200, "TYPE I"); err != nil {
+		return errors.Wrap(err, "TYPE I src")
+	}
+	if _, _, err = ftpRawCmd(dstText, 200, "TYPE I"); err != nil {
+		return errors.Wrap(err, "TYPE I dst")
+	}
+	_, pasvMsg, err := ftpRawCmd(dstText, 227, "PASV")
+	if err != nil {
+		return errors.Wrap(err, "PASV")
+	}
+	pasvAddr := ftpPasvRE.FindStringSubmatch(pasvMsg)
+	if pasvAddr == nil {
+		return errors.Errorf("can't parse PASV response %q", pasvMsg)
+	}
+	if _, _, err = ftpRawCmd(srcText, 200, "PORT %s", strings.Join(pasvAddr[1:], ",")); err != nil {
+		return errors.Wrap(err, "PORT")
+	}
+	// send both transfer commands before reading replies, preliminary 150 can be deferred
+	// until the data connection is established between the two server sessions
+	storId, err := dstText.Cmd("STOR %s", dstKey)
+	if err != nil {
+		return errors.Wrap(err, "STOR")
+	}
+	retrId, err := srcText.Cmd("RETR %s", srcKey)
+	if err != nil {
+		return errors.Wrap(err, "RETR")
+	}
+	if err = ftpReadTransferResponse(dstText, storId, "STOR"); err != nil {
+		return err
+	}
+	return ftpReadTransferResponse(srcText, retrId, "RETR")
+}
+
+// ftpReadTransferResponse reads the preliminary 1xx reply (when sent) and the final 2xx transfer reply
+func ftpReadTransferResponse(text *textproto.Conn, cmdId uint, operation string) error {
+	text.StartResponse(cmdId)
+	defer text.EndResponse(cmdId)
+	code, msg, err := text.ReadResponse(-1)
+	if err != nil {
+		return errors.Wrapf(err, "%s response", operation)
+	}
+	if code/100 == 1 {
+		if code, msg, err = text.ReadResponse(-1); err != nil {
+			return errors.Wrapf(err, "%s final response", operation)
+		}
+	}
+	if code/100 != 2 {
+		return &textproto.Error{Code: code, Msg: fmt.Sprintf("%s: %s", operation, msg)}
+	}
+	return nil
+}
+
+// openRawConn dial a dedicated FTP control connection and log in, mirrors the pool factory connection options
+func (f *FTP) openRawConn(timeout time.Duration) (*textproto.Conn, error) {
+	var conn net.Conn
+	conn, err := net.DialTimeout("tcp", f.Config.Address, timeout)
+	if err != nil {
+		return nil, errors.Wrap(err, "DialTimeout")
+	}
+	if timeout > 0 {
+		if err = conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+			_ = conn.Close()
+			return nil, errors.Wrap(err, "SetDeadline")
+		}
+	}
+	if f.Config.TLS {
+		conn = tls.Client(conn, &tls.Config{InsecureSkipVerify: f.Config.SkipTLSVerify})
+	}
+	text := textproto.NewConn(conn)
+	if _, _, err = text.ReadResponse(220); err != nil {
+		_ = text.Close()
+		return nil, errors.Wrap(err, "read greeting")
+	}
+	code, msg, err := ftpRawCmd(text, -1, "USER %s", f.Config.Username)
+	if err != nil {
+		_ = text.Close()
+		return nil, errors.Wrap(err, "USER")
+	}
+	if code == 331 {
+		if _, _, err = ftpRawCmd(text, 230, "PASS %s", f.Config.Password); err != nil {
+			_ = text.Close()
+			return nil, errors.Wrap(err, "PASS")
+		}
+	} else if code != 230 {
+		_ = text.Close()
+		return nil, errors.Errorf("unexpected USER response %d %s", code, msg)
+	}
+	return text, nil
+}
+
+func ftpRawCmd(text *textproto.Conn, expectCode int, format string, args ...interface{}) (int, string, error) {
+	cmdId, err := text.Cmd(format, args...)
+	if err != nil {
+		return 0, "", err
+	}
+	text.StartResponse(cmdId)
+	defer text.EndResponse(cmdId)
+	return text.ReadResponse(expectCode)
+}
+
+// isFTPCommandUnsupported detects permanent `command not implemented` replies,
+// so unsupported server-side copy methods are probed only once per connection lifetime
+func isFTPCommandUnsupported(err error) bool {
+	var tpErr *textproto.Error
+	if errors.As(err, &tpErr) {
+		return tpErr.Code == 500 || tpErr.Code == 502 || tpErr.Code == 504
+	}
+	return false
 }
 
 func (f *FTP) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {

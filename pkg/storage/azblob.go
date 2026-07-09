@@ -381,8 +381,8 @@ func blobItemToFile(b *container.BlobItem, prefix string) *azureBlobFile {
 	}
 }
 
+// CopyObject server-side copy from srcBucket/srcKey to a.Config.Container/dstKey, both keys are absolute inside the container
 func (a *AzureBlob) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
-	dstKey = path.Join(a.Config.ObjectDiskPath, dstKey)
 	a.logf("AZBLOB->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, a.Config.Container, dstKey)
 	//ugly hack ;(
 	endpoint := a.Config.EndpointSuffix
