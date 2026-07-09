@@ -150,11 +150,19 @@ func runRebaseScenario(t *testing.T, r *require.Assertions, env *TestEnvironment
 	inc1Backup := dbName + "_inc1"
 	inc2Backup := dbName + "_inc2"
 
-	for _, b := range []string{fullBackup, inc1Backup, inc2Backup} {
-		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c "+configFile+" delete remote "+b+" 2>/dev/null || true")
-		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c "+configFile+" delete local "+b+" 2>/dev/null || true")
+	// deferred (not t.Cleanup) so it unwinds before the caller's `defer env.Cleanup(t, r)`,
+	// while the ClickHouse connection is still open: a mid-scenario `require` failure calls
+	// t.FailNow()/runtime.Goexit and skips the rest of this function, so without this the
+	// shared pooled env would leak test_rebase_* state into whichever test reuses it next
+	cleanupScenario := func() {
+		for _, b := range []string{fullBackup, inc1Backup, inc2Backup} {
+			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c "+configFile+" delete remote "+b+" 2>/dev/null || true")
+			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c "+configFile+" delete local "+b+" 2>/dev/null || true")
+		}
+		r.NoError(env.dropDatabase(dbName, true))
 	}
-	r.NoError(env.dropDatabase(dbName, true))
+	defer cleanupScenario()
+	cleanupScenario()
 
 	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
 	for _, table := range tables {
@@ -201,20 +209,39 @@ func runRebaseScenario(t *testing.T, r *require.Assertions, env *TestEnvironment
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", configFile, "rebase", inc2Backup)
 
 	// the rebased backup on remote storage must keep the chain data_format and lose `required_backup`,
-	// check via `list remote` (local metadata.json is unusable here - download clears `data_format`)
-	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", configFile, "list", "remote")
-	r.NoError(err, "list remote: %s", out)
-	inc2Line := ""
+	// check via `list remote --format=json` (local metadata.json is unusable here - download clears
+	// `data_format`; json avoids scraping the human `text` table, whose tabwriter output can be spliced
+	// mid-row by a concurrent zerolog write to the same stdout/stderr stream)
+	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", configFile, "list", "remote", "--format=json")
+	r.NoError(err, "list remote --format=json: %s", out)
+	// `out` also contains clickhouse-backup's own log lines around the JSON payload, the JSON array
+	// itself is written as a single line via fmt.Fprintln, so pick that line out before unmarshalling
+	jsonLine := ""
 	for _, line := range strings.Split(out, "\n") {
-		if strings.HasPrefix(line, inc2Backup+" ") {
-			inc2Line = line
+		if strings.HasPrefix(strings.TrimSpace(line), "[") {
+			jsonLine = line
 			break
 		}
 	}
-	r.NotEmptyf(inc2Line, "%s not found in `list remote` output: %s", inc2Backup, out)
-	r.NotContainsf(inc2Line, "+", "expected empty required_backup after rebase")
+	r.NotEmptyf(jsonLine, "no JSON array found in `list remote --format=json` output: %s", out)
+	type remoteBackupInfo struct {
+		BackupName     string `json:"BackupName"`
+		RequiredBackup string `json:"RequiredBackup"`
+		Description    string `json:"Description"`
+	}
+	var remoteBackups []remoteBackupInfo
+	r.NoError(json.Unmarshal([]byte(jsonLine), &remoteBackups), "list remote --format=json: %s", out)
+	var inc2Info *remoteBackupInfo
+	for i := range remoteBackups {
+		if remoteBackups[i].BackupName == inc2Backup {
+			inc2Info = &remoteBackups[i]
+			break
+		}
+	}
+	r.NotNilf(inc2Info, "%s not found in `list remote --format=json` output: %s", inc2Backup, out)
+	r.Emptyf(inc2Info.RequiredBackup, "expected empty required_backup after rebase")
 	if expectedDataFormat != "" {
-		r.Containsf(inc2Line, expectedDataFormat, "expected data_format=%s after rebase", expectedDataFormat)
+		r.Containsf(inc2Info.Description, expectedDataFormat, "expected data_format=%s after rebase", expectedDataFormat)
 	}
 
 	// ancestors are not needed anymore
@@ -258,9 +285,4 @@ func runRebaseScenario(t *testing.T, r *require.Assertions, env *TestEnvironment
 		}
 		r.Equalf(3, partsCount, "%s: expected 3 parts after rebase; metadata=%s", table, out)
 	}
-
-	// Cleanup
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", configFile, "delete", "remote", inc2Backup)
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", configFile, "delete", "local", inc2Backup)
-	r.NoError(env.dropDatabase(dbName, true))
 }
