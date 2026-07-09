@@ -165,6 +165,10 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if !found {
 		return errors.Errorf("'%s' is not found on remote storage", backupName)
 	}
+	// Download file manifest for Walk-free restore (falls back gracefully if not present)
+	backupManifest := b.dst.DownloadManifest(ctx, backupName)
+	defer backupManifest.Close()
+
 	if len(remoteBackup.Tables) == 0 && remoteBackup.RBACSize == 0 && remoteBackup.ConfigSize == 0 && remoteBackup.NamedCollectionsSize == 0 && !b.cfg.General.AllowEmptyBackups {
 		return errors.Errorf("'%s' is empty backup", backupName)
 	}
@@ -273,7 +277,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 				}).Msg("download table start")
 				var downloadDataErr error
 				var downloadDataSize uint64
-				downloadDataSize, downloadDataErr = b.downloadTableData(dataCtx, remoteBackup.BackupMetadata, *tableMetadataAfterDownload[idx], disks, hardlinkExistsFiles)
+				downloadDataSize, downloadDataErr = b.downloadTableData(dataCtx, remoteBackup.BackupMetadata, *tableMetadataAfterDownload[idx], disks, hardlinkExistsFiles, backupManifest)
 				if downloadDataErr != nil {
 					return errors.Wrap(downloadDataErr, "downloadTableData")
 				}
@@ -740,7 +744,7 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 	return uint64(remoteFileInfo.Size()), nil
 }
 
-func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, disks []clickhouse.Disk, hardlinkExistsFiles bool) (uint64, error) {
+func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, disks []clickhouse.Disk, hardlinkExistsFiles bool, manifest *storage.ManifestReader) (uint64, error) {
 	dbAndTableDir := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 	dataGroup, dataCtx := errgroup.WithContext(ctx)
 	dataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
@@ -915,6 +919,27 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 						}
 					}
 
+					// Try manifest-based download to avoid Walk (ListObjectsV2)
+					if manifest != nil {
+						manifestPrefix := path.Join("shadow", dbAndTableDir, capturedDisk, capturedPart.Name)
+						manifestFiles, manifestErr := manifest.FilesUnderPrefix(manifestPrefix)
+						if manifestErr != nil {
+							log.Warn().Err(manifestErr).Msgf("manifest lookup failed for %s, will fall back to Walk", manifestPrefix)
+						}
+						if len(manifestFiles) > 0 {
+							pathSize, downloadErr := b.dst.DownloadPathWithManifest(dataCtx, partRemotePath, partLocalPath, manifestFiles, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.DownloadMaxBytesPerSecond)
+							if downloadErr != nil {
+								return errors.WithMessage(downloadErr, "DownloadPathWithManifest")
+							}
+							atomic.AddUint64(&downloadedSize, uint64(pathSize))
+							if b.resume {
+								b.resumableState.AppendToState(partRemotePath, pathSize)
+							}
+							log.Debug().Msgf("finish %s -> %s (manifest, %d files)", partRemotePath, partLocalPath, len(manifestFiles))
+							return nil
+						}
+					}
+					// Fall back to Walk (ListObjectsV2) when no manifest is available
 					pathSize, downloadErr := b.dst.DownloadPath(dataCtx, partRemotePath, partLocalPath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.DownloadMaxBytesPerSecond)
 					if downloadErr != nil {
 						return errors.Wrap(downloadErr, "DownloadPath")
