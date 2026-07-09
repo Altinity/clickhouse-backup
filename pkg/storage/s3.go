@@ -233,8 +233,12 @@ func (s *S3) Connect(ctx context.Context) error {
 	})
 
 	// transferManager wraps the configured client, inheriting endpoint resolver, path-style and the GCS signature transport.
+	// transfermanager.Options.RequestChecksumCalculation is a separate field from the S3 client's awsConfig one set above
+	// (aws-sdk-go-v2/feature/s3/transfermanager v0.3.1+ computes the checksum algorithm dynamically per call and defaults
+	// to WhenSupported, forcing CRC32 regardless of ChecksumAlgorithm overrides, unless set to WhenRequired here too.
 	s.transferManager = transfermanager.New(s.client, func(o *transfermanager.Options) {
 		o.Concurrency = s.Concurrency
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 	})
 
 	s.versioning = s.isVersioningEnabled(ctx)
