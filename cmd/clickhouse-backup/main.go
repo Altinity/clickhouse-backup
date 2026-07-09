@@ -88,10 +88,10 @@ func main() {
 		{
 			Name:      "tables",
 			Usage:     "List of tables, exclude skip_tables",
-			UsageText: "clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all]",
+			UsageText: "clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all] [--list-parts] [--partitions]",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.PrintTables(c.Bool("all"), c.String("table"), c.String("remote-backup"), c.String("local-backup"), c.String("format"))
+				return b.PrintTables(c.Bool("all"), c.String("table"), c.String("remote-backup"), c.String("local-backup"), c.String("format"), c.Bool("list-parts"), c.Bool("partitions"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.BoolFlag{
@@ -118,6 +118,20 @@ func main() {
 					Name:   "format, f",
 					Hidden: false,
 					Usage:  "Output format (text|json|yaml|csv|tsv)",
+				},
+				cli.BoolFlag{
+					Name:   "list-parts, parts",
+					Hidden: false,
+					Usage: "Also list every physical part for each table (name, partition_id, size)\n" +
+						"Against the live server, reads name/partition_id/bytes_on_disk from `system.parts`\n" +
+						"Against --local-backup/--remote-backup, reads part names from backup metadata (partition_id derived from the name, no size available)",
+				},
+				cli.BoolFlag{
+					Name:   "partitions, list-partitions",
+					Hidden: false,
+					Usage: "Also list the distinct partitions for each table (partition_id, partition, parts count, size), aggregated from parts\n" +
+						"Against the live server, reads partition_id/partition/parts/size from `system.parts`\n" +
+						"Against --local-backup/--remote-backup, derives partition_id and parts count from part names (no partition value or per-partition size available)",
 				},
 			),
 		},

@@ -842,6 +842,42 @@ func testAPIBackupTables(r *require.Assertions, env *TestEnvironment) {
 		r.Contains(out, "INFORMATION_SCHEMA")
 		r.Contains(out, "information_schema")
 	}
+
+	// /backup/tables?list_parts=1 attaches every physical part (name, partition_id, size), read
+	// live from `system.parts`; independent of and without `partitions`.
+	log.Debug().Msg("Check /backup/tables?list_parts=1&table=long_schema.t0")
+	out, err = env.DockerExecOut(
+		"clickhouse-backup",
+		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables?list_parts=1&table=long_schema.t0\"",
+	)
+	r.NoError(err, "%s\nunexpected GET /backup/tables?list_parts=1&table=long_schema.t0 error: %v", out, err)
+	r.Contains(out, `"table":"t0"`)
+	r.Contains(out, `"parts_list":[`)
+	r.Contains(out, `"name":`)
+	r.Contains(out, `"partition_id":`)
+	r.NotContains(out, `"partitions":`)
+
+	// /backup/tables?partitions=1 (alias list_partitions) attaches the distinct partitions
+	// (partition_id, partition, parts, size); independent of and without `parts_list`.
+	log.Debug().Msg("Check /backup/tables?partitions=1&table=long_schema.t0")
+	out, err = env.DockerExecOut(
+		"clickhouse-backup",
+		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables?partitions=1&table=long_schema.t0\"",
+	)
+	r.NoError(err, "%s\nunexpected GET /backup/tables?partitions=1&table=long_schema.t0 error: %v", out, err)
+	r.Contains(out, `"table":"t0"`)
+	r.Contains(out, `"partitions":[`)
+	r.Contains(out, `"partition_id":`)
+	r.Contains(out, `"partition":`)
+	r.NotContains(out, `"parts_list":`)
+
+	// list_partitions alias behaves the same as partitions=1.
+	out, err = env.DockerExecOut(
+		"clickhouse-backup",
+		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables?list_partitions=1&table=long_schema.t0\"",
+	)
+	r.NoError(err, "%s\nunexpected GET /backup/tables?list_partitions=1&table=long_schema.t0 error: %v", out, err)
+	r.Contains(out, `"partitions":[`)
 }
 
 func testAPIBackupTablesRemote(r *require.Assertions, env *TestEnvironment) {
@@ -865,6 +901,31 @@ func testAPIBackupTablesRemote(r *require.Assertions, env *TestEnvironment) {
 	r.Contains(out, `"parts":`)
 	r.Contains(out, `"total_bytes":`)
 	r.Contains(out, `"disks":[`)
+
+	// /backup/tables?remote_backup=...&list_parts=1 reads part names from backup metadata
+	// (long_schema.t0 has no PARTITION BY, so its single partition_id is "all"); independent of
+	// and without `partitions`.
+	log.Debug().Msg("Check /backup/tables?remote_backup=z_backup_1&list_parts=1&table=long_schema.t0")
+	out, err = env.DockerExecOut(
+		"clickhouse-backup",
+		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables?remote_backup=z_backup_1&list_parts=1&table=long_schema.t0\"",
+	)
+	r.NoError(err, "%s\nunexpected GET /backup/tables?remote_backup=z_backup_1&list_parts=1&table=long_schema.t0 error: %v", out, err)
+	r.Contains(out, `"table":"t0"`)
+	r.Contains(out, `"parts_list":[`)
+	r.Contains(out, `"partition_id":"all"`)
+	r.NotContains(out, `"partitions":`)
+
+	// /backup/tables?remote_backup=...&partitions=1 aggregates partition_id from part names;
+	// independent of and without `parts_list`.
+	out, err = env.DockerExecOut(
+		"clickhouse-backup",
+		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables?remote_backup=z_backup_1&partitions=1&table=long_schema.t0\"",
+	)
+	r.NoError(err, "%s\nunexpected GET /backup/tables?remote_backup=z_backup_1&partitions=1&table=long_schema.t0 error: %v", out, err)
+	r.Contains(out, `"partitions":[`)
+	r.Contains(out, `"partition_id":"all"`)
+	r.NotContains(out, `"parts_list":`)
 }
 
 // testAPIBackupTablesLocal exercises /backup/tables?local_backup=<name>
@@ -897,6 +958,38 @@ func testAPIBackupTablesLocal(r *require.Assertions, env *TestEnvironment) {
 	r.NoError(err, "%s\nunexpected GET /backup/tables?local_backup=z_backup_1&table=long_schema.t0 error: %v", out, err)
 	r.Contains(out, `"table":"t0"`)
 	r.NotContains(out, `"table":"t1"`)
+
+	// list_parts=1 (alias parts) reads part names from backup metadata (no PARTITION BY -> "all");
+	// independent of and without `partitions`.
+	log.Debug().Msg("Check /backup/tables?local_backup=z_backup_1&list_parts=1&table=long_schema.t0")
+	out, err = env.DockerExecOut(
+		"clickhouse-backup",
+		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables?local_backup=z_backup_1&list_parts=1&table=long_schema.t0\"",
+	)
+	r.NoError(err, "%s\nunexpected GET /backup/tables?local_backup=z_backup_1&list_parts=1&table=long_schema.t0 error: %v", out, err)
+	r.Contains(out, `"table":"t0"`)
+	r.Contains(out, `"parts_list":[`)
+	r.Contains(out, `"partition_id":"all"`)
+	r.NotContains(out, `"partitions":`)
+
+	// parts=1 alias behaves the same as list_parts=1.
+	out, err = env.DockerExecOut(
+		"clickhouse-backup",
+		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables?local_backup=z_backup_1&parts=1&table=long_schema.t0\"",
+	)
+	r.NoError(err, "%s\nunexpected GET /backup/tables?local_backup=z_backup_1&parts=1&table=long_schema.t0 error: %v", out, err)
+	r.Contains(out, `"parts_list":[`)
+
+	// partitions=1 (alias list_partitions) aggregates partition_id from part names; independent
+	// of and without `parts_list`.
+	out, err = env.DockerExecOut(
+		"clickhouse-backup",
+		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables?local_backup=z_backup_1&partitions=1&table=long_schema.t0\"",
+	)
+	r.NoError(err, "%s\nunexpected GET /backup/tables?local_backup=z_backup_1&partitions=1&table=long_schema.t0 error: %v", out, err)
+	r.Contains(out, `"partitions":[`)
+	r.Contains(out, `"partition_id":"all"`)
+	r.NotContains(out, `"parts_list":`)
 }
 
 // testAPIRebindReplicaPath verifies the rebind_replica_path_if_exists query parameter for the

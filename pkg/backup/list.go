@@ -529,15 +529,42 @@ func (b *Backuper) GetTables(ctx context.Context, tablePattern string) ([]clickh
 // TableRow is the output projection used by the `tables` command for non-text formats.
 // Disks is exposed as a structured list in JSON/YAML and as a comma-joined string in CSV/TSV.
 type TableRow struct {
-	Database   string   `json:"database" yaml:"database" csv:"database"`
-	Table      string   `json:"table" yaml:"table" csv:"table"`
-	TotalBytes uint64   `json:"total_bytes" yaml:"total_bytes" csv:"total_bytes"`
-	Size       string   `json:"size" yaml:"size" csv:"size"`
-	Parts      int      `json:"parts" yaml:"parts" csv:"parts"`
-	Disks      []string `json:"disks" yaml:"disks" csv:"-"`
-	DisksStr   string   `json:"-" yaml:"-" csv:"disks"`
-	Skip       bool     `json:"skip" yaml:"skip" csv:"skip"`
-	BackupType string   `json:"backup_type,omitempty" yaml:"backup_type,omitempty" csv:"backup_type"`
+	Database   string         `json:"database" yaml:"database" csv:"database"`
+	Table      string         `json:"table" yaml:"table" csv:"table"`
+	TotalBytes uint64         `json:"total_bytes" yaml:"total_bytes" csv:"total_bytes"`
+	Size       string         `json:"size" yaml:"size" csv:"size"`
+	Parts      int            `json:"parts" yaml:"parts" csv:"parts"`
+	Disks      []string       `json:"disks" yaml:"disks" csv:"-"`
+	DisksStr   string         `json:"-" yaml:"-" csv:"disks"`
+	Skip       bool           `json:"skip" yaml:"skip" csv:"skip"`
+	BackupType string         `json:"backup_type,omitempty" yaml:"backup_type,omitempty" csv:"backup_type"`
+	PartsList  []PartRow      `json:"parts_list,omitempty" yaml:"parts_list,omitempty" csv:"-"`
+	Partitions []PartitionRow `json:"partitions,omitempty" yaml:"partitions,omitempty" csv:"-"`
+}
+
+// PartRow describes one physical data part of a table, as returned by `tables --list-parts`
+// (alias `--parts`). Against the live server it comes straight from `system.parts`; against
+// `--local-backup`/`--remote-backup` only Name and PartitionID are available (from backup
+// metadata), PartitionID being the `_`-delimited prefix of Name, same convention as
+// filesystemhelper.IsPartInPartition.
+type PartRow struct {
+	Name        string `json:"name" yaml:"name" csv:"name"`
+	PartitionID string `json:"partition_id" yaml:"partition_id" csv:"partition_id"`
+	TotalBytes  uint64 `json:"total_bytes,omitempty" yaml:"total_bytes,omitempty" csv:"total_bytes"`
+	Size        string `json:"size,omitempty" yaml:"size,omitempty" csv:"size"`
+}
+
+// PartitionRow describes one distinct partition of a table (parts grouped by partition_id), as
+// returned by `tables --partitions` (alias `--list-partitions`). Against the live server it
+// comes from `system.parts`, including the human-readable Partition value and total size.
+// Against `--local-backup`/`--remote-backup` it's aggregated from part names (same convention as
+// PartRow.PartitionID), so Partition/TotalBytes/Size stay empty/zero there.
+type PartitionRow struct {
+	PartitionID string `json:"partition_id" yaml:"partition_id" csv:"partition_id"`
+	Partition   string `json:"partition,omitempty" yaml:"partition,omitempty" csv:"partition"`
+	Parts       int    `json:"parts" yaml:"parts" csv:"parts"`
+	TotalBytes  uint64 `json:"total_bytes,omitempty" yaml:"total_bytes,omitempty" csv:"total_bytes"`
+	Size        string `json:"size,omitempty" yaml:"size,omitempty" csv:"size"`
 }
 
 // InfoResult wraps a per-backup result with aggregate fields for JSON/YAML output of
@@ -567,7 +594,16 @@ type tableSection struct {
 // be set simultaneously to render `local` and `remote` sections in one go.
 // Otherwise tables are read from the live ClickHouse server.
 // `format` controls output: text (default), json, yaml, csv, tsv.
-func (b *Backuper) PrintTables(printAll bool, tablePattern, remoteBackup, localBackup, format string) error {
+// `listParts` and `listPartitions` are independent toggles, usable alone or together, against
+// the live server or `--local-backup`/`--remote-backup` alike:
+//   - listParts attaches every physical part (name, partition_id, and against the live server
+//     also size), read from `system.parts` live or from backup metadata otherwise.
+//   - listPartitions attaches the distinct partitions (parts grouped by partition_id), with
+//     the human-readable partition value and size only available against the live server.
+//
+// Against `--local-backup`/`--remote-backup`, partition_id is derived from each part's name
+// (the `_`-delimited prefix, same convention as filesystemhelper.IsPartInPartition).
+func (b *Backuper) PrintTables(printAll bool, tablePattern, remoteBackup, localBackup, format string, listParts, listPartitions bool) error {
 	ctx, cancel, _ := status.Current.GetContextWithCancel(status.NotFromAPI)
 	defer cancel()
 	if err := b.ch.Connect(); err != nil {
@@ -576,7 +612,7 @@ func (b *Backuper) PrintTables(printAll bool, tablePattern, remoteBackup, localB
 	defer b.ch.Close()
 
 	if localBackup == "" && remoteBackup == "" {
-		rows, err := b.collectTablesFromLive(ctx, tablePattern)
+		rows, err := b.collectTablesFromLive(ctx, tablePattern, listParts, listPartitions)
 		if err != nil {
 			return err
 		}
@@ -588,7 +624,7 @@ func (b *Backuper) PrintTables(printAll bool, tablePattern, remoteBackup, localB
 
 	var sections []tableSection
 	if localBackup != "" {
-		rows, err := b.collectTablesFromLocalBackup(ctx, localBackup, tablePattern)
+		rows, err := b.collectTablesFromLocalBackup(ctx, localBackup, tablePattern, listParts, listPartitions)
 		if err != nil {
 			return err
 		}
@@ -603,7 +639,7 @@ func (b *Backuper) PrintTables(printAll bool, tablePattern, remoteBackup, localB
 		})
 	}
 	if remoteBackup != "" {
-		rows, err := b.collectTablesFromRemoteBackup(ctx, remoteBackup, tablePattern)
+		rows, err := b.collectTablesFromRemoteBackup(ctx, remoteBackup, tablePattern, listParts, listPartitions)
 		if err != nil {
 			return err
 		}
@@ -623,12 +659,31 @@ func (b *Backuper) PrintTables(printAll bool, tablePattern, remoteBackup, localB
 // GetTableRowsForLocalBackup returns per-table rows (db, table, size, parts, disks, skip)
 // for a local backup, reading metadata from disk; intended for callers like the REST API.
 // When printAll is false, tables matching skip_tables are filtered out.
-func (b *Backuper) GetTableRowsForLocalBackup(ctx context.Context, backupName, tablePattern string, printAll bool) ([]TableRow, error) {
+func (b *Backuper) GetTableRowsForLocalBackup(ctx context.Context, backupName, tablePattern string, printAll, listParts, listPartitions bool) ([]TableRow, error) {
 	if err := b.ch.Connect(); err != nil {
 		return nil, errors.Wrap(err, "can't connect to clickhouse")
 	}
 	defer b.ch.Close()
-	rows, err := b.collectTablesFromLocalBackup(ctx, backupName, tablePattern)
+	rows, err := b.collectTablesFromLocalBackup(ctx, backupName, tablePattern, listParts, listPartitions)
+	if err != nil {
+		return nil, err
+	}
+	if printAll {
+		return rows, nil
+	}
+	return filterSkippedRows(rows), nil
+}
+
+// GetTableRowsForLive returns per-table rows for the live ClickHouse server, optionally
+// including the parts/partitions breakdown from `system.parts` (see collectTablesFromLive);
+// intended for callers like the REST API. When printAll is false, tables matching skip_tables
+// are filtered out.
+func (b *Backuper) GetTableRowsForLive(ctx context.Context, tablePattern string, printAll, listParts, listPartitions bool) ([]TableRow, error) {
+	if err := b.ch.Connect(); err != nil {
+		return nil, errors.Wrap(err, "can't connect to clickhouse")
+	}
+	defer b.ch.Close()
+	rows, err := b.collectTablesFromLive(ctx, tablePattern, listParts, listPartitions)
 	if err != nil {
 		return nil, err
 	}
@@ -641,12 +696,12 @@ func (b *Backuper) GetTableRowsForLocalBackup(ctx context.Context, backupName, t
 // GetTableRowsForRemoteBackup returns per-table rows (db, table, size, parts, disks, skip)
 // for a remote backup, downloading per-table metadata; intended for callers like the REST API.
 // When printAll is false, tables matching skip_tables are filtered out.
-func (b *Backuper) GetTableRowsForRemoteBackup(ctx context.Context, backupName, tablePattern string, printAll bool) ([]TableRow, error) {
+func (b *Backuper) GetTableRowsForRemoteBackup(ctx context.Context, backupName, tablePattern string, printAll, listParts, listPartitions bool) ([]TableRow, error) {
 	if err := b.ch.Connect(); err != nil {
 		return nil, errors.Wrap(err, "can't connect to clickhouse")
 	}
 	defer b.ch.Close()
-	rows, err := b.collectTablesFromRemoteBackup(ctx, backupName, tablePattern)
+	rows, err := b.collectTablesFromRemoteBackup(ctx, backupName, tablePattern, listParts, listPartitions)
 	if err != nil {
 		return nil, err
 	}
@@ -666,7 +721,7 @@ func filterSkippedRows(rows []TableRow) []TableRow {
 	return out
 }
 
-func (b *Backuper) collectTablesFromLive(ctx context.Context, tablePattern string) ([]TableRow, error) {
+func (b *Backuper) collectTablesFromLive(ctx context.Context, tablePattern string, listParts, listPartitions bool) ([]TableRow, error) {
 	allTables, err := b.GetTables(ctx, tablePattern)
 	if err != nil {
 		return nil, errors.Wrap(err, "collectTablesFromLive GetTables")
@@ -682,7 +737,7 @@ func (b *Backuper) collectTablesFromLive(ctx context.Context, tablePattern strin
 			tableDisks = append(tableDisks, disk)
 		}
 		sort.Strings(tableDisks)
-		rows = append(rows, TableRow{
+		row := TableRow{
 			Database:   table.Database,
 			Table:      table.Name,
 			TotalBytes: table.TotalBytes,
@@ -691,12 +746,84 @@ func (b *Backuper) collectTablesFromLive(ctx context.Context, tablePattern strin
 			DisksStr:   strings.Join(tableDisks, ","),
 			Skip:       table.Skip,
 			BackupType: string(table.BackupType),
+		}
+		if listParts {
+			partRows, err := b.collectPartsForTable(ctx, table.Database, table.Name)
+			if err != nil {
+				log.Warn().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Err(err).Msg("can't list parts")
+			} else {
+				row.PartsList = partRows
+			}
+		}
+		if listPartitions {
+			partitionRows, err := b.collectPartitionsForTable(ctx, table.Database, table.Name)
+			if err != nil {
+				log.Warn().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Err(err).Msg("can't list partitions")
+			} else {
+				row.Partitions = partitionRows
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+// collectPartsForTable returns every active physical part of a live table from `system.parts`.
+func (b *Backuper) collectPartsForTable(ctx context.Context, database, table string) ([]PartRow, error) {
+	var result []struct {
+		Name        string `ch:"name"`
+		PartitionID string `ch:"partition_id"`
+		TotalBytes  uint64 `ch:"total_bytes"`
+	}
+	query := fmt.Sprintf(
+		"SELECT name, partition_id, bytes_on_disk AS total_bytes FROM `system`.`parts` WHERE active AND database='%s' AND table='%s' ORDER BY name",
+		database, table,
+	)
+	if err := b.ch.SelectContext(ctx, &result, query); err != nil {
+		return nil, errors.Wrapf(err, "collectPartsForTable %s.%s", database, table)
+	}
+	rows := make([]PartRow, 0, len(result))
+	for _, r := range result {
+		rows = append(rows, PartRow{
+			Name:        r.Name,
+			PartitionID: r.PartitionID,
+			TotalBytes:  r.TotalBytes,
+			Size:        utils.FormatBytes(r.TotalBytes),
 		})
 	}
 	return rows, nil
 }
 
-func (b *Backuper) collectTablesFromLocalBackup(ctx context.Context, backupName, tablePattern string) ([]TableRow, error) {
+// collectPartitionsForTable returns the distinct partitions of a live table from `system.parts`
+// (active parts only), grouped by partition_id.
+func (b *Backuper) collectPartitionsForTable(ctx context.Context, database, table string) ([]PartitionRow, error) {
+	var result []struct {
+		PartitionID string `ch:"partition_id"`
+		Partition   string `ch:"partition"`
+		Parts       int    `ch:"parts"`
+		TotalBytes  uint64 `ch:"total_bytes"`
+	}
+	query := fmt.Sprintf(
+		"SELECT partition_id, partition, count() AS parts, sum(bytes_on_disk) AS total_bytes FROM `system`.`parts` WHERE active AND database='%s' AND table='%s' GROUP BY partition_id, partition ORDER BY partition_id",
+		database, table,
+	)
+	if err := b.ch.SelectContext(ctx, &result, query); err != nil {
+		return nil, errors.Wrapf(err, "collectPartitionsForTable %s.%s", database, table)
+	}
+	rows := make([]PartitionRow, 0, len(result))
+	for _, r := range result {
+		rows = append(rows, PartitionRow{
+			PartitionID: r.PartitionID,
+			Partition:   r.Partition,
+			Parts:       r.Parts,
+			TotalBytes:  r.TotalBytes,
+			Size:        utils.FormatBytes(r.TotalBytes),
+		})
+	}
+	return rows, nil
+}
+
+func (b *Backuper) collectTablesFromLocalBackup(ctx context.Context, backupName, tablePattern string, listParts, listPartitions bool) ([]TableRow, error) {
 	localBackup, _, err := b.getLocalBackup(ctx, backupName, nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "collectTablesFromLocalBackup getLocalBackup")
@@ -721,12 +848,12 @@ func (b *Backuper) collectTablesFromLocalBackup(ctx context.Context, backupName,
 			rows = append(rows, TableRow{Database: t.Database, Table: t.Table, Disks: []string{}, Skip: b.shouldSkipByTableName(tableName) || IsInformationSchema(t.Database)})
 			continue
 		}
-		rows = append(rows, b.tableRowFromMetadata(t, &tm))
+		rows = append(rows, b.tableRowFromMetadata(t, &tm, listParts, listPartitions))
 	}
 	return rows, nil
 }
 
-func (b *Backuper) collectTablesFromRemoteBackup(ctx context.Context, backupName, tablePattern string) ([]TableRow, error) {
+func (b *Backuper) collectTablesFromRemoteBackup(ctx context.Context, backupName, tablePattern string, listParts, listPartitions bool) ([]TableRow, error) {
 	if b.cfg.General.RemoteStorage == "none" || b.cfg.General.RemoteStorage == "custom" {
 		return nil, errors.New("`tables --remote-backup` does not support `none` and `custom` remote storage")
 	}
@@ -798,12 +925,17 @@ func (b *Backuper) collectTablesFromRemoteBackup(ctx context.Context, backupName
 			rows = append(rows, TableRow{Database: t.Database, Table: t.Table, Disks: []string{}, Skip: b.shouldSkipByTableName(tableName) || IsInformationSchema(t.Database)})
 			continue
 		}
-		rows = append(rows, b.tableRowFromMetadata(t, &tm))
+		rows = append(rows, b.tableRowFromMetadata(t, &tm, listParts, listPartitions))
 	}
 	return rows, nil
 }
 
-func (b *Backuper) tableRowFromMetadata(t metadata.TableTitle, tm *metadata.TableMetadata) TableRow {
+// tableRowFromMetadata builds a TableRow from a backup's TableMetadata. listParts/listPartitions
+// derive their breakdown from each part's name (the `_`-delimited prefix is the partition_id,
+// same convention as filesystemhelper.IsPartInPartition) - the human-readable partition value
+// and per-partition/per-part size aren't stored in backup metadata, so those fields stay
+// empty/zero.
+func (b *Backuper) tableRowFromMetadata(t metadata.TableTitle, tm *metadata.TableMetadata, listParts, listPartitions bool) TableRow {
 	tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
 	disks := []string{}
 	for disk := range tm.Size {
@@ -814,7 +946,7 @@ func (b *Backuper) tableRowFromMetadata(t metadata.TableTitle, tm *metadata.Tabl
 	for _, parts := range tm.Parts {
 		partCount += len(parts)
 	}
-	return TableRow{
+	row := TableRow{
 		Database:   t.Database,
 		Table:      t.Table,
 		TotalBytes: tm.TotalBytes,
@@ -824,6 +956,49 @@ func (b *Backuper) tableRowFromMetadata(t metadata.TableTitle, tm *metadata.Tabl
 		DisksStr:   strings.Join(disks, ","),
 		Skip:       IsInformationSchema(t.Database) || b.shouldSkipByTableName(tableName),
 	}
+	if listParts {
+		row.PartsList = partsListFromMetadata(tm)
+	}
+	if listPartitions {
+		row.Partitions = partitionsFromMetadata(tm)
+	}
+	return row
+}
+
+// partsListFromMetadata lists every part stored in a backup's TableMetadata, deriving each
+// part's partition_id from the `_`-delimited prefix of its name.
+func partsListFromMetadata(tm *metadata.TableMetadata) []PartRow {
+	var rows []PartRow
+	for _, parts := range tm.Parts {
+		for _, part := range parts {
+			partitionId, _, _ := strings.Cut(part.Name, "_")
+			rows = append(rows, PartRow{Name: part.Name, PartitionID: partitionId})
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+	return rows
+}
+
+// partitionsFromMetadata derives a partition_id -> parts-count breakdown from a backup's
+// TableMetadata, by splitting each part's name on its first '_' (the partition_id prefix).
+func partitionsFromMetadata(tm *metadata.TableMetadata) []PartitionRow {
+	counts := map[string]int{}
+	for _, parts := range tm.Parts {
+		for _, part := range parts {
+			partitionId, _, _ := strings.Cut(part.Name, "_")
+			counts[partitionId]++
+		}
+	}
+	ids := make([]string, 0, len(counts))
+	for id := range counts {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	rows := make([]PartitionRow, 0, len(ids))
+	for _, id := range ids {
+		rows = append(rows, PartitionRow{PartitionID: id, Parts: counts[id]})
+	}
+	return rows
 }
 
 // filterBackupTablesByPattern keeps only tables matching any comma-separated glob pattern.
@@ -908,6 +1083,16 @@ func printLiveTableRows(rows []TableRow, format string) error {
 			}
 			if _, err := fmt.Fprintf(w, "%s.%s\t%s\t%d\t%s\t%s\n", r.Database, r.Table, r.Size, r.Parts, r.DisksStr, marker); err != nil {
 				log.Error().Msgf("printLiveTableRows Fprintf error: %v", err)
+			}
+			for _, p := range r.Partitions {
+				if _, err := fmt.Fprintf(w, "  partition_id=%s\tpartition=%s\t%d parts\t%s\t\n", p.PartitionID, p.Partition, p.Parts, p.Size); err != nil {
+					log.Error().Msgf("printLiveTableRows Fprintf error: %v", err)
+				}
+			}
+			for _, part := range r.PartsList {
+				if _, err := fmt.Fprintf(w, "  part=%s\tpartition_id=%s\t%s\t\t\n", part.Name, part.PartitionID, part.Size); err != nil {
+					log.Error().Msgf("printLiveTableRows Fprintf error: %v", err)
+				}
 			}
 		}
 		return w.Flush()
@@ -1031,13 +1216,17 @@ func renderTextSection(s tableSection) error {
 		}
 	}
 	if len(s.Rows) == 0 {
-		fmt.Fprintln(w)
+		if _, err := fmt.Fprintln(w); err != nil {
+			return err
+		}
 		if _, err := fmt.Fprintln(w, "(no tables)"); err != nil {
 			return err
 		}
 		return w.Flush()
 	}
-	fmt.Fprintln(w)
+	if _, err := fmt.Fprintln(w); err != nil {
+		return err
+	}
 	if _, err := fmt.Fprintln(w, "TABLE\tSIZE\tPARTS\tDISKS\tFLAGS"); err != nil {
 		return err
 	}
