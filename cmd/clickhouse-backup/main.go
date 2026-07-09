@@ -444,6 +444,20 @@ func main() {
 			),
 		},
 		{
+			Name:      "rebase",
+			Usage:     "Copy required parts from `required_backup` chain into remote backup and remove `required_backup` dependency, so backup becomes full",
+			UsageText: "clickhouse-backup rebase <backup_name>",
+			Action: func(c *cli.Context) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				if c.Args().First() == "" {
+					log.Err(fmt.Errorf("backup name must be defined")).Send()
+					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
+				}
+				return b.Rebase(c.Args().First(), c.Int("command-id"))
+			},
+			Flags: cliapp.Flags,
+		},
+		{
 			Name:      "restore",
 			Usage:     "Create schema and restore data from backup",
 			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] [--skip-empty-tables] <backup_name>",

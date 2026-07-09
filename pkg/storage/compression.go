@@ -15,11 +15,22 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// retentionSortDate - retention must order backups by a date `rebase` does not change:
+// rebase rewrites metadata.json and refreshes its LastModified (UploadDate), so a rebased backup
+// would jump into the keep window and push a newer backup out; CreationDate from the parsed
+// metadata content is immutable, UploadDate stays the fallback for entries without parsed metadata
+func retentionSortDate(b Backup) time.Time {
+	if !b.CreationDate.IsZero() {
+		return b.CreationDate
+	}
+	return b.UploadDate
+}
+
 func GetBackupsToDeleteRemote(backups []Backup, keep int) []Backup {
 	if len(backups) > keep {
-		// sort backup ascending
+		// sort backup descending, newest first
 		sort.SliceStable(backups, func(i, j int) bool {
-			return backups[i].UploadDate.After(backups[j].UploadDate)
+			return retentionSortDate(backups[i]).After(retentionSortDate(backups[j]))
 		})
 		// KeepRemoteBackups should respect incremental backups sequences and don't deleteKey required backups
 		// fix https://github.com/Altinity/clickhouse-backup/issues/111
@@ -63,6 +74,34 @@ func GetBackupsToDeleteRemote(backups []Backup, keep int) []Backup {
 		return deletedBackups
 	}
 	return []Backup{}
+}
+
+// GetOldestLiveBackupToRebase - return the oldest kept backup whose `required_backup` points to a backup
+// outside the `keep` window, rebase of such backup makes it full, so the whole out-of-window chain
+// loses `required_backup` references from kept backups and becomes deletable by GetBackupsToDeleteRemote
+func GetOldestLiveBackupToRebase(backups []Backup, keep int) *Backup {
+	if keep < 1 || len(backups) <= keep {
+		return nil
+	}
+	// sort backup descending, newest first
+	sort.SliceStable(backups, func(i, j int) bool {
+		return retentionSortDate(backups[i]).After(retentionSortDate(backups[j]))
+	})
+	deletableBackups := make(map[string]struct{}, len(backups)-keep)
+	for _, b := range backups[keep:] {
+		// backup with UploadDate `0001-01-01 00:00:00` never deleted, to avoid race condition for multiple shards copy
+		// fix https://github.com/Altinity/clickhouse-backup/issues/409
+		if b.UploadDate != time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC) {
+			deletableBackups[b.BackupName] = struct{}{}
+		}
+	}
+	for i := keep - 1; i >= 0; i-- {
+		if _, exists := deletableBackups[backups[i].RequiredBackup]; exists {
+			candidate := backups[i]
+			return &candidate
+		}
+	}
+	return nil
 }
 
 // pgzipDefaultBlockSize mirrors pgzip's unexported defaultBlockSize (1MB); used as the pgzip block

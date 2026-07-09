@@ -112,11 +112,16 @@ func NewTestContainers(envID int) (*TestContainers, error) {
 
 func isAdvancedMode() bool {
 	v := os.Getenv("CLICKHOUSE_VERSION")
-	if v == "" || v == "head" {
-		return true
-	}
-	// Match old run.sh behavior: CLICKHOUSE_VERSION == 2* → advanced mode
-	return compareVersion(v, "20.0") >= 0
+	return v == "" || v == "head" || compareVersion(v, "20.0") >= 0
+}
+
+// isModernSSHD reports whether the OpenSSH 10 linuxserver/openssh-server sshd
+// (advertises the sftp `copy-data` extension) is used instead of the OpenSSH 8.6
+// panubo image; gated to CH>=23.3 so the copy-data path gets coverage on newer
+// matrix entries while older ones keep exercising the hardlink fallback.
+func isModernSSHD() bool {
+	v := os.Getenv("CLICKHOUSE_VERSION")
+	return v == "" || v == "head" || compareVersion(v, "23.3") >= 0
 }
 
 // StartAll creates the network and starts all containers.
@@ -662,17 +667,40 @@ func getEnvDefault(key, defaultVal string) string {
 
 // Container start methods
 
+// startSSHD starts the shared sshd container used by the SFTP storage and the
+// custom rsync backend. Both variants expose the identical connection surface -
+// user `sftpuser`, port 2222, writable home /config - so a single set of sftp
+// configs and rsync scripts works regardless of image. CH>=23.3 uses the
+// OpenSSH 10 linuxserver/openssh-server image so the sftp `copy-data` extension
+// is advertised and SFTP.CopyObject exercises the server-side copyDataServerSide
+// path; older versions keep the OpenSSH 8.6 panubo image (hardlink fallback).
 func (tc *TestContainers) startSSHD(ctx context.Context) error {
+	if isModernSSHD() {
+		return tc.startSSHDOpenSSH10(ctx)
+	}
+	return tc.startSSHDPanubo(ctx)
+}
+
+func (tc *TestContainers) startSSHDPanubo(ctx context.Context) error {
 	return tc.startContainer(ctx, "sshd",
 		&container.Config{
 			Image: "docker.io/panubo/sshd:latest",
 			Env: envMap(map[string]string{
-				"SSH_ENABLE_ROOT":          "true",
 				"SSH_ENABLE_PASSWORD_AUTH": "true",
 			}),
-			Cmd: []string{"sh", "-c", `echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && echo "LogLevel DEBUG3" >> /etc/ssh/sshd_config && echo "root:JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ" | chpasswd && /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config`},
+			// create sftpuser (home /config), enable password auth, listen on 2222 to
+			// match the linuxserver image; rsync-over-ssh reuses the same user/port.
+			Cmd: []string{"sh", "-c", strings.Join([]string{
+				`adduser -D -h /config -s /bin/sh sftpuser`,
+				`echo "sftpuser:JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ" | chpasswd`,
+				`mkdir -p /config && chown -R sftpuser:sftpuser /config`,
+				`sed -i "s/^Port 22$/Port 2222/" /etc/ssh/sshd_config`,
+				`sed -i "s/^#*PasswordAuthentication .*/PasswordAuthentication yes/" /etc/ssh/sshd_config`,
+				`echo "LogLevel DEBUG3" >> /etc/ssh/sshd_config`,
+				`/usr/sbin/sshd -D -e -f /etc/ssh/sshd_config`,
+			}, " && ")},
 			Healthcheck: &container.HealthConfig{
-				Test:     []string{"CMD-SHELL", "echo 1"},
+				Test:     []string{"CMD-SHELL", "nc -z 127.0.0.1 2222"},
 				Interval: 1 * time.Second,
 				Retries:  30,
 			},
@@ -682,18 +710,57 @@ func (tc *TestContainers) startSSHD(ctx context.Context) error {
 	)
 }
 
+// startSSHDOpenSSH10 runs linuxserver/openssh-server (OpenSSH 10, copy-data
+// capable). It logs in as non-root `sftpuser` on port 2222 with password + key
+// auth (public key installed from PUBLIC_KEY at start), home /config.
+func (tc *TestContainers) startSSHDOpenSSH10(ctx context.Context) error {
+	pubKey, err := os.ReadFile("sftp/clickhouse-backup_rsa.pub")
+	if err != nil {
+		return fmt.Errorf("startSSHDOpenSSH10 read sftp pubkey: %w", err)
+	}
+	return tc.startContainer(ctx, "sshd",
+		&container.Config{
+			Image: "docker.io/linuxserver/openssh-server:latest",
+			Env: envMap(map[string]string{
+				"USER_NAME":       "sftpuser",
+				"USER_PASSWORD":   "JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ",
+				"PASSWORD_ACCESS": "true",
+				"SUDO_ACCESS":     "false",
+				"PUBLIC_KEY":      strings.TrimSpace(string(pubKey)),
+			}),
+			// gate readiness on the full s6 init, not just the sshd bind: under parallel
+			// container startup the `chown /config` and PUBLIC_KEY install steps can lag
+			// behind the port opening, and connecting early hits a root-owned /config
+			// (MkdirAll -> permission denied).
+			Healthcheck: &container.HealthConfig{
+				Test:     []string{"CMD-SHELL", `nc -z 127.0.0.1 2222 && [ "$(stat -c %U /config)" = sftpuser ] && [ -s /config/.ssh/authorized_keys ]`},
+				Interval: 1 * time.Second,
+				Retries:  60,
+			},
+		},
+		&container.HostConfig{SecurityOpt: []string{"label:disable"}},
+		"sshd",
+	)
+}
+
 func (tc *TestContainers) startFTP(ctx context.Context, curDir string) error {
 	if tc.isAdvanced {
+		proftpdEnv := map[string]string{
+			"FTP_USER_NAME":         "test_backup",
+			"FTP_USER_PASS":         "test_backup",
+			"FTP_MASQUERADEADDRESS": "yes",
+			"FTP_PASSIVE_PORTS":     "21100 31100",
+			"FTP_MAX_CONNECTIONS":   "255",
+		}
+		// 23.x+ runs ProFTPD with mod_copy (SITE CPFR/CPTO CopyObject path),
+		// 20.0 <= CLICKHOUSE_VERSION <= 22.12 disables mod_copy to cover the FXP CopyObject path
+		if v := os.Getenv("CLICKHOUSE_VERSION"); v != "" && v != "head" && compareVersion(v, "23.0") < 0 {
+			proftpdEnv["FTP_DISABLE_MOD_COPY"] = "yes"
+		}
 		return tc.startContainer(ctx, "ftp",
 			&container.Config{
 				Image: "docker.io/iradu/proftpd:latest",
-				Env: envMap(map[string]string{
-					"FTP_USER_NAME":         "test_backup",
-					"FTP_USER_PASS":         "test_backup",
-					"FTP_MASQUERADEADDRESS": "yes",
-					"FTP_PASSIVE_PORTS":     "21100 31100",
-					"FTP_MAX_CONNECTIONS":   "255",
-				}),
+				Env:   envMap(proftpdEnv),
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD-SHELL", "echo 1"},
 					Interval: 1 * time.Second,
@@ -1020,6 +1087,22 @@ func (tc *TestContainers) clickHouseBinds(curDir, configsDir string) []string {
 	return binds
 }
 
+// writeMacrosVersionXML - generate the `{version}` macro for the clickhouse-backup config
+// path/object_disk_path, it isolates parallel CI matrix jobs sharing the same remote bucket
+// (real GCS, real S3, COS). Generated on the host and bind-mounted unconditionally because
+// dynamic_settings.sh runs only in advanced mode, while old versions (1.x, 19.x) need the
+// isolation too: with the macro missing `{version}` stays literal, so all simple-mode matrix
+// jobs collide on the same remote path and delete each other's fixed-name backups.
+func (tc *TestContainers) writeMacrosVersionXML() (string, error) {
+	version := strings.ReplaceAll(getEnvDefault("CLICKHOUSE_VERSION", "26.3"), ".", "_")
+	content := fmt.Sprintf("<yandex>\n  <macros>\n    <version>%s</version>\n  </macros>\n</yandex>\n", version)
+	fPath := filepath.Join(os.TempDir(), fmt.Sprintf("clickhouse-backup-macros-version-env%d.xml", tc.envID))
+	if err := os.WriteFile(fPath, []byte(content), 0644); err != nil {
+		return "", fmt.Errorf("writeMacrosVersionXML %s: %w", fPath, err)
+	}
+	return fPath, nil
+}
+
 func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDir string) error {
 	chImage := fmt.Sprintf("docker.io/%s:%s",
 		getEnvDefault("CLICKHOUSE_IMAGE", "clickhouse/clickhouse-server"),
@@ -1031,6 +1114,11 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 	}
 
 	binds := tc.clickHouseBinds(curDir, configsDir)
+	macrosVersionPath, err := tc.writeMacrosVersionXML()
+	if err != nil {
+		return err
+	}
+	binds = append(binds, macrosVersionPath+":/etc/clickhouse-server/config.d/macros_version.xml")
 
 	// Add shared volume mounts
 	for i, vol := range tc.sharedVolumes {

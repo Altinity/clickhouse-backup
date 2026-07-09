@@ -516,7 +516,7 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/backups_s3")
 	}
 	if t.Name() == "TestCustomRsync" {
-		env.DockerExecNoError(r, "sshd", "rm", "-rf", "/root/rsync_backups")
+		env.DockerExecNoError(r, "sshd", "rm", "-rf", "/config/rsync_backups")
 	}
 	if t.Name() == "TestCustomRestic" {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/restic")
@@ -1033,7 +1033,7 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 		case "CUSTOM":
 			switch configFile {
 			case "config-custom-rsync.yml":
-				checkRemoteNoFiles("sshd", "/root/rsync_backups/cluster/shard0/")
+				checkRemoteNoFiles("sshd", "/config/rsync_backups/cluster/shard0/")
 			case "config-custom-restic.yml":
 				// restic physically removes snapshot objects from S3 on
 				// `forget --prune --unsafe-allow-remove-all`; the restic
@@ -1087,10 +1087,16 @@ func (env *TestEnvironment) uploadSSHKeys(r *require.Assertions, container strin
 	env.DockerExecNoError(r, container, "cp", "-vf", "/id_rsa", "/tmp/id_rsa")
 	env.DockerExecNoError(r, container, "chmod", "-v", "0600", "/tmp/id_rsa")
 
+	// CH>=23.3 uses the linuxserver/openssh-server sshd, which installs sftpuser's
+	// public key from the PUBLIC_KEY env at container start; the panubo image needs
+	// it copied into AuthorizedKeysFile (/etc/authorized_keys/%u).
+	if isModernSSHD() {
+		return
+	}
 	r.NoError(env.DockerCP("sftp/clickhouse-backup_rsa.pub", "sshd:/authorized_keys"))
-	env.DockerExecNoError(r, "sshd", "cp", "-vf", "/authorized_keys", "/etc/authorized_keys/root")
-	env.DockerExecNoError(r, "sshd", "chown", "-v", "root:root", "/etc/authorized_keys/root")
-	env.DockerExecNoError(r, "sshd", "chmod", "-v", "0600", "/etc/authorized_keys/root")
+	env.DockerExecNoError(r, "sshd", "cp", "-vf", "/authorized_keys", "/etc/authorized_keys/sftpuser")
+	env.DockerExecNoError(r, "sshd", "chown", "-v", "root:root", "/etc/authorized_keys/sftpuser")
+	env.DockerExecNoError(r, "sshd", "chmod", "-v", "0644", "/etc/authorized_keys/sftpuser")
 }
 
 // Utility functions

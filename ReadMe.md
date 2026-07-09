@@ -107,12 +107,17 @@ general:
                                  # You can run `clickhouse-backup delete local <backup_name>` command to remove temporary backup files from the local disk
   backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE, how many latest backup should be kept on remote storage, 0 means all uploaded backups will be stored on remote storage.
                                  # If old backups are required for newer incremental backup then it won't be deleted. Be careful with long incremental backup sequences.
+                                 # Backups are ordered by `creation_date` from backup metadata (upload date is used only for backups with unreadable metadata), so `rebase` doesn't change the backup position in the retention order.
+  rebase_before_remove_old_remote: false # REBASE_BEFORE_REMOVE_OLD_REMOTE, makes `backups_to_keep_remote` a strict limit: when deletion is blocked by `required_backup` links from kept backups,
+                                 # the oldest kept increment is rebased first (same as the `rebase` command, requires `upload_by_part: true` and the same `compression_format` for the whole chain),
+                                 # so the whole out-of-window chain becomes deletable; rebase failure is not fatal and falls back to the legacy keep-required behavior.
   log_level: info                # LOG_LEVEL, a choice from `debug`, `info`, `warning`, `error`
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
   # Concurrency means parallel tables and parallel parts inside tables
   # For example, 4 means max 4 parallel tables and 4 parallel parts inside one table, so equals 16 concurrent streams
   download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is floor(AVAILABLE_CPU_CORES / 2). If result is < 1, then 1.
   upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2)). If result is < 1, then 1.
+  rebase_concurrency: 1          # REBASE_CONCURRENCY, max 255, how many tables process in parallel during `rebase` command, by default the same as download_concurrency.
   
   # Throttling speed for upload and download, enforced inline via a token-bucket rate limiter shared across all concurrent workers, so the value is an aggregate cap with smooth (non-bursty) throughput.
   # Throttling does NOT apply to server-side object disk copy (`CopyObject`, e.g. S3 server-side copy / Azure copy-blob), because those bytes move inside the cloud provider and never pass through clickhouse-backup. When server-side copy is unavailable (incompatible src/dst `remote_storage`, or a failed `CopyObject` falling back to streaming through local memory), the streaming copy IS throttled.
@@ -608,6 +613,14 @@ Download backup from remote storage: `curl -s localhost:7171/backup/download/<BA
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
 
+### POST /backup/rebase
+
+Copy required parts from the `required_backup` chain into remote backup and remove the `required_backup` dependency, so the incremental backup becomes a full one: `curl -s localhost:7171/backup/rebase/<BACKUP_NAME> -X POST | jq .`
+
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
+
+Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
+
 ### POST /backup/restore
 
 Create schema and restore data from backup: `curl -s localhost:7171/backup/restore/<BACKUP_NAME> -X POST | jq .`
@@ -872,6 +885,19 @@ Look at the system.parts partition and partition_id fields for details https://c
    --named-collections-only, --named-collections  Download named collections and settings only, will skip download data, will download schema only if --schema added
    --resume, --resumable                          Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --hardlink-exists-files                        Create hardlinks for existing files instead of downloading
+   
+```
+### CLI command - rebase
+```
+NAME:
+   clickhouse-backup rebase - Copy required parts from `required_backup` chain into remote backup and remove `required_backup` dependency, so backup becomes full
+
+USAGE:
+   clickhouse-backup rebase <backup_name>
+
+OPTIONS:
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
    
 ```
 ### CLI command - restore

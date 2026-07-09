@@ -252,6 +252,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	r.HandleFunc("/backup/clean/local_broken", api.httpCleanLocalBrokenHandler).Methods("POST")
 	r.HandleFunc("/backup/upload/{name}", api.httpUploadHandler).Methods("POST")
 	r.HandleFunc("/backup/download/{name}", api.httpDownloadHandler).Methods("POST")
+	r.HandleFunc("/backup/rebase/{name}", api.httpRebaseHandler).Methods("POST")
 	r.HandleFunc("/backup/restore/{name}", api.httpRestoreHandler).Methods("POST")
 	r.HandleFunc("/backup/restore_remote/{name}", api.httpRestoreRemoteHandler).Methods("POST")
 	r.HandleFunc("/backup/delete/{where}/{name}", api.httpDeleteHandler).Methods("POST")
@@ -397,7 +398,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)
 				return
 			}
-		case "create", "restore", "upload", "download", "create_remote", "restore_remote", "list":
+		case "create", "restore", "upload", "download", "create_remote", "restore_remote", "list", "rebase":
 			actionsResults, err = api.actionsAsyncCommandsHandler(command, args, row, actionsResults)
 			if err != nil {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)
@@ -1567,6 +1568,61 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		BackupName:  name,
 		BackupFrom:  diffFrom,
 		Diff:        diffFrom != "",
+		OperationId: operationId.String(),
+	})
+}
+
+// httpRebaseHandler - copy required parts from `required_backup` chain into remote backup and remove `required_backup` dependency
+func (api *APIServer) httpRebaseHandler(w http.ResponseWriter, r *http.Request) {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
+		log.Warn().Err(ErrAPILocked).Send()
+		api.writeError(w, http.StatusLocked, "rebase", ErrAPILocked)
+		return
+	}
+	cfg, err := api.ReloadConfig(w, "rebase")
+	if err != nil {
+		return
+	}
+	vars := mux.Vars(r)
+	query := r.URL.Query()
+	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
+	fullCommand := fmt.Sprint("rebase ", name)
+	operationId, _ := uuid.NewUUID()
+
+	callback, err := parseCallback(query)
+	if err != nil {
+		log.Error().Err(err).Send()
+		api.writeError(w, http.StatusBadRequest, "rebase", err)
+		return
+	}
+
+	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	go func() {
+		err, _ := api.metrics.ExecuteWithMetrics("rebase", 0, func() error {
+			b := backup.NewBackuper(cfg)
+			return b.Rebase(name, commandId)
+		})
+		if err != nil {
+			log.Error().Msgf("Rebase error: %v", err)
+			status.Current.Stop(commandId, err)
+			api.errorCallback(context.Background(), err, operationId.String(), callback)
+			return
+		}
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
+		status.Current.Stop(commandId, nil)
+		api.successCallback(context.Background(), operationId.String(), callback)
+	}()
+	api.sendJSONEachRow(w, http.StatusOK, struct {
+		Status      string `json:"status"`
+		Operation   string `json:"operation"`
+		BackupName  string `json:"backup_name"`
+		OperationId string `json:"operation_id"`
+	}{
+		Status:      "acknowledged",
+		Operation:   "rebase",
+		BackupName:  name,
 		OperationId: operationId.String(),
 	})
 }

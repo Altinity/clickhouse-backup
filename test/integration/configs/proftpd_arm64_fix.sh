@@ -9,6 +9,15 @@ sed -i 's/^LoadModule mod_exec.c/#LoadModule mod_exec.c/' /etc/proftpd/modules.c
 sed -i 's/^LoadModule mod_sftp_pam.c/#LoadModule mod_sftp_pam.c/' /etc/proftpd/modules.conf
 sed -i 's/^LoadModule mod_wrap.c/#LoadModule mod_wrap.c/' /etc/proftpd/modules.conf
 
+# 1b. mod_copy HANDLING (SITE CPFR/CPTO server-side copy used by clickhouse-backup CopyObject)
+# FTP_DISABLE_MOD_COPY=yes disables the module to force the FXP CopyObject path (requires AllowForeignAddress on, see step 3)
+if [[ "${FTP_DISABLE_MOD_COPY,,}" == "yes" ]]; then
+    sed -i 's/^LoadModule mod_copy.c/#LoadModule mod_copy.c/' /etc/proftpd/modules.conf
+else
+    sed -i 's/^#LoadModule mod_copy.c/LoadModule mod_copy.c/' /etc/proftpd/modules.conf
+    grep -q "^LoadModule mod_copy.c" /etc/proftpd/modules.conf || echo "LoadModule mod_copy.c" >> /etc/proftpd/modules.conf
+fi
+
 # 2. CREATE USER (Bypass system useradd/shadow/PAM)
 if [ -n "$FTP_USER_NAME" -a -n "$FTP_USER_PASS" ]; then
     echo ">>> Creating user $FTP_USER_NAME in virtual file..."
@@ -44,6 +53,11 @@ DefaultRoot ~
 HiddenStores on
 MaxInstances ${FTP_MAX_CONNECTIONS:-20}
 EOF
+
+# FXP (server-to-itself PORT transfer) needs foreign data connection addresses when mod_copy is disabled
+if [[ "${FTP_DISABLE_MOD_COPY,,}" == "yes" ]]; then
+    echo "AllowForeignAddress on" >> $CONF_FILE
+fi
 
 # Handle passive ports
 if [ -n "$FTP_PASSIVE_PORTS" ]; then

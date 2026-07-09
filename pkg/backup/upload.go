@@ -315,6 +315,9 @@ func (b *Backuper) RemoveOldBackupsRemote(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "BackupList")
 	}
+	if b.cfg.General.RebaseBeforeRemoveOldRemote {
+		backupList = b.rebaseRequiredLiveBackups(ctx, backupList)
+	}
 	backupsToDelete := storage.GetBackupsToDeleteRemote(backupList, b.cfg.General.BackupsToKeepRemote)
 	log.Info().Fields(map[string]interface{}{
 		"operation": "RemoveOldBackupsRemote",
