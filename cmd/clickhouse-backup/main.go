@@ -88,10 +88,10 @@ func main() {
 		{
 			Name:      "tables",
 			Usage:     "List of tables, exclude skip_tables",
-			UsageText: "clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all] [--list-parts] [--partitions]",
+			UsageText: "clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all] [--parts] [--partitions]",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.PrintTables(c.Bool("all"), c.String("table"), c.String("remote-backup"), c.String("local-backup"), c.String("format"), c.Bool("list-parts"), c.Bool("partitions"))
+				return b.PrintTables(c.Bool("all"), c.String("table"), c.String("remote-backup"), c.String("local-backup"), c.String("format"), c.Bool("parts"), c.Bool("partitions"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.BoolFlag{
@@ -120,7 +120,7 @@ func main() {
 					Usage:  "Output format (text|json|yaml|csv|tsv)",
 				},
 				cli.BoolFlag{
-					Name:   "list-parts, parts",
+					Name:   "parts, list-parts",
 					Hidden: false,
 					Usage: "Also list every physical part for each table (name, partition_id, size)\n" +
 						"Against the live server, reads name/partition_id/bytes_on_disk from `system.parts`\n" +

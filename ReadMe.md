@@ -735,7 +735,7 @@ NAME:
    clickhouse-backup tables - List of tables, exclude skip_tables
 
 USAGE:
-   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all] [--list-parts] [--partitions]
+   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all] [--parts] [--partitions]
 
 OPTIONS:
    --config value, -c value                         Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
@@ -745,7 +745,7 @@ OPTIONS:
    --remote-backup value                            List tables from a remote backup, including per-table size and parts count
    --local-backup value                             List tables from a local backup (read from disk, no live ClickHouse query), including per-table size and parts count
    --format value, -f value                         Output format (text|json|yaml|csv|tsv)
-   --list-parts system.parts, --parts system.parts  Also list every physical part for each table (name, partition_id, size)
+   --parts system.parts, --list-parts system.parts  Also list every physical part for each table (name, partition_id, size)
 Against the live server, reads name/partition_id/bytes_on_disk from system.parts
 Against --local-backup/--remote-backup, reads part names from backup metadata (partition_id derived from the name, no size available)
    --partitions system.parts, --list-partitions system.parts  Also list the distinct partitions for each table (partition_id, partition, parts count, size), aggregated from parts
