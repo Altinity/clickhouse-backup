@@ -289,19 +289,57 @@ func (s *S3) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadClos
 	return resp.Body, nil
 }
 
-func (s *S3) enrichGetObjectParams(params *s3.GetObjectInput) {
+// s3SSECustomerParams holds the SSE-C fields shared by every S3 request that accepts them
+// (GetObject, HeadObject, PutObject, CreateMultipartUpload, CopyObject).
+type s3SSECustomerParams struct {
+	SSECustomerAlgorithm *string
+	SSECustomerKey       *string
+	SSECustomerKeyMD5    *string
+}
+
+func (s *S3) sseCustomerParams() s3SSECustomerParams {
+	p := s3SSECustomerParams{}
 	if s.Config.SSECustomerAlgorithm != "" {
-		params.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
+		p.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
 	}
 	if s.Config.SSECustomerKey != "" {
-		params.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
+		p.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
 	}
 	if s.Config.SSECustomerKeyMD5 != "" {
-		params.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
+		p.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
 	}
+	return p
+}
+
+func (s *S3) requestPayer() s3types.RequestPayer {
 	if s.Config.RequestPayer != "" {
-		params.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
+		return s3types.RequestPayer(s.Config.RequestPayer)
 	}
+	return ""
+}
+
+func (s *S3) enrichGetObjectParams(params *s3.GetObjectInput) {
+	sse := s.sseCustomerParams()
+	params.SSECustomerAlgorithm = sse.SSECustomerAlgorithm
+	params.SSECustomerKey = sse.SSECustomerKey
+	params.SSECustomerKeyMD5 = sse.SSECustomerKeyMD5
+	params.RequestPayer = s.requestPayer()
+}
+
+// calculatePartSize derives the multipart chunk size for a transfer of fullSize bytes,
+// honoring the configured ChunkSize/MaxPartsCount and clamping to [minPartSize, 5GB].
+func (s *S3) calculatePartSize(fullSize, minPartSize int64) int64 {
+	var partSize int64
+	if s.Config.ChunkSize > 0 && (fullSize+s.Config.ChunkSize-1)/s.Config.ChunkSize < s.Config.MaxPartsCount {
+		// Use configured chunk size
+		partSize = s.Config.ChunkSize
+	} else {
+		partSize = fullSize / s.Config.MaxPartsCount
+		if fullSize%s.Config.MaxPartsCount > 0 {
+			partSize += max(1, (fullSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
+		}
+	}
+	return AdjustValueByRange(partSize, minPartSize, 5*1024*1024*1024)
 }
 
 func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath string, remoteSize int64) (io.ReadCloser, error) {
@@ -313,17 +351,7 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 			return nil, errors.Wrap(err, "S3 GetFileReaderWithLocalPath CreateTemp")
 		}
 
-		var partSize int64
-		if s.Config.ChunkSize > 0 && (remoteSize+s.Config.ChunkSize-1)/s.Config.ChunkSize < s.Config.MaxPartsCount {
-			// Use configured chunk size
-			partSize = s.Config.ChunkSize
-		} else {
-			partSize = remoteSize / s.Config.MaxPartsCount
-			if remoteSize%s.Config.MaxPartsCount > 0 {
-				partSize += max(1, (remoteSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
-			}
-		}
-		partSize = AdjustValueByRange(partSize, 5*1024*1024, 5*1024*1024*1024)
+		partSize := s.calculatePartSize(remoteSize, 5*1024*1024)
 
 		_, err = s.transferManager.DownloadObject(ctx, &transfermanager.DownloadObjectInput{
 			Bucket:   aws.String(s.Config.Bucket),
@@ -387,21 +415,14 @@ func (s *S3) commonObjectParams() s3CommonObjectParams {
 	if s.Config.SSEKMSKeyId != "" {
 		p.SSEKMSKeyId = aws.String(s.Config.SSEKMSKeyId)
 	}
-	if s.Config.SSECustomerAlgorithm != "" {
-		p.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
-	}
-	if s.Config.SSECustomerKey != "" {
-		p.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
-	}
-	if s.Config.SSECustomerKeyMD5 != "" {
-		p.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
-	}
+	sse := s.sseCustomerParams()
+	p.SSECustomerAlgorithm = sse.SSECustomerAlgorithm
+	p.SSECustomerKey = sse.SSECustomerKey
+	p.SSECustomerKeyMD5 = sse.SSECustomerKeyMD5
 	if s.Config.SSEKMSEncryptionContext != "" {
 		p.SSEKMSEncryptionContext = aws.String(s.Config.SSEKMSEncryptionContext)
 	}
-	if s.Config.RequestPayer != "" {
-		p.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
-	}
+	p.RequestPayer = s.requestPayer()
 	return p
 }
 
@@ -423,16 +444,7 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 		SSEKMSEncryptionContext: common.SSEKMSEncryptionContext,
 		RequestPayer:            common.RequestPayer,
 	}
-	var partSize int64
-	if s.Config.ChunkSize > 0 && (localSize+s.Config.ChunkSize-1)/s.Config.ChunkSize < s.Config.MaxPartsCount {
-		partSize = s.Config.ChunkSize
-	} else {
-		partSize = localSize / s.Config.MaxPartsCount
-		if localSize%s.Config.MaxPartsCount > 0 {
-			partSize += max(1, (localSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
-		}
-	}
-	partSize = AdjustValueByRange(partSize, 5*1024*1024, 5*1024*1024*1024)
+	partSize := s.calculatePartSize(localSize, 5*1024*1024)
 
 	// transfermanager.UploadObject sends the part checksum as a trailer, which S3 Object Lock rejects on UploadPart. Fall back to manual multipart with per-part x-amz-checksum-crc32 header, fix https://github.com/Altinity/clickhouse-backup/issues/829
 	if s.Config.CheckSumAlgorithm == string(s3types.ChecksumAlgorithmCrc32) && localSize > partSize {
@@ -958,16 +970,7 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 	uploadID := initResp.UploadId
 
 	// Set the part size (128 MB minimum for CopyObject, or use configured chunk size)
-	var partSize int64
-	if s.Config.ChunkSize > 0 && (srcSize+s.Config.ChunkSize-1)/s.Config.ChunkSize < s.Config.MaxPartsCount {
-		partSize = s.Config.ChunkSize
-	} else {
-		partSize = srcSize / s.Config.MaxPartsCount
-		if srcSize%s.Config.MaxPartsCount > 0 {
-			partSize += max(1, (srcSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
-		}
-	}
-	partSize = AdjustValueByRange(partSize, 128*1024*1024, 5*1024*1024*1024)
+	partSize := s.calculatePartSize(srcSize, 128*1024*1024)
 
 	// Calculate the number of parts
 	numParts := (srcSize + partSize - 1) / partSize
@@ -1069,41 +1072,17 @@ func (s *S3) enrichCreateMultipartUploadParams(params *s3.CreateMultipartUploadI
 }
 
 func (s *S3) enrichCopyObjectParams(params *s3.CopyObjectInput) {
-	if s.Config.CheckSumAlgorithm != "" {
-		params.ChecksumAlgorithm = s3types.ChecksumAlgorithm(s.Config.CheckSumAlgorithm)
-	}
-	// https://github.com/Altinity/clickhouse-backup/issues/588
-	if len(s.Config.ObjectLabels) > 0 {
-		tags := ""
-		for k, v := range s.Config.ObjectLabels {
-			if tags != "" {
-				tags += "&"
-			}
-			tags += k + "=" + v
-		}
-		params.Tagging = aws.String(tags)
-	}
-	if s.Config.SSE != "" {
-		params.ServerSideEncryption = s3types.ServerSideEncryption(s.Config.SSE)
-	}
-	if s.Config.SSEKMSKeyId != "" {
-		params.SSEKMSKeyId = aws.String(s.Config.SSEKMSKeyId)
-	}
-	if s.Config.SSECustomerAlgorithm != "" {
-		params.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
-	}
-	if s.Config.SSECustomerKey != "" {
-		params.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
-	}
-	if s.Config.SSECustomerKeyMD5 != "" {
-		params.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
-	}
-	if s.Config.SSEKMSEncryptionContext != "" {
-		params.SSEKMSEncryptionContext = aws.String(s.Config.SSEKMSEncryptionContext)
-	}
-	if s.Config.RequestPayer != "" {
-		params.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
-	}
+	common := s.commonObjectParams()
+	params.ChecksumAlgorithm = common.ChecksumAlgorithm
+	params.ACL = common.ACL
+	params.Tagging = common.Tagging
+	params.ServerSideEncryption = common.ServerSideEncryption
+	params.SSEKMSKeyId = common.SSEKMSKeyId
+	params.SSECustomerAlgorithm = common.SSECustomerAlgorithm
+	params.SSECustomerKey = common.SSECustomerKey
+	params.SSECustomerKeyMD5 = common.SSECustomerKeyMD5
+	params.SSEKMSEncryptionContext = common.SSEKMSEncryptionContext
+	params.RequestPayer = common.RequestPayer
 }
 
 func (s *S3) restoreObject(ctx context.Context, key string) error {
@@ -1147,18 +1126,11 @@ func (s *S3) restoreObject(ctx context.Context, key string) error {
 }
 
 func (s *S3) enrichHeadParams(headParams *s3.HeadObjectInput) {
-	if s.Config.RequestPayer != "" {
-		headParams.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
-	}
-	if s.Config.SSECustomerAlgorithm != "" {
-		headParams.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
-	}
-	if s.Config.SSECustomerKey != "" {
-		headParams.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
-	}
-	if s.Config.SSECustomerKeyMD5 != "" {
-		headParams.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
-	}
+	headParams.RequestPayer = s.requestPayer()
+	sse := s.sseCustomerParams()
+	headParams.SSECustomerAlgorithm = sse.SSECustomerAlgorithm
+	headParams.SSECustomerKey = sse.SSECustomerKey
+	headParams.SSECustomerKeyMD5 = sse.SSECustomerKeyMD5
 }
 
 type s3File struct {
