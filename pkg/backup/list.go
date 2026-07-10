@@ -800,7 +800,7 @@ func (b *Backuper) collectPartitionsForTable(ctx context.Context, database, tabl
 	var result []struct {
 		PartitionID string `ch:"partition_id"`
 		Partition   string `ch:"partition"`
-		Parts       int    `ch:"parts"`
+		Parts       uint64 `ch:"parts"`
 		TotalBytes  uint64 `ch:"total_bytes"`
 	}
 	query := fmt.Sprintf(
@@ -815,7 +815,7 @@ func (b *Backuper) collectPartitionsForTable(ctx context.Context, database, tabl
 		rows = append(rows, PartitionRow{
 			PartitionID: r.PartitionID,
 			Partition:   r.Partition,
-			Parts:       r.Parts,
+			Parts:       int(r.Parts),
 			TotalBytes:  r.TotalBytes,
 			Size:        utils.FormatBytes(r.TotalBytes),
 		})
@@ -824,9 +824,14 @@ func (b *Backuper) collectPartitionsForTable(ctx context.Context, database, tabl
 }
 
 func (b *Backuper) collectTablesFromLocalBackup(ctx context.Context, backupName, tablePattern string, listParts, listPartitions bool) ([]TableRow, error) {
-	localBackup, _, err := b.getLocalBackup(ctx, backupName, nil)
+	localBackup, disks, err := b.getLocalBackup(ctx, backupName, nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "collectTablesFromLocalBackup getLocalBackup")
+	}
+	if b.DefaultDataPath == "" {
+		if b.DefaultDataPath, err = b.ch.GetDefaultPath(disks); err != nil {
+			return nil, errors.Wrap(err, "collectTablesFromLocalBackup GetDefaultPath")
+		}
 	}
 	filtered := filterBackupTablesByPattern(localBackup.Tables, tablePattern)
 	if len(filtered) == 0 && tablePattern != "" {
