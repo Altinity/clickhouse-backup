@@ -36,7 +36,7 @@ func (sftp *SFTP) Kind() string {
 	return "SFTP"
 }
 
-func (sftp *SFTP) Connect(ctx context.Context) error {
+func (sftp *SFTP) Connect(_ context.Context) error {
 	authMethods := make([]ssh.AuthMethod, 0)
 
 	if sftp.Config.Key == "" && sftp.Config.Password == "" {
@@ -94,7 +94,7 @@ func (sftp *SFTP) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (sftp *SFTP) Close(ctx context.Context) error {
+func (sftp *SFTP) Close(_ context.Context) error {
 	if err := sftp.sftpClient.Close(); err != nil {
 		return errors.Wrap(err, "sftpClient.Close()")
 	}
@@ -108,7 +108,7 @@ func (sftp *SFTP) StatFile(ctx context.Context, key string) (RemoteFile, error) 
 	return sftp.StatFileAbsolute(ctx, path.Join(sftp.Config.Path, key))
 }
 
-func (sftp *SFTP) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, error) {
+func (sftp *SFTP) StatFileAbsolute(_ context.Context, key string) (RemoteFile, error) {
 	stat, err := sftp.sftpClient.Stat(key)
 	if err != nil {
 		sftp.Debug("[SFTP_DEBUG] StatFile::STAT %s return error %v", key, err)
@@ -136,9 +136,9 @@ func (sftp *SFTP) DeleteFile(ctx context.Context, key string) error {
 	}
 	if fileStat.IsDir() {
 		return sftp.DeleteDirectory(ctx, filePath)
-	} else {
-		return sftp.sftpClient.Remove(filePath)
 	}
+
+	return sftp.sftpClient.Remove(filePath)
 }
 
 func (sftp *SFTP) DeleteDirectory(ctx context.Context, dirPath string) error {
@@ -226,11 +226,11 @@ func (sftp *SFTP) GetFileReader(ctx context.Context, key string) (io.ReadCloser,
 	return sftp.GetFileReaderAbsolute(ctx, path.Join(sftp.Config.Path, key))
 }
 
-func (sftp *SFTP) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
+func (sftp *SFTP) GetFileReaderAbsolute(_ context.Context, key string) (io.ReadCloser, error) {
 	return sftp.sftpClient.OpenFile(key, syscall.O_RDWR)
 }
 
-func (sftp *SFTP) GetFileReaderWithLocalPath(ctx context.Context, key, localPath string, remoteSize int64) (io.ReadCloser, error) {
+func (sftp *SFTP) GetFileReaderWithLocalPath(ctx context.Context, key, _ string, _ int64) (io.ReadCloser, error) {
 	return sftp.GetFileReader(ctx, key)
 }
 
@@ -238,7 +238,7 @@ func (sftp *SFTP) PutFile(ctx context.Context, key string, r io.ReadCloser, loca
 	return sftp.PutFileAbsolute(ctx, path.Join(sftp.Config.Path, key), r, localSize)
 }
 
-func (sftp *SFTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
+func (sftp *SFTP) PutFileAbsolute(_ context.Context, key string, r io.ReadCloser, _ int64) error {
 	if err := sftp.sftpClient.MkdirAll(path.Dir(key)); err != nil {
 		log.Warn().Msgf("sftp.sftpClient.MkdirAll(%s) err=%v", path.Dir(key), err)
 	}
@@ -510,62 +510,29 @@ func (sftp *SFTP) DeleteFileFromObjectDiskBackup(ctx context.Context, key string
 	}
 	if fileStat.IsDir() {
 		return sftp.DeleteDirectory(ctx, filePath)
-	} else {
-		return sftp.sftpClient.Remove(filePath)
 	}
+
+	return sftp.sftpClient.Remove(filePath)
 }
 
 // DeleteKeys implements BatchDeleter interface for SFTP
 // SFTP uses sequential deletion due to protocol limitations (single connection)
 func (sftp *SFTP) DeleteKeys(ctx context.Context, keys []string) error {
-	if len(keys) == 0 {
-		return nil
-	}
-
-	sftp.Debug("[SFTP_DEBUG] DeleteKeys: deleting %d keys sequentially", len(keys))
-
-	var failures []KeyError
-	deletedCount := 0
-
-	for _, key := range keys {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		filePath := path.Join(sftp.Config.Path, key)
-		err := sftp.deleteKeyInternal(ctx, filePath)
-		if err != nil {
-			// Check if it's a "not found" error - that's OK
-			if strings.Contains(err.Error(), "not exist") {
-				deletedCount++
-				continue
-			}
-			failures = append(failures, KeyError{Key: key, Err: err})
-			continue
-		}
-		deletedCount++
-	}
-
-	if len(failures) > 0 {
-		return &BatchDeleteError{
-			Message:  fmt.Sprintf("SFTP batch delete: %d keys deleted, %d failed", deletedCount, len(failures)),
-			Failures: failures,
-		}
-	}
-
-	log.Debug().Msgf("SFTP batch delete: successfully deleted %d keys", deletedCount)
-	return nil
+	return sftp.deleteKeysBatch(ctx, keys, sftp.Config.Path, "DeleteKeys")
 }
 
 // DeleteKeysFromObjectDiskBackup implements BatchDeleter interface for SFTP
 func (sftp *SFTP) DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []string) error {
+	return sftp.deleteKeysBatch(ctx, keys, sftp.Config.ObjectDiskPath, "DeleteKeysFromObjectDiskBackup")
+}
+
+// deleteKeysBatch deletes keys sequentially under basePath, shared by DeleteKeys and DeleteKeysFromObjectDiskBackup
+func (sftp *SFTP) deleteKeysBatch(ctx context.Context, keys []string, basePath, logPrefix string) error {
 	if len(keys) == 0 {
 		return nil
 	}
 
-	sftp.Debug("[SFTP_DEBUG] DeleteKeysFromObjectDiskBackup: deleting %d keys sequentially", len(keys))
+	sftp.Debug("[SFTP_DEBUG] %s: deleting %d keys sequentially", logPrefix, len(keys))
 
 	var failures []KeyError
 	deletedCount := 0
@@ -577,7 +544,7 @@ func (sftp *SFTP) DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []str
 		default:
 		}
 
-		filePath := path.Join(sftp.Config.ObjectDiskPath, key)
+		filePath := path.Join(basePath, key)
 		err := sftp.deleteKeyInternal(ctx, filePath)
 		if err != nil {
 			// Check if it's a "not found" error - that's OK

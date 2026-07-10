@@ -150,7 +150,7 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (a *AzureBlob) Close(ctx context.Context) error {
+func (a *AzureBlob) Close(_ context.Context) error {
 	return nil
 }
 
@@ -171,7 +171,7 @@ func (a *AzureBlob) GetFileReaderAbsolute(ctx context.Context, key string) (io.R
 	return resp.Body, nil
 }
 
-func (a *AzureBlob) GetFileReaderWithLocalPath(ctx context.Context, key, localPath string, remoteSize int64) (io.ReadCloser, error) {
+func (a *AzureBlob) GetFileReaderWithLocalPath(ctx context.Context, key, _ string, _ int64) (io.ReadCloser, error) {
 	return a.GetFileReader(ctx, key)
 }
 
@@ -382,7 +382,7 @@ func blobItemToFile(b *container.BlobItem, prefix string) *azureBlobFile {
 }
 
 // CopyObject server-side copy from srcBucket/srcKey to a.Config.Container/dstKey, both keys are absolute inside the container
-func (a *AzureBlob) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
+func (a *AzureBlob) CopyObject(ctx context.Context, _ int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	a.logf("AZBLOB->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, a.Config.Container, dstKey)
 	//ugly hack ;(
 	endpoint := a.Config.EndpointSuffix

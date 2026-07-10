@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 	"sync"
@@ -70,11 +72,32 @@ func (gcs *GCS) Kind() string {
 	return "GCS"
 }
 
+// detectGCSCredentialType inspects the `type` field of a Google credentials JSON
+// document and maps it to the option.CredentialsType required by WithAuthCredentialsJSON/File.
+func detectGCSCredentialType(data []byte) option.CredentialsType {
+	var probe struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return option.ServiceAccount
+	}
+	switch probe.Type {
+	case "authorized_user":
+		return option.AuthorizedUser
+	case "impersonated_service_account":
+		return option.ImpersonatedServiceAccount
+	case "external_account":
+		return option.ExternalAccount
+	default:
+		return option.ServiceAccount
+	}
+}
+
 type rewriteTransport struct {
 	base http.RoundTripper
 }
 
-// forces requests to target varnish and use HTTP, required to get uploading
+// RoundTrip forces requests to target varnish and use HTTP, required to get uploading
 // via varnish working
 func (r rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Scheme == "https" {
@@ -94,12 +117,17 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 	// 1. Build the credential option
 	var credOption option.ClientOption
 	if gcs.Config.CredentialsJSON != "" {
-		credOption = option.WithCredentialsJSON([]byte(gcs.Config.CredentialsJSON))
+		d := []byte(gcs.Config.CredentialsJSON)
+		credOption = option.WithAuthCredentialsJSON(detectGCSCredentialType(d), d)
 	} else if gcs.Config.CredentialsJSONEncoded != "" {
 		d, _ := base64.StdEncoding.DecodeString(gcs.Config.CredentialsJSONEncoded)
-		credOption = option.WithCredentialsJSON(d)
+		credOption = option.WithAuthCredentialsJSON(detectGCSCredentialType(d), d)
 	} else if gcs.Config.CredentialsFile != "" {
-		credOption = option.WithCredentialsFile(gcs.Config.CredentialsFile)
+		d, err := os.ReadFile(gcs.Config.CredentialsFile)
+		if err != nil {
+			return errors.Wrap(err, "GCS Connect failed to read credentials_file")
+		}
+		credOption = option.WithAuthCredentialsFile(detectGCSCredentialType(d), gcs.Config.CredentialsFile)
 	} else if gcs.Config.SAEmail != "" {
 		ts, err := impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{
 			TargetPrincipal: gcs.Config.SAEmail,
@@ -345,7 +373,7 @@ func (gcs *GCS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadC
 	return reader, nil
 }
 
-func (gcs *GCS) GetFileReaderWithLocalPath(ctx context.Context, key, localPath string, remoteSize int64) (io.ReadCloser, error) {
+func (gcs *GCS) GetFileReaderWithLocalPath(ctx context.Context, key, _ string, _ int64) (io.ReadCloser, error) {
 	return gcs.GetFileReader(ctx, key)
 }
 
@@ -353,7 +381,7 @@ func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser, localS
 	return gcs.PutFileAbsolute(ctx, path.Join(gcs.Config.Path, key), r, localSize)
 }
 
-func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
+func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, _ int64) error {
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
 		log.Error().Msgf("gcs.PutFile: gcs.clientPool.BorrowObject error: %+v", err)
@@ -561,7 +589,7 @@ func (gcs *GCS) deleteKeysConcurrent(ctx context.Context, keys []string) error {
 }
 
 // CopyObject server-side copy from srcBucket/srcKey to gcs.Config.Bucket/dstKey, both keys are absolute inside the bucket
-func (gcs *GCS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
+func (gcs *GCS) CopyObject(ctx context.Context, _ int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	log.Debug().Msgf("GCS->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, gcs.Config.Bucket, dstKey)
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {

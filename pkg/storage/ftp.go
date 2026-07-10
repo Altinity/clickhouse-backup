@@ -224,7 +224,7 @@ func (f *FTP) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadClo
 	}, err
 }
 
-func (f *FTP) GetFileReaderWithLocalPath(ctx context.Context, key, localPath string, remoteSize int64) (io.ReadCloser, error) {
+func (f *FTP) GetFileReaderWithLocalPath(ctx context.Context, key, _ string, _ int64) (io.ReadCloser, error) {
 	return f.GetFileReader(ctx, key)
 }
 
@@ -232,7 +232,7 @@ func (f *FTP) PutFile(ctx context.Context, key string, r io.ReadCloser, localSiz
 	return f.PutFileAbsolute(ctx, path.Join(f.Config.Path, key), r, localSize)
 }
 
-func (f *FTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
+func (f *FTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, _ int64) error {
 	where := fmt.Sprintf("PutFileReaderAbsolute->%s", key)
 	client, err := f.getConnectionFromPool(ctx, where)
 	defer f.returnConnectionToPool(ctx, where, client)
@@ -678,7 +678,7 @@ func (f *ftpPoolFactory) MakeObject(ctx context.Context) (*pool.PooledObject, er
 	return nil, errors.Errorf("ftpPoolFactory->MakeObject failed after %d attempts", maxRetries)
 }
 
-func (f *ftpPoolFactory) DestroyObject(ctx context.Context, object *pool.PooledObject) error {
+func (f *ftpPoolFactory) DestroyObject(_ context.Context, object *pool.PooledObject) error {
 	if err := object.Object.(*ftp.ServerConn).Quit(); err != nil {
 		log.Warn().Msgf("ftpPoolFactory->Destroy Quit error: %v", err)
 		return errors.Wrap(err, "ftpPoolFactory DestroyObject Quit")
@@ -686,7 +686,7 @@ func (f *ftpPoolFactory) DestroyObject(ctx context.Context, object *pool.PooledO
 	return nil
 }
 
-func (f *ftpPoolFactory) ValidateObject(ctx context.Context, object *pool.PooledObject) bool {
+func (f *ftpPoolFactory) ValidateObject(_ context.Context, object *pool.PooledObject) bool {
 	// Validate connection by sending NOOP command
 	conn := object.Object.(*ftp.ServerConn)
 	if err := conn.NoOp(); err != nil {
@@ -702,10 +702,10 @@ func (f *ftpPoolFactory) ValidateObject(ctx context.Context, object *pool.Pooled
 	return true
 }
 
-func (f *ftpPoolFactory) ActivateObject(ctx context.Context, object *pool.PooledObject) error {
+func (f *ftpPoolFactory) ActivateObject(_ context.Context, _ *pool.PooledObject) error {
 	return nil
 }
 
-func (f *ftpPoolFactory) PassivateObject(ctx context.Context, object *pool.PooledObject) error {
+func (f *ftpPoolFactory) PassivateObject(_ context.Context, _ *pool.PooledObject) error {
 	return nil
 }

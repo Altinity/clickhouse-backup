@@ -98,6 +98,13 @@ func TestHardlinksExistsFiles(t *testing.T) {
 
 		// move parts to another disk
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.1") >= 0 {
+			var partDisks []struct {
+				Name string `ch:"name"`
+				Disk string `ch:"disk_name"`
+			}
+			r.NoError(env.ch.Select(&partDisks, "SELECT name, disk_name FROM system.parts WHERE database=? AND `table`=? AND active", dbNameFull, tableName))
+			t.Logf("TestHardlinksExistsFiles [%s] part disks before explicit MOVE: %+v", compression, partDisks)
+
 			env.queryWithNoError(t, r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART 'all_1_1_0' TO DISK 'hdd2'")
 			env.queryWithNoError(t, r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART 'all_2_2_0' TO DISK 'hdd1'")
 		}

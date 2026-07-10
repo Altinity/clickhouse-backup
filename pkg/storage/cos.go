@@ -64,7 +64,7 @@ func (c *COS) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (c *COS) Close(ctx context.Context) error {
+func (c *COS) Close(_ context.Context) error {
 	return nil
 }
 
@@ -204,9 +204,9 @@ func (c *COS) GetFileReaderWithLocalPath(ctx context.Context, key, localPath str
 
 		// Reopen the file for reading
 		return writer, nil
-	} else {
-		return c.GetFileReader(ctx, key)
 	}
+
+	return c.GetFileReader(ctx, key)
 }
 
 func (c *COS) PutFile(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
