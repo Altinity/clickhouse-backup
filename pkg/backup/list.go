@@ -106,6 +106,7 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 		}
 		return nil
 	case "csv":
+		gocsv.SetCSVWriter(gocsv.DefaultCSVWriter)
 		csvString, err := gocsv.MarshalString(backupInfos)
 		if err != nil {
 			log.Error().Msgf("gocsv.MarshalString return error: %v", err)
@@ -1061,6 +1062,7 @@ func printLiveTableRows(rows []TableRow, format string) error {
 		fmt.Print(string(data))
 		return nil
 	case "csv":
+		gocsv.SetCSVWriter(gocsv.DefaultCSVWriter)
 		s, err := gocsv.MarshalString(rows)
 		if err != nil {
 			return errors.Wrap(err, "printLiveTableRows csv MarshalString")
@@ -1168,6 +1170,7 @@ func printBackupSections(sections []tableSection, format string) error {
 		fmt.Print(string(data))
 		return nil
 	case "csv":
+		gocsv.SetCSVWriter(gocsv.DefaultCSVWriter)
 		for i, s := range sections {
 			if i > 0 {
 				fmt.Println()
@@ -1220,17 +1223,14 @@ func renderTextSection(s tableSection) error {
 			return err
 		}
 	}
+	if _, err := fmt.Fprintln(w); err != nil {
+		return err
+	}
 	if len(s.Rows) == 0 {
-		if _, err := fmt.Fprintln(w); err != nil {
-			return err
-		}
 		if _, err := fmt.Fprintln(w, "(no tables)"); err != nil {
 			return err
 		}
 		return w.Flush()
-	}
-	if _, err := fmt.Fprintln(w); err != nil {
-		return err
 	}
 	if _, err := fmt.Fprintln(w, "TABLE\tSIZE\tPARTS\tDISKS\tFLAGS"); err != nil {
 		return err
@@ -1258,76 +1258,4 @@ func renderTextSection(s tableSection) error {
 		return err
 	}
 	return w.Flush()
-}
-
-func (b *Backuper) GetTablesRemote(ctx context.Context, backupName string, tablePattern string) ([]clickhouse.Table, error) {
-	if !b.ch.IsOpen {
-		if err := b.ch.Connect(); err != nil {
-			return []clickhouse.Table{}, errors.Wrap(err, "can't connect to clickhouse")
-		}
-		defer b.ch.Close()
-	}
-	if b.cfg.General.RemoteStorage == "none" || b.cfg.General.RemoteStorage == "custom" {
-		return nil, errors.New("GetTablesRemote does not support `none` and `custom` remote storage")
-	}
-	if b.dst == nil {
-		bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
-		if err != nil {
-			return nil, errors.Wrap(err, "GetTablesRemote NewBackupDestination")
-		}
-		err = bd.Connect(ctx)
-		if err != nil {
-			return nil, errors.Wrap(err, "can't connect to remote storage")
-		}
-		defer func() {
-			if err := bd.Close(ctx); err != nil {
-				log.Warn().Msgf("can't close BackupDestination error: %v", err)
-			}
-		}()
-
-		b.dst = bd
-	}
-	backupList, err := b.dst.BackupList(ctx, true, backupName)
-	if err != nil {
-		return nil, errors.Wrap(err, "GetTablesRemote BackupList")
-	}
-
-	var tables []clickhouse.Table
-	tablePatterns := []string{"*"}
-
-	if tablePattern != "" {
-		tablePatterns = strings.Split(tablePattern, ",")
-	}
-
-	for _, remoteBackup := range backupList {
-		if remoteBackup.BackupName == backupName {
-			// https://github.com/Altinity/clickhouse-backup/issues/1091
-			replacer := strings.NewReplacer("/", "_", `\`, "_")
-
-			for _, t := range remoteBackup.Tables {
-				isInformationSchema := IsInformationSchema(t.Database)
-				tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
-				shallSkipped := b.shouldSkipByTableName(tableName)
-				matched := false
-				for _, pattern := range tablePatterns {
-					// https://github.com/Altinity/clickhouse-backup/issues/1091
-					if pattern == "*" {
-						matched = true
-						break
-					}
-					// https://github.com/Altinity/clickhouse-backup/issues/1091
-					if matched, _ = filepath.Match(replacer.Replace(strings.Trim(pattern, " \t\r\n")), replacer.Replace(tableName)); matched {
-						break
-					}
-				}
-				tables = append(tables, clickhouse.Table{
-					Database: t.Database,
-					Name:     t.Table,
-					Skip:     !matched || (isInformationSchema || shallSkipped),
-				})
-			}
-		}
-	}
-
-	return tables, nil
 }
