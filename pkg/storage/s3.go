@@ -246,7 +246,7 @@ func (s *S3) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (s *S3) Close(ctx context.Context) error {
+func (s *S3) Close(_ context.Context) error {
 	return nil
 }
 
