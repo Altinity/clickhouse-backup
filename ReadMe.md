@@ -486,6 +486,8 @@ Print list of tables: `curl -s localhost:7171/backup/tables | jq .`, exclude pat
 - Optional query argument `table` works the same as the `--table=pattern` CLI argument.
 - Optional query argument `remote_backup` (or `remote-backup`) works the same as the `--remote-backup=name` CLI argument. The response then includes per-table `size`, `total_bytes`, `parts`, and `disks` (JSON array of disk names) fields read from the remote backup metadata.
 - Optional query argument `local_backup` (or `local-backup`) works the same as the `--local-backup=name` CLI argument: it lists tables from a local backup directly from disk (no live ClickHouse query required), with `size`, `total_bytes`, `parts`, and `disks` (JSON array) fields.
+- Optional boolean query argument `list_parts` (alias `parts`) works the same as the `--list-parts`/`--parts` CLI argument: it attaches a `parts_list` array per table (`name`, `partition_id`, and against the live server also `total_bytes`/`size`). Works standalone against the live server or together with `remote_backup`/`local_backup`; against a remote/local backup, `partition_id` is derived from the `_`-delimited prefix of each part's name (no size available there).
+- Optional boolean query argument `partitions` (alias `list_partitions`) works the same as the `--partitions`/`--list-partitions` CLI argument: it attaches a `partitions` array per table (`partition_id`, and against the live server also `partition`/`parts`/`total_bytes`/`size`), aggregated from parts. Independent of `list_parts`; against a remote/local backup, `partition_id` is derived the same way as `list_parts` (no partition value or size available there).
 
 ### GET /backup/tables/all
 
@@ -494,6 +496,7 @@ Print list of tables: `curl -s localhost:7171/backup/tables/all | jq .`, ignore 
 - Optional query argument `table` works the same as the `--table=pattern` CLI argument.
 - Optional query argument `remote_backup` (or `remote-backup`) works the same as the `--remote-backup=name` CLI argument; response shape matches `GET /backup/tables` with the remote-backup parameter.
 - Optional query argument `local_backup` (or `local-backup`) works the same as the `--local-backup=name` CLI argument; response shape matches `GET /backup/tables` with the local-backup parameter.
+- Optional boolean query arguments `list_parts`/`parts` and `partitions`/`list_partitions` work the same as on `GET /backup/tables`.
 
 ### POST /backup/create
 
@@ -732,16 +735,22 @@ NAME:
    clickhouse-backup tables - List of tables, exclude skip_tables
 
 USAGE:
-   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all]
+   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all] [--parts] [--partitions]
 
 OPTIONS:
-   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --environment-override value, --env value  override any environment variable via CLI parameter
-   --all, -a                                  Print table even when match with skip_tables pattern
-   --table value, --tables value, -t value    List tables only match with table name patterns, separated by comma, allow ? and * as wildcard
-   --remote-backup value                      List tables from a remote backup, including per-table size and parts count
-   --local-backup value                       List tables from a local backup (read from disk, no live ClickHouse query), including per-table size and parts count
-   --format value, -f value                   Output format (text|json|yaml|csv|tsv)
+   --config value, -c value                         Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value        override any environment variable via CLI parameter
+   --all, -a                                        Print table even when match with skip_tables pattern
+   --table value, --tables value, -t value          List tables only match with table name patterns, separated by comma, allow ? and * as wildcard
+   --remote-backup value                            List tables from a remote backup, including per-table size and parts count
+   --local-backup value                             List tables from a local backup (read from disk, no live ClickHouse query), including per-table size and parts count
+   --format value, -f value                         Output format (text|json|yaml|csv|tsv)
+   --parts system.parts, --list-parts system.parts  Also list every physical part for each table (name, partition_id, size)
+Against the live server, reads name/partition_id/bytes_on_disk from system.parts
+Against --local-backup/--remote-backup, reads part names from backup metadata (partition_id derived from the name, no size available)
+   --partitions system.parts, --list-partitions system.parts  Also list the distinct partitions for each table (partition_id, partition, parts count, size), aggregated from parts
+Against the live server, reads partition_id/partition/parts/size from system.parts
+Against --local-backup/--remote-backup, derives partition_id and parts count from part names (no partition value or per-partition size available)
    
 ```
 ### CLI command - create

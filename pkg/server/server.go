@@ -799,6 +799,13 @@ func (api *APIServer) httpKillHandler(w http.ResponseWriter, r *http.Request) {
 //   - table            - filter by db.table glob pattern (comma-separated)
 //   - remote_backup    - list tables from a remote backup (per-table size and parts)
 //   - local_backup     - list tables from a local backup (per-table size and parts), no live ClickHouse query needed
+//   - list_parts (alias parts) - also attach every physical part (name, partition_id, and against the live
+//     server also size) per table; works standalone against the live server or local_backup/remote_backup alike
+//   - partitions (alias list_partitions) - also attach the distinct partitions (partition_id, partition, parts
+//     count, size) per table, aggregated from parts; independent of list_parts, works the same way
+//
+// Against local_backup/remote_backup, partition_id is derived from each part's name (the `_`-delimited
+// prefix), so the human-readable partition value and per-partition/per-part size aren't available there.
 //
 // /backup/tables/all also returns tables that match skip_tables.
 func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) {
@@ -810,10 +817,12 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 	q := r.URL.Query()
 	tablePattern := q.Get("table")
 	printAll := r.URL.Path == "/backup/tables/all"
+	listParts := boolQueryParameter(q, "list_parts", "parts")
+	listPartitions := boolQueryParameter(q, "partitions", "list_partitions")
 
 	// https://github.com/Altinity/clickhouse-backup/issues/1388
 	if localBackup, exists := api.getQueryParameter(q, "local_backup"); exists {
-		rows, err := b.GetTableRowsForLocalBackup(context.Background(), localBackup, tablePattern, printAll)
+		rows, err := b.GetTableRowsForLocalBackup(context.Background(), localBackup, tablePattern, printAll, listParts, listPartitions)
 		if err != nil {
 			api.writeError(w, http.StatusInternalServerError, "tables", err)
 			return
@@ -822,7 +831,16 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if remoteBackup, exists := api.getQueryParameter(q, "remote_backup"); exists {
-		rows, err := b.GetTableRowsForRemoteBackup(context.Background(), remoteBackup, tablePattern, printAll)
+		rows, err := b.GetTableRowsForRemoteBackup(context.Background(), remoteBackup, tablePattern, printAll, listParts, listPartitions)
+		if err != nil {
+			api.writeError(w, http.StatusInternalServerError, "tables", err)
+			return
+		}
+		api.sendJSONEachRow(w, http.StatusOK, rows)
+		return
+	}
+	if listParts || listPartitions {
+		rows, err := b.GetTableRowsForLive(context.Background(), tablePattern, printAll, listParts, listPartitions)
 		if err != nil {
 			api.writeError(w, http.StatusInternalServerError, "tables", err)
 			return
@@ -2686,4 +2704,14 @@ func (api *APIServer) getQueryParameter(q url.Values, paramName string) (string,
 		}
 	}
 	return "", false
+}
+
+// boolQueryParameter reports whether any of the given query parameter aliases is set to "1" or "true".
+func boolQueryParameter(q url.Values, names ...string) bool {
+	for _, name := range names {
+		if v := q.Get(name); v == "1" || v == "true" {
+			return true
+		}
+	}
+	return false
 }

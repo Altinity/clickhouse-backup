@@ -4,16 +4,22 @@ NAME:
    clickhouse-backup tables - List of tables, exclude skip_tables
 
 USAGE:
-   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all]
+   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all] [--parts] [--partitions]
 
 OPTIONS:
-   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --environment-override value, --env value  override any environment variable via CLI parameter
-   --all, -a                                  Print table even when match with skip_tables pattern
-   --table value, --tables value, -t value    List tables only match with table name patterns, separated by comma, allow ? and * as wildcard
-   --remote-backup value                      List tables from a remote backup, including per-table size and parts count
-   --local-backup value                       List tables from a local backup (read from disk, no live ClickHouse query), including per-table size and parts count
-   --format value, -f value                   Output format (text|json|yaml|csv|tsv)
+   --config value, -c value                         Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value        override any environment variable via CLI parameter
+   --all, -a                                        Print table even when match with skip_tables pattern
+   --table value, --tables value, -t value          List tables only match with table name patterns, separated by comma, allow ? and * as wildcard
+   --remote-backup value                            List tables from a remote backup, including per-table size and parts count
+   --local-backup value                             List tables from a local backup (read from disk, no live ClickHouse query), including per-table size and parts count
+   --format value, -f value                         Output format (text|json|yaml|csv|tsv)
+   --parts system.parts, --list-parts system.parts  Also list every physical part for each table (name, partition_id, size)
+Against the live server, reads name/partition_id/bytes_on_disk from system.parts
+Against --local-backup/--remote-backup, reads part names from backup metadata (partition_id derived from the name, no size available)
+   --partitions system.parts, --list-partitions system.parts  Also list the distinct partitions for each table (partition_id, partition, parts count, size), aggregated from parts
+Against the live server, reads partition_id/partition/parts/size from system.parts
+Against --local-backup/--remote-backup, derives partition_id and parts count from part names (no partition value or per-partition size available)
    
 ```
 ### CLI command - create
@@ -208,6 +214,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --restore-schema-as-attach                                                        Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --replicated-copy-to-detached                                                     Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step
    --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
+   --rebind-replica-path-if-exists                                                   Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent
    
 ```
 ### CLI command - restore_remote
@@ -246,6 +253,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --restore-schema-as-attach                                                        Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --hardlink-exists-files                                                           Create hardlinks for existing files instead of downloading
    --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
+   --rebind-replica-path-if-exists                                                   Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent
    
 ```
 ### CLI command - delete

@@ -144,3 +144,145 @@ func TestTablesCommand(t *testing.T) {
 	fullCleanup(t, r, env, []string{testBackupName}, []string{"remote", "local"}, databaseList, true, true, true, "config-s3.yml")
 	env.checkObjectStorageIsEmpty(t, r, "S3", "config-s3.yml")
 }
+
+// TestTablesCommandListParts exercises `clickhouse-backup tables --list-parts` (alias --parts)
+// and `--partitions` (alias --list-partitions). The two flags are independent of each other and
+// both work standalone against the live server, --local-backup, and --remote-backup alike.
+// Against the live server, both are read straight from `system.parts`. Against
+// --local-backup/--remote-backup, partition_id is derived from each part's name (the
+// `_`-delimited prefix, same convention as filesystemhelper.IsPartInPartition), so the
+// human-readable partition value and any size are only available against the live server.
+func TestTablesCommandListParts(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+
+	testBackupName := "test_backup_tables_list_parts"
+	dbName := "test_list_parts_db_" + t.Name()
+	tableName := "part_table"
+	fullTableName := dbName + "." + tableName
+
+	r.NoError(env.dropDatabase(dbName, true))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.`%s` (id UInt64, dt Date) ENGINE=MergeTree PARTITION BY toYYYYMM(dt) ORDER BY id", dbName, tableName))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.`%s` SELECT number, '2022-01-01' FROM numbers(10)", dbName, tableName))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.`%s` SELECT number, '2022-02-01' FROM numbers(10)", dbName, tableName))
+
+	findRow := func(rows []interface{}) map[string]interface{} {
+		for _, raw := range rows {
+			row, _ := raw.(map[string]interface{})
+			if row["database"] == dbName {
+				return row
+			}
+		}
+		return nil
+	}
+
+	// Live, --list-parts alone -- one PartRow per physical part, partitions key absent.
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-c",
+		"clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml tables --tables '"+fullTableName+"' --list-parts --format json 2>/dev/null")
+	r.NoError(err, "%s\nunexpected tables --list-parts error: %v", out, err)
+	var liveRows []interface{}
+	r.NoError(json.Unmarshal([]byte(out), &liveRows), "json output is not parseable: %s", out)
+	liveRow := findRow(liveRows)
+	r.NotNil(liveRow, "expected row for %s in: %s", fullTableName, out)
+	livePartsRaw, ok := liveRow["parts_list"].([]interface{})
+	r.True(ok, "expected parts_list array: %v", liveRow)
+	r.Len(livePartsRaw, 2, "expected 2 parts, got: %v", livePartsRaw)
+	r.NotContains(liveRow, "partitions", "--list-parts alone must not attach partitions: %v", liveRow)
+	for _, raw := range livePartsRaw {
+		p, _ := raw.(map[string]interface{})
+		r.NotEmpty(p["name"], "missing part name: %v", p)
+		r.NotEmpty(p["partition_id"], "missing partition_id: %v", p)
+		r.NotEmpty(p["size"], "missing size on live part: %v", p)
+	}
+
+	// Live, --partitions alone (alias --list-partitions) -- one PartitionRow per partition_id,
+	// with partition/parts/size populated; parts_list key absent.
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c",
+		"clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml tables --tables '"+fullTableName+"' --list-partitions --format json 2>/dev/null")
+	r.NoError(err, "%s\nunexpected tables --list-partitions error: %v", out, err)
+	var livePartitionRows []interface{}
+	r.NoError(json.Unmarshal([]byte(out), &livePartitionRows), "json output is not parseable: %s", out)
+	livePartitionRow := findRow(livePartitionRows)
+	r.NotNil(livePartitionRow, "expected row for %s in: %s", fullTableName, out)
+	livePartitionsRaw, ok := livePartitionRow["partitions"].([]interface{})
+	r.True(ok, "expected partitions array: %v", livePartitionRow)
+	r.Len(livePartitionsRaw, 2, "expected 2 partitions, got: %v", livePartitionsRaw)
+	r.NotContains(livePartitionRow, "parts_list", "--partitions alone must not attach parts_list: %v", livePartitionRow)
+	for _, raw := range livePartitionsRaw {
+		p, _ := raw.(map[string]interface{})
+		r.NotEmpty(p["partition_id"], "missing partition_id: %v", p)
+		r.NotEmpty(p["partition"], "missing partition: %v", p)
+		r.EqualValues(1, p["parts"], "expected 1 part per partition: %v", p)
+		r.NotEmpty(p["size"], "missing size on live partition: %v", p)
+	}
+
+	// Live, --parts --list-partitions (both aliases at once) -- both keys attached together.
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c",
+		"clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml tables --tables '"+fullTableName+"' --parts --list-partitions --format json 2>/dev/null")
+	r.NoError(err, "%s\nunexpected tables --parts --list-partitions error: %v", out, err)
+	var bothRows []interface{}
+	r.NoError(json.Unmarshal([]byte(out), &bothRows), "json output is not parseable: %s", out)
+	bothRow := findRow(bothRows)
+	r.NotNil(bothRow, "expected row for %s in: %s", fullTableName, out)
+	_, hasParts := bothRow["parts_list"].([]interface{})
+	_, hasPartitions := bothRow["partitions"].([]interface{})
+	r.True(hasParts, "expected parts_list when both flags set: %v", bothRow)
+	r.True(hasPartitions, "expected partitions when both flags set: %v", bothRow)
+
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--tables", fullTableName, testBackupName)
+
+	// --local-backup, --list-parts -- partition_id derived from part names, no size available.
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c",
+		"clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml tables --local-backup "+testBackupName+" --list-parts --format json 2>/dev/null")
+	r.NoError(err, "%s\nunexpected tables --local-backup --list-parts error: %v", out, err)
+	var localPartsResult map[string]interface{}
+	r.NoError(json.Unmarshal([]byte(out), &localPartsResult), "json output is not parseable: %s", out)
+	localPartsRows, _ := localPartsResult["tables"].([]interface{})
+	localPartsRow := findRow(localPartsRows)
+	r.NotNil(localPartsRow, "expected row for %s in local backup: %s", fullTableName, out)
+	localParts, _ := localPartsRow["parts_list"].([]interface{})
+	r.Len(localParts, 2, "expected 2 parts from local backup metadata, got: %v", localParts)
+	for _, raw := range localParts {
+		p, _ := raw.(map[string]interface{})
+		r.NotEmpty(p["name"], "missing part name: %v", p)
+		r.NotEmpty(p["partition_id"], "missing partition_id: %v", p)
+	}
+
+	// --local-backup, --partitions -- aggregated from part names, no partition value/size.
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c",
+		"clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml tables --local-backup "+testBackupName+" --partitions --format json 2>/dev/null")
+	r.NoError(err, "%s\nunexpected tables --local-backup --partitions error: %v", out, err)
+	var localPartitionsResult map[string]interface{}
+	r.NoError(json.Unmarshal([]byte(out), &localPartitionsResult), "json output is not parseable: %s", out)
+	localPartitionsRows, _ := localPartitionsResult["tables"].([]interface{})
+	localPartitionsRow := findRow(localPartitionsRows)
+	r.NotNil(localPartitionsRow, "expected row for %s in local backup: %s", fullTableName, out)
+	localPartitions, _ := localPartitionsRow["partitions"].([]interface{})
+	r.Len(localPartitions, 2, "expected 2 partitions from local backup metadata, got: %v", localPartitions)
+	for _, raw := range localPartitions {
+		p, _ := raw.(map[string]interface{})
+		r.NotEmpty(p["partition_id"], "missing partition_id: %v", p)
+		r.EqualValues(1, p["parts"], "expected 1 part per partition: %v", p)
+	}
+
+	// --remote-backup, --list-parts and --partitions -- same behavior as --local-backup.
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c",
+		"clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml tables --remote-backup "+testBackupName+" --list-parts --partitions --format json 2>/dev/null")
+	r.NoError(err, "%s\nunexpected tables --remote-backup --list-parts --partitions error: %v", out, err)
+	var remoteResult map[string]interface{}
+	r.NoError(json.Unmarshal([]byte(out), &remoteResult), "json output is not parseable: %s", out)
+	remoteRows, _ := remoteResult["tables"].([]interface{})
+	remoteRow := findRow(remoteRows)
+	r.NotNil(remoteRow, "expected row for %s in remote backup: %s", fullTableName, out)
+	remoteParts, _ := remoteRow["parts_list"].([]interface{})
+	remotePartitions, _ := remoteRow["partitions"].([]interface{})
+	r.Len(remoteParts, 2, "expected 2 parts from remote backup metadata, got: %v", remoteParts)
+	r.Len(remotePartitions, 2, "expected 2 partitions from remote backup metadata, got: %v", remotePartitions)
+
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", testBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", testBackupName)
+	r.NoError(env.dropDatabase(dbName, true))
+	env.checkObjectStorageIsEmpty(t, r, "S3", "config-s3.yml")
+}
