@@ -36,7 +36,9 @@ func TestWatchSchedule(t *testing.T) {
 	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+".t1 (id UInt64) ENGINE=MergeTree() ORDER BY id")
 	env.queryWithNoError(t, r, "INSERT INTO "+dbName+".t1 SELECT number FROM numbers(1000)")
 
-	schedule := fmt.Sprintf("name=%s,full=*/45 * * * * *,increment=*/15 * * * * *,full_type=rebase,delete_previous_cycle=true", prefix)
+	// full at second 50 once per minute, increment at seconds 0/15/30/45 - `*/45` in the seconds field means {0,45}
+	// and would always coincide with increment ticks where full wins, so increments would never run
+	schedule := fmt.Sprintf("name=%s,full=50 * * * * *,increment=*/15 * * * * *,full_type=rebase,delete_previous_cycle=true", prefix)
 	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce",
 		"BACKUPS_TO_KEEP_REMOTE=0 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml watch --tables="+dbName+".* --schedule \""+schedule+"\" &>>/tmp/watch_schedule.log")
 	defer func() {
@@ -75,7 +77,7 @@ func TestWatchSchedule(t *testing.T) {
 			}
 		}
 		log.Debug().Msgf("observedFulls=%v, matched=%v", observedFulls, matched)
-		if len(observedFulls) >= 2 && len(fulls) == 1 {
+		if observedIncrement && len(observedFulls) >= 2 && len(fulls) == 1 {
 			deletePreviousCycleApplied = true
 			break
 		}
