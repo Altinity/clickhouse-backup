@@ -45,6 +45,10 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration.xml
               <disk>hdd2</disk>
           </cold_volume>
         </volumes>
+        <!-- disable free-space-based background moves: on CI the runner disk is >90% full,
+             so the default move_factor=0.1 moves parts off the hot volume right after INSERT
+             and makes explicit MOVE PART targets in tests non-deterministic -->
+        <move_factor>0</move_factor>
       </hot_and_cold>
     </policies>
   </storage_configuration>

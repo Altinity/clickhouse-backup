@@ -102,11 +102,20 @@ func TestHardlinksExistsFiles(t *testing.T) {
 				Name string `ch:"name"`
 				Disk string `ch:"disk_name"`
 			}
-			r.NoError(env.ch.Select(&partDisks, "SELECT name, disk_name FROM system.parts WHERE database=? AND `table`=? AND active", dbNameFull, tableName))
+			r.NoError(env.ch.Select(&partDisks, "SELECT name, disk_name FROM system.parts WHERE database=? AND `table`=? AND active ORDER BY name", dbNameFull, tableName))
 			t.Logf("TestHardlinksExistsFiles [%s] part disks before explicit MOVE: %+v", compression, partDisks)
 
-			env.queryWithNoError(t, r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART 'all_1_1_0' TO DISK 'hdd2'")
-			env.queryWithNoError(t, r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART 'all_2_2_0' TO DISK 'hdd1'")
+			// alternate targets between hdd2/hdd1, skipping the disk the part is
+			// already on: the background MergeTreePartsMover may have moved parts
+			// off the hot volume, and MOVE PART to the current disk fails with code 479
+			targets := []string{"hdd2", "hdd1"}
+			for i, p := range partDisks {
+				target := targets[i%2]
+				if p.Disk == target {
+					target = targets[(i+1)%2]
+				}
+				env.queryWithNoError(t, r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART '"+p.Name+"' TO DISK '"+target+"'")
+			}
 		}
 
 		// Delete local backups
