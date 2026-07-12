@@ -168,7 +168,7 @@ func (api *APIServer) RunWatch(cliCtx *cli.Context) {
 	log.Info().Msg("Starting API Server in watch mode")
 	b := backup.NewBackuper(api.config)
 	commandId, _ := status.Current.Start("watch")
-	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), "*.*", nil, nil, false, false, false, false, false, cliCtx.Bool("watch-delete-source"), api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
+	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), cliCtx.StringSlice("schedule"), "*.*", nil, nil, false, false, false, false, false, cliCtx.Bool("watch-delete-source"), api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
 	api.handleWatchResponse(commandId, err)
 }
 
@@ -607,6 +607,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	watchInterval := ""
 	fullInterval := ""
 	watchBackupNameTemplate := ""
+	schedules := make([]string, 0)
 	fullCommand := "watch"
 
 	simpleParseArg := func(i int, args []string, paramName string) (bool, string) {
@@ -622,23 +623,32 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 					return true, ""
 				}
 			} else {
-				return true, strings.ReplaceAll(strings.SplitN(args[i], "=", 1)[1], "\"", "")
+				return true, strings.ReplaceAll(strings.SplitN(args[i], "=", 2)[1], "\"", "")
 			}
 		}
 		return false, ""
 	}
 	for i := range args {
 		matchParam := false
-		if matchParam, watchInterval = simpleParseArg(i, args, "--watch-interval"); matchParam {
+		// assign only on match, unconditional `param = simpleParseArg(...)` resets the value back to "" on every non-matching arg
+		if matchParam, watchIntervalFromArgs := simpleParseArg(i, args, "--watch-interval"); matchParam {
+			watchInterval = watchIntervalFromArgs
 			fullCommand = fmt.Sprintf("%s --watch-interval=\"%s\"", fullCommand, watchInterval)
 		}
-		if matchParam, fullInterval = simpleParseArg(i, args, "--full-interval"); matchParam {
+		if matchParam, fullIntervalFromArgs := simpleParseArg(i, args, "--full-interval"); matchParam {
+			fullInterval = fullIntervalFromArgs
 			fullCommand = fmt.Sprintf("%s --full-interval=\"%s\"", fullCommand, fullInterval)
 		}
-		if matchParam, watchBackupNameTemplate = simpleParseArg(i, args, "--watch-backup-name-template"); matchParam {
+		if matchParam, watchBackupNameTemplateFromArgs := simpleParseArg(i, args, "--watch-backup-name-template"); matchParam {
+			watchBackupNameTemplate = watchBackupNameTemplateFromArgs
 			fullCommand = fmt.Sprintf("%s --watch-backup-name-template=\"%s\"", fullCommand, watchBackupNameTemplate)
 		}
-		if matchParam, tablePattern = simpleParseArg(i, args, "--tables"); matchParam {
+		if matchParam, scheduleFromArgs := simpleParseArg(i, args, "--schedule"); matchParam {
+			schedules = append(schedules, scheduleFromArgs)
+			fullCommand = fmt.Sprintf("%s --schedule=\"%s\"", fullCommand, scheduleFromArgs)
+		}
+		if matchParam, tablePatternFromArgs := simpleParseArg(i, args, "--tables"); matchParam {
+			tablePattern = tablePatternFromArgs
 			fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 		}
 		if matchParam, partitions := simpleParseArg(i, args, "--partitions"); matchParam {
@@ -678,7 +688,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, schedules, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		api.handleWatchResponse(commandId, err)
 	}()
 
@@ -1302,6 +1312,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	watchInterval := ""
 	fullInterval := ""
 	watchBackupNameTemplate := ""
+	schedules := make([]string, 0)
 	fullCommand := "watch"
 	query := r.URL.Query()
 	if interval, exist := api.getQueryParameter(query, "watch_interval"); exist {
@@ -1315,6 +1326,10 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	if template, exist := api.getQueryParameter(query, "watch_backup_name_template"); exist {
 		watchBackupNameTemplate = template
 		fullCommand = fmt.Sprintf("%s --watch-backup-name-template=\"%s\"", fullCommand, watchBackupNameTemplate)
+	}
+	if scheduleParams, exist := query["schedule"]; exist {
+		schedules = append(schedules, scheduleParams...)
+		fullCommand = fmt.Sprintf("%s --schedule=\"%s\"", fullCommand, strings.Join(scheduleParams, "\" --schedule=\""))
 	}
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
@@ -1370,7 +1385,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, schedules, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		api.handleWatchResponse(commandId, err)
 	}()
 	api.sendJSONEachRow(w, http.StatusCreated, struct {

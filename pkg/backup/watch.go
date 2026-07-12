@@ -17,9 +17,13 @@ import (
 var watchBackupTemplateTimeRE = regexp.MustCompile(`{time:([^}]+)}`)
 
 func (b *Backuper) NewBackupWatchName(ctx context.Context, backupType string) (string, error) {
-	backupName, err := b.ch.ApplyMacros(ctx, b.cfg.General.WatchBackupNameTemplate)
+	return b.newBackupWatchNameFromTemplate(ctx, b.cfg.General.WatchBackupNameTemplate, backupType)
+}
+
+func (b *Backuper) newBackupWatchNameFromTemplate(ctx context.Context, template, backupType string) (string, error) {
+	backupName, err := b.ch.ApplyMacros(ctx, template)
 	if err != nil {
-		return "", errors.Wrap(err, "NewBackupWatchName ApplyMacros")
+		return "", errors.Wrap(err, "newBackupWatchNameFromTemplate ApplyMacros")
 	}
 	backupName = strings.Replace(backupName, "{type}", backupType, -1)
 	if watchBackupTemplateTimeRE.MatchString(backupName) {
@@ -34,8 +38,22 @@ func (b *Backuper) NewBackupWatchName(ctx context.Context, backupType string) (s
 	return backupName, nil
 }
 
-func (b *Backuper) ValidateWatchParams(watchInterval, fullInterval, watchBackupNameTemplate string) error {
+func (b *Backuper) ValidateWatchParams(watchInterval, fullInterval, watchBackupNameTemplate string, schedules []string) error {
 	var err error
+	if watchBackupNameTemplate != "" {
+		b.cfg.General.WatchBackupNameTemplate = watchBackupNameTemplate
+	}
+	if len(schedules) > 0 {
+		if b.cfg.General.WatchSchedules, err = config.ParseWatchSchedules(schedules); err != nil {
+			return err
+		}
+	}
+	if len(b.cfg.General.WatchSchedules) > 0 {
+		if watchInterval != "" || fullInterval != "" {
+			return errors.New("--schedule and general->watch_schedules are mutually exclusive with --watch-interval and --full-interval")
+		}
+		return b.cfg.General.WatchSchedules.Validate()
+	}
 	if watchInterval != "" {
 		b.cfg.General.WatchInterval = watchInterval
 		if b.cfg.General.WatchDuration, err = time.ParseDuration(watchInterval); err != nil {
@@ -51,9 +69,6 @@ func (b *Backuper) ValidateWatchParams(watchInterval, fullInterval, watchBackupN
 	if b.cfg.General.FullDuration <= b.cfg.General.WatchDuration {
 		return errors.Errorf("fullInterval `%s` should be more than watchInterval `%s`", b.cfg.General.FullInterval, b.cfg.General.WatchInterval)
 	}
-	if watchBackupNameTemplate != "" {
-		b.cfg.General.WatchBackupNameTemplate = watchBackupNameTemplate
-	}
 	if b.cfg.General.BackupsToKeepRemote > 0 && b.cfg.General.WatchDuration.Seconds()*float64(b.cfg.General.BackupsToKeepRemote) < b.cfg.General.FullDuration.Seconds() {
 		return errors.Errorf("fullInterval `%s` is too long to keep %d remote backups with watchInterval `%s`", b.cfg.General.FullInterval, b.cfg.General.BackupsToKeepRemote, b.cfg.General.WatchInterval)
 	}
@@ -67,7 +82,7 @@ func (b *Backuper) ValidateWatchParams(watchInterval, fullInterval, watchBackupN
 //
 // - each watch-interval, run create_remote increment --diff-from=prev-name + delete local increment, even when upload failed
 //   - save previous backup type incremental, next try will also incremental, until reach full interval
-func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource bool, version string, commandId int, metrics *metrics.APIMetrics, cliCtx *cli.Context) error {
+func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate string, schedules []string, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource bool, version string, commandId int, metrics *metrics.APIMetrics, cliCtx *cli.Context) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return errors.WithStack(err)
@@ -82,8 +97,11 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 		defer b.ch.Close()
 	}
 
-	if err := b.ValidateWatchParams(watchInterval, fullInterval, watchBackupNameTemplate); err != nil {
+	if err := b.ValidateWatchParams(watchInterval, fullInterval, watchBackupNameTemplate, schedules); err != nil {
 		return errors.Wrap(err, "Watch ValidateWatchParams")
+	}
+	if len(b.cfg.General.WatchSchedules) > 0 {
+		return b.watchWithSchedules(ctx, watchInterval, fullInterval, watchBackupNameTemplate, schedules, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, version, commandId, metrics, cliCtx)
 	}
 	backupType := "full"
 	prevBackupName := ""
@@ -116,7 +134,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 				} else {
 					log.Warn().Msgf("watch config.LoadConfig error: %v", err)
 				}
-				if err := b.ValidateWatchParams(watchInterval, fullInterval, watchBackupNameTemplate); err != nil {
+				if err := b.ValidateWatchParams(watchInterval, fullInterval, watchBackupNameTemplate, schedules); err != nil {
 					return errors.Wrap(err, "Watch ValidateWatchParams in loop")
 				}
 			}

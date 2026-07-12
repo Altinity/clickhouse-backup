@@ -111,7 +111,7 @@ func TestGCSEncryptionKeyValidation(t *testing.T) {
 					EncryptionKey: tc.encryptionKey,
 					// These are required for Connect but we'll test key validation
 					// before actual connection by checking the error
-					Bucket:         "test-bucket",
+					Bucket:          "test-bucket",
 					SkipCredentials: true,
 				},
 			}
