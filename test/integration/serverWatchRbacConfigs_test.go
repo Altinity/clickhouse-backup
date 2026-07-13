@@ -48,7 +48,11 @@ func TestServerWatchRBACConfigs(t *testing.T) {
 	env.queryWithNoError(t, r, "CREATE USER IF NOT EXISTS test_watch_rbac_955 IDENTIFIED WITH no_password")
 	watchFlags := "--rbac --configs"
 	if withNamedCollections {
-		env.queryWithNoError(t, r, "CREATE NAMED COLLECTION IF NOT EXISTS test_watch_nc_955 AS key1 = 'value1'")
+		// IF NOT EXISTS / IF EXISTS for NAMED COLLECTION appeared only in 23.6, drop leftovers with plain DROP and ignore errors
+		if dropErr := env.ch.Query("DROP NAMED COLLECTION test_watch_nc_955"); dropErr != nil {
+			log.Debug().Msgf("DROP NAMED COLLECTION test_watch_nc_955 error (ignored): %v", dropErr)
+		}
+		env.queryWithNoError(t, r, "CREATE NAMED COLLECTION test_watch_nc_955 AS key1 = 'value1'")
 		watchFlags += " --named-collections"
 	}
 
@@ -66,7 +70,7 @@ func TestServerWatchRBACConfigs(t *testing.T) {
 			log.Warn().Msgf("DROP USER test_watch_rbac_955 error: %v", dropErr)
 		}
 		if withNamedCollections {
-			if dropErr := env.ch.Query("DROP NAMED COLLECTION IF EXISTS test_watch_nc_955"); dropErr != nil {
+			if dropErr := env.ch.Query("DROP NAMED COLLECTION test_watch_nc_955"); dropErr != nil {
 				log.Warn().Msgf("DROP NAMED COLLECTION test_watch_nc_955 error: %v", dropErr)
 			}
 		}
