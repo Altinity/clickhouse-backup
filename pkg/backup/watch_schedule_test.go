@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"regexp"
 	"testing"
 	"time"
@@ -125,4 +126,98 @@ func TestFindPreviousWatchBackup(t *testing.T) {
 	prevName, prevType = findPreviousWatchBackup(remoteBackups, regexp.MustCompile(`^missing-\S+$`))
 	assert.Equal(t, "", prevName)
 	assert.Equal(t, "", prevType)
+}
+
+func TestWatchScheduleTemplateRE(t *testing.T) {
+	ctx := context.Background()
+	// {type} and {time:layout} placeholders shall turn into \S+
+	assert.Equal(t, `x-\S+-\S+`, watchScheduleTemplatePrepareRE.ReplaceAllString("x-{type}-{time:20060102150405}", `\S+`))
+
+	// template without `{` shall skip ApplyMacros ClickHouse query and compile as anchored regexp
+	b := NewBackuper(config.DefaultConfig())
+	templateRE, err := b.watchScheduleTemplateRE(ctx, "daily-static-name")
+	require.NoError(t, err)
+	assert.True(t, templateRE.MatchString("daily-static-name"))
+	assert.False(t, templateRE.MatchString("prefix-daily-static-name-suffix"))
+
+	// invalid regexp in template shall trigger compile error
+	_, err = b.watchScheduleTemplateRE(ctx, "bad[template")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "can't compile regexp")
+}
+
+func newTestScheduleBackuper(schedules config.WatchSchedules) *Backuper {
+	cfg := config.DefaultConfig()
+	// no `{` in template, so ApplyMacros shall not query ClickHouse
+	cfg.General.WatchBackupNameTemplate = "static-name"
+	cfg.General.WatchSchedules = schedules
+	return NewBackuper(cfg)
+}
+
+func TestBuildWatchScheduleStates(t *testing.T) {
+	ctx := context.Background()
+
+	// success, continue chain from the last matching non-broken remote backup
+	b := newTestScheduleBackuper(config.WatchSchedules{{Name: "daily", Full: "0 0 * * *", Increment: "*/15 * * * *"}})
+	remoteBackups := []storage.Backup{
+		{BackupMetadata: metadata.BackupMetadata{BackupName: "daily-static-name"}},
+	}
+	states, err := b.buildWatchScheduleStates(ctx, remoteBackups)
+	require.NoError(t, err)
+	require.Len(t, states, 1)
+	assert.Equal(t, "daily-static-name", states[0].template)
+	assert.Equal(t, "daily-static-name", states[0].prevBackupName)
+	assert.Equal(t, "full", states[0].prevBackupType)
+	assert.NotNil(t, states[0].incrementCron)
+
+	// invalid `full` cron expression
+	b = newTestScheduleBackuper(config.WatchSchedules{{Name: "daily", Full: "garbage"}})
+	_, err = b.buildWatchScheduleStates(ctx, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid `full` cron expression")
+
+	// invalid `increment` cron expression
+	b = newTestScheduleBackuper(config.WatchSchedules{{Name: "daily", Full: "0 0 * * *", Increment: "garbage"}})
+	_, err = b.buildWatchScheduleStates(ctx, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid `increment` cron expression")
+
+	// `full` fires more often than `increment`, warning branch shall not fail state build
+	b = newTestScheduleBackuper(config.WatchSchedules{{Name: "daily", Full: "*/15 * * * *", Increment: "0 * * * *"}})
+	states, err = b.buildWatchScheduleStates(ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, states, 1)
+
+	// invalid regexp in watch_backup_name_template propagates from watchScheduleTemplateRE
+	b = newTestScheduleBackuper(config.WatchSchedules{{Name: "daily", Full: "0 0 * * *"}})
+	b.cfg.General.WatchBackupNameTemplate = "bad["
+	_, err = b.buildWatchScheduleStates(ctx, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "can't compile regexp")
+}
+
+// newTestUnreachableClickHouseBackuper - port 1 is closed, ch.Connect inside GetRemoteBackups shall fail fast
+func newTestUnreachableClickHouseBackuper() *Backuper {
+	cfg := config.DefaultConfig()
+	cfg.ClickHouse.Host = "127.0.0.1"
+	cfg.ClickHouse.Port = 1
+	cfg.General.WatchSchedules = config.WatchSchedules{{Name: "daily", Full: "0 0 * * *"}}
+	b := NewBackuper(cfg)
+	// Connect retries forever by design (issue #857), fail on the first Ping error instead of hanging the test
+	b.ch.BreakConnectOnError = true
+	return b
+}
+
+func TestNewWatchScheduleStatesRemoteError(t *testing.T) {
+	b := newTestUnreachableClickHouseBackuper()
+	_, err := b.newWatchScheduleStates(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "newWatchScheduleStates GetRemoteBackups")
+}
+
+func TestWatchWithSchedulesStatesError(t *testing.T) {
+	b := newTestUnreachableClickHouseBackuper()
+	err := b.watchWithSchedules(context.Background(), "", "", "", nil, "", nil, nil, false, false, false, false, false, false, "test", 0, nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "watchWithSchedules newWatchScheduleStates")
 }

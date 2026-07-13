@@ -2,8 +2,11 @@ package backup
 
 import (
 	"context"
+	"os"
+	"os/signal"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -89,6 +92,12 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 	}
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
+	// standalone CLI graceful shutdown, server mode cancels the command context via status.Current.CancelAll on SIGTERM
+	if commandId == status.NotFromAPI {
+		var stopSignals context.CancelFunc
+		ctx, stopSignals = signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stopSignals()
+	}
 
 	if !b.ch.IsOpen {
 		if err = b.ch.Connect(); err != nil {

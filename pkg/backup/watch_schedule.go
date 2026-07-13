@@ -75,6 +75,12 @@ func (b *Backuper) newWatchScheduleStates(ctx context.Context) ([]*watchSchedule
 	if err != nil {
 		return nil, errors.Wrap(err, "newWatchScheduleStates GetRemoteBackups")
 	}
+	return b.buildWatchScheduleStates(ctx, remoteBackups)
+}
+
+// buildWatchScheduleStates - build per schedule runtime states from already fetched remote backups
+func (b *Backuper) buildWatchScheduleStates(ctx context.Context, remoteBackups []storage.Backup) ([]*watchScheduleState, error) {
+	var err error
 	states := make([]*watchScheduleState, 0, len(b.cfg.General.WatchSchedules))
 	for _, schedule := range b.cfg.General.WatchSchedules {
 		st := &watchScheduleState{schedule: schedule}
