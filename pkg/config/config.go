@@ -118,17 +118,19 @@ type GeneralConfig struct {
 	WatchInterval                       string            `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
 	FullInterval                        string            `yaml:"full_interval" envconfig:"FULL_INTERVAL"`
 	WatchBackupNameTemplate             string            `yaml:"watch_backup_name_template" envconfig:"WATCH_BACKUP_NAME_TEMPLATE"`
-	ShardedOperationMode                string            `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
-	CPUNicePriority                     int               `yaml:"cpu_nice_priority" envconfig:"CPU_NICE_PRIORITY"`
-	IONicePriority                      string            `yaml:"io_nice_priority" envconfig:"IO_NICE_PRIORITY"`
-	RBACBackupAlways                    bool              `yaml:"rbac_backup_always" envconfig:"RBAC_BACKUP_ALWAYS"`
-	RBACConflictResolution              string            `yaml:"rbac_conflict_resolution" envconfig:"RBAC_CONFLICT_RESOLUTION"`
-	ConfigBackupAlways                  bool              `yaml:"config_backup_always" envconfig:"CONFIG_BACKUP_ALWAYS"`
-	NamedCollectionsBackupAlways        bool              `yaml:"named_collections_backup_always" envconfig:"NAMED_COLLECTIONS_BACKUP_ALWAYS"`
-	DeleteBatchSize                     int               `yaml:"delete_batch_size" envconfig:"DELETE_BATCH_SIZE"`
-	RetriesDuration                     time.Duration
-	WatchDuration                       time.Duration
-	FullDuration                        time.Duration
+	// WatchSchedules - named cron driven watch chains, alternative to watch_interval/full_interval, in env use ';' as separator between schedules, see https://github.com/Altinity/clickhouse-backup/issues/1354
+	WatchSchedules               WatchSchedules `yaml:"watch_schedules" envconfig:"WATCH_SCHEDULES"`
+	ShardedOperationMode         string         `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
+	CPUNicePriority              int            `yaml:"cpu_nice_priority" envconfig:"CPU_NICE_PRIORITY"`
+	IONicePriority               string         `yaml:"io_nice_priority" envconfig:"IO_NICE_PRIORITY"`
+	RBACBackupAlways             bool           `yaml:"rbac_backup_always" envconfig:"RBAC_BACKUP_ALWAYS"`
+	RBACConflictResolution       string         `yaml:"rbac_conflict_resolution" envconfig:"RBAC_CONFLICT_RESOLUTION"`
+	ConfigBackupAlways           bool           `yaml:"config_backup_always" envconfig:"CONFIG_BACKUP_ALWAYS"`
+	NamedCollectionsBackupAlways bool           `yaml:"named_collections_backup_always" envconfig:"NAMED_COLLECTIONS_BACKUP_ALWAYS"`
+	DeleteBatchSize              int            `yaml:"delete_batch_size" envconfig:"DELETE_BATCH_SIZE"`
+	RetriesDuration              time.Duration
+	WatchDuration                time.Duration
+	FullDuration                 time.Duration
 }
 
 // GCSConfig - GCS settings section
@@ -710,6 +712,9 @@ func ValidateConfig(cfg *Config) error {
 		} else {
 			cfg.General.FullDuration = duration
 		}
+	}
+	if validateErr := cfg.General.WatchSchedules.Validate(); validateErr != nil {
+		return validateErr
 	}
 	if cfg.API.CancelOperationTimeout != "" {
 		duration, err := time.ParseDuration(cfg.API.CancelOperationTimeout)

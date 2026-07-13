@@ -800,11 +800,11 @@ func main() {
 		{
 			Name:        "watch",
 			Usage:       "Run infinite loop which create full + incremental backup sequence to allow efficient backup sequences",
-			UsageText:   "clickhouse-backup watch [--watch-interval=1h] [--full-interval=24h] [--watch-backup-name-template=shard{shard}-{type}-{time:20060102150405}] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--schema] [--rbac] [--configs] [--skip-check-parts-columns]",
-			Description: "Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups",
+			UsageText:   "clickhouse-backup watch [--watch-interval=1h] [--full-interval=24h] [--watch-backup-name-template=shard{shard}-{type}-{time:20060102150405}] [--schedule=name=<name>,full=<cron>,increment=<cron>] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--schema] [--rbac] [--configs] [--skip-check-parts-columns]",
+			Description: "Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups. Use `--schedule` instead of intervals to run backups on cron expressions",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), c.Bool("named-collections"), c.Bool("skip-check-parts-columns"), c.Bool("delete-source"), version, c.Int("command-id"), nil, c)
+				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.StringSlice("schedule"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), c.Bool("named-collections"), c.Bool("skip-check-parts-columns"), c.Bool("delete-source"), version, c.Int("command-id"), nil, c)
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -820,6 +820,15 @@ func main() {
 				cli.StringFlag{
 					Name:   "watch-backup-name-template",
 					Usage:  "Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples",
+					Hidden: false,
+				},
+				cli.StringSliceFlag{
+					Name: "schedule",
+					Usage: "Named cron driven backup chain in name=<name>,full=<cron>[,increment=<cron>][,full_type=create|rebase][,delete_previous_cycle=true|false] format, can be specified multiple times, mutually exclusive with --watch-interval and --full-interval\n" +
+						"	cron expression contains standard 5 fields, optional leading seconds field and @every/@daily descriptors, see https://pkg.go.dev/github.com/robfig/cron/v3#hdr-CRON_Expression_Format\n" +
+						"	name added as prefix to --watch-backup-name-template to isolate backup chains\n" +
+						"	full_type=rebase creates scheduled full backup as increment + rebase command, server-side copy of previous chain instead of full re-upload\n" +
+						"	delete_previous_cycle=true deletes all older backups of the chain after successful full backup",
 					Hidden: false,
 				},
 				cli.StringFlag{
@@ -908,6 +917,11 @@ func main() {
 				cli.StringFlag{
 					Name:   "watch-backup-name-template",
 					Usage:  "Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples",
+					Hidden: false,
+				},
+				cli.StringSliceFlag{
+					Name:   "schedule",
+					Usage:  "Named cron driven backup chain for watch in name=<name>,full=<cron>[,increment=<cron>][,full_type=create|rebase][,delete_previous_cycle=true|false] format, can be specified multiple times, mutually exclusive with --watch-interval and --full-interval",
 					Hidden: false,
 				},
 				cli.BoolFlag{

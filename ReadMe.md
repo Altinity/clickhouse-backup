@@ -168,7 +168,20 @@ general:
   watch_interval: 1h       # WATCH_INTERVAL, use only for `watch` command, backup will create every 1h
   full_interval: 24h       # FULL_INTERVAL, use only for `watch` command, full backup will create every 24h
   watch_backup_name_template: "shard{shard}-{type}-{time:20060102150405}" # WATCH_BACKUP_NAME_TEMPLATE, used only for `watch` command, macros values will apply from `system.macros` for time:XXX, look format in https://go.dev/src/time/format.go
-
+  
+  # watch_schedules - WATCH_SCHEDULES, use only for `watch` command, named cron driven backup chains, mutually exclusive with watch_interval/full_interval
+  # `name` added as prefix to watch_backup_name_template to isolate backup chains, `full` and `increment` are cron expressions (standard 5 fields, optional leading seconds field, @every/@daily descriptors)
+  # `full_type: rebase` creates scheduled full backup as increment + `rebase` command (server-side copy of previous chain instead of full re-upload)
+  # `delete_previous_cycle: true` deletes all older backups of the chain after successful full backup
+  # in WATCH_SCHEDULES env variable use `name=daily,full=0 0 * * *,increment=0 * * * *;name=weekly,full=@weekly` format, `;` as separator between schedules
+  # watch_schedules:
+  #   - name: daily
+  #     full: "0 0 * * *"
+  #     increment: "0 * * * *"
+  #     full_type: create
+  #     delete_previous_cycle: false
+  watch_schedules: []
+  
   sharded_operation_mode: none       # SHARDED_OPERATION_MODE, how different replicas will shard backing up data for tables. Options are: none (no sharding), table (table granularity), database (database granularity), first-replica (on the lexicographically sorted first active replica). If left empty, then the "none" option will be set as default.
   
   cpu_nice_priority: 15    # CPU niceness priority, to allow throttling CPU intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/nice.1.html
@@ -549,6 +562,7 @@ You can't run watch twice with the same parameters even when `allow_parallel: tr
 - Optional string query argument `watch_interval` or `watch-interval` works the same as the `--watch-interval value` CLI argument.
 - Optional string query argument `full_interval` or `full-interval` works the same as the `--full-interval value` CLI argument.
 - Optional string query argument `watch_backup_name_template` or `watch-backup-name-template` works the same as the `--watch-backup-name-template value` CLI argument.
+- Optional string query argument `schedule` works the same as the `--schedule value` CLI argument (named cron driven backup chain in `name=<name>,full=<cron>[,increment=<cron>][,full_type=create|rebase][,delete_previous_cycle=true|false]` format, can be specified multiple times, mutually exclusive with `watch_interval`/`full_interval`).
 - Optional string query argument `table` works the same as the `--table value` CLI argument (backup only selected tables).
 - Optional string query argument `partitions` works the same as the `--partitions value` CLI argument (backup only selected partitions).
 - Optional boolean query argument `schema` works the same as the `--schema` CLI argument (backup schema only).
@@ -1091,10 +1105,10 @@ NAME:
    clickhouse-backup watch - Run infinite loop which create full + incremental backup sequence to allow efficient backup sequences
 
 USAGE:
-   clickhouse-backup watch [--watch-interval=1h] [--full-interval=24h] [--watch-backup-name-template=shard{shard}-{type}-{time:20060102150405}] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--schema] [--rbac] [--configs] [--skip-check-parts-columns]
+   clickhouse-backup watch [--watch-interval=1h] [--full-interval=24h] [--watch-backup-name-template=shard{shard}-{type}-{time:20060102150405}] [--schedule=name=<name>,full=<cron>,increment=<cron>] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--schema] [--rbac] [--configs] [--skip-check-parts-columns]
 
 DESCRIPTION:
-   Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups
+   Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups. Use `--schedule` instead of intervals to run backups on cron expressions
 
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
@@ -1102,6 +1116,11 @@ OPTIONS:
    --watch-interval value                     Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration
    --full-interval value                      Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration
    --watch-backup-name-template value         Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
+   --schedule value                           Named cron driven backup chain in name=<name>,full=<cron>[,increment=<cron>][,full_type=create|rebase][,delete_previous_cycle=true|false] format, can be specified multiple times, mutually exclusive with --watch-interval and --full-interval
+                                              cron expression contains standard 5 fields, optional leading seconds field and @every/@daily descriptors, see https://pkg.go.dev/github.com/robfig/cron/v3#hdr-CRON_Expression_Format
+                                              name added as prefix to --watch-backup-name-template to isolate backup chains
+                                              full_type=rebase creates scheduled full backup as increment + rebase command, server-side copy of previous chain instead of full re-upload
+                                              delete_previous_cycle=true deletes all older backups of the chain after successful full backup
    --table value, --tables value, -t value    Create and upload only objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --partitions partition_id                  Partitions names, separated by comma
 If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
@@ -1142,6 +1161,7 @@ OPTIONS:
    --watch-interval value                       Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration
    --full-interval value                        Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration
    --watch-backup-name-template value           Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
+   --schedule value                             Named cron driven backup chain for watch in name=<name>,full=<cron>[,increment=<cron>][,full_type=create|rebase][,delete_previous_cycle=true|false] format, can be specified multiple times, mutually exclusive with --watch-interval and --full-interval
    --watch-delete-source, --watch-delete-local  explicitly delete local backup during upload in watch
    
 ```
