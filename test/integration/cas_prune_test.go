@@ -38,10 +38,10 @@ func TestCASPruneSmoke(t *testing.T) {
 	)
 
 	r.NoError(env.dropDatabase(dbName, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64, payload String) ENGINE=MergeTree ORDER BY id "+
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64, payload String) ENGINE=MergeTree ORDER BY id "+
 		"SETTINGS min_rows_for_wide_part=0, min_bytes_for_wide_part=0", dbName))
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"INSERT INTO `%s`.t SELECT number, randomPrintableASCII(64) FROM numbers(500)", dbName))
 	env.casBackupNoError(r, "create", "--tables", dbName+".*", backupName)
 	env.casBackupNoError(r, "cas-upload", backupName)
@@ -92,17 +92,17 @@ func TestCASPruneEndToEndDedupeReclaim(t *testing.T) {
 	)
 
 	r.NoError(env.dropDatabase(dbName, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, fmt.Sprintf(`CREATE TABLE `+"`%s`.`%s`"+` (id UInt64, payload String, marker String)
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf(`CREATE TABLE `+"`%s`.`%s`"+` (id UInt64, payload String, marker String)
 		ENGINE=MergeTree ORDER BY id
 		SETTINGS min_rows_for_wide_part=0, min_bytes_for_wide_part=0`, dbName, tblName))
 
 	for i, marker := range []string{"v1", "v2", "v3"} {
 		bk := fmt.Sprintf("cas_prune_e2e_bk%d", i+1)
-		env.queryWithNoError(r, fmt.Sprintf(
+		env.queryWithNoError(t, r, fmt.Sprintf(
 			"INSERT INTO `%s`.`%s` SELECT number, randomPrintableASCII(64), '%s' FROM numbers(1000)",
 			dbName, tblName, marker))
-		env.queryWithNoError(r, fmt.Sprintf("OPTIMIZE TABLE `%s`.`%s` FINAL", dbName, tblName))
+		env.queryWithNoError(t, r, fmt.Sprintf("OPTIMIZE TABLE `%s`.`%s` FINAL", dbName, tblName))
 		env.casBackupNoError(r, "create", "--tables", dbName+".*", bk)
 		env.casBackupNoError(r, "cas-upload", bk)
 	}

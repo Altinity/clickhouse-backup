@@ -59,14 +59,14 @@ func testCASRestoreRBACOnly(t *testing.T, env *TestEnvironment, r *require.Asser
 		backup = "cas_restore_rbac_only"
 	)
 	r.NoError(env.dropDatabase(db, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", db))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(10)", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(10)", db))
 
-	env.queryWithNoError(r, "DROP USER IF EXISTS `cas_restore_user_a`")
-	env.queryWithNoError(r, "DROP ROLE IF EXISTS `cas_restore_role_a`")
-	env.queryWithNoError(r, "CREATE ROLE `cas_restore_role_a`")
-	env.queryWithNoError(r, "CREATE USER `cas_restore_user_a` IDENTIFIED BY 'pw' DEFAULT ROLE `cas_restore_role_a`")
+	env.queryWithNoError(t, r, "DROP USER IF EXISTS `cas_restore_user_a`")
+	env.queryWithNoError(t, r, "DROP ROLE IF EXISTS `cas_restore_role_a`")
+	env.queryWithNoError(t, r, "CREATE ROLE `cas_restore_role_a`")
+	env.queryWithNoError(t, r, "CREATE USER `cas_restore_user_a` IDENTIFIED BY 'pw' DEFAULT ROLE `cas_restore_role_a`")
 
 	env.casBackupNoError(r, "create", "--rbac", "--tables", db+".*", backup)
 	env.casBackupNoError(r, "cas-upload", backup)
@@ -74,8 +74,8 @@ func testCASRestoreRBACOnly(t *testing.T, env *TestEnvironment, r *require.Asser
 
 	// Drop RBAC + DB so we can observe the restore. DB will NOT come back
 	// because --rbac-only must skip table restore entirely.
-	env.queryWithNoError(r, "DROP USER IF EXISTS `cas_restore_user_a`")
-	env.queryWithNoError(r, "DROP ROLE IF EXISTS `cas_restore_role_a`")
+	env.queryWithNoError(t, r, "DROP USER IF EXISTS `cas_restore_user_a`")
+	env.queryWithNoError(t, r, "DROP ROLE IF EXISTS `cas_restore_role_a`")
 	r.NoError(env.dropDatabase(db, true))
 
 	// cas-restore --rbac-only: tables must NOT be restored.
@@ -126,8 +126,8 @@ func testCASRestoreRBACOnly(t *testing.T, env *TestEnvironment, r *require.Asser
 	r.Empty(dbRows, "--rbac-only must not restore the database %s; rows=%v", db, dbRows)
 
 	// Cleanup.
-	env.queryWithNoError(r, "DROP USER IF EXISTS `cas_restore_user_a`")
-	env.queryWithNoError(r, "DROP ROLE IF EXISTS `cas_restore_role_a`")
+	env.queryWithNoError(t, r, "DROP USER IF EXISTS `cas_restore_user_a`")
+	env.queryWithNoError(t, r, "DROP ROLE IF EXISTS `cas_restore_role_a`")
 	env.casBackupNoError(r, "cas-delete", backup)
 }
 
@@ -138,18 +138,18 @@ func testCASRestoreRBACWithTables(t *testing.T, env *TestEnvironment, r *require
 		backup = "cas_restore_rbac_full"
 	)
 	r.NoError(env.dropDatabase(db, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", db))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(7)", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(7)", db))
 
-	env.queryWithNoError(r, "DROP USER IF EXISTS `cas_restore_user_b`")
-	env.queryWithNoError(r, "CREATE USER `cas_restore_user_b` IDENTIFIED BY 'pw'")
+	env.queryWithNoError(t, r, "DROP USER IF EXISTS `cas_restore_user_b`")
+	env.queryWithNoError(t, r, "CREATE USER `cas_restore_user_b` IDENTIFIED BY 'pw'")
 
 	env.casBackupNoError(r, "create", "--rbac", "--tables", db+".*", backup)
 	env.casBackupNoError(r, "cas-upload", backup)
 	env.casBackupNoError(r, "delete", "local", backup)
 
-	env.queryWithNoError(r, "DROP USER IF EXISTS `cas_restore_user_b`")
+	env.queryWithNoError(t, r, "DROP USER IF EXISTS `cas_restore_user_b`")
 	r.NoError(env.dropDatabase(db, true))
 
 	// cas-restore --rbac with tables may exit non-zero on this env (SYSTEM
@@ -188,7 +188,7 @@ func testCASRestoreRBACWithTables(t *testing.T, env *TestEnvironment, r *require
 	}
 	r.True(found, "expected cas_restore_user_b in SHOW USERS")
 
-	env.queryWithNoError(r, "DROP USER IF EXISTS `cas_restore_user_b`")
+	env.queryWithNoError(t, r, "DROP USER IF EXISTS `cas_restore_user_b`")
 	r.NoError(env.dropDatabase(db, true))
 	env.casBackupNoError(r, "cas-delete", backup)
 }
@@ -201,12 +201,12 @@ func testCASRestoreNoFlags(t *testing.T, env *TestEnvironment, r *require.Assert
 		backup = "cas_restore_no_flags"
 	)
 	r.NoError(env.dropDatabase(db, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", db))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(3)", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(3)", db))
 
-	env.queryWithNoError(r, "DROP USER IF EXISTS `cas_restore_user_c`")
-	env.queryWithNoError(r, "CREATE USER `cas_restore_user_c` IDENTIFIED BY 'pw'")
+	env.queryWithNoError(t, r, "DROP USER IF EXISTS `cas_restore_user_c`")
+	env.queryWithNoError(t, r, "CREATE USER `cas_restore_user_c` IDENTIFIED BY 'pw'")
 
 	env.casBackupNoError(r, "create", "--rbac", "--tables", db+".*", backup)
 	env.casBackupNoError(r, "cas-upload", backup)
@@ -235,7 +235,7 @@ func testCASRestoreNoFlags(t *testing.T, env *TestEnvironment, r *require.Assert
 	}
 	r.True(found, "cas-restore without --rbac must not remove existing users")
 
-	env.queryWithNoError(r, "DROP USER IF EXISTS `cas_restore_user_c`")
+	env.queryWithNoError(t, r, "DROP USER IF EXISTS `cas_restore_user_c`")
 	r.NoError(env.dropDatabase(db, true))
 	env.casBackupNoError(r, "cas-delete", backup)
 }
@@ -248,21 +248,21 @@ func testCASRestoreNamedCollectionsOnly(t *testing.T, env *TestEnvironment, r *r
 		collection = "cas_restore_nc"
 	)
 	r.NoError(env.dropDatabase(db, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", db))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(2)", db))
-	env.queryWithNoError(r, fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collection))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(2)", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collection))
 	// No OVERRIDABLE/NOT OVERRIDABLE modifier: that per-key override syntax was
 	// only added in ClickHouse 24.x and 23.x (this subtest runs on 22.12+)
 	// rejects it with a syntax error. The override mode is irrelevant to what
 	// this test verifies (named-collection round-trip + DB isolation).
-	env.queryWithNoError(r, fmt.Sprintf("CREATE NAMED COLLECTION %s AS key='val'", collection))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE NAMED COLLECTION %s AS key='val'", collection))
 
 	env.casBackupNoError(r, "create", "--named-collections", "--tables", db+".*", backup)
 	env.casBackupNoError(r, "cas-upload", backup)
 	env.casBackupNoError(r, "delete", "local", backup)
 
-	env.queryWithNoError(r, fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collection))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collection))
 	r.NoError(env.dropDatabase(db, true))
 
 	env.casBackupNoError(r, "cas-restore", "--named-collections-only", backup)
@@ -290,7 +290,7 @@ func testCASRestoreNamedCollectionsOnly(t *testing.T, env *TestEnvironment, r *r
 		fmt.Sprintf("SELECT name FROM system.databases WHERE name = '%s'", db)))
 	r.Empty(dbRows, "--named-collections-only must not restore the database; rows=%v", dbRows)
 
-	env.queryWithNoError(r, fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collection))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collection))
 	r.NoError(env.dropDatabase(db, true))
 	env.casBackupNoError(r, "cas-delete", backup)
 }
@@ -304,9 +304,9 @@ func testCASRestoreIgnoreDependenciesNoOp(t *testing.T, env *TestEnvironment, r 
 		backup = "cas_restore_idep"
 	)
 	r.NoError(env.dropDatabase(db, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", db))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(4)", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(4)", db))
 
 	env.casBackupNoError(r, "create", "--tables", db+".*", backup)
 	env.casBackupNoError(r, "cas-upload", backup)
@@ -334,10 +334,10 @@ func testCASRestoreDataOnly(t *testing.T, env *TestEnvironment, r *require.Asser
 		backup = "cas_restore_data_only"
 	)
 	r.NoError(env.dropDatabase(db, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", db))
 	createTable := fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db)
-	env.queryWithNoError(r, createTable)
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(6)", db))
+	env.queryWithNoError(t, r, createTable)
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(6)", db))
 
 	env.casBackupNoError(r, "create", "--tables", db+".*", backup)
 	env.casBackupNoError(r, "cas-upload", backup)
@@ -345,7 +345,7 @@ func testCASRestoreDataOnly(t *testing.T, env *TestEnvironment, r *require.Asser
 
 	// Truncate the rows but keep the table; --data-only must attach the
 	// backup's parts back into the existing table.
-	env.queryWithNoError(r, fmt.Sprintf("TRUNCATE TABLE `%s`.t", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("TRUNCATE TABLE `%s`.t", db))
 	env.checkCount(r, 1, 0, fmt.Sprintf("SELECT count() FROM `%s`.t", db))
 
 	env.casBackupNoError(r, "cas-restore", "--data", backup)

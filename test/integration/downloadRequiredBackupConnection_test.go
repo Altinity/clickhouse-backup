@@ -68,15 +68,15 @@ func runDownloadRequiredBackupConnectionCase(t *testing.T, tc restoreResolveIncr
 	}
 	r.NoError(env.dropDatabase(dbName, true))
 
-	env.queryWithNoError(r, "CREATE DATABASE "+dbName)
-	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
+	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id")
 	// keep the increment's new rows in their own part so the increment has a non-required part
 	// that the parent must download via b.dst after the recursive RequiredBackup download
-	env.queryWithNoError(r, "SYSTEM STOP MERGES "+dbName+"."+tableName)
-	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number FROM numbers(100)")
+	env.queryWithNoError(t, r, "SYSTEM STOP MERGES "+dbName+"."+tableName)
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+"."+tableName+" SELECT number FROM numbers(100)")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+tc.configFile, "create_remote", "--delete-source", "--tables="+dbName+".*", fullBackup)
 
-	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number+100 FROM numbers(100)")
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+"."+tableName+" SELECT number+100 FROM numbers(100)")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+tc.configFile, "create_remote", "--delete-source", "--diff-from-remote="+fullBackup, "--tables="+dbName+".*", incrBackup)
 
 	// make sure nothing is cached locally so the download must pull both backups from remote
@@ -98,7 +98,7 @@ func runDownloadRequiredBackupConnectionCase(t *testing.T, tc restoreResolveIncr
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.1") >= 0 {
 		dropSQL += " SYNC"
 	}
-	env.queryWithNoError(r, dropSQL)
+	env.queryWithNoError(t, r, dropSQL)
 	restoreOut, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s restore --rm --tables=%s.%s %s 2>&1", tc.configFile, dbName, tableName, incrBackup))
 	r.NoError(err, restoreOut)
 	env.checkCount(r, 1, 200, "SELECT count() FROM "+dbName+"."+tableName)

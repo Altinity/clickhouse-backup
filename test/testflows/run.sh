@@ -1,8 +1,8 @@
 #!/bin/bash
 set -o pipefail
 CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+rm -rf "${CUR_DIR}/_coverage_/"
 mkdir -p "${CUR_DIR}/_coverage_/"
-rm -rf "${CUR_DIR}/_coverage_/*"
 if [[ -f "${CUR_DIR}/.env" ]]; then
   source "${CUR_DIR}/.env"
 fi
@@ -141,6 +141,24 @@ if command -v tfs &>/dev/null && [[ -f "${RAW_LOG}" ]]; then
   tfs ${TFS_FLAGS} transform compact "${RAW_LOG}" "${CUR_DIR}/compact.log" || true
   tfs ${TFS_FLAGS} transform nice "${RAW_LOG}" "${CUR_DIR}/nice.log.txt" || true
   tfs ${TFS_FLAGS} transform short "${RAW_LOG}" "${CUR_DIR}/short.log.txt" || true
+
+  # FIPS requirements coverage report (HTML artifact). The FIPS suite has its
+  # own specification backed by requirements/fips/requirements.py, distinct from
+  # the main suite. The requirements source is passed explicitly (instead of
+  # '-' = read specs from the log, which would merge both specifications that
+  # regression.py declares into one report) so the report is scoped to the FIPS
+  # specification only. Generated only for the FIPS run (its CI job sets
+  # RUN_TESTS to the FIPS feature); the main run is unaffected. This is the
+  # requirements-coverage HTML produced manually before via `tfs report
+  # coverage`; Go source-code coverage is reported separately to Coveralls.
+  FIPS_REQUIREMENTS="${CUR_DIR}/clickhouse_backup/requirements/fips/requirements.py"
+  if [[ "${RUN_TESTS}" == *FIPS* && -f "${FIPS_REQUIREMENTS}" ]]; then
+    tfs ${TFS_FLAGS} report coverage "${FIPS_REQUIREMENTS}" "${RAW_LOG}" \
+      --confidential --copyright "Altinity LTD" --logo "${CUR_DIR}/altinity.png" \
+      --title "ClickHouse Backup FIPS Requirements Coverage" \
+      | tfs ${TFS_FLAGS} document convert > "${CUR_DIR}/fips_coverage.html" || true
+  fi
+
   if [[ -n "${GITHUB_SERVER_URL}" && -n "${GITHUB_REPOSITORY}" && -n "${GITHUB_RUN_ID}" ]]; then
     tfs ${TFS_FLAGS} report results \
       -a "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/" \

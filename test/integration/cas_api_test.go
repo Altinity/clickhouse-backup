@@ -45,13 +45,13 @@ func TestCASAPIRoundtrip(t *testing.T) {
 
 	// Prepare test data and local backup.
 	r.NoError(env.dropDatabase(dbName, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE `%s`.`%s` (id UInt64, payload String) ENGINE=MergeTree ORDER BY id "+
 			"SETTINGS min_rows_for_wide_part=0, min_bytes_for_wide_part=0",
 		dbName, tbl))
 	// Use randomPrintableASCII to exceed the 1024-byte inline threshold.
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"INSERT INTO `%s`.`%s` SELECT number, randomPrintableASCII(64) FROM numbers(1000)",
 		dbName, tbl))
 
@@ -83,7 +83,7 @@ func TestCASAPIRoundtrip(t *testing.T) {
 	r.True(found, "cas backup must appear in /backup/list/remote with kind=cas; out=%s", out)
 
 	// POST /backup/cas-restore/<bk>?rm — drop the table first so restore re-creates it.
-	env.queryWithNoError(r, fmt.Sprintf("DROP TABLE `%s`.`%s` SYNC", dbName, tbl))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE `%s`.`%s` SYNC", dbName, tbl))
 	opID = casAPIPostAndCaptureOpID(t, env, r, fmt.Sprintf("/backup/cas-restore/%s?rm", bk))
 	casAPIWaitForOperation(t, env, r, opID, 120*time.Second)
 

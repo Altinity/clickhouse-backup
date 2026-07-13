@@ -20,11 +20,11 @@ import (
 func runCASBackendSmoke(t *testing.T, env *TestEnvironment, r *require.Assertions, dbName, tableName, backupName string) {
 	t.Helper()
 	r.NoError(env.dropDatabase(dbName, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE `%s`.`%s` (id UInt64, payload String) ENGINE=MergeTree ORDER BY id "+
 			"SETTINGS min_rows_for_wide_part=0, min_bytes_for_wide_part=0", dbName, tableName))
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"INSERT INTO `%s`.`%s` SELECT number, randomPrintableASCII(64) FROM numbers(200)",
 		dbName, tableName))
 
@@ -114,10 +114,10 @@ func TestCASSmokeFTPRefusesByDefault(t *testing.T) {
 		backupName = "cas_smoke_ftp_refuse_bk"
 	)
 	r.NoError(env.dropDatabase(dbName, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE `%s`.`%s` (id UInt64) ENGINE=MergeTree ORDER BY id", dbName, tableName))
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"INSERT INTO `%s`.`%s` SELECT number FROM numbers(10)", dbName, tableName))
 
 	env.casBackupNoError(r, "create", "--tables", dbName+".*", backupName)

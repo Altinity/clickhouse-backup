@@ -112,11 +112,16 @@ func NewTestContainers(envID int) (*TestContainers, error) {
 
 func isAdvancedMode() bool {
 	v := os.Getenv("CLICKHOUSE_VERSION")
-	if v == "" || v == "head" {
-		return true
-	}
-	// Match old run.sh behavior: CLICKHOUSE_VERSION == 2* → advanced mode
-	return compareVersion(v, "20.0") >= 0
+	return v == "" || v == "head" || compareVersion(v, "20.0") >= 0
+}
+
+// isModernSSHD reports whether the OpenSSH 10 linuxserver/openssh-server sshd
+// (advertises the sftp `copy-data` extension) is used instead of the OpenSSH 8.6
+// panubo image; gated to CH>=23.3 so the copy-data path gets coverage on newer
+// matrix entries while older ones keep exercising the hardlink fallback.
+func isModernSSHD() bool {
+	v := os.Getenv("CLICKHOUSE_VERSION")
+	return v == "" || v == "head" || compareVersion(v, "23.3") >= 0
 }
 
 // StartAll creates the network and starts all containers.
@@ -324,7 +329,7 @@ func (tc *TestContainers) RestartContainer(t *testing.T, name string) error {
 	if err := tc.client.ContainerRestart(ctx, info.ID, container.StopOptions{Timeout: &timeout}); err != nil {
 		return err
 	}
-	return tc.waitHealthy(ctx, name, 10*time.Minute, t.Name())
+	return tc.waitHealthy(ctx, name, 12*time.Minute, t.Name())
 }
 
 func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout time.Duration, testName string) error {
@@ -342,18 +347,115 @@ func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout 
 		}
 		time.Sleep(2 * time.Second)
 	}
-	tc.dumpContainerInfo(ctx, name)
-	if name == "clickhouse" && strings.HasPrefix(testName, "TestAzure") {
-		if _, ok := tc.containers["azure"]; ok {
-			tc.dumpContainerInfo(ctx, "azure")
+	tc.dumpContainerInfo(ctx, name, testName)
+	if name == "clickhouse" {
+		// ClickHouse depends on Keeper; a "not healthy" clickhouse is frequently a
+		// symptom of an unresponsive/restarted keeper, so dump it too.
+		tc.dumpContainerInfo(ctx, "zookeeper", testName)
+		// clickhouse always mounts Azure-backed disks (disk_azblob/backups_azure) from the shared
+		// config, so ANY test that (re)starts clickhouse - not only TestAzure* - can fail to become
+		// healthy when azurite is unresponsive: clickhouse reads the disk format version over the
+		// network at table-load time and aborts startup on an Azure timeout. When the failure looks
+		// Azure-related, dump the azurite logs scoped to clickhouse's last (re)start so the azurite
+		// side of the timeout is visible (the 12m healthcheck window means "recent" logs would miss it).
+		if _, ok := tc.containers["azure"]; ok && (strings.HasPrefix(testName, "TestAzure") || tc.clickhouseFailedOnAzure(ctx)) {
+			tc.DumpContainerLogsSince(ctx, "azure", tc.containerStartedAt(ctx, "clickhouse"), testName)
 		}
 	}
 	return fmt.Errorf("container %s not healthy after %v", name, timeout)
 }
 
+// testLogPrefix returns a "[TestName] " prefix for dump banners so that, under
+// parallel execution, interleaved container dumps can be attributed to the test
+// that triggered them. Empty when the dump happens outside a test (e.g. startup).
+func testLogPrefix(testName string) string {
+	if testName == "" {
+		return ""
+	}
+	return "[" + testName + "] "
+}
+
+// containerStateSummary builds a one-line human-readable summary of a container's
+// state for dump banners.
+//
+// RestartCount is included because it is the only signal that survives a Docker
+// auto-restart: when a container crashes (e.g. OOM under high RUN_PARALLEL load)
+// Docker restarts it and inspect reports status=running, exitCode=0, OOMKilled=false
+// again, so restartCount>0 (or a startedAt later than the test start) is often the
+// only remaining evidence that the container died mid-test.
+func containerStateSummary(inspect container.InspectResponse) string {
+	if inspect.State == nil {
+		return "unknown"
+	}
+	state := inspect.State.Status
+	if inspect.State.Health != nil {
+		state += ", health=" + inspect.State.Health.Status
+	}
+	if inspect.State.ExitCode != 0 {
+		state += fmt.Sprintf(", exitCode=%d", inspect.State.ExitCode)
+	}
+	if inspect.State.OOMKilled {
+		state += ", OOMKilled"
+	}
+	if inspect.RestartCount != 0 {
+		state += fmt.Sprintf(", restartCount=%d", inspect.RestartCount)
+	}
+	if inspect.State.StartedAt != "" {
+		state += ", startedAt=" + inspect.State.StartedAt
+	}
+	if inspect.State.FinishedAt != "" && inspect.State.FinishedAt != "0001-01-01T00:00:00Z" {
+		state += ", finishedAt=" + inspect.State.FinishedAt
+	}
+	return state
+}
+
+// clickhouseFailedOnAzure reports whether the clickhouse container logs contain an Azure SDK
+// failure signature, meaning the unhealthy state was caused by an unresponsive azurite rather
+// than clickhouse itself. The signatures only appear in exception stack traces, never during
+// normal startup/shutdown, so this stays quiet for genuine clickhouse-only failures.
+func (tc *TestContainers) clickhouseFailedOnAzure(ctx context.Context) bool {
+	info := tc.containers["clickhouse"]
+	if info == nil {
+		return false
+	}
+	reader, err := tc.client.ContainerLogs(ctx, info.ID, container.LogsOptions{
+		ShowStdout: true, ShowStderr: true, Tail: "500",
+	})
+	if err != nil {
+		return false
+	}
+	defer func() { _ = reader.Close() }()
+	logBytes, _ := io.ReadAll(reader)
+	logs := string(logBytes)
+	for _, sig := range []string{"Azure::Core::Http", "TransportException"} {
+		if strings.Contains(logs, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+// containerStartedAt returns the container's last start time from docker inspect,
+// or the zero time if it can't be determined.
+func (tc *TestContainers) containerStartedAt(ctx context.Context, name string) time.Time {
+	info := tc.containers[name]
+	if info == nil {
+		return time.Time{}
+	}
+	inspect, err := tc.client.ContainerInspect(ctx, info.ID)
+	if err != nil || inspect.State == nil || inspect.State.StartedAt == "" {
+		return time.Time{}
+	}
+	started, err := time.Parse(time.RFC3339Nano, inspect.State.StartedAt)
+	if err != nil {
+		return time.Time{}
+	}
+	return started
+}
+
 // DumpAllContainerLogs dumps state and last 50 log lines for all containers.
 // Called when a test fails to aid debugging.
-func (tc *TestContainers) DumpAllContainerLogs(ctx context.Context) {
+func (tc *TestContainers) DumpAllContainerLogs(ctx context.Context, testName string) {
 	tc.mu.Lock()
 	names := make([]string, 0, len(tc.containers))
 	for name := range tc.containers {
@@ -361,15 +463,17 @@ func (tc *TestContainers) DumpAllContainerLogs(ctx context.Context) {
 	}
 	tc.mu.Unlock()
 	for _, name := range names {
-		tc.dumpContainerInfo(ctx, name)
+		tc.dumpContainerInfo(ctx, name, testName)
 	}
 }
 
 // DumpContainerLogsSince dumps state and logs for a single container limited to a time window.
 // Used to provide focused diagnostics when a query fails — we only want logs from the moment the
 // query started, not the entire test history. A small look-back buffer is added to catch
-// shutdown/restart messages that may precede the failure.
-func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name string, since time.Time) {
+// shutdown/restart messages that may precede the failure. testName prefixes every emitted line so
+// the dump is attributable to the failing test in interleaved parallel CI output (pass "" when the
+// caller has no test name to hand).
+func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name string, since time.Time, testName string) {
 	info := tc.containers[name]
 	if info == nil {
 		return
@@ -379,30 +483,11 @@ func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name strin
 		log.Error().Err(err).Msgf("can't inspect container %s (%s)", name, info.ID[:12])
 		return
 	}
-	state := "unknown"
-	if inspect.State != nil {
-		state = inspect.State.Status
-		if inspect.State.Health != nil {
-			state += ", health=" + inspect.State.Health.Status
-		}
-		if inspect.State.ExitCode != 0 {
-			state += fmt.Sprintf(", exitCode=%d", inspect.State.ExitCode)
-		}
-		if inspect.State.OOMKilled {
-			state += ", OOMKilled"
-		}
-		if inspect.State.StartedAt != "" {
-			state += ", startedAt=" + inspect.State.StartedAt
-		}
-		if inspect.State.FinishedAt != "" && inspect.State.FinishedAt != "0001-01-01T00:00:00Z" {
-			state += ", finishedAt=" + inspect.State.FinishedAt
-		}
-	}
 	if since.IsZero() {
 		since = time.Now()
 	}
 	since = since.Add(-30 * time.Second)
-	log.Error().Msgf("=== container %s (%s) state: %s ===", name, info.ID[:12], state)
+	log.Error().Msgf("=== %scontainer %s (%s) state: %s ===", testLogPrefix(testName), name, info.ID[:12], containerStateSummary(inspect))
 
 	logOpts := container.LogsOptions{
 		ShowStdout: true,
@@ -421,10 +506,41 @@ func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name strin
 		}
 	}()
 	logBytes, _ := io.ReadAll(reader)
-	log.Error().Msgf("=== %s logs since %s ===\n%s", name, since.Format(time.RFC3339), string(logBytes))
+	logText := string(logBytes)
+	if name == "azure" {
+		logText = filterAzuriteNoise(logText)
+	}
+	log.Error().Msgf("=== %s%s logs since %s ===\n%s", testLogPrefix(testName), name, since.Format(time.RFC3339), logText)
 }
 
-func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
+// filterAzuriteNoise drops azurite's idle background-maintenance chatter (blob/queue GC mark-sweep
+// loops, per-extent skip lines, account re-init) so the request/error lines that explain a
+// clickhouse-to-azurite timeout are not buried under thousands of debug lines. Non-azurite logs
+// never contain these markers, so this is a no-op for them.
+func filterAzuriteNoise(logText string) string {
+	noise := []string{
+		"GCManager",
+		"FSExtentStore:deleteExtents",
+		"AccountDataStore:init",
+	}
+	lines := strings.Split(logText, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		drop := false
+		for _, marker := range noise {
+			if strings.Contains(line, marker) {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
+func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string, testName string) {
 	info := tc.containers[name]
 	if info == nil {
 		return
@@ -434,20 +550,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 		log.Error().Err(err).Msgf("can't inspect container %s (%s)", name, info.ID[:12])
 		return
 	}
-	state := "unknown"
-	if inspect.State != nil {
-		state = inspect.State.Status
-		if inspect.State.Health != nil {
-			state += ", health=" + inspect.State.Health.Status
-		}
-		if inspect.State.ExitCode != 0 {
-			state += fmt.Sprintf(", exitCode=%d", inspect.State.ExitCode)
-		}
-		if inspect.State.OOMKilled {
-			state += ", OOMKilled"
-		}
-	}
-	log.Error().Msgf("=== container %s (%s) state: %s ===", name, info.ID[:12], state)
+	log.Error().Msgf("=== %scontainer %s (%s) state: %s ===", testLogPrefix(testName), name, info.ID[:12], containerStateSummary(inspect))
 
 	logOpts := container.LogsOptions{ShowStdout: true, ShowStderr: true}
 	reader, logErr := tc.client.ContainerLogs(ctx, info.ID, logOpts)
@@ -461,7 +564,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 		}
 	}()
 	logBytes, _ := io.ReadAll(reader)
-	log.Error().Msgf("=== full %s logs ===\n%s", name, string(logBytes))
+	log.Error().Msgf("=== %sfull %s logs ===\n%s", testLogPrefix(testName), name, string(logBytes))
 
 	// For the clickhouse-server container, healthcheck failures may leave
 	// nothing in stdout/stderr because clickhouse-server writes auth/config
@@ -477,7 +580,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 			if execErr != nil {
 				log.Error().Err(execErr).Msgf("can't cat %s in %s: %s", logPath, name, string(errOut))
 			} else {
-				log.Error().Msgf("=== full %s:%s ===\n%s", name, logPath, string(errOut))
+				log.Error().Msgf("=== %sfull %s:%s ===\n%s", testLogPrefix(testName), name, logPath, string(errOut))
 			}
 		}
 	}
@@ -493,7 +596,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 		if execErr != nil {
 			log.Error().Err(execErr).Msgf("can't cat %s in %s: %s", serverLogPath, name, string(serverOut))
 		} else {
-			log.Error().Msgf("=== full %s:%s ===\n%s", name, serverLogPath, string(serverOut))
+			log.Error().Msgf("=== %sfull %s:%s ===\n%s", testLogPrefix(testName), name, serverLogPath, string(serverOut))
 		}
 	}
 }
@@ -564,17 +667,40 @@ func getEnvDefault(key, defaultVal string) string {
 
 // Container start methods
 
+// startSSHD starts the shared sshd container used by the SFTP storage and the
+// custom rsync backend. Both variants expose the identical connection surface -
+// user `sftpuser`, port 2222, writable home /config - so a single set of sftp
+// configs and rsync scripts works regardless of image. CH>=23.3 uses the
+// OpenSSH 10 linuxserver/openssh-server image so the sftp `copy-data` extension
+// is advertised and SFTP.CopyObject exercises the server-side copyDataServerSide
+// path; older versions keep the OpenSSH 8.6 panubo image (hardlink fallback).
 func (tc *TestContainers) startSSHD(ctx context.Context) error {
+	if isModernSSHD() {
+		return tc.startSSHDOpenSSH10(ctx)
+	}
+	return tc.startSSHDPanubo(ctx)
+}
+
+func (tc *TestContainers) startSSHDPanubo(ctx context.Context) error {
 	return tc.startContainer(ctx, "sshd",
 		&container.Config{
 			Image: "docker.io/panubo/sshd:latest",
 			Env: envMap(map[string]string{
-				"SSH_ENABLE_ROOT":          "true",
 				"SSH_ENABLE_PASSWORD_AUTH": "true",
 			}),
-			Cmd: []string{"sh", "-c", `echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && echo "LogLevel DEBUG3" >> /etc/ssh/sshd_config && echo "root:JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ" | chpasswd && /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config`},
+			// create sftpuser (home /config), enable password auth, listen on 2222 to
+			// match the linuxserver image; rsync-over-ssh reuses the same user/port.
+			Cmd: []string{"sh", "-c", strings.Join([]string{
+				`adduser -D -h /config -s /bin/sh sftpuser`,
+				`echo "sftpuser:JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ" | chpasswd`,
+				`mkdir -p /config && chown -R sftpuser:sftpuser /config`,
+				`sed -i "s/^Port 22$/Port 2222/" /etc/ssh/sshd_config`,
+				`sed -i "s/^#*PasswordAuthentication .*/PasswordAuthentication yes/" /etc/ssh/sshd_config`,
+				`echo "LogLevel DEBUG3" >> /etc/ssh/sshd_config`,
+				`/usr/sbin/sshd -D -e -f /etc/ssh/sshd_config`,
+			}, " && ")},
 			Healthcheck: &container.HealthConfig{
-				Test:     []string{"CMD-SHELL", "echo 1"},
+				Test:     []string{"CMD-SHELL", "nc -z 127.0.0.1 2222"},
 				Interval: 1 * time.Second,
 				Retries:  30,
 			},
@@ -584,18 +710,57 @@ func (tc *TestContainers) startSSHD(ctx context.Context) error {
 	)
 }
 
+// startSSHDOpenSSH10 runs linuxserver/openssh-server (OpenSSH 10, copy-data
+// capable). It logs in as non-root `sftpuser` on port 2222 with password + key
+// auth (public key installed from PUBLIC_KEY at start), home /config.
+func (tc *TestContainers) startSSHDOpenSSH10(ctx context.Context) error {
+	pubKey, err := os.ReadFile("sftp/clickhouse-backup_rsa.pub")
+	if err != nil {
+		return fmt.Errorf("startSSHDOpenSSH10 read sftp pubkey: %w", err)
+	}
+	return tc.startContainer(ctx, "sshd",
+		&container.Config{
+			Image: "docker.io/linuxserver/openssh-server:latest",
+			Env: envMap(map[string]string{
+				"USER_NAME":       "sftpuser",
+				"USER_PASSWORD":   "JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ",
+				"PASSWORD_ACCESS": "true",
+				"SUDO_ACCESS":     "false",
+				"PUBLIC_KEY":      strings.TrimSpace(string(pubKey)),
+			}),
+			// gate readiness on the full s6 init, not just the sshd bind: under parallel
+			// container startup the `chown /config` and PUBLIC_KEY install steps can lag
+			// behind the port opening, and connecting early hits a root-owned /config
+			// (MkdirAll -> permission denied).
+			Healthcheck: &container.HealthConfig{
+				Test:     []string{"CMD-SHELL", `nc -z 127.0.0.1 2222 && [ "$(stat -c %U /config)" = sftpuser ] && [ -s /config/.ssh/authorized_keys ]`},
+				Interval: 1 * time.Second,
+				Retries:  60,
+			},
+		},
+		&container.HostConfig{SecurityOpt: []string{"label:disable"}},
+		"sshd",
+	)
+}
+
 func (tc *TestContainers) startFTP(ctx context.Context, curDir string) error {
 	if tc.isAdvanced {
+		proftpdEnv := map[string]string{
+			"FTP_USER_NAME":         "test_backup",
+			"FTP_USER_PASS":         "test_backup",
+			"FTP_MASQUERADEADDRESS": "yes",
+			"FTP_PASSIVE_PORTS":     "21100 31100",
+			"FTP_MAX_CONNECTIONS":   "255",
+		}
+		// 23.x+ runs ProFTPD with mod_copy (SITE CPFR/CPTO CopyObject path),
+		// 20.0 <= CLICKHOUSE_VERSION <= 22.12 disables mod_copy to cover the FXP CopyObject path
+		if v := os.Getenv("CLICKHOUSE_VERSION"); v != "" && v != "head" && compareVersion(v, "23.0") < 0 {
+			proftpdEnv["FTP_DISABLE_MOD_COPY"] = "yes"
+		}
 		return tc.startContainer(ctx, "ftp",
 			&container.Config{
 				Image: "docker.io/iradu/proftpd:latest",
-				Env: envMap(map[string]string{
-					"FTP_USER_NAME":         "test_backup",
-					"FTP_USER_PASS":         "test_backup",
-					"FTP_MASQUERADEADDRESS": "yes",
-					"FTP_PASSIVE_PORTS":     "21100 31100",
-					"FTP_MAX_CONNECTIONS":   "255",
-				}),
+				Env:   envMap(proftpdEnv),
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD-SHELL", "echo 1"},
 					Interval: 1 * time.Second,
@@ -922,6 +1087,22 @@ func (tc *TestContainers) clickHouseBinds(curDir, configsDir string) []string {
 	return binds
 }
 
+// writeMacrosVersionXML - generate the `{version}` macro for the clickhouse-backup config
+// path/object_disk_path, it isolates parallel CI matrix jobs sharing the same remote bucket
+// (real GCS, real S3, COS). Generated on the host and bind-mounted unconditionally because
+// dynamic_settings.sh runs only in advanced mode, while old versions (1.x, 19.x) need the
+// isolation too: with the macro missing `{version}` stays literal, so all simple-mode matrix
+// jobs collide on the same remote path and delete each other's fixed-name backups.
+func (tc *TestContainers) writeMacrosVersionXML() (string, error) {
+	version := strings.ReplaceAll(getEnvDefault("CLICKHOUSE_VERSION", "26.3"), ".", "_")
+	content := fmt.Sprintf("<yandex>\n  <macros>\n    <version>%s</version>\n  </macros>\n</yandex>\n", version)
+	fPath := filepath.Join(os.TempDir(), fmt.Sprintf("clickhouse-backup-macros-version-env%d.xml", tc.envID))
+	if err := os.WriteFile(fPath, []byte(content), 0644); err != nil {
+		return "", fmt.Errorf("writeMacrosVersionXML %s: %w", fPath, err)
+	}
+	return fPath, nil
+}
+
 func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDir string) error {
 	chImage := fmt.Sprintf("docker.io/%s:%s",
 		getEnvDefault("CLICKHOUSE_IMAGE", "clickhouse/clickhouse-server"),
@@ -933,6 +1114,11 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 	}
 
 	binds := tc.clickHouseBinds(curDir, configsDir)
+	macrosVersionPath, err := tc.writeMacrosVersionXML()
+	if err != nil {
+		return err
+	}
+	binds = append(binds, macrosVersionPath+":/etc/clickhouse-server/config.d/macros_version.xml")
 
 	// Add shared volume mounts
 	for i, vol := range tc.sharedVolumes {

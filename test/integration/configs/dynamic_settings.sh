@@ -45,6 +45,10 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration.xml
               <disk>hdd2</disk>
           </cold_volume>
         </volumes>
+        <!-- disable free-space-based background moves: on CI the runner disk is >90% full,
+             so the default move_factor=0.1 moves parts off the hot volume right after INSERT
+             and makes explicit MOVE PART targets in tests non-deterministic -->
+        <move_factor>0</move_factor>
       </hot_and_cold>
     </policies>
   </storage_configuration>
@@ -893,14 +897,6 @@ cat <<EOT > /etc/clickhouse-server/users.d/database_atomic_wait_for_drop_and_det
 EOT
 fi
 
-# {version} macro for clickhouse-backup config path/object_disk_path isolation
-# across parallel CI matrix jobs sharing the same remote bucket (e.g. real GCS,
-# real S3, COS). Dots are replaced with underscores to keep the value safe as
-# a path component.
-cat <<EOT > /etc/clickhouse-server/config.d/macros_version.xml
-<yandex>
-  <macros>
-    <version>${CLICKHOUSE_VERSION//./_}</version>
-  </macros>
-</yandex>
-EOT
+# {version} macro for path/object_disk_path isolation is bind-mounted as
+# config.d/macros_version.xml by containers.go writeMacrosVersionXML, because
+# this script runs only in advanced mode while old versions need it too

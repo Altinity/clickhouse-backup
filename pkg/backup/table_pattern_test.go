@@ -53,3 +53,42 @@ func TestSkipTablesByEngine(t *testing.T) {
 	assert.Equal(t, "events", result[0].Table)
 	assert.Empty(t, partitionNames, "partition names of skipped tables must be removed")
 }
+
+// TestAddTableToListIfNotExistsOrEnrichQueryAndParts covers the O(1) index-based dedup/enrich:
+// the .sql file (carrying Query) and the .json file (carrying Parts) of the same embedded table
+// must merge into a single entry, non-empty fields must never be overwritten, and the tableIndex
+// must keep pointing at the right slice position across multiple distinct tables.
+func TestAddTableToListIfNotExistsOrEnrichQueryAndParts(t *testing.T) {
+	result := ListOfTables{}
+	tableIndex := make(map[metadata.TableTitle]int)
+
+	// first file for db.t1 carries only Parts (json)
+	result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, tableIndex, metadata.TableMetadata{
+		Database: "db", Table: "t1",
+		Parts: map[string][]metadata.Part{"default": {{Name: "p1"}}},
+	})
+	// an unrelated table in between, to verify index correctness
+	result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, tableIndex, metadata.TableMetadata{
+		Database: "db", Table: "t2", Query: "CREATE TABLE db.t2 ...",
+	})
+	// second file for db.t1 carries only Query (sql) -> must enrich the existing entry, not append
+	result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, tableIndex, metadata.TableMetadata{
+		Database: "db", Table: "t1", Query: "CREATE TABLE db.t1 ...",
+	})
+
+	assert.Len(t, result, 2, "same db.table must not be duplicated")
+	assert.Equal(t, 0, tableIndex[metadata.TableTitle{Database: "db", Table: "t1"}])
+	assert.Equal(t, 1, tableIndex[metadata.TableTitle{Database: "db", Table: "t2"}])
+	assert.Equal(t, "CREATE TABLE db.t1 ...", result[0].Query, "Query must be enriched from the .sql file")
+	assert.Len(t, result[0].Parts, 1, "Parts from the .json file must be preserved")
+
+	// a further file with a different Query/Parts must NOT overwrite already-populated fields
+	result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, tableIndex, metadata.TableMetadata{
+		Database: "db", Table: "t1", Query: "SHOULD NOT WIN",
+		Parts: map[string][]metadata.Part{"other": {{Name: "p2"}}},
+	})
+	assert.Len(t, result, 2)
+	assert.Equal(t, "CREATE TABLE db.t1 ...", result[0].Query, "non-empty Query must not be overwritten")
+	assert.Contains(t, result[0].Parts, "default", "non-empty Parts must not be overwritten")
+	assert.NotContains(t, result[0].Parts, "other")
+}

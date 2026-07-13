@@ -26,9 +26,9 @@ func TestCASUploadWaitsForPrune(t *testing.T) {
 		bk      = "cas_waitprune_bk"
 	)
 	r.NoError(env.dropDatabase(dbName, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.`%s` (id UInt64) ENGINE=MergeTree ORDER BY id", dbName, tblName))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.`%s` SELECT number FROM numbers(100)", dbName, tblName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.`%s` (id UInt64) ENGINE=MergeTree ORDER BY id", dbName, tblName))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.`%s` SELECT number FROM numbers(100)", dbName, tblName))
 	env.casBackupNoError(r, "create", "--tables", dbName+".*", bk)
 
 	// Inject a prune marker. The s3.path carries the {version} macro, so
@@ -78,9 +78,9 @@ func TestCASUploadWaitTimeout(t *testing.T) {
 		bk      = "cas_waittimeout_bk"
 	)
 	r.NoError(env.dropDatabase(dbName, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.`%s` (id UInt64) ENGINE=MergeTree ORDER BY id", dbName, tblName))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.`%s` SELECT number FROM numbers(10)", dbName, tblName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.`%s` (id UInt64) ENGINE=MergeTree ORDER BY id", dbName, tblName))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.`%s` SELECT number FROM numbers(10)", dbName, tblName))
 	env.casBackupNoError(r, "create", "--tables", dbName+".*", bk)
 
 	// The s3.path carries the {version} macro; resolve it via the live server.

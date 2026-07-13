@@ -4,8 +4,8 @@ set -e
 
 CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 export CUR_DIR
+rm -rf "${CUR_DIR}/_coverage_/"
 mkdir -p "${CUR_DIR}/_coverage_/"
-rm -rf "${CUR_DIR}/_coverage_/*"
 
 source "${CUR_DIR}/.env"
 

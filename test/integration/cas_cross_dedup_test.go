@@ -35,14 +35,14 @@ func TestCASCrossBackupDedup(t *testing.T) {
 	// (so blobs in C match A's exactly).
 	setup := func(db string, seed int) {
 		r.NoError(env.dropDatabase(db, true))
-		env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", db))
-		env.queryWithNoError(r, fmt.Sprintf(`CREATE TABLE `+"`%s`.`%s`"+` (id UInt64, payload String)
+		env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", db))
+		env.queryWithNoError(t, r, fmt.Sprintf(`CREATE TABLE `+"`%s`.`%s`"+` (id UInt64, payload String)
             ENGINE=MergeTree ORDER BY id
             SETTINGS min_rows_for_wide_part=0, min_bytes_for_wide_part=0`, db, tbl))
-		env.queryWithNoError(r, fmt.Sprintf(
+		env.queryWithNoError(t, r, fmt.Sprintf(
 			"INSERT INTO `%s`.`%s` SELECT number + %d, repeat('x', 1024) FROM numbers(%d)",
 			db, tbl, seed, rows))
-		env.queryWithNoError(r, fmt.Sprintf("OPTIMIZE TABLE `%s`.`%s` FINAL", db, tbl))
+		env.queryWithNoError(t, r, fmt.Sprintf("OPTIMIZE TABLE `%s`.`%s` FINAL", db, tbl))
 	}
 
 	// Backup A: db dbA, seed 0
@@ -87,7 +87,7 @@ func TestCASCrossBackupDedup(t *testing.T) {
 	env.casBackupNoError(r, "cas-delete", bkA)
 	env.casBackupNoError(r, "cas-delete", bkB)
 	env.casBackupNoError(r, "cas-delete", bkC)
-	env.queryWithNoError(r, fmt.Sprintf("DROP DATABASE `%s` SYNC", dbA))
-	env.queryWithNoError(r, fmt.Sprintf("DROP DATABASE `%s` SYNC", dbB))
-	env.queryWithNoError(r, fmt.Sprintf("DROP DATABASE `%s` SYNC", dbC))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP DATABASE `%s` SYNC", dbA))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP DATABASE `%s` SYNC", dbB))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP DATABASE `%s` SYNC", dbC))
 }

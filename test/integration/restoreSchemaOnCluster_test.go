@@ -23,9 +23,9 @@ func TestRestoreSchemaOnClusterSafety(t *testing.T) {
 
 	dbName := "test_restore_on_cluster_safety"
 	tableName := "t"
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
-	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number FROM numbers(10)")
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+"."+tableName+" SELECT number FROM numbers(10)")
 
 	backupName := "test_restore_on_cluster_safety_backup"
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables="+dbName+".*", backupName)

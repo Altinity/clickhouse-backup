@@ -35,14 +35,14 @@ func TestCASMutationDedup(t *testing.T) {
 	// Schema: wide table with a "big" payload column and a "small" marker
 	// column we'll mutate. force-wide so each column has its own .bin file.
 	r.NoError(env.dropDatabase(dbName, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, fmt.Sprintf(`CREATE TABLE `+"`%s`.`%s`"+` (id UInt64, payload String, marker String)
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf(`CREATE TABLE `+"`%s`.`%s`"+` (id UInt64, payload String, marker String)
         ENGINE=MergeTree ORDER BY id
         SETTINGS min_rows_for_wide_part=0, min_bytes_for_wide_part=0`, dbName, tblName))
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"INSERT INTO `%s`.`%s` SELECT number, repeat('x', 1024), 'orig' FROM numbers(%d)",
 		dbName, tblName, rows))
-	env.queryWithNoError(r, fmt.Sprintf("OPTIMIZE TABLE `%s`.`%s` FINAL", dbName, tblName))
+	env.queryWithNoError(t, r, fmt.Sprintf("OPTIMIZE TABLE `%s`.`%s` FINAL", dbName, tblName))
 
 	// First backup — uploads everything fresh.
 	env.casBackupNoError(r, "create", "--tables", dbName+".*", bk1)
@@ -54,10 +54,10 @@ func TestCASMutationDedup(t *testing.T) {
 	}
 
 	// Mutate ONLY the marker column; payload is hardlinked unchanged.
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"ALTER TABLE `%s`.`%s` UPDATE marker = 'after' WHERE 1 SETTINGS mutations_sync=2",
 		dbName, tblName))
-	env.queryWithNoError(r, fmt.Sprintf("OPTIMIZE TABLE `%s`.`%s` FINAL", dbName, tblName))
+	env.queryWithNoError(t, r, fmt.Sprintf("OPTIMIZE TABLE `%s`.`%s` FINAL", dbName, tblName))
 
 	env.casBackupNoError(r, "create", "--tables", dbName+".*", bk2)
 	out2 := env.casBackupNoError(r, "cas-upload", bk2)
@@ -81,7 +81,7 @@ func TestCASMutationDedup(t *testing.T) {
 	// Cleanup.
 	env.casBackupNoError(r, "cas-delete", bk1)
 	env.casBackupNoError(r, "cas-delete", bk2)
-	env.queryWithNoError(r, fmt.Sprintf("DROP DATABASE `%s` SYNC", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP DATABASE `%s` SYNC", dbName))
 }
 
 // parseBytesUploaded extracts the bytes-uploaded value from cas-upload's

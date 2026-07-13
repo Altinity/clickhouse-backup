@@ -64,7 +64,7 @@ func (c *COS) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (c *COS) Close(ctx context.Context) error {
+func (c *COS) Close(_ context.Context) error {
 	return nil
 }
 
@@ -208,9 +208,9 @@ func (c *COS) GetFileReaderWithLocalPath(ctx context.Context, key, localPath str
 
 		// Reopen the file for reading
 		return writer, nil
-	} else {
-		return c.GetFileReader(ctx, key)
 	}
+
+	return c.GetFileReader(ctx, key)
 }
 
 func (c *COS) PutFile(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
@@ -388,8 +388,26 @@ func isCOSPreconditionFailed(err error) bool {
 	return false
 }
 
+// CopyObject server-side copy inside COS, empty srcBucket means the same bucket,
+// non-empty srcBucket - another COS bucket in the same region (e.g. ClickHouse object disk over COS),
+// MultiCopy internally switches to multipart copy for objects above the single-copy limit,
+// when the source is not really on COS (e.g. object disk over MinIO) MultiCopy fails and callers fall back to streaming
 func (c *COS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
-	return 0, errors.Errorf("CopyObject not implemented for %s", c.Kind())
+	srcHost := c.client.BaseURL.BucketURL.Host
+	if srcBucket != "" {
+		// bucket host format is <bucket>-<appid>.cos.<region>.myqcloud.com, take the regional suffix from our own bucket host
+		hostParts := strings.SplitN(srcHost, ".", 2)
+		if len(hostParts) != 2 {
+			return 0, errors.Errorf("COS CopyObject can't derive regional endpoint for src bucket %s from %s", srcBucket, srcHost)
+		}
+		srcHost = srcBucket + "." + hostParts[1]
+	}
+	sourceURL := fmt.Sprintf("%s/%s", srcHost, strings.TrimPrefix(srcKey, "/"))
+	log.Debug().Msgf("COS->CopyObject %s -> %s", sourceURL, dstKey)
+	if _, _, err := c.client.Object.MultiCopy(ctx, dstKey, sourceURL, nil); err != nil {
+		return 0, errors.Wrapf(err, "COS CopyObject MultiCopy %s -> %s", sourceURL, dstKey)
+	}
+	return srcSize, nil
 }
 
 func (c *COS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {

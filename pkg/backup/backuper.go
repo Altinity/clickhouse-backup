@@ -68,6 +68,7 @@ type Backuper struct {
 	resumableState         *resumable.State
 	shadowBackupUUIDs      []string
 	shadowBackupUUIDsMutex sync.Mutex
+	fileManifest           *storage.ManifestWriter
 
 	// casProbeState is the shared (or per-instance) state for the CAS
 	// conditional-put probe and the unsafe-marker WARN banner. In daemon mode
@@ -623,6 +624,27 @@ func (b *Backuper) addShadowBackupUUID(uuid string) {
 	b.shadowBackupUUIDsMutex.Lock()
 	b.shadowBackupUUIDs = append(b.shadowBackupUUIDs, uuid)
 	b.shadowBackupUUIDsMutex.Unlock()
+}
+
+// recordUploadedFile records a single file in the backup manifest (thread-safe).
+// remotePath should be the full remote path including the backupName prefix.
+func (b *Backuper) recordUploadedFile(backupName, remotePath string) {
+	if b.fileManifest == nil {
+		return
+	}
+	b.fileManifest.AddFile(strings.TrimPrefix(remotePath, backupName+"/"))
+}
+
+// recordUploadedFiles records multiple files in the backup manifest (thread-safe).
+// remotePath is the remote directory (including backupName prefix), files are
+// relative to it.
+func (b *Backuper) recordUploadedFiles(backupName, remotePath string, files []string) {
+	if b.fileManifest == nil {
+		return
+	}
+	for _, f := range files {
+		b.fileManifest.AddFile(strings.TrimPrefix(path.Join(remotePath, f), backupName+"/"))
+	}
 }
 
 // CheckDisksUsage - https://github.com/Altinity/clickhouse-backup/issues/878

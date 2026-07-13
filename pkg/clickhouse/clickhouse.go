@@ -402,7 +402,8 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 		Name string `ch:"name"`
 	}, 0)
 	// MaterializedPostgreSQL doesn't support FREEZE look https://github.com/Altinity/clickhouse-backup/issues/550 and https://github.com/ClickHouse/ClickHouse/issues/32902
-	if err = ch.SelectContext(ctx, &skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('MySQL','PostgreSQL','MaterializedPostgreSQL')"); err != nil {
+	// DataLakeCatalog is read-only, we don't need these tables in metadata, look https://github.com/Altinity/clickhouse-backup/issues/1417
+	if err = ch.SelectContext(ctx, &skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('DataLakeCatalog','MySQL','PostgreSQL','MaterializedPostgreSQL')"); err != nil {
 		return nil, errors.Wrap(err, "GetTables: select skip databases")
 	}
 	skipDatabaseNames := make([]string, len(skipDatabases))
@@ -1046,10 +1047,14 @@ var attachViewRefreshRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+
 var attachViewToClauseRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+TO\s+.+)`)
 var attachViewAsWithRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+AS\s+WITH\s+.+)`)
 var attachViewRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+AS\s+.+)`)
+var viewStorageRe = regexp.MustCompile(`(?im)^((?:ATTACH|CREATE)[\s\w]+VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?\S+(?:\s+UUID\s+'[^']+')?)(\s+ENGINE\s*=?\s*.+)`)
+var viewColumnsRe = regexp.MustCompile(`(?im)^((?:ATTACH|CREATE)[\s\w]+VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?\S+(?:\s+UUID\s+'[^']+')?)\s*(\(.+\s+(?:AS|TO)\s+.+)`)
 var createObjRe = regexp.MustCompile(`(?is)^(CREATE [^(]+)(\(.+)`)
 var onClusterRe = regexp.MustCompile(`(?im)\s+ON\s+CLUSTER\s+`)
 var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^)]+)\)`)
 var macroRE = regexp.MustCompile(`(?i){[a-z0-9-_]+}`)
+var aliasEngineRe = regexp.MustCompile(`(?i)ENGINE\s*=\s*Alias\s*\(`)
+var aliasEngineColumnsRe = regexp.MustCompile(`(?is)^((?:CREATE|ATTACH)\s+TABLE\s+[^(]+?)\s*\(.+\)\s*(ENGINE\s*=\s*Alias\s*\(.*)$`)
 
 // CreateTable - create ClickHouse table
 func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDependencies bool, onCluster string, version int, defaultDataPath string, asAttach bool, databaseEngine string) error {
@@ -1130,6 +1135,8 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	if (strings.HasPrefix(query, "CREATE MATERIALIZED VIEW") || strings.HasPrefix(query, "ATTACH MATERIALIZED VIEW")) && strings.Contains(query, " REFRESH ") && !strings.Contains(query, " EMPTY ") {
 		query = strings.Replace(query, "DEFINER", "EMPTY DEFINER", 1)
 	}
+	// https://github.com/Altinity/clickhouse-backup/issues/1426
+	query = fixAliasEngineQuery(query, version)
 	// WINDOW VIEW / LIVE VIEW unavailable with analyzer after 24.3
 	// Use per-query settings via clickhouse.Context to avoid connection pool race
 	ctx := ch.AnalyzerOffContextIfNecessary(version, query)
@@ -1137,6 +1144,20 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 		return errors.Wrap(err, "CreateTable: execute create query")
 	}
 	return nil
+}
+
+// fixAliasEngineQuery - ENGINE=Alias doesn't support explicit column definitions (columns inherited from target table)
+// and requires allow_experimental_alias_table_engine=1 since 25.11
+// https://github.com/Altinity/clickhouse-backup/issues/1426
+func fixAliasEngineQuery(query string, version int) string {
+	if !aliasEngineRe.MatchString(query) {
+		return query
+	}
+	query = aliasEngineColumnsRe.ReplaceAllString(query, "$1 $2")
+	if version >= 25011000 && !strings.Contains(query, "allow_experimental_alias_table_engine") {
+		query += " SETTINGS allow_experimental_alias_table_engine=1"
+	}
+	return query
 }
 
 func (ch *ClickHouse) cleanUUIDForReplicatedDatabase(table Table, query string, databaseEngine string) (string, error) {
@@ -1173,7 +1194,7 @@ func (ch *ClickHouse) CreateTableAsAttach(query string) error {
 
 func (ch *ClickHouse) enrichQueryWithOnCluster(query string, onCluster string, version int, databaseEngine string) string {
 	if version > 19000000 && !strings.HasPrefix(databaseEngine, "Replicated") && onCluster != "" && !onClusterRe.MatchString(query) {
-		tryMatchReList := []*regexp.Regexp{attachViewRefreshRe, attachViewToClauseRe, attachViewAsWithRe, attachViewRe, createViewRefreshRe, createViewToClauseRe, createViewAsWithRe, createViewRe, createObjRe}
+		tryMatchReList := []*regexp.Regexp{attachViewRefreshRe, attachViewToClauseRe, viewStorageRe, attachViewAsWithRe, attachViewRe, createViewRefreshRe, createViewToClauseRe, createViewAsWithRe, createViewRe, viewColumnsRe, createObjRe}
 		for _, tryMatchRe := range tryMatchReList {
 			if tryMatchRe.MatchString(query) {
 				query = tryMatchRe.ReplaceAllString(query, "$1 ON CLUSTER '"+onCluster+"' $2")
@@ -1365,6 +1386,42 @@ func (ch *ClickHouse) GetInProgressMutations(ctx context.Context, database strin
 	return inProgressMutations, nil
 }
 
+// GetInProgressMutationsBatch returns all in-progress mutations across the whole server in a
+// SINGLE query, keyed by metadata.TableTitle{Database, Table}. system.mutations is an expensive
+// virtual table — every query against it enumerates all tables on the server — so calling
+// GetInProgressMutations once per table is O(N^2) and dominates `create` wall-clock on
+// installations with many tables (observed: ~240ms/call * tens of thousands of tables). Fetching
+// the whole in-progress set once per backup turns that into a single O(N) scan; per-table lookup is
+// then an in-memory map access.
+type inProgressMutationRow struct {
+	Database   string `ch:"database"`
+	Table      string `ch:"table"`
+	MutationId string `ch:"mutation_id"`
+	Command    string `ch:"command"`
+}
+
+// groupMutationsByTable buckets flat mutation rows into per-table lists keyed by
+// metadata.TableTitle{Database, Table}. A struct key avoids the corner cases of a "database.table"
+// string key (dots are legal in database/table names, so concatenation is ambiguous). Pure (no I/O)
+// so it is unit-testable without a ClickHouse server.
+func groupMutationsByTable(rows []inProgressMutationRow) map[metadata.TableTitle][]metadata.MutationMetadata {
+	result := make(map[metadata.TableTitle][]metadata.MutationMetadata, len(rows))
+	for _, r := range rows {
+		key := metadata.TableTitle{Database: r.Database, Table: r.Table}
+		result[key] = append(result[key], metadata.MutationMetadata{MutationId: r.MutationId, Command: r.Command})
+	}
+	return result
+}
+
+func (ch *ClickHouse) GetInProgressMutationsBatch(ctx context.Context) (map[metadata.TableTitle][]metadata.MutationMetadata, error) {
+	var rows []inProgressMutationRow
+	query := "SELECT database, table, mutation_id, command FROM system.mutations WHERE is_done=0"
+	if err := ch.SelectContext(ctx, &rows, query); err != nil {
+		return nil, errors.Wrap(err, "can't get in progress mutations")
+	}
+	return groupMutationsByTable(rows), nil
+}
+
 func (ch *ClickHouse) ApplyMacros(ctx context.Context, s string) (string, error) {
 	if !strings.Contains(s, "{") {
 		return s, nil
@@ -1483,8 +1540,27 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 	// https://github.com/Altinity/clickhouse-backup/issues/1360
 	// Batch the WHERE OR-list to keep per-query memory bounded on instances with thousands of tables.
 	partsColumnsBatchSize := 25
-	if ch.Config != nil && ch.Config.PartsColumnsBatchSize > 0 {
-		partsColumnsBatchSize = ch.Config.PartsColumnsBatchSize
+	// https://github.com/Altinity/clickhouse-backup/issues/1420
+	// Memory caps are configurable, 0 means don't inject the corresponding setting.
+	maxBytesBeforeExternalGroupBy := int64(100000000)
+	maxMemoryUsage := int64(200000000)
+	if ch.Config != nil {
+		if ch.Config.PartsColumnsBatchSize > 0 {
+			partsColumnsBatchSize = ch.Config.PartsColumnsBatchSize
+		}
+		maxBytesBeforeExternalGroupBy = ch.Config.PartsColumnsMaxBytesBeforeExternalGroupBy
+		maxMemoryUsage = ch.Config.PartsColumnsMaxMemoryUsage
+	}
+	var querySettings []string
+	if maxBytesBeforeExternalGroupBy > 0 {
+		querySettings = append(querySettings, fmt.Sprintf("max_bytes_before_external_group_by=%d", maxBytesBeforeExternalGroupBy))
+	}
+	if maxMemoryUsage > 0 {
+		querySettings = append(querySettings, fmt.Sprintf("max_memory_usage=%d", maxMemoryUsage))
+	}
+	settingsClause := ""
+	if len(querySettings) > 0 {
+		settingsClause = " SETTINGS " + strings.Join(querySettings, ", ")
 	}
 	tableDataTypes := make(map[string][]ColumnDataTypes)
 	for start := 0; start < len(conditions); start += partsColumnsBatchSize {
@@ -1500,8 +1576,8 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 			"WHERE active AND (" + strings.Join(batchConditions, " OR ") + ") " +
 			"AND type NOT LIKE 'Enum%(%' AND type NOT LIKE 'Tuple(%' AND type NOT LIKE 'Nullable(Enum%(%' " +
 			"AND type NOT LIKE 'Nullable(Tuple(%' AND type NOT LIKE 'Array(Tuple(%' AND type NOT LIKE 'Nullable(Array(Tuple(%' " +
-			"GROUP BY database, table, column HAVING min_type != max_type " +
-			"SETTINGS max_bytes_before_external_group_by=100000000, max_memory_usage=200000000"
+			"GROUP BY database, table, column HAVING min_type != max_type" +
+			settingsClause
 
 		if err := ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL); err != nil {
 			return errors.Wrap(err, "CheckSystemPartsColumnsForTables: select parts columns")

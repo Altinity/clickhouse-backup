@@ -8,7 +8,7 @@ for disk in $LOCAL_DISKS; do
   disk_name=$(echo $disk | cut -d ":" -f 1)
   disk_path=$(echo $disk | cut -d ":" -f 2)
   mkdir -pv "${disk_path}/backup/${BACKUP_NAME}/"
-  if [[ "0" != $(ssh -i ${BACKUP_SSH_KEY} -o 'StrictHostKeyChecking no' "${BACKUP_REMOTE_SERVER}" ls -d ${BACKUP_REMOTE_DIR}/${BACKUP_NAME}/*/ | grep -c "/${disk_name}/") ]]; then
-    rsync -e "ssh -i ${BACKUP_SSH_KEY} -o 'StrictHostKeyChecking no'" -avzrPH "${BACKUP_REMOTE_SERVER}:${BACKUP_REMOTE_DIR}/${BACKUP_NAME}/${disk_name}/" "${disk_path}/backup/${BACKUP_NAME}"
+  if [[ "0" != $(ssh -i ${BACKUP_SSH_KEY} -p ${BACKUP_SSH_PORT} -o 'StrictHostKeyChecking no' "${BACKUP_REMOTE_SERVER}" ls -d ${BACKUP_REMOTE_DIR}/${BACKUP_NAME}/*/ | grep -c "/${disk_name}/") ]]; then
+    rsync -e "ssh -i ${BACKUP_SSH_KEY} -p ${BACKUP_SSH_PORT} -o 'StrictHostKeyChecking no'" -avzrPH "${BACKUP_REMOTE_SERVER}:${BACKUP_REMOTE_DIR}/${BACKUP_NAME}/${disk_name}/" "${disk_path}/backup/${BACKUP_NAME}"
   fi
 done

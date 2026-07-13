@@ -104,10 +104,10 @@ func fakeBackupDest(entries []fakeRemoteFile) *BackupDestination {
 func TestBackupList_SkipPrefixesFiltering(t *testing.T) {
 	now := time.Now()
 	entries := []fakeRemoteFile{
-		{name: "cas/", size: 0, modTime: now},          // should be skipped when prefix="cas/"
-		{name: "v1backup-1", size: 0, modTime: now},    // must NOT be skipped
-		{name: "v1backup-2", size: 0, modTime: now},    // must NOT be skipped
-		{name: "casematch", size: 0, modTime: now},     // must NOT be skipped ("cas" prefix but no trailing slash)
+		{name: "cas/", size: 0, modTime: now},       // should be skipped when prefix="cas/"
+		{name: "v1backup-1", size: 0, modTime: now}, // must NOT be skipped
+		{name: "v1backup-2", size: 0, modTime: now}, // must NOT be skipped
+		{name: "casematch", size: 0, modTime: now},  // must NOT be skipped ("cas" prefix but no trailing slash)
 	}
 	bd := fakeBackupDest(entries)
 

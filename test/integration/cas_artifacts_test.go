@@ -56,22 +56,22 @@ func testCASArtifactsRBAC(t *testing.T, env *TestEnvironment, r *require.Asserti
 	)
 
 	r.NoError(env.dropDatabase(db, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", db))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(10)", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(10)", db))
 
-	env.queryWithNoError(r, "DROP USER IF EXISTS `cas_art_test_user`")
-	env.queryWithNoError(r, "DROP ROLE IF EXISTS `cas_art_test_role`")
-	env.queryWithNoError(r, "CREATE ROLE `cas_art_test_role`")
-	env.queryWithNoError(r, "CREATE USER `cas_art_test_user` IDENTIFIED BY 'test_pass' DEFAULT ROLE `cas_art_test_role`")
+	env.queryWithNoError(t, r, "DROP USER IF EXISTS `cas_art_test_user`")
+	env.queryWithNoError(t, r, "DROP ROLE IF EXISTS `cas_art_test_role`")
+	env.queryWithNoError(t, r, "CREATE ROLE `cas_art_test_role`")
+	env.queryWithNoError(t, r, "CREATE USER `cas_art_test_user` IDENTIFIED BY 'test_pass' DEFAULT ROLE `cas_art_test_role`")
 
 	// create (v1 local) → cas-upload → delete local → cas-download → restore --rbac
 	env.casBackupNoError(r, "create", "--rbac", "--tables", db+".*", backup)
 	env.casBackupNoError(r, "cas-upload", backup)
 	env.casBackupNoError(r, "delete", "local", backup)
 
-	env.queryWithNoError(r, "DROP USER IF EXISTS `cas_art_test_user`")
-	env.queryWithNoError(r, "DROP ROLE IF EXISTS `cas_art_test_role`")
+	env.queryWithNoError(t, r, "DROP USER IF EXISTS `cas_art_test_user`")
+	env.queryWithNoError(t, r, "DROP ROLE IF EXISTS `cas_art_test_role`")
 
 	env.casBackupNoError(r, "cas-download", backup)
 	// Note: restore --rbac may exit non-zero on this test env because the
@@ -119,8 +119,8 @@ func testCASArtifactsRBAC(t *testing.T, env *TestEnvironment, r *require.Asserti
 	env.checkCount(r, 1, 10, fmt.Sprintf("SELECT count() FROM `%s`.t", db))
 
 	// Cleanup.
-	env.queryWithNoError(r, "DROP USER IF EXISTS `cas_art_test_user`")
-	env.queryWithNoError(r, "DROP ROLE IF EXISTS `cas_art_test_role`")
+	env.queryWithNoError(t, r, "DROP USER IF EXISTS `cas_art_test_user`")
+	env.queryWithNoError(t, r, "DROP ROLE IF EXISTS `cas_art_test_role`")
 	r.NoError(env.dropDatabase(db, true))
 	env.casBackupNoError(r, "cas-delete", backup)
 }
@@ -133,9 +133,9 @@ func testCASArtifactsDatabases(t *testing.T, env *TestEnvironment, r *require.As
 
 	r.NoError(env.dropDatabase(db, true))
 	// Use Atomic engine explicitly so the Databases metadata carries the engine.
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s` ENGINE=Atomic", db))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(5)", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s` ENGINE=Atomic", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(5)", db))
 
 	env.casBackupNoError(r, "create", "--tables", db+".*", backup)
 	env.casBackupNoError(r, "cas-upload", backup)
@@ -175,17 +175,17 @@ func testCASArtifactsFunctions(t *testing.T, env *TestEnvironment, r *require.As
 	)
 
 	r.NoError(env.dropDatabase(db, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", db))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(3)", db))
-	env.queryWithNoError(r, fmt.Sprintf("DROP FUNCTION IF EXISTS %s", fn))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE FUNCTION %s AS (x) -> x * 2", fn))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(3)", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP FUNCTION IF EXISTS %s", fn))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE FUNCTION %s AS (x) -> x * 2", fn))
 
 	env.casBackupNoError(r, "create", "--tables", db+".*", backup)
 	env.casBackupNoError(r, "cas-upload", backup)
 	env.casBackupNoError(r, "delete", "local", backup)
 
-	env.queryWithNoError(r, fmt.Sprintf("DROP FUNCTION IF EXISTS %s", fn))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP FUNCTION IF EXISTS %s", fn))
 	r.NoError(env.dropDatabase(db, true))
 
 	env.casBackupNoError(r, "cas-download", backup)
@@ -199,7 +199,7 @@ func testCASArtifactsFunctions(t *testing.T, env *TestEnvironment, r *require.As
 		fmt.Sprintf("SELECT name FROM system.functions WHERE name = '%s' AND origin = 'SQLUserDefined'", fn)))
 	r.NotEmpty(rows, "expected function %s in system.functions after CAS restore", fn)
 
-	env.queryWithNoError(r, fmt.Sprintf("DROP FUNCTION IF EXISTS %s", fn))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP FUNCTION IF EXISTS %s", fn))
 	r.NoError(env.dropDatabase(db, true))
 	env.casBackupNoError(r, "cas-delete", backup)
 }
@@ -212,20 +212,20 @@ func testCASArtifactsNamedCollections(t *testing.T, env *TestEnvironment, r *req
 	)
 
 	r.NoError(env.dropDatabase(db, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", db))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(4)", db))
-	env.queryWithNoError(r, fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collection))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(4)", db))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collection))
 	// No OVERRIDABLE modifier: that per-key override syntax was only added in
 	// ClickHouse 24.x and 23.x (this subtest runs on 22.12+) rejects it with a
 	// syntax error. The override mode is irrelevant to this test.
-	env.queryWithNoError(r, fmt.Sprintf("CREATE NAMED COLLECTION %s AS key='val'", collection))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE NAMED COLLECTION %s AS key='val'", collection))
 
 	env.casBackupNoError(r, "create", "--named-collections", "--tables", db+".*", backup)
 	env.casBackupNoError(r, "cas-upload", backup)
 	env.casBackupNoError(r, "delete", "local", backup)
 
-	env.queryWithNoError(r, fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collection))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collection))
 	r.NoError(env.dropDatabase(db, true))
 
 	env.casBackupNoError(r, "cas-download", backup)
@@ -242,7 +242,7 @@ func testCASArtifactsNamedCollections(t *testing.T, env *TestEnvironment, r *req
 
 	env.checkCount(r, 1, 4, fmt.Sprintf("SELECT count() FROM `%s`.t", db))
 
-	env.queryWithNoError(r, fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collection))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collection))
 	r.NoError(env.dropDatabase(db, true))
 	env.casBackupNoError(r, "cas-delete", backup)
 }

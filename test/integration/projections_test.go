@@ -29,66 +29,66 @@ func TestProjections(t *testing.T) {
 			}
 		}
 		// create --skip-projection
-		env.queryWithNoError(r, "CREATE TABLE default.table_with_projection(dt DateTime, v UInt64, PROJECTION x (SELECT toStartOfMonth(dt) m, sum(v) GROUP BY m)) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
-		env.queryWithNoError(r, "INSERT INTO default.table_with_projection SELECT today() - INTERVAL number DAY, number FROM numbers(5)")
+		env.queryWithNoError(t, r, "CREATE TABLE default.table_with_projection(dt DateTime, v UInt64, PROJECTION x (SELECT toStartOfMonth(dt) m, sum(v) GROUP BY m)) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
+		env.queryWithNoError(t, r, "INSERT INTO default.table_with_projection SELECT today() - INTERVAL number DAY, number FROM numbers(5)")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create", "--skip-projections", "default.*", "test_skip_projections")
 		isProjectionExists(true)
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "upload", "--delete-source", "test_skip_projections")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "download", "test_skip_projections")
 		isProjectionExists(true)
-		env.queryWithNoError(r, "DROP TABLE default.table_with_projection NO DELAY")
+		env.queryWithNoError(t, r, "DROP TABLE default.table_with_projection NO DELAY")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "restore", "test_skip_projections")
 		counts = 0
 		r.NoError(env.ch.SelectSingleRowNoCtx(&counts, "SELECT count() FROM default.table_with_projection"))
 		r.Equal(uint64(5), counts)
-		env.queryWithNoError(r, "DROP TABLE default.table_with_projection NO DELAY")
+		env.queryWithNoError(t, r, "DROP TABLE default.table_with_projection NO DELAY")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "test_skip_projections")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "remote", "test_skip_projections")
 
 		// upload --skip-projection
-		env.queryWithNoError(r, "CREATE TABLE default.table_with_projection(dt DateTime, v UInt64, PROJECTION x (SELECT toStartOfMonth(dt) m, sum(v) GROUP BY m)) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
-		env.queryWithNoError(r, "INSERT INTO default.table_with_projection SELECT today() - INTERVAL number DAY, number FROM numbers(5)")
+		env.queryWithNoError(t, r, "CREATE TABLE default.table_with_projection(dt DateTime, v UInt64, PROJECTION x (SELECT toStartOfMonth(dt) m, sum(v) GROUP BY m)) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
+		env.queryWithNoError(t, r, "INSERT INTO default.table_with_projection SELECT today() - INTERVAL number DAY, number FROM numbers(5)")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create", "test_skip_projections")
 		isProjectionExists(false)
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "upload", "--skip-projections", "default.*", "--delete-source", "test_skip_projections")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "download", "test_skip_projections")
 		isProjectionExists(true)
-		env.queryWithNoError(r, "DROP TABLE default.table_with_projection NO DELAY")
+		env.queryWithNoError(t, r, "DROP TABLE default.table_with_projection NO DELAY")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "restore", "test_skip_projections")
 		counts = 0
 		r.NoError(env.ch.SelectSingleRowNoCtx(&counts, "SELECT count() FROM default.table_with_projection"))
 		r.Equal(uint64(5), counts)
-		env.queryWithNoError(r, "DROP TABLE default.table_with_projection NO DELAY")
+		env.queryWithNoError(t, r, "DROP TABLE default.table_with_projection NO DELAY")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "test_skip_projections")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "remote", "test_skip_projections")
 
 		// restore --skip-projection
-		env.queryWithNoError(r, "CREATE TABLE default.table_with_projection(dt DateTime, v UInt64, PROJECTION x (SELECT toStartOfMonth(dt) m, sum(v) GROUP BY m)) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
-		env.queryWithNoError(r, "INSERT INTO default.table_with_projection SELECT today() - INTERVAL number DAY, number FROM numbers(5)")
+		env.queryWithNoError(t, r, "CREATE TABLE default.table_with_projection(dt DateTime, v UInt64, PROJECTION x (SELECT toStartOfMonth(dt) m, sum(v) GROUP BY m)) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
+		env.queryWithNoError(t, r, "INSERT INTO default.table_with_projection SELECT today() - INTERVAL number DAY, number FROM numbers(5)")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create", "test_skip_projections")
 		isProjectionExists(false)
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "upload", "--delete-source", "test_skip_projections")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "download", "test_skip_projections")
 		isProjectionExists(false)
-		env.queryWithNoError(r, "DROP TABLE default.table_with_projection NO DELAY")
+		env.queryWithNoError(t, r, "DROP TABLE default.table_with_projection NO DELAY")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "restore", "--skip-projections", "default.*", "test_skip_projections")
 		counts = 0
 		r.NoError(env.ch.SelectSingleRowNoCtx(&counts, "SELECT count() FROM default.table_with_projection"))
 		r.Equal(uint64(5), counts)
-		env.queryWithNoError(r, "DROP TABLE default.table_with_projection NO DELAY")
+		env.queryWithNoError(t, r, "DROP TABLE default.table_with_projection NO DELAY")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "test_skip_projections")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "remote", "test_skip_projections")
 	}
 
 	// other cases
-	env.queryWithNoError(r, "CREATE TABLE default.table_with_projection(dt DateTime, v UInt64, PROJECTION x (SELECT toStartOfMonth(dt) m, sum(v) GROUP BY m)) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
-	env.queryWithNoError(r, "INSERT INTO default.table_with_projection SELECT today() - INTERVAL number DAY, number FROM numbers(5)")
+	env.queryWithNoError(t, r, "CREATE TABLE default.table_with_projection(dt DateTime, v UInt64, PROJECTION x (SELECT toStartOfMonth(dt) m, sum(v) GROUP BY m)) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
+	env.queryWithNoError(t, r, "INSERT INTO default.table_with_projection SELECT today() - INTERVAL number DAY, number FROM numbers(5)")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create_remote", "test_backup_projection_full")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_full")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "restore_remote", "--rm", "test_backup_projection_full")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_full")
 
-	env.queryWithNoError(r, "INSERT INTO default.table_with_projection SELECT today() - INTERVAL number WEEK, number FROM numbers(5)")
+	env.queryWithNoError(t, r, "INSERT INTO default.table_with_projection SELECT today() - INTERVAL number WEEK, number FROM numbers(5)")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create_remote", "--diff-from-remote", "test_backup_projection_full", "test_backup_projection_increment")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_increment")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "restore_remote", "--rm", "test_backup_projection_increment")
@@ -102,7 +102,7 @@ func TestProjections(t *testing.T) {
 		r.Equal(uint64(10), counts)
 	}
 
-	env.queryWithNoError(r, "DROP TABLE default.table_with_projection NO DELAY")
+	env.queryWithNoError(t, r, "DROP TABLE default.table_with_projection NO DELAY")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "remote", "test_backup_projection_increment")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "remote", "test_backup_projection_full")

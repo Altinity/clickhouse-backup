@@ -95,6 +95,7 @@ type TestEnvironment struct {
 	ch          *clickhouse.ClickHouse
 	ProjectName string
 	tc          *TestContainers
+	testName    string
 }
 
 func defaultTestData() []TestDataStruct {
@@ -483,6 +484,7 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 	if env.ch == nil {
 		env.ch = clickhouse.NewClickHouse(&config.ClickHouseConfig{})
 	}
+	env.testName = t.Name()
 	t.Logf("%s acquired env %s", t.Name(), env.ProjectName)
 	envUsage.acquire(env.ProjectName, t.Name())
 
@@ -498,7 +500,7 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	// Dump container logs when test fails to aid debugging
 	if t.Failed() && os.Getenv("DUMP_FAILED_TEST_CONTAINER_LOGS") != "" {
 		t.Logf("=== %s FAILED, dumping container logs ===", t.Name())
-		env.tc.DumpAllContainerLogs(t.Context())
+		env.tc.DumpAllContainerLogs(t.Context(), t.Name())
 	}
 
 	env.ch.Close()
@@ -557,7 +559,7 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/backups_s3")
 	}
 	if t.Name() == "TestCustomRsync" {
-		env.DockerExecNoError(r, "sshd", "rm", "-rf", "/root/rsync_backups")
+		env.DockerExecNoError(r, "sshd", "rm", "-rf", "/config/rsync_backups")
 	}
 	if t.Name() == "TestCustomRestic" {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/restic")
@@ -742,13 +744,15 @@ func (env *TestEnvironment) connect(t *testing.T, timeOut string) error {
 
 // Query and data methods
 
-func (env *TestEnvironment) queryWithNoError(r *require.Assertions, query string, args ...interface{}) {
+func (env *TestEnvironment) queryWithNoError(t *testing.T, r *require.Assertions, query string, args ...interface{}) {
+	t.Helper()
 	startedAt := time.Now()
 	err := env.ch.Query(query, args...)
 	if err != nil {
 		log.Error().Err(err).Msgf("queryWithNoError(%s) error", query)
 		if env.tc != nil {
-			env.tc.DumpContainerLogsSince(context.Background(), "clickhouse", startedAt)
+			env.tc.DumpContainerLogsSince(context.Background(), "clickhouse", startedAt, env.testName)
+			env.tc.DumpContainerLogsSince(context.Background(), "zookeeper", startedAt, env.testName)
 		}
 	}
 	r.NoError(err)
@@ -980,7 +984,16 @@ func (env *TestEnvironment) dropDatabase(database string, ifExists bool) (err er
 		}
 		dropDatabaseSQL += " SYNC"
 	}
+	startedAt := time.Now()
 	dropErr := env.ch.Query(dropDatabaseSQL)
+	// ON CLUSTER DROP DATABASE routes through DDLWorker -> Keeper; a Keeper timeout
+	// (Code: 999 Coordination::Exception) surfaces here. Dump both clickhouse and
+	// keeper logs so such failures are diagnosable without re-running.
+	if dropErr != nil && env.tc != nil {
+		log.Error().Err(dropErr).Msgf("dropDatabase(%s) error", database)
+		env.tc.DumpContainerLogsSince(context.Background(), "clickhouse", startedAt, env.testName)
+		env.tc.DumpContainerLogsSince(context.Background(), "zookeeper", startedAt, env.testName)
+	}
 	// On ClickHouse < 20.10 with Ordinary engine, DROP DATABASE may not be fully synchronous
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.10") < 0 {
 		time.Sleep(1 * time.Second)
@@ -1063,7 +1076,7 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 		case "CUSTOM":
 			switch configFile {
 			case "config-custom-rsync.yml":
-				checkRemoteNoFiles("sshd", "/root/rsync_backups/cluster/shard0/")
+				checkRemoteNoFiles("sshd", "/config/rsync_backups/cluster/shard0/")
 			case "config-custom-restic.yml":
 				// restic physically removes snapshot objects from S3 on
 				// `forget --prune --unsafe-allow-remove-all`; the restic
@@ -1117,10 +1130,16 @@ func (env *TestEnvironment) uploadSSHKeys(r *require.Assertions, container strin
 	env.DockerExecNoError(r, container, "cp", "-vf", "/id_rsa", "/tmp/id_rsa")
 	env.DockerExecNoError(r, container, "chmod", "-v", "0600", "/tmp/id_rsa")
 
+	// CH>=23.3 uses the linuxserver/openssh-server sshd, which installs sftpuser's
+	// public key from the PUBLIC_KEY env at container start; the panubo image needs
+	// it copied into AuthorizedKeysFile (/etc/authorized_keys/%u).
+	if isModernSSHD() {
+		return
+	}
 	r.NoError(env.DockerCP("sftp/clickhouse-backup_rsa.pub", "sshd:/authorized_keys"))
-	env.DockerExecNoError(r, "sshd", "cp", "-vf", "/authorized_keys", "/etc/authorized_keys/root")
-	env.DockerExecNoError(r, "sshd", "chown", "-v", "root:root", "/etc/authorized_keys/root")
-	env.DockerExecNoError(r, "sshd", "chmod", "-v", "0600", "/etc/authorized_keys/root")
+	env.DockerExecNoError(r, "sshd", "cp", "-vf", "/authorized_keys", "/etc/authorized_keys/sftpuser")
+	env.DockerExecNoError(r, "sshd", "chown", "-v", "root:root", "/etc/authorized_keys/sftpuser")
+	env.DockerExecNoError(r, "sshd", "chmod", "-v", "0644", "/etc/authorized_keys/sftpuser")
 }
 
 // Utility functions
@@ -1275,6 +1294,28 @@ func generateTestDataForDifferentServerVersion(remoteStorageType string, offset,
 			//table shall be empty cause restore mv_refreshable with EMPTY option
 			Rows: func() []map[string]interface{} {
 				return []map[string]interface{}{}
+			}(),
+			Fields:  []string{"id"},
+			OrderBy: "id",
+		})
+	}
+	// ENGINE=Alias, experimental since 25.11, requires allow_experimental_alias_table_engine
+	// https://github.com/Altinity/clickhouse-backup/issues/1426
+	// add only once, alias forwards SELECT to `mv_src_table` which gets rows only for offset == 0
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") >= 0 && offset == 0 {
+		testData = addTestDataIfNotExistsAndReplaceRowsIfExists(testData, TestDataStruct{
+			Database:       dbNameAtomic,
+			DatabaseEngine: "Atomic",
+			Name:           "alias_to_mv_src_table",
+			Schema:         fmt.Sprintf("ENGINE=Alias('%s', 'mv_src_table_{test}') SETTINGS allow_experimental_alias_table_engine=1", dbNameAtomic),
+			SkipInsert:     true,
+			// rows are inherited from `mv_src_table` target table
+			Rows: func() []map[string]interface{} {
+				var result []map[string]interface{}
+				for i := 0; i < 100; i++ {
+					result = append(result, map[string]interface{}{"id": uint64(i)})
+				}
+				return result
 			}(),
 			Fields:  []string{"id"},
 			OrderBy: "id",
@@ -1435,17 +1476,17 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	}()
 	fillTables := func(partitions []string) {
 		for _, dt := range partitions {
-			env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t1(dt, v) SELECT '%s', number FROM numbers(10)", dt))
-			env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t2(dt, v) SELECT '%s', number FROM numbers(10)", dt))
+			env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO "+dbName+".t1(dt, v) SELECT '%s', number FROM numbers(10)", dt))
+			env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO "+dbName+".t2(dt, v) SELECT '%s', number FROM numbers(10)", dt))
 		}
 	}
 	createAndFillTables := func() {
 		log.Debug().Msg("Create and fill tables")
-		env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
-		env.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t1")
-		env.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t2")
-		env.queryWithNoError(r, "CREATE TABLE "+dbName+".t1 (dt Date, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, toYYYYMMDD(dt)) ORDER BY dt")
-		env.queryWithNoError(r, "CREATE TABLE "+dbName+".t2 (dt String, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, dt) ORDER BY dt")
+		env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+		env.queryWithNoError(t, r, "DROP TABLE IF EXISTS "+dbName+".t1")
+		env.queryWithNoError(t, r, "DROP TABLE IF EXISTS "+dbName+".t2")
+		env.queryWithNoError(t, r, "CREATE TABLE "+dbName+".t1 (dt Date, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, toYYYYMMDD(dt)) ORDER BY dt")
+		env.queryWithNoError(t, r, "CREATE TABLE "+dbName+".t2 (dt String, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, dt) ORDER BY dt")
 		fillTables([]string{"2022-01-01", "2022-01-02", "2022-01-03", "2022-01-04"})
 	}
 	createAndFillTables()

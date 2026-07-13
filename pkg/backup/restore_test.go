@@ -1,10 +1,13 @@
 package backup
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"testing"
+
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func TestDetectRBACObject(t *testing.T) {
@@ -190,6 +193,21 @@ func TestChangeTablePatternFromRestoreMapping(t *testing.T) {
 			restoreTableMapping: map[string]string{"t1": "t2", "t3": "t4"},
 			expected:            "db1.t2,db2.t4",
 		},
+		// https://github.com/Altinity/clickhouse-backup/issues/1421
+		{
+			name:                   "database mapping with same source database repeated in comma-separated patterns",
+			tablePattern:           "dwh.events,dwh.events_invalid",
+			objType:                "database",
+			restoreDatabaseMapping: map[string]string{"dwh": "sandbox"},
+			expected:               "sandbox.*,sandbox.*",
+		},
+		{
+			name:                "table mapping with same table name repeated in different databases",
+			tablePattern:        "db1.t1,db2.t1",
+			objType:             "table",
+			restoreTableMapping: map[string]string{"t1": "t2"},
+			expected:            "db1.t2,db2.t2",
+		},
 		// Empty mapping tests
 		{
 			name:                   "empty database mapping returns pattern unchanged",
@@ -220,4 +238,23 @@ func TestChangeTablePatternFromRestoreMapping(t *testing.T) {
 			assert.Equal(t, tc.expected, result)
 		})
 	}
+}
+
+func TestRestoreRBACResolveAllConflictsMissingAccessDir(t *testing.T) {
+	b := &Backuper{DefaultDataPath: t.TempDir()}
+
+	err := b.restoreRBACResolveAllConflicts(context.Background(), "missing-backup", t.TempDir(), 0, nil, nil, false)
+
+	assert.NoError(t, err)
+}
+
+// restoreBackupRelatedDir must surface a missing source dir as an os.IsNotExist-recognizable
+// error so restoreRBAC's `os.IsNotExist(err)` guards can skip RBAC restore gracefully (issue #1432).
+func TestRestoreBackupRelatedDirMissingDirIsNotExist(t *testing.T) {
+	b := &Backuper{DefaultDataPath: t.TempDir()}
+
+	err := b.restoreBackupRelatedDir("missing-backup", "access", t.TempDir(), nil, []string{"*.jsonl"})
+
+	assert.Error(t, err)
+	assert.True(t, os.IsNotExist(err), "expected os.IsNotExist to match the returned error, got: %v", err)
 }

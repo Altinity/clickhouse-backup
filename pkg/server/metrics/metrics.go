@@ -8,6 +8,16 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// FailedPartsCount counts data parts skipped as broken during backup creation when
+// general.max_broken_part_ratio > 0 tolerated them. It is a package-level counter because it is
+// incremented from pkg/backup (which has no APIMetrics instance) and registered in RegisterMetrics,
+// see https://github.com/Altinity/clickhouse-backup/issues/1418
+var FailedPartsCount = prometheus.NewCounter(prometheus.CounterOpts{
+	Namespace: "clickhouse_backup",
+	Name:      "failed_parts_count",
+	Help:      "Counter of data parts skipped as broken during backup creation with max_broken_part_ratio > 0",
+})
+
 type APIMetrics struct {
 	SuccessfulCounter map[string]prometheus.Counter
 	FailedCounter     map[string]prometheus.Counter
@@ -43,7 +53,7 @@ func NewAPIMetrics() *APIMetrics {
 // RegisterMetrics resister prometheus metrics and define allowed measured commands list
 func (m *APIMetrics) RegisterMetrics() {
 	commandList := []string{
-		"create", "upload", "download", "restore", "create_remote", "restore_remote", "delete",
+		"create", "upload", "download", "restore", "create_remote", "restore_remote", "delete", "rebase",
 		"cas-upload", "cas-download", "cas-restore", "cas-delete", "cas-verify", "cas-prune",
 	}
 	successfulCounter := map[string]prometheus.Counter{}
@@ -165,6 +175,7 @@ func (m *APIMetrics) RegisterMetrics() {
 	}
 
 	prometheus.MustRegister(
+		FailedPartsCount,
 		m.LastBackupSizeLocal,
 		m.LastBackupSizeRemote,
 		m.NumberBackupsRemote,

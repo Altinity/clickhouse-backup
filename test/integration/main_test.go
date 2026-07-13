@@ -101,8 +101,12 @@ func prePullImages() {
 		getEnvDefault("ZOOKEEPER_IMAGE", "docker.io/zookeeper"),
 		getEnvDefault("ZOOKEEPER_VERSION", "3.9.5"))
 
+	sshdImage := "docker.io/panubo/sshd:latest"
+	if isModernSSHD() {
+		sshdImage = "docker.io/linuxserver/openssh-server:latest"
+	}
 	images := []string{
-		"docker.io/panubo/sshd:latest",
+		sshdImage,
 		fmt.Sprintf("docker.io/minio/minio:%s", getEnvDefault("MINIO_VERSION", "latest")),
 		"fsouza/fake-gcs-server:latest",
 		"mcr.microsoft.com/azure-storage/azurite:latest",

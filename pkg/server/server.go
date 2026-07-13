@@ -173,7 +173,7 @@ func (api *APIServer) RunWatch(cliCtx *cli.Context) {
 	log.Info().Msg("Starting API Server in watch mode")
 	b := backup.NewBackuper(api.config)
 	commandId, _ := status.Current.Start("watch")
-	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), "*.*", nil, nil, false, false, false, false, false, cliCtx.Bool("watch-delete-source"), api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
+	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), cliCtx.StringSlice("schedule"), "*.*", nil, nil, false, false, false, false, false, cliCtx.Bool("watch-delete-source"), api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
 	api.handleWatchResponse(commandId, err)
 }
 
@@ -264,6 +264,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	r.HandleFunc("/backup/cas-prune", api.httpCASPruneHandler).Methods("POST")
 	r.HandleFunc("/backup/cas-status", api.httpCASStatusHandler).Methods("GET")
 	r.HandleFunc("/backup/download/{name}", api.httpDownloadHandler).Methods("POST")
+	r.HandleFunc("/backup/rebase/{name}", api.httpRebaseHandler).Methods("POST")
 	r.HandleFunc("/backup/restore/{name}", api.httpRestoreHandler).Methods("POST")
 	r.HandleFunc("/backup/restore_remote/{name}", api.httpRestoreRemoteHandler).Methods("POST")
 	r.HandleFunc("/backup/delete/{where}/{name}", api.httpDeleteHandler).Methods("POST")
@@ -364,12 +365,18 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			api.writeError(w, http.StatusBadRequest, string(line), err)
 			return
 		}
-		log.Info().Str("version", api.cliApp.Version).Msgf("/backup/actions call: %s", row.Command)
+		// Parse args from the raw command first so the real (unmasked) --env
+		// values are still applied on execution, then redact the command used
+		// for logging, async status storage, and API responses so sensitive
+		// --env overrides (passwords, keys, tokens) never leak.
+		//See https://github.com/Altinity/clickhouse-backup/issues/1429
 		args, err := shlex.Split(row.Command)
 		if err != nil {
 			api.writeError(w, http.StatusBadRequest, "", err)
 			return
 		}
+		row.Command = config.MaskEnvOverrideCommand(row.Command)
+		log.Info().Str("version", api.cliApp.Version).Msgf("/backup/actions call: %s", row.Command)
 		command := args[0]
 		switch command {
 		// watch command can't be run via cli app.Run, need parsing args
@@ -403,7 +410,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)
 				return
 			}
-		case "create", "restore", "upload", "download", "create_remote", "restore_remote", "list":
+		case "create", "restore", "upload", "download", "create_remote", "restore_remote", "list", "rebase":
 			actionsResults, err = api.actionsAsyncCommandsHandler(command, args, row, actionsResults)
 			if err != nil {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)
@@ -618,6 +625,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	watchInterval := ""
 	fullInterval := ""
 	watchBackupNameTemplate := ""
+	schedules := make([]string, 0)
 	fullCommand := "watch"
 
 	simpleParseArg := func(i int, args []string, paramName string) (bool, string) {
@@ -633,23 +641,32 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 					return true, ""
 				}
 			} else {
-				return true, strings.ReplaceAll(strings.SplitN(args[i], "=", 1)[1], "\"", "")
+				return true, strings.ReplaceAll(strings.SplitN(args[i], "=", 2)[1], "\"", "")
 			}
 		}
 		return false, ""
 	}
 	for i := range args {
 		matchParam := false
-		if matchParam, watchInterval = simpleParseArg(i, args, "--watch-interval"); matchParam {
+		// assign only on match, unconditional `param = simpleParseArg(...)` resets the value back to "" on every non-matching arg
+		if matchParam, watchIntervalFromArgs := simpleParseArg(i, args, "--watch-interval"); matchParam {
+			watchInterval = watchIntervalFromArgs
 			fullCommand = fmt.Sprintf("%s --watch-interval=\"%s\"", fullCommand, watchInterval)
 		}
-		if matchParam, fullInterval = simpleParseArg(i, args, "--full-interval"); matchParam {
+		if matchParam, fullIntervalFromArgs := simpleParseArg(i, args, "--full-interval"); matchParam {
+			fullInterval = fullIntervalFromArgs
 			fullCommand = fmt.Sprintf("%s --full-interval=\"%s\"", fullCommand, fullInterval)
 		}
-		if matchParam, watchBackupNameTemplate = simpleParseArg(i, args, "--watch-backup-name-template"); matchParam {
+		if matchParam, watchBackupNameTemplateFromArgs := simpleParseArg(i, args, "--watch-backup-name-template"); matchParam {
+			watchBackupNameTemplate = watchBackupNameTemplateFromArgs
 			fullCommand = fmt.Sprintf("%s --watch-backup-name-template=\"%s\"", fullCommand, watchBackupNameTemplate)
 		}
-		if matchParam, tablePattern = simpleParseArg(i, args, "--tables"); matchParam {
+		if matchParam, scheduleFromArgs := simpleParseArg(i, args, "--schedule"); matchParam {
+			schedules = append(schedules, scheduleFromArgs)
+			fullCommand = fmt.Sprintf("%s --schedule=\"%s\"", fullCommand, scheduleFromArgs)
+		}
+		if matchParam, tablePatternFromArgs := simpleParseArg(i, args, "--tables"); matchParam {
+			tablePattern = tablePatternFromArgs
 			fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 		}
 		if matchParam, partitions := simpleParseArg(i, args, "--partitions"); matchParam {
@@ -689,7 +706,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, schedules, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		api.handleWatchResponse(commandId, err)
 	}()
 
@@ -810,6 +827,13 @@ func (api *APIServer) httpKillHandler(w http.ResponseWriter, r *http.Request) {
 //   - table            - filter by db.table glob pattern (comma-separated)
 //   - remote_backup    - list tables from a remote backup (per-table size and parts)
 //   - local_backup     - list tables from a local backup (per-table size and parts), no live ClickHouse query needed
+//   - list_parts (alias parts) - also attach every physical part (name, partition_id, and against the live
+//     server also size) per table; works standalone against the live server or local_backup/remote_backup alike
+//   - partitions (alias list_partitions) - also attach the distinct partitions (partition_id, partition, parts
+//     count, size) per table, aggregated from parts; independent of list_parts, works the same way
+//
+// Against local_backup/remote_backup, partition_id is derived from each part's name (the `_`-delimited
+// prefix), so the human-readable partition value and per-partition/per-part size aren't available there.
 //
 // /backup/tables/all also returns tables that match skip_tables.
 func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) {
@@ -821,10 +845,12 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 	q := r.URL.Query()
 	tablePattern := q.Get("table")
 	printAll := r.URL.Path == "/backup/tables/all"
+	listParts := boolQueryParameter(q, "list_parts", "parts")
+	listPartitions := boolQueryParameter(q, "partitions", "list_partitions")
 
 	// https://github.com/Altinity/clickhouse-backup/issues/1388
 	if localBackup, exists := api.getQueryParameter(q, "local_backup"); exists {
-		rows, err := b.GetTableRowsForLocalBackup(context.Background(), localBackup, tablePattern, printAll)
+		rows, err := b.GetTableRowsForLocalBackup(context.Background(), localBackup, tablePattern, printAll, listParts, listPartitions)
 		if err != nil {
 			api.writeError(w, http.StatusInternalServerError, "tables", err)
 			return
@@ -833,7 +859,16 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if remoteBackup, exists := api.getQueryParameter(q, "remote_backup"); exists {
-		rows, err := b.GetTableRowsForRemoteBackup(context.Background(), remoteBackup, tablePattern, printAll)
+		rows, err := b.GetTableRowsForRemoteBackup(context.Background(), remoteBackup, tablePattern, printAll, listParts, listPartitions)
+		if err != nil {
+			api.writeError(w, http.StatusInternalServerError, "tables", err)
+			return
+		}
+		api.sendJSONEachRow(w, http.StatusOK, rows)
+		return
+	}
+	if listParts || listPartitions {
+		rows, err := b.GetTableRowsForLive(context.Background(), tablePattern, printAll, listParts, listPartitions)
 		if err != nil {
 			api.writeError(w, http.StatusInternalServerError, "tables", err)
 			return
@@ -1325,6 +1360,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	watchInterval := ""
 	fullInterval := ""
 	watchBackupNameTemplate := ""
+	schedules := make([]string, 0)
 	fullCommand := "watch"
 	query := r.URL.Query()
 	if interval, exist := api.getQueryParameter(query, "watch_interval"); exist {
@@ -1338,6 +1374,10 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	if template, exist := api.getQueryParameter(query, "watch_backup_name_template"); exist {
 		watchBackupNameTemplate = template
 		fullCommand = fmt.Sprintf("%s --watch-backup-name-template=\"%s\"", fullCommand, watchBackupNameTemplate)
+	}
+	if scheduleParams, exist := query["schedule"]; exist {
+		schedules = append(schedules, scheduleParams...)
+		fullCommand = fmt.Sprintf("%s --schedule=\"%s\"", fullCommand, strings.Join(scheduleParams, "\" --schedule=\""))
 	}
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
@@ -1393,7 +1433,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, schedules, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		api.handleWatchResponse(commandId, err)
 	}()
 	api.sendJSONEachRow(w, http.StatusCreated, struct {
@@ -1412,9 +1452,13 @@ func (api *APIServer) httpCleanHandler(w http.ResponseWriter, _ *http.Request) {
 	var err error
 	fullCommand := "clean"
 	commandId, ctx := status.Current.Start(fullCommand)
-	b := backup.NewBackuper(api.config)
+	defer func() { status.Current.Stop(commandId, err) }()
+	cfg, err := api.ReloadConfig(w, "clean")
+	if err != nil {
+		return
+	}
+	b := backup.NewBackuper(cfg)
 	err = b.Clean(ctx)
-	defer status.Current.Stop(commandId, err)
 	if err != nil {
 		log.Error().Msgf("Clean error: %v", err)
 		api.writeError(w, http.StatusInternalServerError, "clean", err)
@@ -1609,6 +1653,61 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// httpRebaseHandler - copy required parts from `required_backup` chain into remote backup and remove `required_backup` dependency
+func (api *APIServer) httpRebaseHandler(w http.ResponseWriter, r *http.Request) {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
+		log.Warn().Err(ErrAPILocked).Send()
+		api.writeError(w, http.StatusLocked, "rebase", ErrAPILocked)
+		return
+	}
+	cfg, err := api.ReloadConfig(w, "rebase")
+	if err != nil {
+		return
+	}
+	vars := mux.Vars(r)
+	query := r.URL.Query()
+	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
+	fullCommand := fmt.Sprint("rebase ", name)
+	operationId, _ := uuid.NewUUID()
+
+	callback, err := parseCallback(query)
+	if err != nil {
+		log.Error().Err(err).Send()
+		api.writeError(w, http.StatusBadRequest, "rebase", err)
+		return
+	}
+
+	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	go func() {
+		err, _ := api.metrics.ExecuteWithMetrics("rebase", 0, func() error {
+			b := backup.NewBackuper(cfg)
+			return b.Rebase(name, commandId)
+		})
+		if err != nil {
+			log.Error().Msgf("Rebase error: %v", err)
+			status.Current.Stop(commandId, err)
+			api.errorCallback(context.Background(), err, operationId.String(), callback)
+			return
+		}
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
+		status.Current.Stop(commandId, nil)
+		api.successCallback(context.Background(), operationId.String(), callback)
+	}()
+	api.sendJSONEachRow(w, http.StatusOK, struct {
+		Status      string `json:"status"`
+		Operation   string `json:"operation"`
+		BackupName  string `json:"backup_name"`
+		OperationId string `json:"operation_id"`
+	}{
+		Status:      "acknowledged",
+		Operation:   "rebase",
+		BackupName:  name,
+		OperationId: operationId.String(),
+	})
+}
+
 var databaseMappingRE = regexp.MustCompile(`[\w+]:[\w+]`)
 var tableMappingRE = regexp.MustCompile(`[\w+]:[\w+]`)
 
@@ -1619,7 +1718,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		api.writeError(w, http.StatusLocked, "restore", ErrAPILocked)
 		return
 	}
-	_, err := api.ReloadConfig(w, "restore")
+	cfg, err := api.ReloadConfig(w, "restore")
 	if err != nil {
 		return
 	}
@@ -1798,6 +1897,20 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// Handle rebind-replica-path-if-exists parameter, overrides clickhouse.rebind_replica_path_if_exists for this request only
+	// https://github.com/Altinity/clickhouse-backup/issues/1428
+	rebindReplicaPathParamName := "rebind_replica_path_if_exists"
+	rebindReplicaPathParamNames := []string{
+		strings.Replace(rebindReplicaPathParamName, "_", "-", -1),
+		strings.Replace(rebindReplicaPathParamName, "-", "_", -1),
+	}
+	for _, paramName := range rebindReplicaPathParamNames {
+		if _, exist := api.getQueryParameter(query, paramName); exist {
+			cfg.ClickHouse.RebindReplicaPathIfExists = true
+			fullCommand += " --rebind-replica-path-if-exists"
+		}
+	}
+
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
 	fullCommand += fmt.Sprintf(" %s", name)
 
@@ -1811,7 +1924,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
-			b := backup.NewBackuper(api.config)
+			b := backup.NewBackuper(cfg)
 			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, api.cliApp.Version, commandId)
 		})
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
@@ -2027,6 +2140,20 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		if _, exist := api.getQueryParameter(query, paramName); exist {
 			skipEmptyTables = true
 			fullCommand += " --skip-empty-tables"
+		}
+	}
+
+	// Handle rebind-replica-path-if-exists parameter, overrides clickhouse.rebind_replica_path_if_exists for this request only
+	// https://github.com/Altinity/clickhouse-backup/issues/1428
+	rebindReplicaPathParamName := "rebind_replica_path_if_exists"
+	rebindReplicaPathParamNames := []string{
+		strings.Replace(rebindReplicaPathParamName, "_", "-", -1),
+		strings.Replace(rebindReplicaPathParamName, "-", "_", -1),
+	}
+	for _, paramName := range rebindReplicaPathParamNames {
+		if _, exist := api.getQueryParameter(query, paramName); exist {
+			cfg.ClickHouse.RebindReplicaPathIfExists = true
+			fullCommand += " --rebind-replica-path-if-exists"
 		}
 	}
 
@@ -2650,4 +2777,14 @@ func (api *APIServer) getQueryParameter(q url.Values, paramName string) (string,
 		}
 	}
 	return "", false
+}
+
+// boolQueryParameter reports whether any of the given query parameter aliases is set to "1" or "true".
+func boolQueryParameter(q url.Values, names ...string) bool {
+	for _, name := range names {
+		if v := q.Get(name); v == "1" || v == "true" {
+			return true
+		}
+	}
+	return false
 }

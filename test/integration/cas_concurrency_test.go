@@ -50,9 +50,9 @@ func TestCASUploadRefusesConcurrent(t *testing.T) {
 
 	const dbName = "cas_concur_up_db"
 	r.NoError(env.dropDatabase(dbName, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", dbName))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(10)", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(10)", dbName))
 
 	env.casBackupNoError(r, "create", "--tables", dbName+".*", "concur_bk")
 

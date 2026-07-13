@@ -104,10 +104,10 @@ func runResumeOperationsAfterRestart(t *testing.T, tc resumeAfterRestartCase) {
 	fullCleanup(t, r, env, []string{baseBackup, resumeBackup}, []string{"remote", "local"}, []string{dbName}, false, false, false, tc.configFile)
 	defer fullCleanup(t, r, env, []string{baseBackup, resumeBackup}, []string{"remote", "local"}, []string{dbName}, false, false, false, tc.configFile)
 
-	env.queryWithNoError(r, "DROP DATABASE IF EXISTS "+dbName+" SYNC")
-	env.queryWithNoError(r, "CREATE DATABASE "+dbName)
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE %s.%s (id UInt64, payload String) ENGINE=MergeTree() PARTITION BY id %% %d ORDER BY id SETTINGS storage_policy='%s'", dbName, tableName, partitionsCount, storagePolicy))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO %s.%s SELECT number, repeat('x', 1024) FROM numbers(%d)", dbName, tableName, rowsPerStep))
+	env.queryWithNoError(t, r, "DROP DATABASE IF EXISTS "+dbName+" SYNC")
+	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE %s.%s (id UInt64, payload String) ENGINE=MergeTree() PARTITION BY id %% %d ORDER BY id SETTINGS storage_policy='%s'", dbName, tableName, partitionsCount, storagePolicy))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO %s.%s SELECT number, repeat('x', 1024) FROM numbers(%d)", dbName, tableName, rowsPerStep))
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+tc.configFile, "create", "--tables="+tablePattern, baseBackup)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+tc.configFile, "upload", baseBackup)
@@ -115,7 +115,7 @@ func runResumeOperationsAfterRestart(t *testing.T, tc resumeAfterRestartCase) {
 	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-f", resumeAfterRestartServerLog)
 	startResumeAfterRestartServer(t, r, env, tc.configFile)
 
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO %s.%s SELECT number + %d, repeat('y', 1024) FROM numbers(%d)", dbName, tableName, rowsPerStep, rowsPerStep))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO %s.%s SELECT number + %d, repeat('y', 1024) FROM numbers(%d)", dbName, tableName, rowsPerStep, rowsPerStep))
 
 	resumeOperationAfterRestart(t, r, env, tc.configFile, "create", resumeBackup,
 		resumeAPIRequest(fmt.Sprintf("http://localhost:7171/backup/create?name=%s&table=%s&diff-from-remote=%s&resume=1", resumeBackup, tablePattern, baseBackup)),
@@ -147,7 +147,7 @@ func runResumeOperationsAfterRestart(t *testing.T, tc resumeAfterRestartCase) {
 			return backupFileExists(env, resumeBackup, "metadata.json")
 		})
 
-	env.queryWithNoError(r, "DROP DATABASE "+dbName+" SYNC")
+	env.queryWithNoError(t, r, "DROP DATABASE "+dbName+" SYNC")
 	resumeOperationAfterRestart(t, r, env, tc.configFile, "restore", resumeBackup,
 		resumeAPIRequest(fmt.Sprintf("http://localhost:7171/backup/restore/%s?rm=1&resume=1", resumeBackup)),
 		"/var/lib/clickhouse/backup/"+resumeBackup+"/restore.state2",
@@ -232,7 +232,7 @@ exit 1
 	r.NoError(err, "%s\nserver process is still alive after SIGKILL during %s %s", out, command, backupName)
 
 	startResumeAfterRestartServer(t, r, env, configFile)
-	waitResumeAssertion(t, r, assertResumed)
+	waitResumeAssertion(t, r, env, assertResumed)
 	removeResumeState(t, r, env, backupName, command)
 }
 
@@ -254,7 +254,7 @@ exit 1
 	r.NoError(err, "%s", out)
 }
 
-func waitResumeAssertion(t *testing.T, r *require.Assertions, assertResumed func() (bool, string)) {
+func waitResumeAssertion(t *testing.T, r *require.Assertions, env *TestEnvironment, assertResumed func() (bool, string)) {
 	t.Helper()
 	lastDetail := ""
 	for i := 0; i < 180; i++ {
@@ -265,7 +265,8 @@ func waitResumeAssertion(t *testing.T, r *require.Assertions, assertResumed func
 		lastDetail = detail
 		time.Sleep(1 * time.Second)
 	}
-	r.FailNow("timeout waiting for resumed operation", lastDetail)
+	serverLog, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "tail -n 200 "+resumeAfterRestartServerLog+" || true")
+	r.FailNow("timeout waiting for resumed operation", "%s\nserver log tail:\n%s", lastDetail, serverLog)
 }
 
 func backupListed(env *TestEnvironment, configFile, location, backupName string) (bool, string) {

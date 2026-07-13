@@ -630,6 +630,10 @@ func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []c
 
 func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupName string, accessPath string, version int, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory, dropExists bool) error {
 	backupAccessPath := path.Join(b.DefaultDataPath, "backup", backupName, "access")
+	if _, statErr := os.Stat(backupAccessPath); os.IsNotExist(statErr) {
+		log.Debug().Msgf("backup access path %s doesn't exist, skip RBAC restore", backupAccessPath)
+		return nil
+	}
 
 	walkErr := filepath.Walk(backupAccessPath, func(fPath string, fInfo fs.FileInfo, err error) error {
 		if err != nil {
@@ -941,6 +945,10 @@ func (b *Backuper) restoreRBACReplicated(backupName string, backupPrefixDir stri
 	info, err := os.Stat(srcBackupDir)
 	if err != nil {
 		log.Warn().Msgf("stat: %s error: %v", srcBackupDir, err)
+		// keep the not-exist error unwrapped so callers can detect it via os.IsNotExist
+		if os.IsNotExist(err) {
+			return err
+		}
 		return errors.Wrap(err, "stat backup dir")
 	}
 
@@ -1434,6 +1442,10 @@ func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinat
 	info, err := os.Stat(srcBackupDir)
 	if err != nil {
 		log.Warn().Msgf("stat: %s error: %v", srcBackupDir, err)
+		// keep the not-exist error unwrapped so callers can detect it via os.IsNotExist
+		if os.IsNotExist(err) {
+			return err
+		}
 		return errors.Wrap(err, "stat backup dir")
 	}
 	existsFiles, _ := os.ReadDir(destinationDir)
@@ -1843,22 +1855,32 @@ func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context
 		if err = b.ch.SelectSingleRow(ctx, &isReplicaPresent, "SELECT count() FROM system.zookeeper WHERE path=?", fullReplicaPath); err != nil {
 			log.Warn().Msgf("can't check replica %s in system.zookeeper error: %v", fullReplicaPath, err)
 		}
-		// Even if our specific replica entry is gone, the table-level znode may still
-		// hold leftover state (log, parts, replicas/<other>) from a recently dropped
-		// table — table-level ZK cleanup is asynchronous. Re-creating a Replicated
-		// table on top of that znode would inherit the stale data, e.g. silently
-		// re-fetching parts via replication. Detect that case and rename the znode
-		// to a fresh path too. https://github.com/Altinity/clickhouse-backup/issues/849
-		isTablePathStale := uint64(0)
 		if isReplicaPresent == 0 {
-			if err = b.ch.SelectSingleRow(ctx, &isTablePathStale, "SELECT count() FROM system.zookeeper WHERE path=?", resolvedReplicaPath); err != nil {
-				// path does not exist => clean state, nothing to do
-				return
+			// A different local table using this resolved path = a foreign/renamed table occupying it on THIS
+			// node, so rebind (https://github.com/Altinity/clickhouse-backup/issues/849). HA-safe: system.replicas
+			// is node-local, a real sibling (https://github.com/Altinity/clickhouse-backup/issues/1428) is remote.
+			otherTablesWithSameZKPath := ""
+			if err = b.ch.SelectSingleRow(ctx, &otherTablesWithSameZKPath, "SELECT arrayStringConcat(groupArray(concat(database,'.',table)),', ') FROM system.replicas WHERE zookeeper_path=? AND concat(database,'::',table)!=?", resolvedReplicaPath, schema.Database+"::"+schema.Table); err != nil {
+				log.Warn().Msgf("can't check system.replicas for %s error: %v", resolvedReplicaPath, err)
 			}
-			if isTablePathStale == 0 {
-				return
+			if otherTablesWithSameZKPath == "" {
+				// No local table here: a remote HA sibling (join, safe default) or async-stale leftovers after
+				// DROP. Indistinguishable in ZK, so rebind only when explicitly opted in.
+				if !b.cfg.ClickHouse.RebindReplicaPathIfExists {
+					return
+				}
+				isTablePathStale := uint64(0)
+				if err = b.ch.SelectSingleRow(ctx, &isTablePathStale, "SELECT count() FROM system.zookeeper WHERE path=?", resolvedReplicaPath); err != nil {
+					// path does not exist => clean state, nothing to do
+					return
+				}
+				if isTablePathStale == 0 {
+					return
+				}
+				log.Warn().Msgf("zookeeper path %s still has %d children but replica entry is absent, rebind_replica_path_if_exists=true => will rebind to fresh replica path", resolvedReplicaPath, isTablePathStale)
+			} else {
+				log.Warn().Msgf("zookeeper path %s is already used by other local table(s) %s in system.replicas, will rebind to fresh replica path", resolvedReplicaPath, otherTablesWithSameZKPath)
 			}
-			log.Warn().Msgf("zookeeper path %s still has %d children after table drop, will rebind to fresh replica path", resolvedReplicaPath, isTablePathStale)
 		}
 		newReplicaPath := b.cfg.ClickHouse.DefaultReplicaPath
 		newReplicaName := b.cfg.ClickHouse.DefaultReplicaName
@@ -3064,74 +3086,52 @@ func (b *Backuper) changeTablePatternFromRestoreMapping(tablePattern, objType st
 	}
 	isDatabase := objType == "database"
 	for sourceObj, targetObj := range mapping {
+		// process each comma-separated pattern item independently,
+		// https://github.com/Altinity/clickhouse-backup/issues/1421
+		matched := false
 		if tablePattern != "" {
-			var sourceObjRE *regexp.Regexp
-			if isDatabase {
-				sourceObjRE = regexp.MustCompile(fmt.Sprintf("(^%s\\.[^,]*)|(,%s\\.[^,]*)", sourceObj, sourceObj))
-			} else {
-				// Check if sourceObj is a full qualified name (db.table)
-				if strings.Contains(sourceObj, ".") {
-					// Full qualified mapping: source_db.table -> target_db.new_table
-					escapedSource := regexp.QuoteMeta(sourceObj)
-					sourceObjRE = regexp.MustCompile(fmt.Sprintf("(^%s)|(,%s)", escapedSource, escapedSource))
-				} else {
-					sourceObjRE = regexp.MustCompile(fmt.Sprintf("(^([^\\.]+)\\.%s)|(,([^\\.]+)\\.%s)", sourceObj, sourceObj))
-				}
-			}
-
-			if sourceObjRE.MatchString(tablePattern) {
-				matches := sourceObjRE.FindAllStringSubmatch(tablePattern, -1)
-				var substitution string
+			items := strings.Split(tablePattern, ",")
+			for i, item := range items {
 				if isDatabase {
-					substitution = targetObj + ".*"
-				} else {
-					// Check if sourceObj is full qualified
-					if strings.Contains(sourceObj, ".") {
-						// Use targetObj as-is (may contain database)
-						substitution = targetObj
-					} else {
-						// matches[0][2] has database name when first alternative matches (^...)
-						// matches[0][4] has database name when second alternative matches (,...)
-						dbName := matches[0][2]
-						if dbName == "" && len(matches[0]) > 4 {
-							dbName = matches[0][4]
-						}
-						// Check if targetObj contains database
-						if strings.Contains(targetObj, ".") {
-							substitution = targetObj
-						} else {
-							substitution = dbName + "." + targetObj
-						}
+					if db, _, found := strings.Cut(item, "."); found && db == sourceObj {
+						items[i] = targetObj + ".*"
+						matched = true
 					}
-				}
-				if strings.HasPrefix(matches[0][0], ",") {
-					substitution = "," + substitution
-				}
-
-				tablePattern = sourceObjRE.ReplaceAllString(tablePattern, substitution)
-			} else {
-				if isDatabase {
-					tablePattern += "," + targetObj + ".*"
-				} else {
+				} else if strings.Contains(sourceObj, ".") {
+					// Full qualified mapping: source_db.table -> target_db.new_table
+					if item == sourceObj {
+						// Use targetObj as-is (may contain database)
+						items[i] = targetObj
+						matched = true
+					}
+				} else if db, table, found := strings.Cut(item, "."); found && table == sourceObj {
 					// Check if targetObj contains database
 					if strings.Contains(targetObj, ".") {
-						tablePattern += "," + targetObj
+						items[i] = targetObj
 					} else {
-						tablePattern += ",*." + targetObj
+						items[i] = db + "." + targetObj
 					}
+					matched = true
 				}
 			}
-		} else {
+			if matched {
+				tablePattern = strings.Join(items, ",")
+			}
+		}
+		if !matched {
+			var appendix string
 			if isDatabase {
-				tablePattern += targetObj + ".*"
+				appendix = targetObj + ".*"
+			} else if strings.Contains(targetObj, ".") {
+				// targetObj contains database
+				appendix = targetObj
 			} else {
-				// Check if targetObj contains database
-				if strings.Contains(targetObj, ".") {
-					tablePattern += targetObj
-				} else {
-					tablePattern += "*." + targetObj
-				}
+				appendix = "*." + targetObj
 			}
+			if tablePattern != "" {
+				tablePattern += ","
+			}
+			tablePattern += appendix
 		}
 	}
 	return tablePattern

@@ -261,6 +261,15 @@ jobs:
           source ~/venv/qa/bin/activate
           export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
           ./test/testflows/run.sh
+      - name: Report FIPS testflows coverage
+        uses: coverallsapp/github-action@v2
+        with:
+          fail-on-error: false
+          base-path: ./
+          file: test/testflows/_coverage_/coverage.out
+          parallel: true
+          format: golang
+          flag-name: testflows-${{ matrix.clickhouse }}
 
       - name: Fix FIPS log permissions for artifact upload
         if: always()
@@ -414,6 +423,7 @@ jobs:
     needs:
       - test
       - testflows
+      - testflows_fips
     name: coverage
     runs-on: ubuntu-24.04
     steps:

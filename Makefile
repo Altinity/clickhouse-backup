@@ -32,6 +32,7 @@ rebuild: clean all
 
 test:
 	go vet ./...
+	rm -rf ./_coverage_
 	mkdir -v ./_coverage_
 	GOCOVERDIR=./_coverage_/ go test -coverprofile=./_coverage_/coverage.out -covermode=atomic -v ./...
 

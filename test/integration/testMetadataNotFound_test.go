@@ -115,8 +115,8 @@ func runMetadataNotFoundScenario(t *testing.T, tc metadataNotFoundCase) {
 	// db/table names are encoded as-is by common.TablePathEncode.
 	metaFile := fmt.Sprintf("%s/metadata/default/%s.json", backupName, tableShort)
 
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s(id UInt64) ENGINE=MergeTree() ORDER BY id", tableName))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO %s SELECT number FROM numbers(100)", tableName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s(id UInt64) ENGINE=MergeTree() ORDER BY id", tableName))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO %s SELECT number FROM numbers(100)", tableName))
 	t.Cleanup(func() {
 		dropQ := "DROP TABLE IF EXISTS " + tableName
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") > 0 {
@@ -207,6 +207,8 @@ func sftpMetadataNotFoundCase() metadataNotFoundCase {
 	tc := containerFSMetadataCase("SFTP", "config-sftp-auth-key.yaml", "sshd")
 	tc.setup = func(env *TestEnvironment, r *require.Assertions) {
 		env.uploadSSHKeys(r, "clickhouse-backup")
+		// mkdir -p root ran as root via docker exec; give it back to the SFTP login user
+		env.DockerExecNoError(r, "sshd", "chown", "-R", "sftpuser:sftpuser", "/config")
 	}
 	return tc
 }

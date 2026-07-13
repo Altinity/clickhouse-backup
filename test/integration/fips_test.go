@@ -26,6 +26,17 @@ func TestFIPS(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 1*time.Second, 1*time.Second, 1*time.Minute)
+
+	// Diagnostic: the `clickhouse-backup-fips server` started below runs ResumeOperationsAfterRestart
+	// on startup (complete_resumable_after_restart=true by default), which scans
+	// /var/lib/clickhouse/backup/*/*.state2 and, if any exist, starts an async resume that holds the
+	// API lock — making the first create_remote action below fail with "another operation is currently
+	// running" (ErrAPILocked, HTTP 500). TestFIPS has not created any backup yet, so any *.state2 here
+	// leaked from a previous test on this pooled env (Cleanup does not remove them). Fail loudly with
+	// the offending paths so we can see which test/backup leaked them and clean it at the source.
+	staleState, _ := env.DockerExecOut("clickhouse", "bash", "-ce", "ls -la /var/lib/clickhouse/backup/*/*.state2 2>/dev/null || true")
+	r.Empty(strings.TrimSpace(staleState), "orphaned *.state2 leaked into pooled env %s before TestFIPS:\n%s", env.ProjectName, staleState)
+
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
 	env.DockerExecNoError(r, "clickhouse", "rm", "-fv", "/etc/apt/sources.list.d/clickhouse.list")
 	env.InstallDebIfNotExists(r, "clickhouse", "ca-certificates", "curl", "gettext-base", "binutils", "bsdmainutils", "dnsutils", "git")
@@ -77,10 +88,10 @@ func TestFIPS(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse", "bash", "-xec", "cat /etc/clickhouse-backup/config-s3-fips.yml.template | envsubst > /etc/clickhouse-backup/config-s3-fips.yml")
 
 	generateCerts("rsa", "4096", "")
-	env.queryWithNoError(r, "CREATE DATABASE "+t.Name())
+	env.queryWithNoError(t, r, "CREATE DATABASE "+t.Name())
 	createSQL := "CREATE TABLE " + t.Name() + ".fips_table (v UInt64) ENGINE=MergeTree() ORDER BY tuple()"
-	env.queryWithNoError(r, createSQL)
-	env.queryWithNoError(r, "INSERT INTO "+t.Name()+".fips_table SELECT number FROM numbers(1000)")
+	env.queryWithNoError(t, r, createSQL)
+	env.queryWithNoError(t, r, "INSERT INTO "+t.Name()+".fips_table SELECT number FROM numbers(1000)")
 	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml create_remote --tables="+t.Name()+".fips_table "+fipsBackupName)
 	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete local "+fipsBackupName)
 	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml restore_remote --tables="+t.Name()+".fips_table "+fipsBackupName)

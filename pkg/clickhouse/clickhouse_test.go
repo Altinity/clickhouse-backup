@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"testing"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/go-faster/errors"
 	"github.com/stretchr/testify/assert"
 )
@@ -123,6 +124,57 @@ func TestExtractStoragePolicy(t *testing.T) {
 	}
 }
 
+func TestFixAliasEngineQuery(t *testing.T) {
+	testCases := []struct {
+		Name          string
+		Query         string
+		Version       int
+		ExpectedQuery string
+	}{
+		{
+			Name:          "Non-Alias query unchanged",
+			Query:         "CREATE TABLE test (id UInt64) ENGINE = MergeTree ORDER BY id",
+			Version:       26003012,
+			ExpectedQuery: "CREATE TABLE test (id UInt64) ENGINE = MergeTree ORDER BY id",
+		},
+		{
+			Name:          "Strip columns and add setting, 25.11+",
+			Query:         "CREATE TABLE default.alias_t UUID '9083c81b-b5b0-4273-9202-5b8e7460a228' (`id` UInt64, `s` String) ENGINE = Alias('default', 'target')",
+			Version:       26003012,
+			ExpectedQuery: "CREATE TABLE default.alias_t UUID '9083c81b-b5b0-4273-9202-5b8e7460a228' ENGINE = Alias('default', 'target') SETTINGS allow_experimental_alias_table_engine=1",
+		},
+		{
+			Name:          "Strip columns without setting on 25.10 (setting not exists yet)",
+			Query:         "CREATE TABLE default.alias_t (`id` UInt64) ENGINE = Alias('default', 'target')",
+			Version:       25010000,
+			ExpectedQuery: "CREATE TABLE default.alias_t ENGINE = Alias('default', 'target')",
+		},
+		{
+			Name:          "Strip columns with ON CLUSTER",
+			Query:         "CREATE TABLE `db`.`alias_t` UUID '9083c81b-b5b0-4273-9202-5b8e7460a228' ON CLUSTER 'my_cluster' (`id` UInt64, `s` String) ENGINE = Alias('db', 'target')",
+			Version:       25011001,
+			ExpectedQuery: "CREATE TABLE `db`.`alias_t` UUID '9083c81b-b5b0-4273-9202-5b8e7460a228' ON CLUSTER 'my_cluster' ENGINE = Alias('db', 'target') SETTINGS allow_experimental_alias_table_engine=1",
+		},
+		{
+			Name:          "Keep COMMENT, append setting after it",
+			Query:         "CREATE TABLE default.alias_t (`id` UInt64) ENGINE = Alias('default', 'target') COMMENT 'test comment'",
+			Version:       26003012,
+			ExpectedQuery: "CREATE TABLE default.alias_t ENGINE = Alias('default', 'target') COMMENT 'test comment' SETTINGS allow_experimental_alias_table_engine=1",
+		},
+		{
+			Name:          "No columns and setting already present, unchanged",
+			Query:         "CREATE TABLE default.alias_t ENGINE=Alias('default', 'target') SETTINGS allow_experimental_alias_table_engine=1",
+			Version:       26003012,
+			ExpectedQuery: "CREATE TABLE default.alias_t ENGINE=Alias('default', 'target') SETTINGS allow_experimental_alias_table_engine=1",
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			assert.Equal(t, tc.ExpectedQuery, fixAliasEngineQuery(tc.Query, tc.Version))
+		})
+	}
+}
+
 func TestEnrichQueryWithOnCluster(t *testing.T) {
 	ch := ClickHouse{}
 
@@ -148,11 +200,11 @@ func TestEnrichQueryWithOnCluster(t *testing.T) {
 			ExpectedQuery: "CREATE TABLE test  ON CLUSTER 'my_cluster' (id UInt64) ENGINE = MergeTree ORDER BY id",
 		},
 		{
-			Name:          "OnCluster provided, version >= 19000000, CREATE VIEW with TO clause",
-			Query:         "CREATE VIEW test_view TO test_table AS SELECT * FROM test_table",
+			Name:          "OnCluster provided, version >= 19000000, CREATE MATERIALIZED VIEW with TO clause",
+			Query:         "CREATE MATERIALIZED VIEW test_view TO test_table AS SELECT * FROM test_table",
 			OnCluster:     "my_cluster",
 			Version:       19000001,
-			ExpectedQuery: "CREATE VIEW test_view ON CLUSTER 'my_cluster'  TO test_table AS SELECT * FROM test_table",
+			ExpectedQuery: "CREATE MATERIALIZED VIEW test_view ON CLUSTER 'my_cluster'  TO test_table AS SELECT * FROM test_table",
 		},
 		{
 			Name:          "OnCluster provided, version >= 19000000, CREATE VIEW with AS SELECT",
@@ -162,11 +214,11 @@ func TestEnrichQueryWithOnCluster(t *testing.T) {
 			ExpectedQuery: "CREATE VIEW test_view ON CLUSTER 'my_cluster'  AS SELECT * FROM test_table",
 		},
 		{
-			Name:          "OnCluster provided, version >= 19000000, ATTACH VIEW with TO clause",
-			Query:         "ATTACH VIEW test_view TO test_table AS SELECT * FROM test_table",
+			Name:          "OnCluster provided, version >= 19000000, CREATE MATERIALIZED VIEW with ENGINE clause",
+			Query:         "CREATE MATERIALIZED VIEW test_view ENGINE = AggregatingMergeTree() ORDER BY t AS SELECT * FROM test_table",
 			OnCluster:     "my_cluster",
 			Version:       19000001,
-			ExpectedQuery: "ATTACH VIEW test_view ON CLUSTER 'my_cluster'  TO test_table AS SELECT * FROM test_table",
+			ExpectedQuery: "CREATE MATERIALIZED VIEW test_view ON CLUSTER 'my_cluster'  ENGINE = AggregatingMergeTree() ORDER BY t AS SELECT * FROM test_table",
 		},
 		{
 			Name:          "OnCluster provided, version >= 19000000, ATTACH VIEW with AS SELECT",
@@ -174,6 +226,55 @@ func TestEnrichQueryWithOnCluster(t *testing.T) {
 			OnCluster:     "my_cluster",
 			Version:       19000001,
 			ExpectedQuery: "ATTACH VIEW test_view ON CLUSTER 'my_cluster'  AS SELECT * FROM test_table",
+		},
+		{
+			Name:          "OnCluster provided, version >= 19000000, ATTACH LIVE VIEW with columns",
+			Query:         "ATTACH LIVE VIEW test.daily_sales_live UUID '8190d585-1111-2222-3333-444444444444' (`event_date` UInt32, `sku_id` String, `total_sales` Decimal(38, 2)) AS SELECT event_date FROM test.sales",
+			OnCluster:     "my_cluster",
+			Version:       19000001,
+			ExpectedQuery: "ATTACH LIVE VIEW test.daily_sales_live UUID '8190d585-1111-2222-3333-444444444444' ON CLUSTER 'my_cluster' (`event_date` UInt32, `sku_id` String, `total_sales` Decimal(38, 2)) AS SELECT event_date FROM test.sales",
+		},
+		{
+			Name:          "OnCluster provided, version >= 19000000, ATTACH WINDOW VIEW with engine and settings",
+			Query:         "ATTACH WINDOW VIEW test.wv UUID '6b87827c-1111-2222-3333-444444444444' ENGINE AggregatingMergeTree() ORDER BY total SETTINGS index_granularity = 8192 AS SELECT total FROM test.src",
+			OnCluster:     "my_cluster",
+			Version:       19000001,
+			ExpectedQuery: "ATTACH WINDOW VIEW test.wv UUID '6b87827c-1111-2222-3333-444444444444' ON CLUSTER 'my_cluster'  ENGINE AggregatingMergeTree() ORDER BY total SETTINGS index_granularity = 8192 AS SELECT total FROM test.src",
+		},
+		{
+			Name:          "OnCluster provided, version >= 19000000, CREATE VIEW with columns",
+			Query:         "CREATE VIEW test_view (`id` UInt64) AS SELECT id FROM test_table",
+			OnCluster:     "my_cluster",
+			Version:       19000001,
+			ExpectedQuery: "CREATE VIEW test_view ON CLUSTER 'my_cluster' (`id` UInt64) AS SELECT id FROM test_table",
+		},
+		{
+			Name:          "OnCluster provided, version >= 19000000, ATTACH VIEW without columns regression",
+			Query:         "ATTACH VIEW test_view AS SELECT id FROM test_table",
+			OnCluster:     "my_cluster",
+			Version:       19000001,
+			ExpectedQuery: "ATTACH VIEW test_view ON CLUSTER 'my_cluster'  AS SELECT id FROM test_table",
+		},
+		{
+			Name:          "OnCluster already present leaves query unchanged",
+			Query:         "ATTACH VIEW test_view ON CLUSTER 'my_cluster' AS SELECT * FROM test_table",
+			OnCluster:     "my_cluster",
+			Version:       19000001,
+			ExpectedQuery: "ATTACH VIEW test_view ON CLUSTER 'my_cluster' AS SELECT * FROM test_table",
+		},
+		{
+			Name:          "Version before ON CLUSTER support leaves ATTACH LIVE VIEW unchanged",
+			Query:         "ATTACH LIVE VIEW test.daily_sales_live UUID '8190d585-1111-2222-3333-444444444444' (`event_date` UInt32, `sku_id` String, `total_sales` Decimal(38, 2)) AS SELECT event_date FROM test.sales",
+			OnCluster:     "my_cluster",
+			Version:       18999999,
+			ExpectedQuery: "ATTACH LIVE VIEW test.daily_sales_live UUID '8190d585-1111-2222-3333-444444444444' (`event_date` UInt32, `sku_id` String, `total_sales` Decimal(38, 2)) AS SELECT event_date FROM test.sales",
+		},
+		{
+			Name:          "Empty OnCluster leaves ATTACH WINDOW VIEW unchanged",
+			Query:         "ATTACH WINDOW VIEW test.wv UUID '6b87827c-1111-2222-3333-444444444444' (`total` Decimal(38, 2), `w_start` DateTime) ENGINE = MergeTree ORDER BY total SETTINGS index_granularity = 8192 AS SELECT total FROM test.src",
+			OnCluster:     "",
+			Version:       19000001,
+			ExpectedQuery: "ATTACH WINDOW VIEW test.wv UUID '6b87827c-1111-2222-3333-444444444444' (`total` Decimal(38, 2), `w_start` DateTime) ENGINE = MergeTree ORDER BY total SETTINGS index_granularity = 8192 AS SELECT total FROM test.src",
 		},
 		{
 			Name:          "OnCluster provided, version >= 19000000, CREATE DICTIONARY",
@@ -197,4 +298,51 @@ func TestEnrichQueryWithOnCluster(t *testing.T) {
 			assert.Equal(t, tc.ExpectedQuery, result)
 		})
 	}
+}
+
+// TestGroupMutationsByTable covers the per-backup batch mutation lookup that replaced the
+// per-table system.mutations query (O(N^2) fix). Verifies that mutations from a single
+// server-wide scan are bucketed to the correct database.table and never leak across tables.
+func TestGroupMutationsByTable(t *testing.T) {
+	rows := []inProgressMutationRow{
+		{Database: "db1", Table: "t1", MutationId: "0000000001", Command: "MODIFY COLUMN a UInt64"},
+		{Database: "db1", Table: "t1", MutationId: "0000000002", Command: "DROP COLUMN b"},
+		{Database: "db1", Table: "t2", MutationId: "0000000003", Command: "MODIFY COLUMN c String"},
+	}
+
+	got := groupMutationsByTable(rows)
+
+	assert.Len(t, got, 2, "two distinct tables expected")
+	assert.Equal(t, []metadata.MutationMetadata{
+		{MutationId: "0000000001", Command: "MODIFY COLUMN a UInt64"},
+		{MutationId: "0000000002", Command: "DROP COLUMN b"},
+	}, got[metadata.TableTitle{Database: "db1", Table: "t1"}], "t1 must keep both of its mutations, in order")
+	assert.Equal(t, []metadata.MutationMetadata{
+		{MutationId: "0000000003", Command: "MODIFY COLUMN c String"},
+	}, got[metadata.TableTitle{Database: "db1", Table: "t2"}], "t2 must get only its own mutation (no cross-table leak)")
+}
+
+// TestGroupMutationsByTableDottedNames pins the reason for the metadata.TableTitle struct key:
+// dots are legal in database/table names, so a "database.table" string key would collapse
+// {db="a.b", table="c"} and {db="a", table="b.c"} into the same "a.b.c" bucket. The struct key
+// keeps them separate.
+func TestGroupMutationsByTableDottedNames(t *testing.T) {
+	rows := []inProgressMutationRow{
+		{Database: "a.b", Table: "c", MutationId: "0000000001", Command: "DROP COLUMN x"},
+		{Database: "a", Table: "b.c", MutationId: "0000000002", Command: "DROP COLUMN y"},
+	}
+
+	got := groupMutationsByTable(rows)
+
+	assert.Len(t, got, 2, "ambiguous string key would have merged these into one bucket")
+	assert.Equal(t, []metadata.MutationMetadata{
+		{MutationId: "0000000001", Command: "DROP COLUMN x"},
+	}, got[metadata.TableTitle{Database: "a.b", Table: "c"}])
+	assert.Equal(t, []metadata.MutationMetadata{
+		{MutationId: "0000000002", Command: "DROP COLUMN y"},
+	}, got[metadata.TableTitle{Database: "a", Table: "b.c"}])
+}
+
+func TestGroupMutationsByTableEmpty(t *testing.T) {
+	assert.Empty(t, groupMutationsByTable(nil))
 }

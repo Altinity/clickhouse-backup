@@ -136,12 +136,12 @@ func TestCASRoundtrip(t *testing.T) {
 	// of repetitive 'x' the column compressed to <100 bytes; randomPrintable
 	// at 10000 rows produces ~tens of KB per column, well above threshold.)
 	r.NoError(env.dropDatabase(dbName, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE `%s`.`%s` (id UInt64, payload String) ENGINE=MergeTree ORDER BY id "+
 			"SETTINGS min_rows_for_wide_part=0, min_bytes_for_wide_part=0",
 		dbName, tableName))
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"INSERT INTO `%s`.`%s` SELECT number, randomPrintableASCII(64) FROM numbers(%d)",
 		dbName, tableName, rowCount))
 
@@ -199,9 +199,9 @@ func TestCASCrossModeGuards(t *testing.T) {
 	)
 
 	r.NoError(env.dropDatabase(dbName, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", dbName))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(10)", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64) ENGINE=MergeTree ORDER BY id", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number FROM numbers(10)", dbName))
 
 	// 1. Two backups: one via v1 upload, one via cas-upload.
 	env.casBackupNoError(r, "create", "--tables", dbName+".*", v1Name)
@@ -268,9 +268,9 @@ func TestCASVerify(t *testing.T) {
 	)
 
 	r.NoError(env.dropDatabase(dbName, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64, payload String) ENGINE=MergeTree ORDER BY id", dbName))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number, repeat('x', 4096) FROM numbers(50)", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.t (id UInt64, payload String) ENGINE=MergeTree ORDER BY id", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.t SELECT number, repeat('x', 4096) FROM numbers(50)", dbName))
 
 	env.casBackupNoError(r, "create", "--tables", dbName+".*", backupName)
 	env.casBackupNoError(r, "cas-upload", backupName)

@@ -23,8 +23,8 @@ func TestShadowCleanup(t *testing.T) {
 	backupName := fmt.Sprintf("test_shadow_cleanup_%d", time.Now().UnixNano())
 
 	log.Debug().Msg("Create test table and insert data")
-	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS default.shadow_test(id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "INSERT INTO default.shadow_test SELECT number FROM numbers(100)")
+	env.queryWithNoError(t, r, "CREATE TABLE IF NOT EXISTS default.shadow_test(id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "INSERT INTO default.shadow_test SELECT number FROM numbers(100)")
 
 	log.Debug().Msg("Clean shadow directory to avoid cross-test contamination")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean")
@@ -60,7 +60,7 @@ func TestShadowCleanup(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") > 0 {
 		dropQuery += " NO DELAY"
 	}
-	env.queryWithNoError(r, dropQuery)
+	env.queryWithNoError(t, r, dropQuery)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", backupName)
 }
 
@@ -73,8 +73,8 @@ func TestShadowCleanupOnFailure(t *testing.T) {
 	r.NoError(env.DockerCP("configs/config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 
 	log.Debug().Msg("Create test table and insert data")
-	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS default.shadow_fail_test(id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "INSERT INTO default.shadow_fail_test SELECT number FROM numbers(100)")
+	env.queryWithNoError(t, r, "CREATE TABLE IF NOT EXISTS default.shadow_fail_test(id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "INSERT INTO default.shadow_fail_test SELECT number FROM numbers(100)")
 
 	log.Debug().Msg("Clean shadow directory to avoid cross-test contamination")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean")
@@ -106,7 +106,7 @@ func TestShadowCleanupOnFailure(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") > 0 {
 		dropQuery += " NO DELAY"
 	}
-	env.queryWithNoError(r, dropQuery)
+	env.queryWithNoError(t, r, dropQuery)
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", fmt.Sprintf("rm -f /var/lib/clickhouse/backup/%s", failBackupName))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean")
 }

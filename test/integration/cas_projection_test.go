@@ -37,12 +37,12 @@ func TestCASRoundtripWithProjection(t *testing.T) {
 		backupName = "cas_proj_bk"
 	)
 	r.NoError(env.dropDatabase(dbName, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, fmt.Sprintf(`CREATE TABLE `+"`%s`.`%s`"+` (id UInt64, payload String, PROJECTION p1 (SELECT id, payload ORDER BY payload))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf(`CREATE TABLE `+"`%s`.`%s`"+` (id UInt64, payload String, PROJECTION p1 (SELECT id, payload ORDER BY payload))
 		ENGINE=MergeTree ORDER BY id
 		SETTINGS min_rows_for_wide_part=0, min_bytes_for_wide_part=0`, dbName, tblName))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.`%s` SELECT number, randomPrintableASCII(64) FROM numbers(500)", dbName, tblName))
-	env.queryWithNoError(r, fmt.Sprintf("OPTIMIZE TABLE `%s`.`%s` FINAL", dbName, tblName))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.`%s` SELECT number, randomPrintableASCII(64) FROM numbers(500)", dbName, tblName))
+	env.queryWithNoError(t, r, fmt.Sprintf("OPTIMIZE TABLE `%s`.`%s` FINAL", dbName, tblName))
 
 	env.casBackupNoError(r, "create", "--tables", dbName+".*", backupName)
 	env.casBackupNoError(r, "cas-upload", backupName)
@@ -82,10 +82,10 @@ func TestCASRoundtripWithEmptyTable(t *testing.T) {
 
 	const dbName = "cas_empty_db"
 	r.NoError(env.dropDatabase(dbName, true))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.full (id UInt64) ENGINE=MergeTree ORDER BY id", dbName))
-	env.queryWithNoError(r, fmt.Sprintf("CREATE TABLE `%s`.empty (id UInt64) ENGINE=MergeTree ORDER BY id", dbName))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.full SELECT number FROM numbers(10)", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.full (id UInt64) ENGINE=MergeTree ORDER BY id", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.empty (id UInt64) ENGINE=MergeTree ORDER BY id", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.full SELECT number FROM numbers(10)", dbName))
 
 	env.casBackupNoError(r, "create", "--tables", dbName+".*", "cas_empty_bk")
 	env.casBackupNoError(r, "cas-upload", "cas_empty_bk")
@@ -169,14 +169,14 @@ func TestCASUploadSkipObjectDisks(t *testing.T) {
 		_ = env.dropDatabase(dbName, true)
 		_, _ = env.casBackup("delete", "local", "cas_skipod_bk")
 	}()
-	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE DATABASE `%s`", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE `%s`.regular (id UInt64) ENGINE=MergeTree ORDER BY id", dbName))
-	env.queryWithNoError(r, fmt.Sprintf(
+	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE `%s`.remote (id UInt64) ENGINE=MergeTree ORDER BY id SETTINGS storage_policy='%s'",
 		dbName, policy))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.regular SELECT number FROM numbers(10)", dbName))
-	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO `%s`.remote SELECT number FROM numbers(10)", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.regular SELECT number FROM numbers(10)", dbName))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.remote SELECT number FROM numbers(10)", dbName))
 
 	env.casBackupNoError(r, "create", "--tables", dbName+".*", "cas_skipod_bk")
 

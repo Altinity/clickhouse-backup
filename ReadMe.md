@@ -146,12 +146,17 @@ general:
                                  # You can run `clickhouse-backup delete local <backup_name>` command to remove temporary backup files from the local disk
   backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE, how many latest backup should be kept on remote storage, 0 means all uploaded backups will be stored on remote storage.
                                  # If old backups are required for newer incremental backup then it won't be deleted. Be careful with long incremental backup sequences.
+                                 # Backups are ordered by `creation_date` from backup metadata (upload date is used only for backups with unreadable metadata), so `rebase` doesn't change the backup position in the retention order.
+  rebase_before_remove_old_remote: false # REBASE_BEFORE_REMOVE_OLD_REMOTE, makes `backups_to_keep_remote` a strict limit: when deletion is blocked by `required_backup` links from kept backups,
+                                 # the oldest kept increment is rebased first (same as the `rebase` command, requires `upload_by_part: true` and the same `compression_format` for the whole chain),
+                                 # so the whole out-of-window chain becomes deletable; rebase failure is not fatal and falls back to the legacy keep-required behavior.
   log_level: info                # LOG_LEVEL, a choice from `debug`, `info`, `warning`, `error`
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
   # Concurrency means parallel tables and parallel parts inside tables
   # For example, 4 means max 4 parallel tables and 4 parallel parts inside one table, so equals 16 concurrent streams
   download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is floor(AVAILABLE_CPU_CORES / 2). If result is < 1, then 1.
   upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2)). If result is < 1, then 1.
+  rebase_concurrency: 1          # REBASE_CONCURRENCY, max 255, how many tables process in parallel during `rebase` command, by default the same as download_concurrency.
   
   # Throttling speed for upload and download, enforced inline via a token-bucket rate limiter shared across all concurrent workers, so the value is an aggregate cap with smooth (non-bursty) throughput.
   # Throttling does NOT apply to server-side object disk copy (`CopyObject`, e.g. S3 server-side copy / Azure copy-blob), because those bytes move inside the cloud provider and never pass through clickhouse-backup. When server-side copy is unavailable (incompatible src/dst `remote_storage`, or a failed `CopyObject` falling back to streaming through local memory), the streaming copy IS throttled.
@@ -159,6 +164,10 @@ general:
   # When `clickhouse->use_embedded_backup_restore: true`, throttling is delegated to the ClickHouse server via the `max_backup_bandwidth` query setting passed in the BACKUP/RESTORE SETTINGS clause (requires ClickHouse 25.1+); upload_max_bytes_per_second applies to BACKUP, download_max_bytes_per_second to RESTORE. On older ClickHouse versions embedded transfers are not throttled.
   download_max_bytes_per_second: 0  # DOWNLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling 
   upload_max_bytes_per_second: 0    # UPLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling
+  # MAX_BROKEN_PART_RATIO, maximum allowed fraction (0..1) of broken data parts (e.g. caused by S3-disk or filesystem failures) that still produces a successful but partial backup during backup creation (`create`, and the create stage of `create_remote`).
+  # 0 (default) preserves legacy behavior where any broken part stops the backup completely. When >0 and the broken/total part ratio stays at or below this value, creation skips the broken parts, logs a warning, and the backup is marked successful.
+  # Skipped parts are recorded in the `broken_parts` section of the table metadata json (next to `parts`) and counted in the `clickhouse_backup_failed_parts_count` prometheus metric in server mode, see https://github.com/Altinity/clickhouse-backup/issues/1418
+  max_broken_part_ratio: 0          # MAX_BROKEN_PART_RATIO
 
   # Buffer tuning for high-bandwidth (10Gbit+) networks, see https://github.com/Altinity/clickhouse-backup/issues/1376 and Examples.md#tuning-for-high-bandwidth-10gbit-networks
   pipe_buffer_size: 131072          # PIPE_BUFFER_SIZE, size in bytes of the in-memory ring buffer between the compression and the upload/download stream handlers, default 128KB; raise (e.g. 8388608 = 8MB) to let compression run ahead of uploads on fast networks
@@ -198,14 +207,27 @@ general:
   watch_interval: 1h       # WATCH_INTERVAL, use only for `watch` command, backup will create every 1h
   full_interval: 24h       # FULL_INTERVAL, use only for `watch` command, full backup will create every 24h
   watch_backup_name_template: "shard{shard}-{type}-{time:20060102150405}" # WATCH_BACKUP_NAME_TEMPLATE, used only for `watch` command, macros values will apply from `system.macros` for time:XXX, look format in https://go.dev/src/time/format.go
-
+  
+  # watch_schedules - WATCH_SCHEDULES, use only for `watch` command, named cron driven backup chains, mutually exclusive with watch_interval/full_interval
+  # `name` added as prefix to watch_backup_name_template to isolate backup chains, `full` and `increment` are cron expressions (standard 5 fields, optional leading seconds field, @every/@daily descriptors)
+  # `full_type: rebase` creates scheduled full backup as increment + `rebase` command (server-side copy of previous chain instead of full re-upload)
+  # `delete_previous_cycle: true` deletes all older backups of the chain after successful full backup
+  # in WATCH_SCHEDULES env variable use `name=daily,full=0 0 * * *,increment=0 * * * *;name=weekly,full=@weekly` format, `;` as separator between schedules
+  # watch_schedules:
+  #   - name: daily
+  #     full: "0 0 * * *"
+  #     increment: "0 * * * *"
+  #     full_type: create
+  #     delete_previous_cycle: false
+  watch_schedules: []
+  
   sharded_operation_mode: none       # SHARDED_OPERATION_MODE, how different replicas will shard backing up data for tables. Options are: none (no sharding), table (table granularity), database (database granularity), first-replica (on the lexicographically sorted first active replica). If left empty, then the "none" option will be set as default.
   
   cpu_nice_priority: 15    # CPU niceness priority, to allow throttling CPU intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/nice.1.html
   io_nice_priority: "idle" # IO niceness priority, to allow throttling DISK intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/ionice.1.html
   
   rbac_backup_always: true # always backup RBAC objects
-  rbac_resolve_conflicts: "recreate"  # action, when RBAC object with the same name already exists, allow "recreate", "ignore", "fail" values
+  rbac_conflict_resolution: "recreate"  # RBAC_CONFLICT_RESOLUTION, action when RBAC object with the same name already exists during restore, allowed values "recreate", "ignore", "fail"
 
   config_backup_always: false # always backup CONFIGS, disabled by default cause configuration shall be manage via Infrastructure as Code approach
   named_collections_backup_always: false # always backup Named Collections, disabled by default cause configuration shall be manage via Infrastructure as Code approach 
@@ -270,6 +292,11 @@ clickhouse:
   check_replicas_before_attach: true # CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH, helps avoiding concurrent ATTACH PART execution when restoring ReplicatedMergeTree tables
   default_replica_path: "/clickhouse/tables/{cluster}/{shard}/{database}/{table}" # CLICKHOUSE_DEFAULT_REPLICA_PATH, will use during restore Replicated tables without macros in replication_path if replica already exists, to avoid restoring conflicts
   default_replica_name: "{replica}" # CLICKHOUSE_DEFAULT_REPLICA_NAME, will use during restore Replicated tables without macros in replica_name if replica already exists, to avoid restoring conflicts
+  # CLICKHOUSE_REBIND_REPLICA_PATH_IF_EXISTS, opt-in fallback for restoring ReplicatedMergeTree tables (https://github.com/Altinity/clickhouse-backup/issues/1428).
+  # A foreign/renamed table that still occupies our resolved ZK replica path on THIS node is always detected via system.replicas and rebound to default_replica_path regardless of this flag (https://github.com/Altinity/clickhouse-backup/issues/849).
+  # This flag ONLY covers the residual case where the ZK path has leftover children but NO local table uses it (async-stale state after a DROP). That case is observationally identical to a temporarily-offline HA sibling replica, so it stays opt-in and defaults to false.
+  # WARNING: MUST be false during a concurrent multi-replica (HA) restore, otherwise rebinding a path held by a live sibling causes split-brain. Can be overridden per invocation with the `--rebind-replica-path-if-exists` flag of `restore`/`restore_remote`.
+  rebind_replica_path_if_exists: false # CLICKHOUSE_REBIND_REPLICA_PATH_IF_EXISTS
   use_embedded_backup_restore: false # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE, use BACKUP / RESTORE SQL statements instead of regular SQL queries to use features of modern ClickHouse server versions
   use_embedded_backup_restore_cluster: "" # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE_CLUSTER, add ON CLUSTER clause to BACKUP / RESTORE SQL statements when `use_embedded_backup_restore: true`, value is cluster name from system.clusters, e.g. "{cluster}"
   embedded_backup_disk: ""  # CLICKHOUSE_EMBEDDED_BACKUP_DISK - disk from system.disks which will use when `use_embedded_backup_restore: true`
@@ -278,6 +305,8 @@ clickhouse:
   restore_distributed_cluster: "" # CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER, cluster name (can use macros) which will use during restore `engine=Distributed` tables, when cluster defined in backup table definition not exists in `system.clusters`
   check_parts_columns: true # CLICKHOUSE_CHECK_PARTS_COLUMNS, check data types from system.parts_columns during create backup to guarantee mutation is complete
   parts_columns_batch_size: 25 # CLICKHOUSE_PARTS_COLUMNS_BATCH_SIZE, batch size for system.parts_columns checks
+  parts_columns_max_bytes_before_external_group_by: 100000000 # CLICKHOUSE_PARTS_COLUMNS_MAX_BYTES_BEFORE_EXTERNAL_GROUP_BY, `max_bytes_before_external_group_by` setting injected into the system.parts_columns check query, 0 means don't inject the setting
+  parts_columns_max_memory_usage: 200000000 # CLICKHOUSE_PARTS_COLUMNS_MAX_MEMORY_USAGE, `max_memory_usage` setting injected into the system.parts_columns check query, 0 means don't inject the setting
   max_connections: 0 # CLICKHOUSE_MAX_CONNECTIONS, how many parallel connections could be opened during operations
 azblob:
   endpoint_schema: "https"            # AZBLOB_ENDPOINT_SCHEMA, URL scheme used to build the AZBLOB endpoint (e.g. http for Azurite emulator)
@@ -509,6 +538,8 @@ Print list of tables: `curl -s localhost:7171/backup/tables | jq .`, exclude pat
 - Optional query argument `table` works the same as the `--table=pattern` CLI argument.
 - Optional query argument `remote_backup` (or `remote-backup`) works the same as the `--remote-backup=name` CLI argument. The response then includes per-table `size`, `total_bytes`, `parts`, and `disks` (JSON array of disk names) fields read from the remote backup metadata.
 - Optional query argument `local_backup` (or `local-backup`) works the same as the `--local-backup=name` CLI argument: it lists tables from a local backup directly from disk (no live ClickHouse query required), with `size`, `total_bytes`, `parts`, and `disks` (JSON array) fields.
+- Optional boolean query argument `list_parts` (alias `parts`) works the same as the `--list-parts`/`--parts` CLI argument: it attaches a `parts_list` array per table (`name`, `partition_id`, and against the live server also `total_bytes`/`size`). Works standalone against the live server or together with `remote_backup`/`local_backup`; against a remote/local backup, `partition_id` is derived from the `_`-delimited prefix of each part's name (no size available there).
+- Optional boolean query argument `partitions` (alias `list_partitions`) works the same as the `--partitions`/`--list-partitions` CLI argument: it attaches a `partitions` array per table (`partition_id`, and against the live server also `partition`/`parts`/`total_bytes`/`size`), aggregated from parts. Independent of `list_parts`; against a remote/local backup, `partition_id` is derived the same way as `list_parts` (no partition value or size available there).
 
 ### GET /backup/tables/all
 
@@ -517,6 +548,7 @@ Print list of tables: `curl -s localhost:7171/backup/tables/all | jq .`, ignore 
 - Optional query argument `table` works the same as the `--table=pattern` CLI argument.
 - Optional query argument `remote_backup` (or `remote-backup`) works the same as the `--remote-backup=name` CLI argument; response shape matches `GET /backup/tables` with the remote-backup parameter.
 - Optional query argument `local_backup` (or `local-backup`) works the same as the `--local-backup=name` CLI argument; response shape matches `GET /backup/tables` with the local-backup parameter.
+- Optional boolean query arguments `list_parts`/`parts` and `partitions`/`list_partitions` work the same as on `GET /backup/tables`.
 
 ### POST /backup/create
 
@@ -569,6 +601,7 @@ You can't run watch twice with the same parameters even when `allow_parallel: tr
 - Optional string query argument `watch_interval` or `watch-interval` works the same as the `--watch-interval value` CLI argument.
 - Optional string query argument `full_interval` or `full-interval` works the same as the `--full-interval value` CLI argument.
 - Optional string query argument `watch_backup_name_template` or `watch-backup-name-template` works the same as the `--watch-backup-name-template value` CLI argument.
+- Optional string query argument `schedule` works the same as the `--schedule value` CLI argument (named cron driven backup chain in `name=<name>,full=<cron>[,increment=<cron>][,full_type=create|rebase][,delete_previous_cycle=true|false]` format, can be specified multiple times, mutually exclusive with `watch_interval`/`full_interval`).
 - Optional string query argument `table` works the same as the `--table value` CLI argument (backup only selected tables).
 - Optional string query argument `partitions` works the same as the `--partitions value` CLI argument (backup only selected partitions).
 - Optional boolean query argument `schema` works the same as the `--schema` CLI argument (backup schema only).
@@ -636,6 +669,14 @@ Download backup from remote storage: `curl -s localhost:7171/backup/download/<BA
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
 
+### POST /backup/rebase
+
+Copy required parts from the `required_backup` chain into remote backup and remove the `required_backup` dependency, so the incremental backup becomes a full one: `curl -s localhost:7171/backup/rebase/<BACKUP_NAME> -X POST | jq .`
+
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
+
+Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
+
 ### POST /backup/restore
 
 Create schema and restore data from backup: `curl -s localhost:7171/backup/restore/<BACKUP_NAME> -X POST | jq .`
@@ -655,6 +696,7 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 - Optional string query argument `restore_schema_as_attach` or `restore-schema-as-attach` works the same as the `--restore-schema-as-attach` CLI argument.
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
 - Optional boolean query argument `skip_empty_tables` or `skip-empty-tables` works the same as the `--skip-empty-tables` CLI argument (skip restoring tables that have no data).
+- Optional boolean query argument `rebind_replica_path_if_exists` or `rebind-replica-path-if-exists` works the same as the `--rebind-replica-path-if-exists` CLI argument (overrides `clickhouse.rebind_replica_path_if_exists` for this request, rebind a restored ReplicatedMergeTree to `default_replica_path` when the original ZK path still has leftover state but our replica entry is absent). WARNING: never set during a concurrent HA multi-replica restore.
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
@@ -681,6 +723,7 @@ Download and restore data from remote backup: `curl -s localhost:7171/backup/res
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
 - Optional boolean query argument `hardlink_exists_files` or `hardlink-exists-files` works the same as the `--hardlink-exists-files` CLI argument (Create hardlinks for existing files instead of downloading).
 - Optional boolean query argument `skip_empty_tables` or `skip-empty-tables` works the same as the `--skip-empty-tables` CLI argument (skip restoring tables that have no data).
+- Optional boolean query argument `rebind_replica_path_if_exists` or `rebind-replica-path-if-exists` works the same as the `--rebind-replica-path-if-exists` CLI argument (overrides `clickhouse.rebind_replica_path_if_exists` for this request, rebind a restored ReplicatedMergeTree to `default_replica_path` when the original ZK path still has leftover state but our replica entry is absent). WARNING: never set during a concurrent HA multi-replica restore.
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
@@ -750,16 +793,22 @@ NAME:
    clickhouse-backup tables - List of tables, exclude skip_tables
 
 USAGE:
-   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all]
+   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all] [--parts] [--partitions]
 
 OPTIONS:
-   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --environment-override value, --env value  override any environment variable via CLI parameter
-   --all, -a                                  Print table even when match with skip_tables pattern
-   --table value, --tables value, -t value    List tables only match with table name patterns, separated by comma, allow ? and * as wildcard
-   --remote-backup value                      List tables from a remote backup, including per-table size and parts count
-   --local-backup value                       List tables from a local backup (read from disk, no live ClickHouse query), including per-table size and parts count
-   --format value, -f value                   Output format (text|json|yaml|csv|tsv)
+   --config value, -c value                         Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value        override any environment variable via CLI parameter
+   --all, -a                                        Print table even when match with skip_tables pattern
+   --table value, --tables value, -t value          List tables only match with table name patterns, separated by comma, allow ? and * as wildcard
+   --remote-backup value                            List tables from a remote backup, including per-table size and parts count
+   --local-backup value                             List tables from a local backup (read from disk, no live ClickHouse query), including per-table size and parts count
+   --format value, -f value                         Output format (text|json|yaml|csv|tsv)
+   --parts system.parts, --list-parts system.parts  Also list every physical part for each table (name, partition_id, size)
+Against the live server, reads name/partition_id/bytes_on_disk from system.parts
+Against --local-backup/--remote-backup, reads part names from backup metadata (partition_id derived from the name, no size available)
+   --partitions system.parts, --list-partitions system.parts  Also list the distinct partitions for each table (partition_id, partition, parts count, size), aggregated from parts
+Against the live server, reads partition_id/partition/parts/size from system.parts
+Against --local-backup/--remote-backup, derives partition_id and parts count from part names (no partition value or per-partition size available)
    
 ```
 ### CLI command - create
@@ -905,6 +954,19 @@ Look at the system.parts partition and partition_id fields for details https://c
    --hardlink-exists-files                        Create hardlinks for existing files instead of downloading
    
 ```
+### CLI command - rebase
+```
+NAME:
+   clickhouse-backup rebase - Copy required parts from `required_backup` chain into remote backup and remove `required_backup` dependency, so backup becomes full
+
+USAGE:
+   clickhouse-backup rebase <backup_name>
+
+OPTIONS:
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   
+```
 ### CLI command - restore
 ```
 NAME:
@@ -941,6 +1003,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --restore-schema-as-attach                                                        Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --replicated-copy-to-detached                                                     Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step
    --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
+   --rebind-replica-path-if-exists                                                   Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent
    
 ```
 ### CLI command - restore_remote
@@ -979,6 +1042,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --restore-schema-as-attach                                                        Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --hardlink-exists-files                                                           Create hardlinks for existing files instead of downloading
    --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
+   --rebind-replica-path-if-exists                                                   Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent
    
 ```
 ### CLI command - delete
@@ -1085,10 +1149,10 @@ NAME:
    clickhouse-backup watch - Run infinite loop which create full + incremental backup sequence to allow efficient backup sequences
 
 USAGE:
-   clickhouse-backup watch [--watch-interval=1h] [--full-interval=24h] [--watch-backup-name-template=shard{shard}-{type}-{time:20060102150405}] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--schema] [--rbac] [--configs] [--skip-check-parts-columns]
+   clickhouse-backup watch [--watch-interval=1h] [--full-interval=24h] [--watch-backup-name-template=shard{shard}-{type}-{time:20060102150405}] [--schedule=name=<name>,full=<cron>,increment=<cron>] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--schema] [--rbac] [--configs] [--skip-check-parts-columns]
 
 DESCRIPTION:
-   Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups
+   Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups. Use `--schedule` instead of intervals to run backups on cron expressions
 
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
@@ -1096,6 +1160,11 @@ OPTIONS:
    --watch-interval value                     Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration
    --full-interval value                      Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration
    --watch-backup-name-template value         Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
+   --schedule value                           Named cron driven backup chain in name=<name>,full=<cron>[,increment=<cron>][,full_type=create|rebase][,delete_previous_cycle=true|false] format, can be specified multiple times, mutually exclusive with --watch-interval and --full-interval
+                                              cron expression contains standard 5 fields, optional leading seconds field and @every/@daily descriptors, see https://pkg.go.dev/github.com/robfig/cron/v3#hdr-CRON_Expression_Format
+                                              name added as prefix to --watch-backup-name-template to isolate backup chains
+                                              full_type=rebase creates scheduled full backup as increment + rebase command, server-side copy of previous chain instead of full re-upload
+                                              delete_previous_cycle=true deletes all older backups of the chain after successful full backup
    --table value, --tables value, -t value    Create and upload only objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --partitions partition_id                  Partitions names, separated by comma
 If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
@@ -1136,6 +1205,7 @@ OPTIONS:
    --watch-interval value                       Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration
    --full-interval value                        Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration
    --watch-backup-name-template value           Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
+   --schedule value                             Named cron driven backup chain for watch in name=<name>,full=<cron>[,increment=<cron>][,full_type=create|rebase][,delete_previous_cycle=true|false] format, can be specified multiple times, mutually exclusive with --watch-interval and --full-interval
    --watch-delete-source, --watch-delete-local  explicitly delete local backup during upload in watch
    
 ```
