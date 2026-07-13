@@ -23,13 +23,17 @@ func TestWatchSchedule(t *testing.T) {
 	dbName := "test_watch_schedule"
 	prefix := "sched1354"
 
-	cleanRemote := func() {
-		out, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml list remote 2>/dev/null | cut -d ' ' -f 1 | grep '^"+prefix+"-' || true")
-		for _, backupName := range strings.Fields(out) {
-			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote "+backupName+" 2>/dev/null || true")
+	cleanBackups := func() {
+		for _, location := range []string{"local", "remote"} {
+			out, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml list "+location+" 2>/dev/null | cut -d ' ' -f 1 | grep '^"+prefix+"-' || true")
+			for _, backupName := range strings.Fields(out) {
+				env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete "+location+" "+backupName+" 2>/dev/null || true")
+			}
 		}
+		// backups killed mid-flight may not show up in `list local`, remove leftovers from all backup disks
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "rm -rf /var/lib/clickhouse/backup/"+prefix+"-* /hdd1_data/backup/"+prefix+"-* /hdd2_data/backup/"+prefix+"-* 2>/dev/null || true")
 	}
-	cleanRemote()
+	cleanBackups()
 	r.NoError(env.dropDatabase(dbName, true))
 
 	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
@@ -42,11 +46,14 @@ func TestWatchSchedule(t *testing.T) {
 	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce",
 		"BACKUPS_TO_KEEP_REMOTE=0 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml watch --tables="+dbName+".* --schedule \""+schedule+"\" &>>/tmp/watch_schedule.log")
 	defer func() {
-		// [c]lickhouse regexp bracket trick, so pkill doesn't match its own `bash -ce` command line and kill itself with SIGTERM
-		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "pkill -f '[c]lickhouse-backup.*watch' || true")
+		// [c]lickhouse regexp bracket trick, so pkill doesn't match its own `bash -ce` command line and kill itself with SIGTERM;
+		// wait until the watch process actually exits, a backup in flight during pkill can re-create local files after cleanup
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "pkill -f '[c]lickhouse-backup.*watch' || true; for i in $(seq 1 30); do pgrep -f '[c]lickhouse-backup.*watch' >/dev/null || break; sleep 1; done")
 		out, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "cat /tmp/watch_schedule.log; rm -f /tmp/watch_schedule.log")
 		log.Debug().Msg(out)
-		cleanRemote()
+		cleanBackups()
+		leftovers, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "ls -d /var/lib/clickhouse/backup/"+prefix+"-* /hdd1_data/backup/"+prefix+"-* /hdd2_data/backup/"+prefix+"-* 2>/dev/null || true")
+		r.Empty(strings.TrimSpace(leftovers), "local backup leftovers shall not leak into the pooled env: %s", leftovers)
 		r.NoError(env.dropDatabase(dbName, true))
 	}()
 
