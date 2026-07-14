@@ -258,6 +258,14 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			return errors.Wrap(reBalanceErr, "reBalanceTablesMetadataIfDiskNotExists")
 		}
 		b.filterPartsAndFilesByDisk(tableMetadataAfterDownload, disks)
+		// https://github.com/Altinity/clickhouse-backup/issues/1268
+		// precise check after table metadata is downloaded and filtered by --tables and --partitions,
+		// counts only parts which really will be downloaded (hardlinkable parts are free)
+		if !b.isEmbedded {
+			if freeSpaceErr := b.checkFreeSpaceForDownload(ctx, remoteBackup, tableMetadataAfterDownload, disks, hardlinkExistsFiles, isResumeExists); freeSpaceErr != nil {
+				return errors.Wrap(freeSpaceErr, "checkFreeSpaceForDownload")
+			}
+		}
 		log.Debug().Str("backupName", backupName).Msgf("prepare table DATA concurrent semaphore with concurrency=%d len(tableMetadataAfterDownload)=%d", b.cfg.General.DownloadConcurrency, len(tableMetadataAfterDownload))
 		dataGroup, dataCtx := errgroup.WithContext(ctx)
 		dataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
@@ -933,7 +941,9 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 							}
 							atomic.AddUint64(&downloadedSize, uint64(pathSize))
 							if b.resume {
-								b.resumableState.AppendToState(partRemotePath, pathSize)
+								if err := b.resumableState.AppendToState(partRemotePath, pathSize); err != nil {
+									return errors.Wrap(err, "resumableState.AppendToState")
+								}
 							}
 							log.Debug().Msgf("finish %s -> %s (manifest, %d files)", partRemotePath, partLocalPath, len(manifestFiles))
 							return nil
@@ -995,10 +1005,44 @@ func (b *Backuper) hardlinkIfLocalPartExistsAndChecksumEqual(backupName string, 
 			return true, size, nil
 		}
 	}
-	if _, exists := table.Checksums[part.Name]; !exists {
-		return false, 0, nil
+	existingPartPath, localDisk, err := b.findLocalPartWithSameChecksum(table, part, disks, diskType, dbAndTableDir)
+	if err != nil || existingPartPath == "" || localDisk == nil {
+		return false, 0, err
 	}
-	for _, localDisk := range disks {
+	partLocalPath := path.Join(b.getLocalBackupDataPathForTable(backupName, localDisk.Name, dbAndTableDir), part.Name)
+	log.Info().Msgf("Found existing part %s with matching checksum, creating hardlinks to %s", existingPartPath, partLocalPath)
+	if err := b.makePartHardlinks(existingPartPath, partLocalPath); err != nil {
+		return false, 0, errors.Wrapf(err, "failed to create hardlinks for %s", existingPartPath)
+	}
+	if diskName != localDisk.Name {
+		part.RebalancedDisk = localDisk.Name
+	}
+	var partSize int64
+	walkErr := filepath.Walk(existingPartPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return errors.Wrap(err, "walk existingPartPath")
+		}
+		if !info.IsDir() {
+			partSize += info.Size()
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return false, 0, errors.Wrapf(walkErr, "failed to calculate size of %s", existingPartPath)
+	}
+	return true, partSize, nil
+}
+
+// findLocalPartWithSameChecksum searches local disks with the same diskType for an existing part
+// directory whose CRC64 of checksums.txt matches table metadata, without creating hardlinks or
+// mutating part, so it is reusable as a read-only probe for the free space check,
+// https://github.com/Altinity/clickhouse-backup/issues/1268
+func (b *Backuper) findLocalPartWithSameChecksum(table metadata.TableMetadata, part *metadata.Part, disks []clickhouse.Disk, diskType, dbAndTableDir string) (string, *clickhouse.Disk, error) {
+	if _, exists := table.Checksums[part.Name]; !exists {
+		return "", nil, nil
+	}
+	for dIdx := range disks {
+		localDisk := &disks[dIdx]
 		if localDisk.Type != diskType {
 			continue
 		}
@@ -1010,61 +1054,234 @@ func (b *Backuper) hardlinkIfLocalPartExistsAndChecksumEqual(backupName string, 
 		if _, err := os.Stat(p1); err == nil {
 			existingPartPaths = append(existingPartPaths, p1)
 		}
-		if (existingPartPaths == nil || len(existingPartPaths) == 0) && table.UUID != "" {
+		if len(existingPartPaths) == 0 && table.UUID != "" {
 			p2 := path.Join(localDisk.Path, "store", table.UUID[:3], table.UUID, part.Name)
 			if _, err := os.Stat(p2); err == nil {
 				existingPartPaths = append(existingPartPaths, p2)
 			}
 		}
 		// https://github.com/Altinity/clickhouse-backup/issues/1244
-		if existingPartPaths == nil || len(existingPartPaths) == 0 {
+		if len(existingPartPaths) == 0 {
 			globDir, globErr := filepath.Glob(path.Join(localDisk.Path, "backup", "*", "shadow", dbAndTableDir, localDisk.Name, part.Name))
 			if globErr != nil {
-				return false, 0, errors.Wrap(globErr, "filepath.Glob")
+				return "", nil, errors.Wrap(globErr, "filepath.Glob")
 			}
 			existingPartPaths = append(existingPartPaths, globDir...)
 		}
 
-		if existingPartPaths != nil && len(existingPartPaths) > 0 {
-			for i, existingPartPath := range existingPartPaths {
-				checksum, err := common.CalculateChecksum(existingPartPath, "checksums.txt")
+		for i, existingPartPath := range existingPartPaths {
+			checksum, err := common.CalculateChecksum(existingPartPath, "checksums.txt")
+			if err != nil {
+				log.Warn().Msgf("calculating checksum for %s failed: %v", existingPartPath, err)
+				if i < len(existingPartPaths)-1 {
+					continue
+				}
+				return "", nil, nil
+			}
+			if checksum == table.Checksums[part.Name] {
+				return existingPartPath, localDisk, nil
+			}
+			log.Warn().Msgf("Found existing part %s but checksums do not match. Expected %d, got %d. Will download.", existingPartPath, table.Checksums[part.Name], checksum)
+		}
+	}
+	return "", nil, nil
+}
+
+// checkFreeSpaceForDownload - https://github.com/Altinity/clickhouse-backup/issues/1268
+// calculates required disk space from per-part `size` fields in already downloaded and filtered
+// table metadata (so --tables and --partitions are respected) and compares it with the total free
+// space. When hardlinkExistsFiles is true, parts which can be hardlinked from existing local parts
+// (matched by hash_of_all_files via system.parts or by CRC64 of checksums.txt) are not counted.
+func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup storage.Backup, tables ListOfTables, disks []clickhouse.Disk, hardlinkExistsFiles, isResumeExists bool) error {
+	requiredSize := uint64(0)
+	unknownSizeParts := 0
+	diskTypeByName := make(map[string]string, len(disks))
+	for _, d := range disks {
+		diskTypeByName[d.Name] = d.Type
+	}
+	var hardlinkableByHash map[metadata.TableTitle]common.EmptyMap
+	if hardlinkExistsFiles {
+		var hashErr error
+		hardlinkableByHash, hashErr = b.findHardlinkablePartsByHash(ctx, tables, disks)
+		if hashErr != nil {
+			log.Warn().Err(hashErr).Msg("can't lookup hash_of_all_files in system.parts, free space check will not count parts hardlinkable by hash")
+		}
+	}
+	// required parts have size=0 in the current backup metadata, their size lives in the backup
+	// of the required chain where the part is not required, resolve it the same way as
+	// downloadDiffParts does, metadata downloaded here is cached on local disk and reused later
+	requiredBackupMetadataCache := make(map[string]*metadata.BackupMetadata)
+	requiredTableMetadataCache := make(map[string]*metadata.TableMetadata)
+	resolveRequiredPartSize := func(requiredBackupName string, title metadata.TableTitle, partName string) (uint64, bool) {
+		for requiredBackupName != "" {
+			requiredBackupMetadata, exists := requiredBackupMetadataCache[requiredBackupName]
+			if !exists {
+				m, err := b.ReadBackupMetadataRemote(ctx, requiredBackupName)
 				if err != nil {
-					log.Warn().Msgf("calculating checksum for %s failed: %v", existingPartPath, err)
-					if i < len(existingPartPaths)-1 {
+					log.Warn().Err(err).Msgf("can't read %s metadata to resolve required part %s size", requiredBackupName, partName)
+					return 0, false
+				}
+				requiredBackupMetadataCache[requiredBackupName] = m
+				requiredBackupMetadata = m
+			}
+			tableMetadataCacheKey := path.Join(requiredBackupName, title.Database, title.Table)
+			requiredTableMetadata, exists := requiredTableMetadataCache[tableMetadataCacheKey]
+			if !exists {
+				m, err := b.downloadTableMetadataIfNotExists(ctx, requiredBackupName, title)
+				if err != nil {
+					log.Warn().Err(err).Msgf("can't download %s table metadata to resolve required part %s size", tableMetadataCacheKey, partName)
+					return 0, false
+				}
+				requiredTableMetadataCache[tableMetadataCacheKey] = m
+				requiredTableMetadata = m
+			}
+			var foundPart *metadata.Part
+			for _, requiredParts := range requiredTableMetadata.Parts {
+				for i := range requiredParts {
+					if requiredParts[i].Name == partName {
+						foundPart = &requiredParts[i]
+						break
+					}
+				}
+				if foundPart != nil {
+					break
+				}
+			}
+			if foundPart == nil {
+				return 0, false
+			}
+			if !foundPart.Required {
+				return foundPart.Size, foundPart.Size > 0
+			}
+			requiredBackupName = requiredBackupMetadata.RequiredBackup
+		}
+		return 0, false
+	}
+	for _, t := range tables {
+		if t == nil || t.MetadataOnly {
+			continue
+		}
+		title := metadata.TableTitle{Database: t.Database, Table: t.Table}
+		dbAndTableDir := path.Join(common.TablePathEncode(t.Database), common.TablePathEncode(t.Table))
+		byHash := hardlinkableByHash[title]
+		for diskName, parts := range t.Parts {
+			for i := range parts {
+				part := parts[i]
+				if hardlinkExistsFiles {
+					if _, ok := byHash[part.Name]; ok {
 						continue
 					}
-					return false, 0, nil
+					if existingPartPath, _, probeErr := b.findLocalPartWithSameChecksum(*t, &part, disks, diskTypeByName[diskName], dbAndTableDir); probeErr == nil && existingPartPath != "" {
+						continue
+					}
 				}
-				if checksum == table.Checksums[part.Name] {
-					partLocalPath := path.Join(b.getLocalBackupDataPathForTable(backupName, localDisk.Name, dbAndTableDir), part.Name)
-					log.Info().Msgf("Found existing part %s with matching checksum, creating hardlinks to %s", existingPartPath, partLocalPath)
-					if err := b.makePartHardlinks(existingPartPath, partLocalPath); err != nil {
-						return false, 0, errors.Wrapf(err, "failed to create hardlinks for %s", existingPartPath)
+				if !part.Required {
+					if part.Size > 0 {
+						requiredSize += part.Size
+					} else {
+						unknownSizeParts++
 					}
-					if diskName != localDisk.Name {
-						part.RebalancedDisk = localDisk.Name
+					continue
+				}
+				// required part already present in the local required backup will be hardlinked
+				// by downloadDiffParts without downloading, same path resolution as downloadDiffParts
+				activeDisk := diskName
+				if part.RebalancedDisk != "" {
+					activeDisk = part.RebalancedDisk
+				}
+				if activeDiskPath, diskExists := b.DiskToPathMap[activeDisk]; diskExists {
+					if _, statErr := os.Stat(path.Join(activeDiskPath, "backup", remoteBackup.RequiredBackup, "shadow", dbAndTableDir, activeDisk, part.Name)); statErr == nil {
+						continue
 					}
-					var partSize int64
-					walkErr := filepath.Walk(existingPartPath, func(path string, info os.FileInfo, err error) error {
-						if err != nil {
-							return errors.Wrap(err, "walk existingPartPath")
-						}
-						if !info.IsDir() {
-							partSize += info.Size()
-						}
-						return nil
-					})
-					if walkErr != nil {
-						return false, 0, errors.Wrapf(walkErr, "failed to calculate size of %s", existingPartPath)
-					}
-					return true, partSize, nil
+				}
+				if size, sizeResolved := resolveRequiredPartSize(remoteBackup.RequiredBackup, title, part.Name); sizeResolved {
+					requiredSize += size
 				} else {
-					log.Warn().Msgf("Found existing part %s but checksums do not match. Expected %d, got %d. Will download.", existingPartPath, table.Checksums[part.Name], checksum)
+					unknownSizeParts++
 				}
 			}
 		}
 	}
-	return false, 0, nil
+	if requiredSize == 0 && unknownSizeParts == 0 {
+		return nil
+	}
+	freeSize := uint64(0)
+	for _, d := range disks {
+		freeSize += d.FreeSpace
+	}
+	if freeSize <= requiredSize {
+		errMsg := fmt.Sprintf("%s requires %s free space to download, but total free space is %s", remoteBackup.BackupName, utils.FormatBytes(requiredSize), utils.FormatBytes(freeSize))
+		if !isResumeExists {
+			return errors.New(errMsg)
+		}
+		log.Warn().Msg(errMsg)
+		return nil
+	}
+	if unknownSizeParts > 0 {
+		log.Warn().Msgf("%d parts in %s don't contain `size` field in metadata (backup created by older clickhouse-backup version), free space check is not precise: requires at least %s, total free space is %s", unknownSizeParts, remoteBackup.BackupName, utils.FormatBytes(requiredSize), utils.FormatBytes(freeSize))
+	}
+	return nil
+}
+
+// findHardlinkablePartsByHash returns per-table sets of part names for which an active part with
+// identical hash_of_all_files already exists in system.parts on one of the known disks, resolved
+// with batched queries instead of one query per part, https://github.com/Altinity/clickhouse-backup/issues/1268
+func (b *Backuper) findHardlinkablePartsByHash(ctx context.Context, tables ListOfTables, disks []clickhouse.Disk) (map[metadata.TableTitle]common.EmptyMap, error) {
+	result := make(map[metadata.TableTitle]common.EmptyMap)
+	type partRef struct {
+		title    metadata.TableTitle
+		partName string
+	}
+	partsByHash := make(map[string][]partRef)
+	hashes := make([]string, 0)
+	for _, t := range tables {
+		if t == nil || t.MetadataOnly {
+			continue
+		}
+		title := metadata.TableTitle{Database: t.Database, Table: t.Table}
+		for partName, h := range t.HashOfAllFiles {
+			h = strings.ToLower(h)
+			if _, exists := partsByHash[h]; !exists {
+				hashes = append(hashes, h)
+			}
+			partsByHash[h] = append(partsByHash[h], partRef{title: title, partName: partName})
+		}
+	}
+	if len(hashes) == 0 {
+		return result, nil
+	}
+	knownDisks := make(common.EmptyMap, len(disks))
+	for _, d := range disks {
+		knownDisks[d.Name] = struct{}{}
+	}
+	const chunkSize = 1000
+	for chunkStart := 0; chunkStart < len(hashes); chunkStart += chunkSize {
+		chunk := hashes[chunkStart:min(chunkStart+chunkSize, len(hashes))]
+		var rows []struct {
+			Hash string `ch:"hash"`
+			Disk string `ch:"disk_name"`
+		}
+		q := fmt.Sprintf("SELECT DISTINCT lower(hash_of_all_files) AS hash, disk_name FROM system.parts WHERE active AND lower(hash_of_all_files) IN (%s)", strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ","))
+		args := make([]interface{}, len(chunk))
+		for i, h := range chunk {
+			args[i] = h
+		}
+		if err := b.ch.SelectContext(ctx, &rows, q, args...); err != nil {
+			return nil, errors.Wrap(err, "SELECT hash_of_all_files FROM system.parts")
+		}
+		for _, row := range rows {
+			if _, diskExists := knownDisks[row.Disk]; !diskExists {
+				continue
+			}
+			for _, ref := range partsByHash[row.Hash] {
+				if _, exists := result[ref.title]; !exists {
+					result[ref.title] = make(common.EmptyMap)
+				}
+				result[ref.title][ref.partName] = struct{}{}
+			}
+		}
+	}
+	return result, nil
 }
 
 // hardlinkByHashOfAllFiles looks up an existing live part in system.parts whose

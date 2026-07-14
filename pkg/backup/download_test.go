@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
@@ -324,4 +326,77 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "250B free space, not found in system.disks with `local` type")
 
+}
+
+// https://github.com/Altinity/clickhouse-backup/issues/1268
+func TestCheckFreeSpaceForDownload(t *testing.T) {
+	ctx := context.Background()
+	backuper := &Backuper{cfg: &config.Config{}}
+	freeSpaceRemoteBackup := storage.Backup{BackupMetadata: metadata.BackupMetadata{BackupName: "test_free_space"}}
+	disks := []clickhouse.Disk{
+		{Name: "default", Path: "/var/lib/clickhouse", Type: "local", FreeSpace: 1000},
+	}
+	tables := ListOfTables{
+		{
+			Database: "default",
+			Table:    "test",
+			Parts:    map[string][]metadata.Part{"default": {{Name: "all_1_1_0", Size: 600}, {Name: "all_2_2_0", Size: 500}}},
+		},
+	}
+	// not enough free space
+	err := backuper.checkFreeSpaceForDownload(ctx, freeSpaceRemoteBackup, tables, disks, false, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires 1.07KiB free space to download")
+	// resume downgrades error to warning
+	require.NoError(t, backuper.checkFreeSpaceForDownload(ctx, freeSpaceRemoteBackup, tables, disks, false, true))
+	// enough free space
+	disks[0].FreeSpace = 2048
+	require.NoError(t, backuper.checkFreeSpaceForDownload(ctx, freeSpaceRemoteBackup, tables, disks, false, false))
+	// required part with unresolvable size (empty RequiredBackup) produces warning only
+	disks[0].FreeSpace = 1000
+	tables[0].Parts["default"][0].Required = true
+	require.NoError(t, backuper.checkFreeSpaceForDownload(ctx, freeSpaceRemoteBackup, tables, disks, false, false))
+	// required part which already exists in the local required backup will be hardlinked and not counted
+	requiredDiskPath := t.TempDir()
+	require.NoError(t, os.MkdirAll(path.Join(requiredDiskPath, "backup", "test_free_space_full", "shadow", "default", "test", "default", "all_1_1_0"), 0o750))
+	backuper.DiskToPathMap = map[string]string{"default": requiredDiskPath}
+	freeSpaceRemoteBackup.RequiredBackup = "test_free_space_full"
+	require.NoError(t, backuper.checkFreeSpaceForDownload(ctx, freeSpaceRemoteBackup, tables, disks, false, false))
+	freeSpaceRemoteBackup.RequiredBackup = ""
+	backuper.DiskToPathMap = nil
+	tables[0].Parts["default"][0].Required = false
+	// parts without size (backup created by older version) produce warning only
+	tables[0].Parts["default"][0].Size = 0
+	tables[0].Parts["default"][1].Size = 0
+	require.NoError(t, backuper.checkFreeSpaceForDownload(ctx, freeSpaceRemoteBackup, tables, disks, false, false))
+}
+
+// https://github.com/Altinity/clickhouse-backup/issues/1268
+func TestCheckFreeSpaceForDownloadHardlinkExistsFiles(t *testing.T) {
+	ctx := context.Background()
+	diskPath := t.TempDir()
+	partPath := path.Join(diskPath, "data", "default", "test", "all_1_1_0")
+	require.NoError(t, os.MkdirAll(partPath, 0o750))
+	require.NoError(t, os.WriteFile(path.Join(partPath, "checksums.txt"), []byte("checksums"), 0o640))
+	checksum, err := common.CalculateChecksum(partPath, "checksums.txt")
+	require.NoError(t, err)
+
+	backuper := &Backuper{cfg: &config.Config{}}
+	freeSpaceRemoteBackup := storage.Backup{BackupMetadata: metadata.BackupMetadata{BackupName: "test_free_space_hardlink"}}
+	disks := []clickhouse.Disk{{Name: "default", Path: diskPath, Type: "local", FreeSpace: 1000}}
+	tables := ListOfTables{
+		{
+			Database:  "default",
+			Table:     "test",
+			Parts:     map[string][]metadata.Part{"default": {{Name: "all_1_1_0", Size: 4096}}},
+			Checksums: map[string]uint64{"all_1_1_0": checksum},
+		},
+	}
+	// without hardlinks part size exceeds free space
+	require.Error(t, backuper.checkFreeSpaceForDownload(ctx, freeSpaceRemoteBackup, tables, disks, false, false))
+	// with hardlinks the part matches local one by checksum and requires no space
+	require.NoError(t, backuper.checkFreeSpaceForDownload(ctx, freeSpaceRemoteBackup, tables, disks, true, false))
+	// checksum mismatch means the part will be downloaded and counted again
+	tables[0].Checksums["all_1_1_0"] = checksum + 1
+	require.Error(t, backuper.checkFreeSpaceForDownload(ctx, freeSpaceRemoteBackup, tables, disks, true, false))
 }
