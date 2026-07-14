@@ -226,6 +226,12 @@ func waitDone(done chan struct{}, command string) {
 	}
 	select {
 	case <-done:
+		return
+	default:
+	}
+	log.Info().Msgf("status.Cancel: waiting up to %s for command %q goroutine to finish", CancelWaitTimeout, command)
+	select {
+	case <-done:
 	case <-time.After(CancelWaitTimeout):
 		log.Warn().Msgf("status.Cancel: timeout (%s) waiting for command %q goroutine to finish", CancelWaitTimeout, command)
 	}

@@ -3,12 +3,34 @@ package backup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
+
+	"github.com/eapache/go-resiliency/retrier"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 )
+
+func TestClassify(t *testing.T) {
+	b := NewBackuper(&config.Config{})
+	testcases := []struct {
+		err    error
+		expect retrier.Action
+	}{
+		{nil, retrier.Succeed},
+		{context.Canceled, retrier.Fail},
+		{context.DeadlineExceeded, retrier.Fail},
+		{fmt.Errorf("object_disk.CopyObject: %w", context.Canceled), retrier.Fail},
+		{errors.New("transient network error"), retrier.Retry},
+	}
+	for _, tc := range testcases {
+		if got := b.Classify(tc.err); got != tc.expect {
+			t.Fatalf("Classify(%v) = %v, expected %v", tc.err, got, tc.expect)
+		}
+	}
+}
 
 type testVersioner struct {
 	err error

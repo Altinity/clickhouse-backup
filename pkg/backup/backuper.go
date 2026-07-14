@@ -73,6 +73,10 @@ func (b *Backuper) Classify(err error) retrier.Action {
 	if err == nil {
 		return retrier.Succeed
 	}
+	// canceled/expired context can't succeed on retry, fail fast so /backup/kill and SIGTERM unwind promptly
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return retrier.Fail
+	}
 	log.Warn().Err(err).Msgf("Will wait near %s and retry", common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter))
 	return retrier.Retry
 }
