@@ -925,6 +925,21 @@ func main() {
 					Hidden: false,
 				},
 				cli.BoolFlag{
+					Name:   "rbac, backup-rbac, do-backup-rbac",
+					Hidden: false,
+					Usage:  "Backup RBAC related objects during --watch",
+				},
+				cli.BoolFlag{
+					Name:   "configs, backup-configs, do-backup-configs",
+					Hidden: false,
+					Usage:  "Backup `clickhouse-server' configuration files during --watch",
+				},
+				cli.BoolFlag{
+					Name:   "named-collections, backup-named-collections, do-backup-named-collections",
+					Hidden: false,
+					Usage:  "Backup named collections and settings during --watch",
+				},
+				cli.BoolFlag{
 					Name:   "watch-delete-source, watch-delete-local",
 					Hidden: false,
 					Usage:  "explicitly delete local backup during upload in watch",

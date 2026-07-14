@@ -1155,13 +1155,16 @@ USAGE:
    clickhouse-backup server [command options] [arguments...]
 
 OPTIONS:
-   --config value, -c value                     Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --environment-override value, --env value    override any environment variable via CLI parameter
-   --watch                                      Run watch go-routine for 'create_remote' + 'delete local', after API server startup
-   --watch-interval value                       Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration
-   --full-interval value                        Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration
-   --watch-backup-name-template value           Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
-   --schedule value                             Named cron driven backup chain for watch in name=<name>,full=<cron>[,increment=<cron>][,full_type=create|rebase][,delete_previous_cycle=true|false] format, can be specified multiple times, mutually exclusive with --watch-interval and --full-interval
-   --watch-delete-source, --watch-delete-local  explicitly delete local backup during upload in watch
+   --config value, -c value                                                        Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value                                       override any environment variable via CLI parameter
+   --watch                                                                         Run watch go-routine for 'create_remote' + 'delete local', after API server startup
+   --watch-interval value                                                          Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration
+   --full-interval value                                                           Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration
+   --watch-backup-name-template value                                              Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
+   --schedule value                                                                Named cron driven backup chain for watch in name=<name>,full=<cron>[,increment=<cron>][,full_type=create|rebase][,delete_previous_cycle=true|false] format, can be specified multiple times, mutually exclusive with --watch-interval and --full-interval
+   --rbac, --backup-rbac, --do-backup-rbac                                         Backup RBAC related objects during --watch
+   --configs, --backup-configs, --do-backup-configs                                Backup `clickhouse-server' configuration files during --watch
+   --named-collections, --backup-named-collections, --do-backup-named-collections  Backup named collections and settings during --watch
+   --watch-delete-source, --watch-delete-local                                     explicitly delete local backup during upload in watch
    
 ```

@@ -168,7 +168,7 @@ func (api *APIServer) RunWatch(cliCtx *cli.Context) {
 	log.Info().Msg("Starting API Server in watch mode")
 	b := backup.NewBackuper(api.config)
 	commandId, _ := status.Current.Start("watch")
-	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), cliCtx.StringSlice("schedule"), "*.*", nil, nil, false, false, false, false, false, cliCtx.Bool("watch-delete-source"), api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
+	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), cliCtx.StringSlice("schedule"), "*.*", nil, nil, false, cliCtx.Bool("rbac"), cliCtx.Bool("configs"), cliCtx.Bool("named-collections"), false, cliCtx.Bool("watch-delete-source"), api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
 	api.handleWatchResponse(commandId, err)
 }
 
