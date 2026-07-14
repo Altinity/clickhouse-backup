@@ -504,7 +504,9 @@ func (k *Keeper) writeJsonString(f *os.File, node DumpNode) (int, error) {
 	return bytes + lnBytes, nil
 }
 
-func (k *Keeper) Restore(dumpFile, prefix string) error {
+// Restore - restore keeper nodes from dumpFile under prefix,
+// skipNode allow skip node restore, receives node with relative path from the dump, could be nil
+func (k *Keeper) Restore(dumpFile, prefix string, skipNode func(node DumpNode) bool) error {
 	f, err := os.Open(dumpFile)
 	if err != nil {
 		return errors.Wrapf(err, "can't open %s", dumpFile)
@@ -538,6 +540,13 @@ func (k *Keeper) Restore(dumpFile, prefix string) error {
 			if stringUnmarshalErr := json.Unmarshal(binaryData, &nodeString); stringUnmarshalErr != nil {
 				return errors.WithStack(fmt.Errorf("k.Restore can't read data binaryErr=%v, stringErr=%v", binaryUnmarshalErr, stringUnmarshalErr))
 			}
+		}
+		if skipNode != nil && skipNode(node) {
+			log.Info().Msgf("skip restore keeper node %s", node.Path)
+			if readErr == io.EOF {
+				break
+			}
+			continue
 		}
 		node.Path = path.Join(prefix, node.Path)
 		version := int32(0)
