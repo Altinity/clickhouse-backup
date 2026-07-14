@@ -1106,6 +1106,7 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 					if linkErr != nil {
 						return nil, nil, nil, nil, nil, nil, errors.Wrapf(linkErr, "LinkPartFromShadow part %s", name)
 					}
+					parts[idx].Size = uint64(linkedSize)
 					realSize[disk.Name] += linkedSize
 				}
 			}
