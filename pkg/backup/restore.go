@@ -577,11 +577,14 @@ func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []c
 	}
 
 	// https://github.com/Altinity/clickhouse-backup/issues/851
-	if err = b.restoreRBACResolveAllConflicts(ctx, backupName, accessPath, version, k, replicatedUserDirectories, dropExists); err != nil {
+	ignoredSQLFiles, ignoredKeeperUuids, err := b.restoreRBACResolveAllConflicts(ctx, backupName, accessPath, version, k, replicatedUserDirectories, dropExists)
+	if err != nil {
 		return errors.Wrap(err, "restoreRBACResolveAllConflicts")
 	}
 
-	if err = b.restoreBackupRelatedDir(backupName, "access", accessPath, disks, []string{"*.jsonl"}); err == nil {
+	// https://github.com/Altinity/clickhouse-backup/issues/1013
+	skipPatterns := append([]string{"*.jsonl"}, ignoredSQLFiles...)
+	if err = b.restoreBackupRelatedDir(backupName, "access", accessPath, disks, skipPatterns); err == nil {
 		markFile := path.Join(accessPath, "need_rebuild_lists.mark")
 		log.Info().Msgf("create %s for properly rebuild RBAC after restart clickhouse-server", markFile)
 		file, err := os.Create(markFile)
@@ -608,17 +611,22 @@ func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []c
 	if err != nil && os.IsNotExist(err) {
 		return nil
 	}
-	if err = b.restoreRBACReplicated(backupName, "access", k, replicatedUserDirectories); err != nil && !os.IsNotExist(err) {
+	if err = b.restoreRBACReplicated(backupName, "access", k, replicatedUserDirectories, ignoredKeeperUuids); err != nil && !os.IsNotExist(err) {
 		return errors.Wrap(err, "restoreRBACReplicated")
 	}
 	return nil
 }
 
-func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupName string, accessPath string, version int, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory, dropExists bool) error {
+// restoreRBACResolveAllConflicts - resolve conflicts between backup and current RBAC objects,
+// returns the list of backup access *.sql file names and keeper uuids which shall be ignored during restore,
+// look https://github.com/Altinity/clickhouse-backup/issues/1013 for details
+func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupName string, accessPath string, version int, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory, dropExists bool) ([]string, map[string]struct{}, error) {
+	ignoredSQLFiles := make([]string, 0)
+	ignoredKeeperUuids := make(map[string]struct{})
 	backupAccessPath := path.Join(b.DefaultDataPath, "backup", backupName, "access")
 	if _, statErr := os.Stat(backupAccessPath); os.IsNotExist(statErr) {
 		log.Debug().Msgf("backup access path %s doesn't exist, skip RBAC restore", backupAccessPath)
-		return nil
+		return ignoredSQLFiles, ignoredKeeperUuids, nil
 	}
 
 	walkErr := filepath.Walk(backupAccessPath, func(fPath string, fInfo fs.FileInfo, err error) error {
@@ -633,8 +641,12 @@ func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupNam
 			if readErr != nil {
 				return errors.Wrap(readErr, "ReadFile RBAC sql")
 			}
-			if resolveErr := b.resolveRBACConflictIfExist(ctx, string(sql), accessPath, version, k, replicatedUserDirectories, dropExists); resolveErr != nil {
+			ignore, resolveErr := b.resolveRBACConflictIfExist(ctx, string(sql), accessPath, version, k, replicatedUserDirectories, dropExists)
+			if resolveErr != nil {
 				return errors.Wrap(resolveErr, "resolveRBACConflictIfExist for sql")
+			}
+			if ignore {
+				ignoredSQLFiles = append(ignoredSQLFiles, filepath.Base(fPath))
 			}
 			log.Debug().Msgf("%s b.resolveRBACConflictIfExist(%s) no error", fPath, string(sql))
 		}
@@ -673,8 +685,12 @@ func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupNam
 					data.Value = []byte(dataString.Value)
 				}
 				if strings.HasPrefix(data.Path, "uuid/") {
-					if resolveErr := b.resolveRBACConflictIfExist(ctx, string(data.Value), accessPath, version, k, replicatedUserDirectories, dropExists); resolveErr != nil {
+					ignore, resolveErr := b.resolveRBACConflictIfExist(ctx, string(data.Value), accessPath, version, k, replicatedUserDirectories, dropExists)
+					if resolveErr != nil {
 						return errors.Wrap(resolveErr, "resolveRBACConflictIfExist for jsonl")
+					}
+					if ignore {
+						ignoredKeeperUuids[strings.TrimPrefix(data.Path, "uuid/")] = struct{}{}
 					}
 					log.Debug().Msgf("%s:%s b.resolveRBACConflictIfExist(%s) no error", fPath, data.Path, string(data.Value))
 				}
@@ -691,29 +707,34 @@ func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupNam
 		return nil
 	})
 	if !os.IsNotExist(walkErr) {
-		return errors.Wrap(walkErr, "walk backup access path")
+		return ignoredSQLFiles, ignoredKeeperUuids, errors.Wrap(walkErr, "walk backup access path")
 	}
-	return nil
+	return ignoredSQLFiles, ignoredKeeperUuids, nil
 }
 
-func (b *Backuper) resolveRBACConflictIfExist(ctx context.Context, sql string, accessPath string, version int, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory, dropExists bool) error {
+// resolveRBACConflictIfExist - returns true when the RBAC object from backup already exists
+// and shall be ignored during restore (rbac_conflict_resolution: "ignore")
+func (b *Backuper) resolveRBACConflictIfExist(ctx context.Context, sql string, accessPath string, version int, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory, dropExists bool) (bool, error) {
 	kind, name, detectErr := b.detectRBACObject(sql)
 	if detectErr != nil {
-		return errors.Wrap(detectErr, "detectRBACObject")
+		return false, errors.Wrap(detectErr, "detectRBACObject")
 	}
 	if isExists, existsRBACType, existsRBACObjectIds := b.isRBACExists(ctx, kind, name, accessPath, version, k, replicatedUserDirectories); isExists {
 		log.Warn().Msgf("RBAC object kind=%s, name=%s already present, will %s", kind, name, b.cfg.General.RBACConflictResolution)
 		if b.cfg.General.RBACConflictResolution == "recreate" || dropExists {
 			if dropErr := b.dropExistsRBAC(ctx, kind, name, accessPath, existsRBACType, existsRBACObjectIds, k); dropErr != nil {
-				return errors.Wrap(dropErr, "dropExistsRBAC")
+				return false, errors.Wrap(dropErr, "dropExistsRBAC")
 			}
-			return nil
+			return false, nil
 		}
 		if b.cfg.General.RBACConflictResolution == "fail" {
-			return errors.Errorf("RBAC object kind=%s, name=%s already present, fix current RBAC objects to resolve conflicts", kind, name)
+			return false, errors.Errorf("RBAC object kind=%s, name=%s already present, fix current RBAC objects to resolve conflicts", kind, name)
+		}
+		if b.cfg.General.RBACConflictResolution == "ignore" {
+			return true, nil
 		}
 	}
-	return nil
+	return false, nil
 }
 
 func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, accessPath string, version int, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory) (bool, string, []string) {
@@ -923,7 +944,7 @@ func (b *Backuper) detectRBACObject(sql string) (string, string, error) {
 }
 
 // @todo think about restore RBAC from replicated to local *.sql
-func (b *Backuper) restoreRBACReplicated(backupName string, backupPrefixDir string, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory) error {
+func (b *Backuper) restoreRBACReplicated(backupName string, backupPrefixDir string, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory, ignoredKeeperUuids map[string]struct{}) error {
 	if k == nil || len(replicatedUserDirectories) == 0 {
 		return nil
 	}
@@ -959,13 +980,26 @@ func (b *Backuper) restoreRBACReplicated(backupName string, backupPrefixDir stri
 			restoreReplicatedRBACMap[jsonLFile] = replicatedUserDirectories[0].Name
 		}
 	}
+	// skip restore of ignored RBAC objects and correlated `name` -> `uuid` znodes,
+	// look https://github.com/Altinity/clickhouse-backup/issues/1013 for details
+	skipNode := func(node keeper.DumpNode) bool {
+		if len(ignoredKeeperUuids) == 0 {
+			return false
+		}
+		if strings.HasPrefix(node.Path, "uuid/") {
+			_, ignore := ignoredKeeperUuids[strings.TrimPrefix(node.Path, "uuid/")]
+			return ignore
+		}
+		_, ignore := ignoredKeeperUuids[string(node.Value)]
+		return ignore
+	}
 	for jsonLFile, userDirectoryName := range restoreReplicatedRBACMap {
 		replicatedAccessPath, err := k.GetReplicatedAccessPath(userDirectoryName)
 		if err != nil {
 			return errors.Wrap(err, "GetReplicatedAccessPath")
 		}
 		log.Info().Msgf("keeper.Restore(%s) -> %s", jsonLFile, replicatedAccessPath)
-		if err := k.Restore(jsonLFile, replicatedAccessPath); err != nil {
+		if err := k.Restore(jsonLFile, replicatedAccessPath, skipNode); err != nil {
 			return errors.Wrap(err, "keeper.Restore")
 		}
 	}
