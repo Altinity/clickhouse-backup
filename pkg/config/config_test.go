@@ -3,7 +3,9 @@ package config
 import (
 	"bytes"
 	"flag"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -176,6 +178,81 @@ func TestOverrideEnvVarsMasksSensitiveValuesOnlyInLogs(t *testing.T) {
 	}
 	if !strings.Contains(output, "override "+nameOnlyFlag+"=true") {
 		t.Fatalf("expected name-only override value in log output, got: %s", output)
+	}
+}
+
+func TestDisableEnvironmentOverride(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	writeConfig := func(disable bool) {
+		content := fmt.Sprintf("general:\n  remote_storage: \"s3\"\n  disable_environment_override: %v\ns3:\n  bucket: \"from-file\"\n", disable)
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatalf("can't write config file: %v", err)
+		}
+	}
+	newCliContext := func(envValues ...string) *cli.Context {
+		env := cli.StringSlice{}
+		flagSet := flag.NewFlagSet("test", flag.ContinueOnError)
+		flagSet.Var(&env, "env", "")
+		flagSet.String("config", configPath, "")
+		for _, value := range envValues {
+			if err := flagSet.Set("env", value); err != nil {
+				t.Fatalf("failed to set env flag %q: %v", value, err)
+			}
+		}
+		return cli.NewContext(cli.NewApp(), flagSet, nil)
+	}
+
+	// envconfig overrides config file values by default
+	t.Setenv("S3_BUCKET", "from-env")
+	writeConfig(false)
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.S3.Bucket != "from-env" {
+		t.Fatalf("expected S3_BUCKET env override %q, got %q", "from-env", cfg.S3.Bucket)
+	}
+
+	// disable_environment_override: true skips envconfig
+	writeConfig(true)
+	cfg, err = LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.S3.Bucket != "from-file" {
+		t.Fatalf("expected config file value %q, got %q", "from-file", cfg.S3.Bucket)
+	}
+
+	// the option itself can't be enabled from the environment
+	if err = os.Unsetenv("S3_BUCKET"); err != nil {
+		t.Fatalf("can't unset S3_BUCKET: %v", err)
+	}
+	t.Setenv("DISABLE_ENVIRONMENT_OVERRIDE", "true")
+	t.Setenv("DISABLEENVIRONMENTOVERRIDE", "true")
+	writeConfig(false)
+	cfg, err = LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.General.DisableEnvironmentOverride {
+		t.Fatal("disable_environment_override must be settable only from the config file, not from the environment")
+	}
+
+	// --env overrides config file values by default
+	writeConfig(false)
+	cfg = GetConfigFromCli(newCliContext("S3_BUCKET=from-cli"))
+	if cfg.S3.Bucket != "from-cli" {
+		t.Fatalf("expected --env override %q, got %q", "from-cli", cfg.S3.Bucket)
+	}
+
+	// disable_environment_override: true ignores --env and doesn't touch the process environment
+	writeConfig(true)
+	cfg = GetConfigFromCli(newCliContext("S3_BUCKET=from-cli"))
+	if cfg.S3.Bucket != "from-file" {
+		t.Fatalf("expected config file value %q, got %q", "from-file", cfg.S3.Bucket)
+	}
+	if _, present := os.LookupEnv("S3_BUCKET"); present {
+		t.Fatal("--env leaked into the process environment while disable_environment_override is enabled")
 	}
 }
 
