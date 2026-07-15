@@ -325,6 +325,266 @@ func TestValidateConfigCompressionTuning(t *testing.T) {
 	}
 }
 
+func TestLoadConfigErrors(t *testing.T) {
+	writeConfig := func(t *testing.T, content string) string {
+		configPath := filepath.Join(t.TempDir(), "config.yml")
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatalf("can't write config file: %v", err)
+		}
+		return configPath
+	}
+	requireErrContains := func(t *testing.T, err error, want string) {
+		if err == nil {
+			t.Fatalf("expected error containing %q, got nil", want)
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got: %v", want, err)
+		}
+	}
+
+	t.Run("missing file is tolerated", func(t *testing.T) {
+		cfg, err := LoadConfig(filepath.Join(t.TempDir(), "nonexistent.yml"))
+		if err != nil {
+			t.Fatalf("missing config file must fall back to defaults, got: %v", err)
+		}
+		if cfg.General.RemoteStorage != "none" {
+			t.Fatalf("expected default remote_storage none, got %q", cfg.General.RemoteStorage)
+		}
+	})
+	t.Run("unreadable file", func(t *testing.T) {
+		// a directory exists but can't be read as a file
+		_, err := LoadConfig(t.TempDir())
+		requireErrContains(t, err, "can't open config file")
+	})
+	t.Run("invalid yaml", func(t *testing.T) {
+		_, err := LoadConfig(writeConfig(t, "general: [unclosed\n\tbroken"))
+		requireErrContains(t, err, "can't parse config file")
+	})
+	t.Run("envconfig type mismatch", func(t *testing.T) {
+		t.Setenv("UPLOAD_CONCURRENCY", "not-a-number")
+		_, err := LoadConfig(writeConfig(t, "general:\n  remote_storage: \"none\"\n"))
+		requireErrContains(t, err, "envconfig.Process")
+	})
+	t.Run("validation failure propagated", func(t *testing.T) {
+		_, err := LoadConfig(writeConfig(t, "general:\n  remote_storage: \"banana\"\n"))
+		requireErrContains(t, err, "LoadConfig ValidateConfig")
+		requireErrContains(t, err, "unknown remote storage")
+	})
+}
+
+func TestValidateConfigErrors(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(cfg *Config)
+		wantErr string
+	}{
+		{"valid default config", func(cfg *Config) {}, ""},
+		{"bad s3 retry_mode", func(cfg *Config) {
+			cfg.General.RemoteStorage = "s3"
+			cfg.S3.RetryMode = "aggressive"
+		}, "ValidateConfig ParseRetryMode"},
+		{"bad s3 http_idle_conn_timeout", func(cfg *Config) {
+			cfg.General.RemoteStorage = "s3"
+			cfg.S3.HTTPIdleConnTimeout = "1parsec"
+		}, "invalid s3 http_idle_conn_timeout"},
+		{"unknown remote storage", func(cfg *Config) {
+			cfg.General.RemoteStorage = "banana"
+		}, "'banana' is unknown remote storage"},
+		{"ftp concurrency below download concurrency", func(cfg *Config) {
+			cfg.General.RemoteStorage = "ftp"
+			cfg.General.DownloadConcurrency = 4
+			cfg.FTP.Concurrency = 1
+		}, "FTP_CONCURRENCY=1 should be great or equal"},
+		{"lz4 compression rejected", func(cfg *Config) {
+			cfg.General.RemoteStorage = "s3"
+			cfg.S3.CompressionFormat = "lz4"
+		}, "clickhouse already compressed data by lz4"},
+		{"unsupported compression format", func(cfg *Config) {
+			cfg.General.RemoteStorage = "s3"
+			cfg.S3.CompressionFormat = "rar"
+		}, "'rar' is unsupported compression format"},
+		{"bad clickhouse timeout", func(cfg *Config) {
+			cfg.ClickHouse.Timeout = "1parsec"
+		}, "invalid clickhouse timeout"},
+		{"embedded backup restore requires timeout >= 4h", func(cfg *Config) {
+			cfg.ClickHouse.UseEmbeddedBackupRestore = true
+			cfg.ClickHouse.Timeout = "1h"
+		}, "not enough for `use_embedded_backup_restore: true`"},
+		{"freeze_by_part incompatible with embedded backup restore", func(cfg *Config) {
+			cfg.ClickHouse.UseEmbeddedBackupRestore = true
+			cfg.ClickHouse.Timeout = "5h"
+			cfg.ClickHouse.FreezeByPart = true
+		}, "`freeze_by_part: true` is not compatible with `use_embedded_backup_restore: true`"},
+		{"bad cos timeout", func(cfg *Config) {
+			cfg.COS.Timeout = "1parsec"
+		}, "invalid cos timeout"},
+		{"bad ftp timeout", func(cfg *Config) {
+			cfg.FTP.Timeout = "1parsec"
+		}, "invalid ftp timeout"},
+		{"bad azblob timeout", func(cfg *Config) {
+			cfg.AzureBlob.Timeout = "1parsec"
+		}, "invalid azblob timeout"},
+		{"bad s3 storage class", func(cfg *Config) {
+			cfg.S3.StorageClass = "SUPER_FAST"
+		}, "'SUPER_FAST' is bad S3_STORAGE_CLASS"},
+		{"custom s3 storage class allowed with use_custom_storage_class", func(cfg *Config) {
+			cfg.S3.UseCustomStorageClass = true
+			cfg.S3.StorageClass = "SUPER_FAST"
+		}, ""},
+		{"multipart download requires s3 concurrency > 1", func(cfg *Config) {
+			cfg.S3.AllowMultipartDownload = true
+			cfg.S3.Concurrency = 1
+		}, "`allow_multipart_download` require `concurrency`"},
+		{"api secure without certificate", func(cfg *Config) {
+			cfg.API.Secure = true
+		}, "api.certificate_file must be defined"},
+		{"api secure without private key", func(cfg *Config) {
+			cfg.API.Secure = true
+			cfg.API.CertificateFile = "/nonexistent/cert.pem"
+		}, "api.private_key_file must be defined"},
+		{"api secure with unreadable key pair", func(cfg *Config) {
+			cfg.API.Secure = true
+			cfg.API.CertificateFile = "/nonexistent/cert.pem"
+			cfg.API.PrivateKeyFile = "/nonexistent/key.pem"
+		}, "ValidateConfig LoadX509KeyPair"},
+		{"bad custom command timeout", func(cfg *Config) {
+			cfg.Custom.CommandTimeout = "1parsec"
+		}, "invalid custom command timeout"},
+		{"empty custom command timeout", func(cfg *Config) {
+			cfg.Custom.CommandTimeout = ""
+		}, "empty custom command timeout"},
+		{"bad retries pause", func(cfg *Config) {
+			cfg.General.RetriesPause = "1parsec"
+		}, "invalid retries pause"},
+		{"empty retries pause", func(cfg *Config) {
+			cfg.General.RetriesPause = ""
+		}, "empty retries pause"},
+		{"bad watch interval", func(cfg *Config) {
+			cfg.General.WatchInterval = "1parsec"
+		}, "invalid watch interval"},
+		{"bad full interval", func(cfg *Config) {
+			cfg.General.FullInterval = "1parsec"
+		}, "invalid full interval for watch"},
+		{"watch schedule without name", func(cfg *Config) {
+			cfg.General.WatchSchedules = WatchSchedules{{Full: "@daily"}}
+		}, "watch schedule requires non-empty `name`"},
+		{"watch schedule invalid name", func(cfg *Config) {
+			cfg.General.WatchSchedules = WatchSchedules{{Name: "bad name!", Full: "@daily"}}
+		}, "only [a-zA-Z0-9_-] allowed"},
+		{"watch schedule without full cron", func(cfg *Config) {
+			cfg.General.WatchSchedules = WatchSchedules{{Name: "nightly"}}
+		}, "requires `full` cron expression"},
+		{"watch schedule bad full cron", func(cfg *Config) {
+			cfg.General.WatchSchedules = WatchSchedules{{Name: "nightly", Full: "not-a-cron"}}
+		}, "invalid `full` cron expression"},
+		{"watch schedule bad increment cron", func(cfg *Config) {
+			cfg.General.WatchSchedules = WatchSchedules{{Name: "nightly", Full: "@daily", Increment: "not-a-cron"}}
+		}, "invalid `increment` cron expression"},
+		{"watch schedule bad full_type", func(cfg *Config) {
+			cfg.General.WatchSchedules = WatchSchedules{{Name: "nightly", Full: "@daily", FullType: "merge"}}
+		}, "invalid `full_type` `merge`"},
+		{"duplicate watch schedule name", func(cfg *Config) {
+			cfg.General.WatchSchedules = WatchSchedules{
+				{Name: "nightly", Full: "@daily"},
+				{Name: "nightly", Full: "@weekly"},
+			}
+		}, "duplicate watch schedule name `nightly`"},
+		{"watch schedule name prefix overlap", func(cfg *Config) {
+			cfg.General.WatchSchedules = WatchSchedules{
+				{Name: "prod", Full: "@daily"},
+				{Name: "prod-eu", Full: "@daily"},
+			}
+		}, "backup chains will overlap"},
+		{"bad api cancel_operation_timeout", func(cfg *Config) {
+			cfg.API.CancelOperationTimeout = "1parsec"
+		}, "invalid api.cancel_operation_timeout"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			tc.mutate(cfg)
+			err := ValidateConfig(cfg)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected error containing %q, got: %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestValidateObjectDiskConfig(t *testing.T) {
+	storages := []struct {
+		name string
+		set  func(cfg *Config, path, objectDiskPath string)
+	}{
+		{"s3", func(cfg *Config, p, o string) { cfg.S3.Path, cfg.S3.ObjectDiskPath = p, o }},
+		{"gcs", func(cfg *Config, p, o string) { cfg.GCS.Path, cfg.GCS.ObjectDiskPath = p, o }},
+		{"azblob", func(cfg *Config, p, o string) { cfg.AzureBlob.Path, cfg.AzureBlob.ObjectDiskPath = p, o }},
+		{"cos", func(cfg *Config, p, o string) { cfg.COS.Path, cfg.COS.ObjectDiskPath = p, o }},
+		{"ftp", func(cfg *Config, p, o string) { cfg.FTP.Path, cfg.FTP.ObjectDiskPath = p, o }},
+		{"sftp", func(cfg *Config, p, o string) { cfg.SFTP.Path, cfg.SFTP.ObjectDiskPath = p, o }},
+	}
+	cases := []struct {
+		name           string
+		path           string
+		objectDiskPath string
+		wantErr        bool
+	}{
+		{"both empty", "", "", true},
+		{"object_disk_path without path", "", "object_disk", true},
+		{"path without object_disk_path", "backup", "", true},
+		{"object_disk_path is prefix of path", "object_disk/backup", "object_disk", true},
+		{"equal paths", "backup", "backup", true},
+		{"disjoint paths", "backup", "object_disk", false},
+	}
+	for _, storage := range storages {
+		for _, tc := range cases {
+			t.Run(storage.name+" "+tc.name, func(t *testing.T) {
+				cfg := DefaultConfig()
+				cfg.General.RemoteStorage = storage.name
+				storage.set(cfg, tc.path, tc.objectDiskPath)
+				err := ValidateObjectDiskConfig(cfg)
+				if !tc.wantErr {
+					if err != nil {
+						t.Fatalf("unexpected error: %v", err)
+					}
+					return
+				}
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), "invalid "+storage.name+"->object_disk_path") {
+					t.Fatalf("expected error to mention %s->object_disk_path, got: %v", storage.name, err)
+				}
+			})
+		}
+	}
+	t.Run("use_embedded_backup_restore skips validation", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.General.RemoteStorage = "s3"
+		cfg.ClickHouse.UseEmbeddedBackupRestore = true
+		cfg.S3.Path, cfg.S3.ObjectDiskPath = "", ""
+		if err := ValidateObjectDiskConfig(cfg); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	t.Run("non-object-disk remote storage skips validation", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.General.RemoteStorage = "none"
+		if err := ValidateObjectDiskConfig(cfg); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
 func TestDefaultMaxBrokenPartRatio(t *testing.T) {
 	if got := DefaultConfig().General.MaxBrokenPartRatio; got != 0 {
 		t.Fatalf("expected default max_broken_part_ratio to be 0, got %v", got)
