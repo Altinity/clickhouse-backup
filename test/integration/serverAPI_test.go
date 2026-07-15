@@ -260,6 +260,9 @@ cat > /etc/clickhouse-server/config.d/skip_disk_tiered.xml <<'XML'
           <hot><disk>default</disk></hot>
           <cold><disk>s3_cold_cache</disk></cold>
         </volumes>
+        <!-- default move_factor=0.1 lets the background MergeTreePartsMover push parts from hot to cold
+             when the runner disk has <10% free space, racing the explicit MOVE PARTITION TO VOLUME below -->
+        <move_factor>0</move_factor>
       </skip_disk_tiered>
     </policies>
   </storage_configuration>
