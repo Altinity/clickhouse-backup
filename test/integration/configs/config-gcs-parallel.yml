@@ -18,8 +18,10 @@ gcs:
   object_disk_path: object_disks/{cluster}/{shard}/{version}
   credentials_file: /etc/clickhouse-backup/credentials.json
   compression_format: tar
-  # experimental parallel composite upload, see https://github.com/Altinity/clickhouse-backup/issues/1028
-  # low thresholds so the ~30MB test archive splits into multiple parallel parts
-  parallel_upload: true
-  parallel_upload_min_size: 1048576
-  parallel_upload_part_size: 5242880
+  # experimental parallel composite upload and multipart download, see https://github.com/Altinity/clickhouse-backup/issues/1028
+  # low thresholds and 5MiB chunk_size so the ~30MB test archive splits into multiple parallel parts
+  allow_multipart_upload: true
+  multipart_upload_min_size: 1048576
+  allow_multipart_download: true
+  download_concurrency: 4
+  chunk_size: 5242880

@@ -387,25 +387,34 @@ func TestValidateConfigErrors(t *testing.T) {
 			cfg.General.RemoteStorage = "s3"
 			cfg.S3.HTTPIdleConnTimeout = "1parsec"
 		}, "invalid s3 http_idle_conn_timeout"},
-		{"gcs parallel_upload with default config", func(cfg *Config) {
+		{"gcs allow_multipart_upload with default config", func(cfg *Config) {
 			cfg.General.RemoteStorage = "gcs"
-			cfg.GCS.ParallelUpload = true
+			cfg.GCS.AllowMultipartUpload = true
 		}, ""},
-		{"gcs parallel_upload incompatible with endpoint", func(cfg *Config) {
+		{"gcs allow_multipart_upload incompatible with endpoint", func(cfg *Config) {
 			cfg.General.RemoteStorage = "gcs"
-			cfg.GCS.ParallelUpload = true
+			cfg.GCS.AllowMultipartUpload = true
 			cfg.GCS.Endpoint = "http://gcs:8080/storage/v1/"
-		}, "gcs `parallel_upload` requires gRPC client and is not compatible with `endpoint`"},
-		{"gcs parallel_upload incompatible with force_http", func(cfg *Config) {
+		}, "gcs `allow_multipart_upload` requires gRPC client and is not compatible with `endpoint`"},
+		{"gcs allow_multipart_upload incompatible with force_http", func(cfg *Config) {
 			cfg.General.RemoteStorage = "gcs"
-			cfg.GCS.ParallelUpload = true
+			cfg.GCS.AllowMultipartUpload = true
 			cfg.GCS.ForceHttp = true
-		}, "gcs `parallel_upload` requires gRPC client and is not compatible with `force_http`"},
-		{"gcs parallel_upload incompatible with encryption_key", func(cfg *Config) {
+		}, "gcs `allow_multipart_upload` requires gRPC client and is not compatible with `force_http`"},
+		{"gcs allow_multipart_upload incompatible with encryption_key", func(cfg *Config) {
 			cfg.General.RemoteStorage = "gcs"
-			cfg.GCS.ParallelUpload = true
+			cfg.GCS.AllowMultipartUpload = true
 			cfg.GCS.EncryptionKey = "dGVzdC1rZXktdGVzdC1rZXktdGVzdC1rZXktdGVzdA=="
-		}, "gcs `parallel_upload` is not compatible with `encryption_key`"},
+		}, "gcs `allow_multipart_upload` is not compatible with `encryption_key`"},
+		{"gcs allow_multipart_download with default config", func(cfg *Config) {
+			cfg.General.RemoteStorage = "gcs"
+			cfg.GCS.AllowMultipartDownload = true
+		}, ""},
+		{"gcs allow_multipart_download requires download_concurrency > 1", func(cfg *Config) {
+			cfg.General.RemoteStorage = "gcs"
+			cfg.GCS.AllowMultipartDownload = true
+			cfg.GCS.DownloadConcurrency = 1
+		}, "`allow_multipart_download` require `download_concurrency` in `gcs` section more than 1"},
 		{"unknown remote storage", func(cfg *Config) {
 			cfg.General.RemoteStorage = "banana"
 		}, "'banana' is unknown remote storage"},
