@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	stderrors "errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -20,6 +21,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsV2Config "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
@@ -478,6 +480,72 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 		return errors.Wrap(err, "S3 PutFileAbsolute Upload")
 	}
 	return nil
+}
+
+// PutFileAbsoluteIfAbsent atomically creates the object at key only if it
+// doesn't already exist. Uses the AWS S3 IfNoneMatch precondition
+// (supported since Nov 2024; MinIO ≥ RELEASE.2024-11). Always uses the
+// single-PUT path (markers are tiny); multipart uploads aren't compatible
+// with IfNoneMatch on PutObject.
+func (s *S3) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	body, err := io.ReadAll(r)
+	_ = r.Close()
+	if err != nil {
+		return false, errors.WithMessage(err, "S3 PutFileAbsoluteIfAbsent ReadAll")
+	}
+	// Apply the same SSE / KMS / ACL / checksum fields the multipart path uses
+	// (see PutFileAbsolute) so a marker write inherits the configured
+	// encryption context. Otherwise SSE-C / KMS-encryption-context configs that
+	// require the headers on every PUT will reject conditional writes or
+	// produce objects with mismatched encryption attributes.
+	common := s.commonObjectParams()
+	params := &s3.PutObjectInput{
+		Bucket:                  aws.String(s.Config.Bucket),
+		Key:                     aws.String(key),
+		Body:                    bytes.NewReader(body),
+		StorageClass:            s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
+		IfNoneMatch:             aws.String("*"),
+		ChecksumAlgorithm:       common.ChecksumAlgorithm,
+		ACL:                     common.ACL,
+		Tagging:                 common.Tagging,
+		ServerSideEncryption:    common.ServerSideEncryption,
+		SSEKMSKeyId:             common.SSEKMSKeyId,
+		SSECustomerAlgorithm:    common.SSECustomerAlgorithm,
+		SSECustomerKey:          common.SSECustomerKey,
+		SSECustomerKeyMD5:       common.SSECustomerKeyMD5,
+		SSEKMSEncryptionContext: common.SSEKMSEncryptionContext,
+		RequestPayer:            common.RequestPayer,
+	}
+	if _, err := s.client.PutObject(ctx, params); err != nil {
+		if isS3PreconditionFailed(err) {
+			return false, nil
+		}
+		return false, errors.WithMessage(err, "S3 PutFileAbsoluteIfAbsent PutObject")
+	}
+	return true, nil
+}
+
+// PutFileIfAbsent is the path-prefixed variant of PutFileAbsoluteIfAbsent.
+// It prepends s.Config.Path to key, matching PutFile semantics.
+func (s *S3) PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return s.PutFileAbsoluteIfAbsent(ctx, path.Join(s.Config.Path, key), r, localSize)
+}
+
+// isS3PreconditionFailed returns true if err corresponds to S3
+// PreconditionFailed (HTTP 412), which is what IfNoneMatch returns when
+// the target object already exists.
+func isS3PreconditionFailed(err error) bool {
+	var apiErr smithy.APIError
+	if stderrors.As(err, &apiErr) {
+		if apiErr.ErrorCode() == "PreconditionFailed" {
+			return true
+		}
+	}
+	var respErr *awshttp.ResponseError
+	if stderrors.As(err, &respErr) && respErr.HTTPStatusCode() == http.StatusPreconditionFailed {
+		return true
+	}
+	return false
 }
 
 func (s *S3) putFileMultipartCRC32(ctx context.Context, putParams *s3.PutObjectInput, r io.Reader, localSize, partSize int64) error {

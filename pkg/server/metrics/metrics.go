@@ -33,6 +33,7 @@ type APIMetrics struct {
 	NumberBackupsLocal          prometheus.Gauge
 	NumberBackupsRemoteExpected prometheus.Gauge
 	NumberBackupsLocalExpected  prometheus.Gauge
+	NumberCASBackupsRemote      prometheus.Gauge
 	InProgressCommands          prometheus.Gauge
 	LocalDataSize               prometheus.Gauge
 
@@ -51,7 +52,10 @@ func NewAPIMetrics() *APIMetrics {
 
 // RegisterMetrics resister prometheus metrics and define allowed measured commands list
 func (m *APIMetrics) RegisterMetrics() {
-	commandList := []string{"create", "upload", "download", "restore", "create_remote", "restore_remote", "delete", "rebase"}
+	commandList := []string{
+		"create", "upload", "download", "restore", "create_remote", "restore_remote", "delete", "rebase",
+		"cas-upload", "cas-download", "cas-restore", "cas-delete", "cas-verify", "cas-prune",
+	}
 	successfulCounter := map[string]prometheus.Counter{}
 	failedCounter := map[string]prometheus.Counter{}
 	lastStart := map[string]prometheus.Gauge{}
@@ -141,6 +145,12 @@ func (m *APIMetrics) RegisterMetrics() {
 		Help:      "How many backups expected on local storage",
 	})
 
+	m.NumberCASBackupsRemote = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "clickhouse_backup",
+		Name:      "number_cas_backups_remote",
+		Help:      "Number of stored remote CAS backups",
+	})
+
 	m.InProgressCommands = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "clickhouse_backup",
 		Name:      "in_progress_commands",
@@ -172,6 +182,7 @@ func (m *APIMetrics) RegisterMetrics() {
 		m.NumberBackupsLocal,
 		m.NumberBackupsRemoteExpected,
 		m.NumberBackupsLocalExpected,
+		m.NumberCASBackupsRemote,
 		m.InProgressCommands,
 		m.LocalDataSize,
 	)
