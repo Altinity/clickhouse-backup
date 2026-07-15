@@ -378,10 +378,10 @@ jobs:
           QA_GCS_OVER_S3_BUCKET: ${{ secrets.QA_GCS_OVER_S3_BUCKET }}
           # alibabacloud.com over S3
           QA_ALIBABA_ACCESS_KEY: ${{ secrets.QA_ALIBABA_ACCESS_KEY }}
-          QA_ALIBABA_SECRET_KEY: $${{ secrets.QA_ALIBABA_SECRET_KEY }}
+          QA_ALIBABA_SECRET_KEY: ${{ secrets.QA_ALIBABA_SECRET_KEY }}
           # tencentcloud
-          QA_TENCENT_SECRET_ID: $${{ secrets.QA_TENCENT_SECRET_ID }}
-          QA_TENCENT_SECRET_KEY: $${{ secrets.QA_TENCENT_SECRET_KEY }}
+          QA_TENCENT_SECRET_ID: ${{ secrets.QA_TENCENT_SECRET_ID }}
+          QA_TENCENT_SECRET_KEY: ${{ secrets.QA_TENCENT_SECRET_KEY }}
 
         run: |
           set -xe
