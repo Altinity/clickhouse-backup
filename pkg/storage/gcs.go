@@ -31,6 +31,7 @@ import (
 // GCS - presents methods for manipulate data on GCS
 type GCS struct {
 	client        *storage.Client
+	grpcClient    *storage.Client // used only for parallel composite uploads, see https://github.com/Altinity/clickhouse-backup/issues/1028
 	Config        *config.GCSConfig
 	clientPool    *pool.ObjectPool
 	encryptionKey []byte // Customer-Supplied Encryption Key (CSEK)
@@ -239,6 +240,20 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		return errors.Wrap(err, "GCS Connect storage.NewClient")
 	}
 
+	if gcs.Config.ParallelUpload {
+		grpcOptions := []option.ClientOption{option.WithTelemetryDisabled()}
+		if credOption != nil {
+			grpcOptions = append(grpcOptions, credOption)
+		}
+		gcs.grpcClient, err = storage.NewGRPCClient(ctx, grpcOptions...)
+		if err != nil {
+			return errors.Wrap(err, "GCS Connect storage.NewGRPCClient")
+		}
+		// client-level retry policy, part uploads inside parallel upload create
+		// fresh ObjectHandle's from the client, so per-object Retryer doesn't cover them
+		gcs.grpcClient.SetRetry(storage.WithPolicy(storage.RetryAlways))
+	}
+
 	// Validate and decode the encryption key if provided
 	if gcs.Config.EncryptionKey != "" {
 		key, err := base64.StdEncoding.DecodeString(gcs.Config.EncryptionKey)
@@ -257,6 +272,11 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 
 func (gcs *GCS) Close(ctx context.Context) error {
 	gcs.clientPool.Close(ctx)
+	if gcs.grpcClient != nil {
+		if err := gcs.grpcClient.Close(); err != nil {
+			return errors.Wrap(err, "GCS Close grpcClient")
+		}
+	}
 	if err := gcs.client.Close(); err != nil {
 		return errors.Wrap(err, "GCS Close")
 	}
@@ -381,7 +401,10 @@ func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser, localS
 	return gcs.PutFileAbsolute(ctx, path.Join(gcs.Config.Path, key), r, localSize)
 }
 
-func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, _ int64) error {
+func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
+	if gcs.grpcClient != nil && localSize >= gcs.Config.ParallelUploadMinSize {
+		return gcs.putFileParallel(ctx, key, r, localSize)
+	}
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
 		log.Error().Msgf("gcs.PutFile: gcs.clientPool.BorrowObject error: %+v", err)
@@ -421,6 +444,39 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 	if err = writer.Close(); err != nil {
 		log.Warn().Msgf("gcs.PutFile: can't close writer: %+v", err)
 		return errors.Wrap(err, "GCS PutFileAbsolute writer.Close")
+	}
+	return nil
+}
+
+// putFileParallel uploads a large file with the experimental parallel composite upload,
+// temporary parts go to the `gcs-go-sdk-pu-tmp/` prefix in the bucket root and are composed
+// into the final object, see https://github.com/Altinity/clickhouse-backup/issues/1028.
+// encryption_key is rejected together with parallel_upload in config validation, so no CSEK handling here.
+func (gcs *GCS) putFileParallel(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
+	log.Debug().Msgf("GCS->putFileParallel %s, size=%d", key, localSize)
+	obj := gcs.grpcClient.Bucket(gcs.Config.Bucket).Object(key)
+	writer := obj.NewWriter(ctx)
+	writer.EnableParallelUpload = true
+	writer.ParallelUploadConfig = storage.ParallelUploadConfig{
+		PartSize:       gcs.Config.ParallelUploadPartSize,
+		MaxConcurrency: gcs.Config.ParallelUploadMaxConcurrency,
+	}
+	writer.StorageClass = gcs.Config.StorageClass
+	if len(gcs.Config.ObjectLabels) > 0 {
+		writer.Metadata = gcs.Config.ObjectLabels
+	}
+	uploadBufferSize := gcs.Config.UploadBufferSize
+	if uploadBufferSize <= 0 {
+		uploadBufferSize = 128 * 1024
+	}
+	buffer := make([]byte, uploadBufferSize)
+	if _, err := io.CopyBuffer(writer, r, buffer); err != nil {
+		log.Warn().Msgf("gcs.putFileParallel: can't copy buffer: %+v", err)
+		return errors.Wrap(err, "GCS putFileParallel CopyBuffer")
+	}
+	if err := writer.Close(); err != nil {
+		log.Warn().Msgf("gcs.putFileParallel: can't close writer: %+v", err)
+		return errors.Wrap(err, "GCS putFileParallel writer.Close")
 	}
 	return nil
 }

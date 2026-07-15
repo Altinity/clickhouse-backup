@@ -367,6 +367,13 @@ gcs:
   client_pool_size: 500        # GCS_CLIENT_POOL_SIZE, default max(upload_concurrency, download concurrency) * 3, should be at least 3 times bigger than `UPLOAD_CONCURRENCY` or `DOWNLOAD_CONCURRENCY` in each upload and download case to avoid stuck
   delete_concurrency: 50       # GCS_DELETE_CONCURRENCY, how many objects delete in parallel during clean/delete operations
   upload_buffer_size: 131072   # GCS_UPLOAD_BUFFER_SIZE, io.CopyBuffer size in bytes feeding the GCS object writer, default 128KB; raise (e.g. 1048576 = 1MB) on high-bandwidth networks, see https://github.com/Altinity/clickhouse-backup/issues/1376
+  # GCS_PARALLEL_UPLOAD, experimental: upload files bigger than `parallel_upload_min_size` as multiple parts in parallel and compose them into the final object, see https://github.com/Altinity/clickhouse-backup/issues/1028
+  # requires direct gRPC connection to storage.googleapis.com, not compatible with `endpoint`, `force_http` and `encryption_key`
+  # temporary parts are written to the `gcs-go-sdk-pu-tmp/` prefix in the bucket root and deleted after compose; setup a bucket lifecycle rule for this prefix to clean up leftovers after crashes
+  parallel_upload: false
+  parallel_upload_part_size: 0 # GCS_PARALLEL_UPLOAD_PART_SIZE, size in bytes of each part uploaded in parallel, default 16MiB, minimum 5MiB
+  parallel_upload_max_concurrency: 0 # GCS_PARALLEL_UPLOAD_MAX_CONCURRENCY, how many parts of one file upload in parallel, default min(4 + CPU/2, 16); total concurrent streams = upload_concurrency * parallel_upload_max_concurrency
+  parallel_upload_min_size: 1073741824 # GCS_PARALLEL_UPLOAD_MIN_SIZE, files smaller than this size in bytes use the regular single-stream upload, default 1GB
   # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
   object_labels: {}

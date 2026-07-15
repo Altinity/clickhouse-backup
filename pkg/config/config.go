@@ -176,6 +176,16 @@ type GCSConfig struct {
 	EncryptionKey string `yaml:"encryption_key" envconfig:"GCS_ENCRYPTION_KEY"`
 	// UploadBufferSize - io.CopyBuffer size feeding the GCS object writer, see https://github.com/Altinity/clickhouse-backup/issues/1376
 	UploadBufferSize int `yaml:"upload_buffer_size" envconfig:"GCS_UPLOAD_BUFFER_SIZE"`
+	// ParallelUpload enables experimental parallel composite uploads via a gRPC client for files
+	// bigger than ParallelUploadMinSize, see https://github.com/Altinity/clickhouse-backup/issues/1028.
+	// Not compatible with `endpoint`, `force_http` and `encryption_key`.
+	ParallelUpload bool `yaml:"parallel_upload" envconfig:"GCS_PARALLEL_UPLOAD"`
+	// ParallelUploadPartSize - size of each part uploaded in parallel, 0 means SDK default 16MiB, minimum 5MiB
+	ParallelUploadPartSize int `yaml:"parallel_upload_part_size" envconfig:"GCS_PARALLEL_UPLOAD_PART_SIZE"`
+	// ParallelUploadMaxConcurrency - how many parts of one file upload in parallel, 0 means SDK default min(4 + NumCPU/2, 16)
+	ParallelUploadMaxConcurrency int `yaml:"parallel_upload_max_concurrency" envconfig:"GCS_PARALLEL_UPLOAD_MAX_CONCURRENCY"`
+	// ParallelUploadMinSize - files smaller than this size use the regular single-stream upload
+	ParallelUploadMinSize int64 `yaml:"parallel_upload_min_size" envconfig:"GCS_PARALLEL_UPLOAD_MIN_SIZE"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
@@ -608,6 +618,19 @@ func ValidateConfig(cfg *Config) error {
 			}
 		}
 	}
+	if cfg.General.RemoteStorage == "gcs" && cfg.GCS.ParallelUpload {
+		// parallel composite upload works only via gRPC client to storage.googleapis.com,
+		// and Compose requires the same CSEK for source parts and destination object
+		if cfg.GCS.Endpoint != "" {
+			return errors.New("gcs `parallel_upload` requires gRPC client and is not compatible with `endpoint`")
+		}
+		if cfg.GCS.ForceHttp {
+			return errors.New("gcs `parallel_upload` requires gRPC client and is not compatible with `force_http`")
+		}
+		if cfg.GCS.EncryptionKey != "" {
+			return errors.New("gcs `parallel_upload` is not compatible with `encryption_key`")
+		}
+	}
 	if cfg.GetCompressionFormat() == "unknown" {
 		return errors.Errorf("'%s' is unknown remote storage", cfg.General.RemoteStorage)
 	}
@@ -884,9 +907,10 @@ func DefaultConfig() *Config {
 			StorageClass:      "STANDARD",
 			ClientPoolSize:    int(max(uploadConcurrency*3, downloadConcurrency*3, objectDiskServerSideCopyConcurrency)),
 			// 16Mb default chunk size, fix https://github.com/Altinity/clickhouse-backup/issues/1292
-			ChunkSize:         16 * 1024 * 1024,
-			DeleteConcurrency: 50,
-			UploadBufferSize:  128 * 1024,
+			ChunkSize:             16 * 1024 * 1024,
+			DeleteConcurrency:     50,
+			UploadBufferSize:      128 * 1024,
+			ParallelUploadMinSize: 1024 * 1024 * 1024,
 		},
 		COS: COSConfig{
 			RowURL:                 "",
