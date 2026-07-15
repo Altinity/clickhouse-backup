@@ -76,9 +76,13 @@ type GeneralConfig struct {
 	BackupsToKeepLocal  int    `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
 	BackupsToKeepRemote int    `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
 	LogLevel            string `yaml:"log_level" envconfig:"LOG_LEVEL"`
-	AllowEmptyBackups   bool   `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
-	DownloadConcurrency uint8  `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
-	UploadConcurrency   uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	// DisableEnvironmentOverride - when true, config values come only from the YAML config file: environment variables (envconfig) and the `--env` CLI flag are ignored during config loading.
+	// Protects against accidental overrides such as Kubernetes service-discovery variables (a `clickhouse` Service in the same namespace exports CLICKHOUSE_PORT=tcp://...), see https://github.com/Altinity/clickhouse-backup/issues/1079
+	// `ignored:"true"` makes this option settable only from the config file, never from the environment it disables
+	DisableEnvironmentOverride bool  `yaml:"disable_environment_override" ignored:"true"`
+	AllowEmptyBackups          bool  `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
+	DownloadConcurrency        uint8 `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
+	UploadConcurrency          uint8 `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
 	// RebaseConcurrency - how many tables process in parallel during `rebase` command execution
 	RebaseConcurrency uint8 `yaml:"rebase_concurrency" envconfig:"REBASE_CONCURRENCY"`
 	// RebaseBeforeRemoveOldRemote - when `backups_to_keep_remote` deletion is blocked by `required_backup` links from kept backups,
@@ -539,8 +543,10 @@ func LoadConfig(configLocation string) (*Config, error) {
 	if err := yaml.Unmarshal(configYaml, &cfg); err != nil {
 		return nil, errors.Wrap(err, "can't parse config file")
 	}
-	if err := envconfig.Process("", cfg); err != nil {
-		return nil, errors.Wrap(err, "LoadConfig envconfig.Process")
+	if !cfg.General.DisableEnvironmentOverride {
+		if err := envconfig.Process("", cfg); err != nil {
+			return nil, errors.Wrap(err, "LoadConfig envconfig.Process")
+		}
 	}
 
 	// auto-tuning upload_concurrency for storage types which not have SDK level concurrency, https://github.com/Altinity/clickhouse-backup/issues/658
@@ -548,8 +554,10 @@ func LoadConfig(configLocation string) (*Config, error) {
 	if err := yaml.Unmarshal(configYaml, &cfgWithoutDefault); err != nil {
 		return nil, errors.Wrap(err, "can't parse config file")
 	}
-	if err := envconfig.Process("", cfgWithoutDefault); err != nil {
-		return nil, errors.Wrap(err, "LoadConfig envconfig.Process cfgWithoutDefault")
+	if !cfg.General.DisableEnvironmentOverride {
+		if err := envconfig.Process("", cfgWithoutDefault); err != nil {
+			return nil, errors.Wrap(err, "LoadConfig envconfig.Process cfgWithoutDefault")
+		}
 	}
 	if (cfg.General.RemoteStorage == "gcs" || cfg.General.RemoteStorage == "azblob" || cfg.General.RemoteStorage == "cos") && cfgWithoutDefault.General.UploadConcurrency == 0 {
 		cfg.General.UploadConcurrency = uint8(runtime.NumCPU() / 2)
@@ -921,7 +929,16 @@ func DefaultConfig() *Config {
 }
 
 func GetConfigFromCli(ctx *cli.Context) *Config {
-	oldEnvValues := OverrideEnvVars(ctx)
+	var oldEnvValues map[string]oldEnvValues
+	// peek disable_environment_override from the config file before applying --env,
+	// deliberately ignoring the environment, so the option can't be bypassed by the mechanisms it disables
+	if envOverrideDisabled(GetConfigPath(ctx)) {
+		if len(ctx.StringSlice("env")) > 0 {
+			log.Warn().Msg("--env is ignored because general->disable_environment_override is enabled in the config file")
+		}
+	} else {
+		oldEnvValues = OverrideEnvVars(ctx)
+	}
 	configPath := GetConfigPath(ctx)
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
@@ -950,6 +967,20 @@ func GetConfigPath(ctx *cli.Context) string {
 		return os.Getenv("CLICKHOUSE_BACKUP_CONFIG")
 	}
 	return DefaultConfigPath
+}
+
+// envOverrideDisabled reads disable_environment_override directly from the config file,
+// see https://github.com/Altinity/clickhouse-backup/issues/1079
+func envOverrideDisabled(configLocation string) bool {
+	configYaml, err := os.ReadFile(configLocation)
+	if err != nil {
+		return false
+	}
+	cfg := Config{}
+	if err := yaml.Unmarshal(configYaml, &cfg); err != nil {
+		return false
+	}
+	return cfg.General.DisableEnvironmentOverride
 }
 
 type oldEnvValues struct {

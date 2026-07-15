@@ -112,6 +112,9 @@ general:
                                  # the oldest kept increment is rebased first (same as the `rebase` command, requires `upload_by_part: true` and the same `compression_format` for the whole chain),
                                  # so the whole out-of-window chain becomes deletable; rebase failure is not fatal and falls back to the legacy keep-required behavior.
   log_level: info                # LOG_LEVEL, a choice from `debug`, `info`, `warning`, `error`
+  disable_environment_override: false # can be set ONLY in the config file (has no environment variable name on purpose); when `true` config values come only from the config file,
+                                 # all environment variables and the `--env` CLI flag are ignored during config loading;
+                                 # protects against accidental overrides such as Kubernetes service-discovery variables (a `clickhouse` Service in the same namespace exports `CLICKHOUSE_PORT=tcp://...`)
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
   # Concurrency means parallel tables and parallel parts inside tables
   # For example, 4 means max 4 parallel tables and 4 parallel parts inside one table, so equals 16 concurrent streams

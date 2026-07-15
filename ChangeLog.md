@@ -1,3 +1,7 @@
+# v2.8.0
+NEW FEATURES
+- add `general.disable_environment_override` (settable ONLY in the config file, no environment variable name on purpose, default `false`) — when `true`, config values come only from the config file: all environment variables and the `--env` CLI flag are ignored during config loading; protects against accidental overrides such as Kubernetes service-discovery variables, fix [#1079](https://github.com/Altinity/clickhouse-backup/issues/1079)
+
 # v2.7.4
 
 NEW FEATURES
