@@ -1831,6 +1831,12 @@ func (b *Backuper) ReadBackupMetadataRemote(ctx context.Context, backupName stri
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
+			// a Broken placeholder contains only BackupName, returning it would produce
+			// confusing downstream errors about empty data_format/tables (e.g. a backup
+			// being deleted or uploaded by a concurrent process)
+			if backup.Broken != "" {
+				return nil, errors.Errorf("%s is %s on remote storage", backupName, backup.Broken)
+			}
 			return &backup.BackupMetadata, nil
 		}
 	}
