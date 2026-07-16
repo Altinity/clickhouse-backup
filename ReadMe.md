@@ -650,6 +650,16 @@ Copy required parts from the `required_backup` chain into remote backup and remo
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
 
+### POST /backup/rebalance
+
+Move data parts inside local backup between disks to match the current `system.parts` layout and the table storage policy, skip parts on object disks: `curl -s localhost:7171/backup/rebalance/<BACKUP_NAME> -X POST | jq .`
+
+- Optional string query argument `table` works the same as the `--tables value` CLI argument.
+- Optional boolean query argument `dry-run` works the same as the `--dry-run` CLI argument (only log which parts would move between disks, change nothing).
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
+
+Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
+
 ### POST /backup/restore
 
 Create schema and restore data from backup: `curl -s localhost:7171/backup/restore/<BACKUP_NAME> -X POST | jq .`
@@ -933,6 +943,21 @@ USAGE:
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
+   
+```
+### CLI command - rebalance
+```
+NAME:
+   clickhouse-backup rebalance - Move data parts inside local backup between disks to match current system.parts layout and storage policy, skip parts on object disks
+
+USAGE:
+   clickhouse-backup rebalance [-t, --tables=<db>.<table>] [--dry-run] <backup_name>
+
+OPTIONS:
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   --table value, --tables value, -t value    Rebalance only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
+   --dry-run                                  Only log which parts would move between disks, change nothing
    
 ```
 ### CLI command - restore

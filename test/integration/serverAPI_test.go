@@ -212,6 +212,111 @@ func buildRebaseChainViaCLI(t *testing.T, r *require.Assertions, env *TestEnviro
 	return fullBackup, inc1Backup, inc2Backup
 }
 
+// TestServerAPIRebalance exercises the `rebalance` command through both server
+// entrypoints: the dedicated POST /backup/rebalance/{name} route (with ?dry-run
+// and the real run) and POST /backup/actions, and checks the
+// clickhouse_backup_*rebalance* Prometheus metrics both endpoints emit via
+// metrics.ExecuteWithMetrics("rebalance", ...).
+// The local backups are built with the CLI before the server starts, so the
+// short-lived CLI runs never contend with the server for the pid lock.
+func TestServerAPIRebalance(t *testing.T) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.1") < 0 {
+		t.Skipf("Test requires ClickHouse >= 20.1 for storage policies and MOVE PARTITION, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
+	}
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	r.NoError(env.DockerCP("configs/config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
+	env.InstallDebIfNotExists(r, "clickhouse-backup", "curl", "jq")
+
+	// build both backups with stale part layout before the server starts (see doc comment)
+	dbName := "test_api_rebalance"
+	directBackup := buildRebalanceBackupViaCLI(t, r, env, dbName, "t1")
+	actionsBackup := buildRebalanceBackupViaCLI(t, r, env, dbName, "t2")
+
+	log.Debug().Msg("Run `clickhouse-backup server` in background")
+	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup server &>>/tmp/clickhouse-backup-server.log")
+	defer func() {
+		_ = env.DockerExec("clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
+	}()
+	time.Sleep(3 * time.Second)
+
+	// --- Scenario 1: dedicated POST /backup/rebalance/{name} (httpRebalanceHandler) ---
+	log.Debug().Msg("Check POST /backup/rebalance/{name}?dry-run")
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/rebalance/%s?dry-run'", directBackup))
+	r.NoError(err, "%s\nunexpected POST /backup/rebalance?dry-run error: %v", out, err)
+	r.Contains(out, "acknowledged")
+	waitForAPIOperationStatus(r, env, parseAPIOperationID(r, out), "rebalance", 120*time.Second)
+	tableJSON, err := env.DockerExecOut("clickhouse-backup", "cat", fmt.Sprintf("/var/lib/clickhouse/backup/%s/metadata/%s/t1.json", directBackup, dbName))
+	r.NoError(err, tableJSON)
+	r.NotContains(tableJSON, "hdd2", "dry-run must not rewrite table metadata")
+
+	log.Debug().Msg("Check POST /backup/rebalance/{name}")
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/rebalance/%s'", directBackup))
+	r.NoError(err, "%s\nunexpected POST /backup/rebalance error: %v", out, err)
+	r.Contains(out, "acknowledged")
+	waitForAPIOperationStatus(r, env, parseAPIOperationID(r, out), "rebalance", 120*time.Second)
+	tableJSON, err = env.DockerExecOut("clickhouse-backup", "cat", fmt.Sprintf("/var/lib/clickhouse/backup/%s/metadata/%s/t1.json", directBackup, dbName))
+	r.NoError(err, tableJSON)
+	r.Contains(tableJSON, "hdd2", "parts must move to hdd2 in table metadata")
+
+	// rebalance metrics must reflect a successful run
+	waitForAPIMetricsContains(r, env, 30*time.Second, "clickhouse_backup_last_rebalance_status 1")
+	metricsOut, err := env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/metrics")
+	r.NoError(err, "%s\nunexpected GET /metrics error: %v", metricsOut, err)
+	r.Regexp(regexp.MustCompile(`clickhouse_backup_successful_rebalances\s+[1-9]\d*`), metricsOut)
+	r.Regexp(regexp.MustCompile(`clickhouse_backup_last_rebalance_duration\s+\d+`), metricsOut)
+
+	// --- Scenario 2: POST /backup/actions with a `rebalance` command ---
+	log.Debug().Msg("Check POST /backup/actions with rebalance command")
+	rebalanceAction := fmt.Sprintf("rebalance --tables=%s.t2 %s", dbName, actionsBackup)
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST -d '{\"command\":\"%s\"}' 'http://localhost:7171/backup/actions'", rebalanceAction))
+	r.NoError(err, "%s\nunexpected POST /backup/actions error: %v", out, err)
+	r.Contains(out, "acknowledged")
+	r.Contains(out, rebalanceAction)
+	waitForAPIActionStatus(r, env, rebalanceAction, status.SuccessStatus, 120*time.Second)
+
+	// the actions rebalance is reflected in /metrics and the GET /backup/actions log
+	waitForAPIMetricsContains(r, env, 30*time.Second, "clickhouse_backup_last_rebalance_status 1")
+	actionsLog, err := env.DockerExecOut("clickhouse-backup", "curl", "-sfL", "http://localhost:7171/backup/actions?filter=rebalance")
+	r.NoError(err, "%s\nunexpected GET /backup/actions?filter=rebalance error: %v", actionsLog, err)
+	r.Contains(actionsLog, rebalanceAction)
+	r.NotContains(actionsLog, "\"status\":\"error\"")
+
+	// Cleanup
+	for _, b := range []string{directBackup, actionsBackup} {
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup delete local "+b+" 2>/dev/null || true")
+	}
+	r.NoError(env.dropDatabase(dbName, true))
+	env.DockerExecNoError(r, "clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
+}
+
+// buildRebalanceBackupViaCLI creates a table on the hot_and_cold policy (all inserts
+// deterministically land on the default disk, move_factor=0), backs it up with the CLI
+// inside the clickhouse-backup container, then moves the live 202402 partition to hdd2
+// so the backup part layout becomes stale and `rebalance` has something to align.
+// Returns the backup name.
+func buildRebalanceBackupViaCLI(t *testing.T, r *require.Assertions, env *TestEnvironment, dbName, tableName string) string {
+	backupName := fmt.Sprintf("%s_%s", dbName, tableName)
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup delete local "+backupName+" 2>/dev/null || true")
+
+	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+	env.queryWithNoError(t, r, fmt.Sprintf(
+		"CREATE TABLE %s.%s (id UInt64, dt DateTime) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY id SETTINGS storage_policy='hot_and_cold'",
+		dbName, tableName,
+	))
+	env.queryWithNoError(t, r, fmt.Sprintf("SYSTEM STOP MERGES %s.%s", dbName, tableName))
+	for _, month := range []string{"2024-01-01", "2024-02-01"} {
+		env.queryWithNoError(t, r, fmt.Sprintf(
+			"INSERT INTO %s.%s SELECT number, toDateTime('%s 00:00:00') + number FROM numbers(100)",
+			dbName, tableName, month,
+		))
+	}
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create", "--tables="+dbName+"."+tableName, backupName)
+	env.queryWithNoError(t, r, fmt.Sprintf("ALTER TABLE %s.%s MOVE PARTITION ID '202402' TO DISK 'hdd2'", dbName, tableName))
+	return backupName
+}
+
 // TestWatchIncrementalSkipDisks reproduces the Slack-reported scenario where a
 // tiered table moves a partition from the hot (default) disk to a cold object
 // disk listed in clickhouse.skip_disks, and the next incremental backup must
