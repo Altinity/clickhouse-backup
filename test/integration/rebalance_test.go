@@ -65,7 +65,7 @@ func TestRebalance(t *testing.T) {
 		}
 	}
 	env.checkCount(r, 1, 0, fmt.Sprintf(
-		"SELECT count() FROM system.parts WHERE database='%s' AND table IN ('data1','data2') AND active AND disk_name!='default'", dbName,
+		"SELECT count() FROM system.parts WHERE database='%s' AND table IN ('data1','data2') AND active AND disk_name!='default' SETTINGS empty_result_for_aggregation_by_empty_set=0", dbName,
 	))
 
 	// Step 2: create the backup, all parts recorded under disk `default`
