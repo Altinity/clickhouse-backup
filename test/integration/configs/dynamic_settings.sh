@@ -217,7 +217,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_cos.xml
     <disks>
       <disk_cos>
         ${COS_DISK_TYPE}
-        <endpoint>https://clickhouse-backup-1336113806.cos.na-ashburn.myqcloud.com/disk_cos/{cluster}/{shard}/</endpoint>
+        <endpoint>https://clickhouse-backup-1336113806.cos.na-ashburn.myqcloud.com/disk_cos/${HOSTNAME}/{cluster}/{shard}/</endpoint>
         <access_key_id>${QA_TENCENT_SECRET_ID}</access_key_id>
         <secret_access_key>${QA_TENCENT_SECRET_KEY}</secret_access_key>
         <send_metadata>false</send_metadata>

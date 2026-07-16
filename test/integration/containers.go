@@ -1093,8 +1093,14 @@ func (tc *TestContainers) clickHouseBinds(curDir, configsDir string) []string {
 // dynamic_settings.sh runs only in advanced mode, while old versions (1.x, 19.x) need the
 // isolation too: with the macro missing `{version}` stays literal, so all simple-mode matrix
 // jobs collide on the same remote path and delete each other's fixed-name backups.
+// GITHUB_RUN_ID is appended because the version alone doesn't isolate CONCURRENT workflow
+// runs (master push + PR) executing the same matrix job: they share the remote path and
+// delete/overwrite each other's fixed-name backups mid-test.
 func (tc *TestContainers) writeMacrosVersionXML() (string, error) {
 	version := strings.ReplaceAll(getEnvDefault("CLICKHOUSE_VERSION", "26.3"), ".", "_")
+	if runID := os.Getenv("GITHUB_RUN_ID"); runID != "" {
+		version += "-" + runID
+	}
 	content := fmt.Sprintf("<yandex>\n  <macros>\n    <version>%s</version>\n  </macros>\n</yandex>\n", version)
 	fPath := filepath.Join(os.TempDir(), fmt.Sprintf("clickhouse-backup-macros-version-env%d.xml", tc.envID))
 	if err := os.WriteFile(fPath, []byte(content), 0644); err != nil {
