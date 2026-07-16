@@ -63,7 +63,7 @@ func TestGCSMultipart(t *testing.T) {
 	r.Contains(out, "putFileMultipart", "upload must go through the parallel composite upload path")
 
 	execCmd(fmt.Sprintf("clickhouse-backup -c %s delete local %s", cfgPath, backupName))
-	env.queryWithNoError(t, r, "DROP DATABASE IF EXISTS "+dbName)
+	r.NoError(env.dropDatabase(dbName, true))
 
 	out = execCmd(fmt.Sprintf("clickhouse-backup -c %s download %s", cfgPath, backupName))
 	r.Contains(out, "multipart download", "download must go through the multipart download path")
@@ -75,5 +75,5 @@ func TestGCSMultipart(t *testing.T) {
 
 	execCmd(fmt.Sprintf("clickhouse-backup -c %s delete local %s", cfgPath, backupName))
 	execCmd(fmt.Sprintf("clickhouse-backup -c %s delete remote %s", cfgPath, backupName))
-	env.queryWithNoError(t, r, "DROP DATABASE IF EXISTS "+dbName)
+	r.NoError(env.dropDatabase(dbName, true))
 }
