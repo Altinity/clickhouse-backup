@@ -3,6 +3,7 @@
 package main
 
 import (
+	cryptoRand "crypto/rand"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -45,9 +46,17 @@ func TestGCSMultipart(t *testing.T) {
 
 	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
 	env.queryWithNoError(t, r, "CREATE TABLE IF NOT EXISTS "+dbName+".big (key UInt64, value String) ENGINE=MergeTree() ORDER BY key")
-	// ~30MB of incompressible data, so the tar stream exceeds multipart_upload_min_size
-	// and splits into multiple chunk_size parts
-	env.queryWithNoError(t, r, "INSERT INTO "+dbName+".big SELECT number, randomString(1000) FROM numbers(30000)")
+	// ~30MB of random data (LZ4-incompressible on disk) generated on the Go side, so the
+	// tar stream exceeds multipart_upload_min_size and splits into multiple chunk_size parts
+	batch, err := env.ch.GetConn().PrepareBatch(t.Context(), "INSERT INTO "+dbName+".big")
+	r.NoError(err)
+	value := make([]byte, 1000)
+	for i := range 30000 {
+		_, err = cryptoRand.Read(value)
+		r.NoError(err)
+		r.NoError(batch.Append(uint64(i), string(value)))
+	}
+	r.NoError(batch.Send())
 
 	execCmd(fmt.Sprintf("clickhouse-backup -c %s create --tables=%s.* %s", cfgPath, dbName, backupName))
 	out := execCmd(fmt.Sprintf("clickhouse-backup -c %s upload %s", cfgPath, backupName))
