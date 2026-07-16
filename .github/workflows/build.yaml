@@ -148,6 +148,9 @@ jobs:
           steps.cache-python.outputs.cache-hit != 'true'
 
       - name: Running TestFlows tests
+        # Backstop for hangs outside the per-suite timeout in run.sh; killing
+        # the step (not the job) lets the `if: always()` log upload still run
+        timeout-minutes: 30
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           QA_AWS_ACCESS_KEY: ${{ secrets.QA_AWS_ACCESS_KEY }}
@@ -246,6 +249,9 @@ jobs:
           steps.cache-python.outputs.cache-hit != 'true'
 
       - name: Running FIPS TestFlows tests
+        # Backstop for hangs outside the per-suite timeout in run.sh; killing
+        # the step (not the job) lets the `if: always()` log upload still run
+        timeout-minutes: 30
         env:
           CLICKHOUSE_IMAGE: altinity/clickhouse-server
           CLICKHOUSE_VERSION: 25.3.8.30001.altinityfips

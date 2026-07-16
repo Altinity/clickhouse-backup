@@ -34,6 +34,18 @@ fi
 
 RAW_LOG="${LOG_FILE:-${CUR_DIR}/raw.log}"
 
+# Per-suite timeout (seconds). Hung suites (observed only on GitHub Actions)
+# are killed so their stdout log can be dumped instead of hanging the job
+# until the 6h GitHub limit. Requires GNU timeout (always present in CI);
+# without it (e.g. bare macOS) suites run without a timeout.
+TEST_TIMEOUT=${TEST_TIMEOUT:-1200}
+TIMEOUT_CMD=""
+if [[ "$(timeout --version 2>/dev/null)" == *GNU* ]]; then
+  TIMEOUT_CMD="timeout -k 60 ${TEST_TIMEOUT}"
+elif [[ "$(gtimeout --version 2>/dev/null)" == *GNU* ]]; then
+  TIMEOUT_CMD="gtimeout -k 60 ${TEST_TIMEOUT}"
+fi
+
 RUN_PARALLEL=${RUN_PARALLEL:-1}
 REGRESSION_PY="${CUR_DIR}/clickhouse_backup/regression.py"
 
@@ -52,7 +64,14 @@ TEST_FAILED=0
 START_TIME=${SECONDS}
 if [[ -n "${RUN_TESTS}" && "${RUN_TESTS}" != "*" ]]; then
   # Single suite mode — run exactly what was requested
-  python3 "${REGRESSION_PY}" ${EXTRA_FLAGS} --only="${RUN_TESTS}" --log "${RAW_LOG}" || TEST_FAILED=1
+  ${TIMEOUT_CMD} python3 "${REGRESSION_PY}" ${EXTRA_FLAGS} --only="${RUN_TESTS}" --log "${RAW_LOG}"
+  rc=$?
+  if [[ ${rc} -eq 124 ]]; then
+    echo "=== TIMEOUT: '${RUN_TESTS}' killed after ${TEST_TIMEOUT}s ==="
+  fi
+  if [[ ${rc} -ne 0 ]]; then
+    TEST_FAILED=1
+  fi
   ELAPSED=$(( SECONDS - START_TIME ))
   echo "=== Total time: $(( ELAPSED / 60 ))m$(( ELAPSED % 60 ))s ==="
 else
@@ -77,7 +96,7 @@ else
     rc_file="'"${CUR_DIR}"'/_logs_/${suite_slug}.rc"
     echo "=== Starting suite: ${suite} ==="
     suite_start=${SECONDS}
-    python3 "'"${REGRESSION_PY}"'" \
+    '"${TIMEOUT_CMD}"' python3 "'"${REGRESSION_PY}"'" \
       '"${EXTRA_FLAGS}"' \
       --only="/clickhouse backup/${suite}*" \
       --log "${log_file}" \
@@ -87,6 +106,9 @@ else
     suite_elapsed=$(( SECONDS - suite_start ))
     suite_min=$(( suite_elapsed / 60 ))
     suite_sec=$(( suite_elapsed % 60 ))
+    if [[ ${rc} -eq 124 ]]; then
+      echo "=== TIMEOUT: ${suite} killed after '"${TEST_TIMEOUT}"'s, last log lines show where it hung ==="
+    fi
     if [[ ${rc} -ne 0 ]]; then
       echo "=== FAIL: ${suite} (${suite_min}m${suite_sec}s, exit code ${rc}) ==="
       echo "=== stdout ==="
@@ -115,7 +137,10 @@ else
       # rc file missing means suite never ran or was killed
       suite_rc=1
     fi
-    if [[ "${suite_rc}" -ne 0 ]]; then
+    if [[ "${suite_rc}" -eq 124 ]]; then
+      echo "  TIMEOUT: ${suite} (killed after ${TEST_TIMEOUT}s)"
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+    elif [[ "${suite_rc}" -ne 0 ]]; then
       echo "  FAIL: ${suite} (exit code ${suite_rc})"
       FAIL_COUNT=$((FAIL_COUNT + 1))
     else
