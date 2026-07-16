@@ -20,6 +20,7 @@ import (
 	"github.com/pkg/errors"
 
 	"cloud.google.com/go/storage"
+	"cloud.google.com/go/storage/transfermanager"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/impersonate"
@@ -31,6 +32,7 @@ import (
 // GCS - presents methods for manipulate data on GCS
 type GCS struct {
 	client        *storage.Client
+	grpcClient    *storage.Client // used only for parallel composite uploads, see https://github.com/Altinity/clickhouse-backup/issues/1028
 	Config        *config.GCSConfig
 	clientPool    *pool.ObjectPool
 	encryptionKey []byte // Customer-Supplied Encryption Key (CSEK)
@@ -239,6 +241,20 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		return errors.Wrap(err, "GCS Connect storage.NewClient")
 	}
 
+	if gcs.Config.AllowMultipartUpload {
+		grpcOptions := []option.ClientOption{option.WithTelemetryDisabled()}
+		if credOption != nil {
+			grpcOptions = append(grpcOptions, credOption)
+		}
+		gcs.grpcClient, err = storage.NewGRPCClient(ctx, grpcOptions...)
+		if err != nil {
+			return errors.Wrap(err, "GCS Connect storage.NewGRPCClient")
+		}
+		// client-level retry policy, part uploads inside parallel upload create
+		// fresh ObjectHandle's from the client, so per-object Retryer doesn't cover them
+		gcs.grpcClient.SetRetry(storage.WithPolicy(storage.RetryAlways))
+	}
+
 	// Validate and decode the encryption key if provided
 	if gcs.Config.EncryptionKey != "" {
 		key, err := base64.StdEncoding.DecodeString(gcs.Config.EncryptionKey)
@@ -257,6 +273,11 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 
 func (gcs *GCS) Close(ctx context.Context) error {
 	gcs.clientPool.Close(ctx)
+	if gcs.grpcClient != nil {
+		if err := gcs.grpcClient.Close(); err != nil {
+			return errors.Wrap(err, "GCS Close grpcClient")
+		}
+	}
 	if err := gcs.client.Close(); err != nil {
 		return errors.Wrap(err, "GCS Close")
 	}
@@ -373,15 +394,76 @@ func (gcs *GCS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadC
 	return reader, nil
 }
 
-func (gcs *GCS) GetFileReaderWithLocalPath(ctx context.Context, key, _ string, _ int64) (io.ReadCloser, error) {
+func (gcs *GCS) GetFileReaderWithLocalPath(ctx context.Context, key, localPath string, remoteSize int64) (io.ReadCloser, error) {
+	/* unfortunately, multipart download require allocate additional disk space
+	and don't allow us to decompress data directly from stream */
+	if gcs.Config.AllowMultipartDownload {
+		log.Debug().Msgf("GCS->GetFileReaderWithLocalPath: multipart download %s, size=%d", key, remoteSize)
+		writer, err := os.CreateTemp(localPath, strings.ReplaceAll(key, "/", "_"))
+		if err != nil {
+			return nil, errors.Wrap(err, "GCS GetFileReaderWithLocalPath CreateTemp")
+		}
+		if err = gcs.downloadMultipart(ctx, key, writer); err != nil {
+			_ = writer.Close()
+			_ = os.Remove(writer.Name())
+			return nil, err
+		}
+		return writer, nil
+	}
 	return gcs.GetFileReader(ctx, key)
+}
+
+// downloadMultipart downloads the object as parallel range reads via transfermanager.Downloader,
+// see https://github.com/Altinity/clickhouse-backup/issues/1028
+func (gcs *GCS) downloadMultipart(ctx context.Context, key string, writer io.WriterAt) error {
+	fullKey := path.Join(gcs.Config.Path, key)
+	partSize := int64(gcs.Config.ChunkSize)
+	if partSize <= 0 {
+		partSize = 16 * 1024 * 1024
+	}
+	attempt := func(encryptionKey []byte) error {
+		downloader, err := transfermanager.NewDownloader(gcs.client,
+			transfermanager.WithWorkers(gcs.Config.DownloadConcurrency),
+			transfermanager.WithPartSize(partSize),
+		)
+		if err != nil {
+			return errors.Wrap(err, "GCS downloadMultipart NewDownloader")
+		}
+		if err = downloader.DownloadObject(ctx, &transfermanager.DownloadObjectInput{
+			Bucket:        gcs.Config.Bucket,
+			Object:        fullKey,
+			Destination:   writer,
+			EncryptionKey: encryptionKey,
+		}); err != nil {
+			return errors.Wrap(err, "GCS downloadMultipart DownloadObject")
+		}
+		_, err = downloader.WaitAndClose()
+		return err
+	}
+	// Do NOT apply encryption for object_disks files - they are not encrypted
+	// because ClickHouse needs to read them directly without encryption key
+	encryptionKey := gcs.encryptionKey
+	if gcs.Config.ObjectDiskPath != "" && strings.HasPrefix(fullKey, gcs.Config.ObjectDiskPath) {
+		encryptionKey = nil
+	}
+	err := attempt(encryptionKey)
+	if err != nil && encryptionKey != nil && gcs.isNotEncryptedError(err) {
+		// If the object is not encrypted but we tried to read it with encryption key,
+		// retry without encryption (for backward compatibility with old backups)
+		log.Warn().Msgf("gcs.downloadMultipart: object %s not encrypted, retrying without encryption key", fullKey)
+		err = attempt(nil)
+	}
+	return errors.Wrap(err, "GCS downloadMultipart WaitAndClose")
 }
 
 func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
 	return gcs.PutFileAbsolute(ctx, path.Join(gcs.Config.Path, key), r, localSize)
 }
 
-func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, _ int64) error {
+func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
+	if gcs.grpcClient != nil && localSize >= gcs.Config.MultipartUploadMinSize {
+		return gcs.putFileMultipart(ctx, key, r, localSize)
+	}
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
 		log.Error().Msgf("gcs.PutFile: gcs.clientPool.BorrowObject error: %+v", err)
@@ -421,6 +503,40 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 	if err = writer.Close(); err != nil {
 		log.Warn().Msgf("gcs.PutFile: can't close writer: %+v", err)
 		return errors.Wrap(err, "GCS PutFileAbsolute writer.Close")
+	}
+	return nil
+}
+
+// putFileMultipart uploads a large file with the experimental parallel composite upload,
+// temporary parts go to the `gcs-go-sdk-pu-tmp/` prefix in the bucket root and are composed
+// into the final object, see https://github.com/Altinity/clickhouse-backup/issues/1028.
+// encryption_key is rejected together with allow_multipart_upload in config validation, so no CSEK handling here.
+func (gcs *GCS) putFileMultipart(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
+	log.Debug().Msgf("GCS->putFileMultipart %s, size=%d", key, localSize)
+	obj := gcs.grpcClient.Bucket(gcs.Config.Bucket).Object(key)
+	writer := obj.NewWriter(ctx)
+	writer.EnableParallelUpload = true
+	// PartSize <= 0 falls back to the SDK default 16MiB, values below 5MiB are bumped to 5MiB by the SDK
+	writer.ParallelUploadConfig = storage.ParallelUploadConfig{
+		PartSize:       gcs.Config.ChunkSize,
+		MaxConcurrency: gcs.Config.UploadConcurrency,
+	}
+	writer.StorageClass = gcs.Config.StorageClass
+	if len(gcs.Config.ObjectLabels) > 0 {
+		writer.Metadata = gcs.Config.ObjectLabels
+	}
+	uploadBufferSize := gcs.Config.UploadBufferSize
+	if uploadBufferSize <= 0 {
+		uploadBufferSize = 128 * 1024
+	}
+	buffer := make([]byte, uploadBufferSize)
+	if _, err := io.CopyBuffer(writer, r, buffer); err != nil {
+		log.Warn().Msgf("gcs.putFileMultipart: can't copy buffer: %+v", err)
+		return errors.Wrap(err, "GCS putFileMultipart CopyBuffer")
+	}
+	if err := writer.Close(); err != nil {
+		log.Warn().Msgf("gcs.putFileMultipart: can't close writer: %+v", err)
+		return errors.Wrap(err, "GCS putFileMultipart writer.Close")
 	}
 	return nil
 }

@@ -1,5 +1,7 @@
 # v2.8.0
 NEW FEATURES
+- add `gcs.allow_multipart_upload` (env `GCS_ALLOW_MULTIPART_UPLOAD`, default `false`, experimental) with `gcs.upload_concurrency` and `gcs.multipart_upload_min_size` (default 1GB) — files bigger than `multipart_upload_min_size` upload to GCS as multiple parallel parts (part size is `chunk_size`) via gRPC client and compose into the final object; not compatible with `endpoint`, `force_http`, `encryption_key`, fix [#1028](https://github.com/Altinity/clickhouse-backup/issues/1028)
+- add `gcs.allow_multipart_download` (env `GCS_ALLOW_MULTIPART_DOWNLOAD`, default `false`) with `gcs.download_concurrency` — download each file as parallel range reads (part size is `chunk_size`) into a temporary file, mirrors `s3.allow_multipart_download`, fix [#1028](https://github.com/Altinity/clickhouse-backup/issues/1028)
 - add `general.disable_environment_override` (settable ONLY in the config file, no environment variable name on purpose, default `false`) — when `true`, config values come only from the config file: all environment variables and the `--env` CLI flag are ignored during config loading; protects against accidental overrides such as Kubernetes service-discovery variables, fix [#1079](https://github.com/Altinity/clickhouse-backup/issues/1079)
 
 # v2.7.4
