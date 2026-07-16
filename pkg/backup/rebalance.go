@@ -59,8 +59,9 @@ type rebalanceDisksInfo struct {
 // Rebalance - move data parts of a local backup between disks, https://github.com/Altinity/clickhouse-backup/issues/1024
 // Rule 1: the live part from system.parts is on the same disk as in the backup - do nothing;
 // Rule 2: the live part is on another usable disk - hardlink it into the backup shadow on that disk;
-// Rule 3: the part is not in system.parts and its backup disk is invalid (absent in system.disks or
-// not in the table storage policy) - copy it to the least used policy disk of the same type;
+// Rule 3: the part is not in system.parts - copy it to the policy disk of the same type with the most
+// effective free space; a part on a still valid disk (present in system.disks and in the table storage
+// policy) moves only to a strictly roomier disk, a part on an invalid disk must move or the command fails;
 // parts on object disks are skipped, metadata in table.json / metadata.json is rewritten accordingly
 func (b *Backuper) Rebalance(backupName string, tablePattern string, dryRun bool, commandId int) error {
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
@@ -384,6 +385,9 @@ func computeTableRebalancePlan(tm *metadata.TableMetadata, backupDiskTypes map[s
 			if isLive && live.DiskName == physicalSrcDisk {
 				continue
 			}
+			_, srcLive := info.liveTypes[physicalSrcDisk]
+			_, srcInPolicy := policyDisks[physicalSrcDisk]
+			srcValid := srcLive && srcInPolicy
 			if isLive {
 				_, dstObject := info.objectDisks[live.DiskName]
 				_, dstSkip := info.skipDisks[live.DiskName]
@@ -397,14 +401,14 @@ func computeTableRebalancePlan(tm *metadata.TableMetadata, backupDiskTypes map[s
 					})
 					continue
 				}
-				// the live copy is unusable as a hardlink source, fall through to the Rule 3 validity check
+				// the live copy is unusable as a hardlink source (object, skipped or
+				// non-policy disk), keep the part while its own disk is still valid
+				if srcValid {
+					continue
+				}
 			}
-			_, srcLive := info.liveTypes[physicalSrcDisk]
-			_, srcInPolicy := policyDisks[physicalSrcDisk]
-			if srcLive && srcInPolicy {
-				continue
-			}
-			// Rule 3 - the backup disk is invalid, copy to the least used policy disk of the same type
+			// Rule 3 - the part is absent from system.parts, copy it to the same-type
+			// policy disk with the most effective free space
 			size := p.Size
 			if size == 0 {
 				size = resolvePartSize(physicalSrcDisk, p.Name)
@@ -415,12 +419,25 @@ func computeTableRebalancePlan(tm *metadata.TableMetadata, backupDiskTypes map[s
 			}
 			dstDisk, err := chooseRebalanceDstDisk(srcDiskType, size, policyDisks, info)
 			if err != nil {
+				// a part on a still valid disk stays there when no better disk fits it
+				if srcValid {
+					continue
+				}
 				return nil, errors.Wrapf(err, "can't rebalance `%s`.`%s` part %s from disk %s with storage policy %s", tm.Database, tm.Table, p.Name, srcDisk, policyName)
+			}
+			// move off a valid disk only to a strictly roomier one even after the part
+			// lands there, otherwise repeated rebalance runs ping-pong the part
+			if srcValid && (dstDisk == physicalSrcDisk || info.effectiveFree[dstDisk] < info.effectiveFree[physicalSrcDisk]+size) {
+				continue
+			}
+			reason := "invalid_backup_disk"
+			if srcValid {
+				reason = "least_used_disk"
 			}
 			info.effectiveFree[dstDisk] -= size
 			moves = append(moves, partMove{
 				PartName: p.Name, SrcDisk: srcDisk, PhysicalSrcDisk: physicalSrcDisk,
-				DstDisk: dstDisk, Size: size, Reason: "invalid_backup_disk",
+				DstDisk: dstDisk, Size: size, Reason: reason,
 			})
 		}
 	}

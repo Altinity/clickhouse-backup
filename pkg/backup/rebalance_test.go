@@ -125,8 +125,39 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 		require.Equal(t, "invalid_backup_disk", moves[0].Reason)
 	})
 
-	t.Run("rule3 not in system.parts and valid disk stays", func(t *testing.T) {
+	t.Run("rule3 valid disk with equal free space stays", func(t *testing.T) {
 		tm := newTestTableMetadata(map[string][]metadata.Part{"hdd1": {{Name: "all_1_1_0", Size: 10}}})
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
+		require.NoError(t, err)
+		require.Empty(t, moves)
+	})
+
+	t.Run("rule3 valid disk moves to strictly roomier disk", func(t *testing.T) {
+		tm := newTestTableMetadata(map[string][]metadata.Part{"hdd1": {{Name: "all_1_1_0", Size: 10}}})
+		info := newTestRebalanceInfo()
+		info.effectiveFree["hdd1"] = 100
+		info.effectiveFree["hdd2"] = 500
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, "jbod", jbodDisks, nil, info, noSizeResolver(t))
+		require.NoError(t, err)
+		require.Len(t, moves, 1)
+		require.False(t, moves[0].HardlinkFromLive)
+		require.Equal(t, "hdd2", moves[0].DstDisk)
+		require.Equal(t, "least_used_disk", moves[0].Reason)
+		require.Equal(t, uint64(490), info.effectiveFree["hdd2"])
+	})
+
+	t.Run("rule3 valid disk stays when the target is not roomier after landing", func(t *testing.T) {
+		tm := newTestTableMetadata(map[string][]metadata.Part{"hdd1": {{Name: "all_1_1_0", Size: 10}}})
+		info := newTestRebalanceInfo()
+		info.effectiveFree["hdd1"] = 100
+		info.effectiveFree["hdd2"] = 105
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, "jbod", jbodDisks, nil, info, noSizeResolver(t))
+		require.NoError(t, err)
+		require.Empty(t, moves)
+	})
+
+	t.Run("rule3 valid disk stays without error when no disk fits", func(t *testing.T) {
+		tm := newTestTableMetadata(map[string][]metadata.Part{"hdd1": {{Name: "all_1_1_0", Size: 5000}}})
 		moves, err := computeTableRebalancePlan(tm, localTypes, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
 		require.NoError(t, err)
 		require.Empty(t, moves)
