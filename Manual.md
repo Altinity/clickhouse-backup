@@ -178,6 +178,21 @@ OPTIONS:
    --environment-override value, --env value  override any environment variable via CLI parameter
    
 ```
+### CLI command - rebalance
+```
+NAME:
+   clickhouse-backup rebalance - Move data parts inside local backup between disks to match current system.parts layout and storage policy, skip parts on object disks
+
+USAGE:
+   clickhouse-backup rebalance [-t, --tables=<db>.<table>] [--dry-run] <backup_name>
+
+OPTIONS:
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   --table value, --tables value, -t value    Rebalance only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
+   --dry-run                                  Only log which parts would move between disks, change nothing
+   
+```
 ### CLI command - restore
 ```
 NAME:
