@@ -111,8 +111,29 @@ func (b *Backuper) Classify(err error) retrier.Action {
 	if err == nil {
 		return retrier.Succeed
 	}
+	// canceled/expired context can't succeed on retry, fail fast so /backup/kill and SIGTERM unwind promptly
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return retrier.Fail
+	}
 	log.Warn().Err(err).Msgf("Will wait near %s and retry", common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter))
 	return retrier.Retry
+}
+
+// copyObjectRetryClassifier retries transient server-side CopyObject errors but fails fast
+// when the copy can't succeed at all (unsupported operation, missing permissions), so the
+// caller falls back to streaming without waiting out the whole backoff budget.
+type copyObjectRetryClassifier struct {
+	b *Backuper
+}
+
+func (c copyObjectRetryClassifier) Classify(err error) retrier.Action {
+	if err == nil {
+		return retrier.Succeed
+	}
+	if storage.IsPermanentCopyObjectError(err) {
+		return retrier.Fail
+	}
+	return c.b.Classify(err)
 }
 
 func WithVersioner(v versioner) BackuperOpt {

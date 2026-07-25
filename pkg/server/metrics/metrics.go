@@ -53,7 +53,7 @@ func NewAPIMetrics() *APIMetrics {
 // RegisterMetrics resister prometheus metrics and define allowed measured commands list
 func (m *APIMetrics) RegisterMetrics() {
 	commandList := []string{
-		"create", "upload", "download", "restore", "create_remote", "restore_remote", "delete", "rebase",
+		"create", "upload", "download", "restore", "create_remote", "restore_remote", "delete", "rebase", "rebalance",
 		"cas-upload", "cas-download", "cas-restore", "cas-delete", "cas-verify", "cas-prune",
 	}
 	successfulCounter := map[string]prometheus.Counter{}

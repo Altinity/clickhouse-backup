@@ -210,3 +210,96 @@ func TestRBAC(t *testing.T) {
 	}
 	testRBACScenario("/etc/clickhouse-backup/config-s3.yml")
 }
+
+// TestRBACIgnore - check rbac_conflict_resolution: "ignore", shall not copy .sql / .jsonl and don't restore correlated RBAC objects
+// https://github.com/Altinity/clickhouse-backup/issues/1013
+func TestRBACIgnore(t *testing.T) {
+	chVersion := os.Getenv("CLICKHOUSE_VERSION")
+	if compareVersion(chVersion, "20.4") < 0 {
+		t.Skipf("Test skipped, RBAC not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
+	}
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	config := "/etc/clickhouse-backup/config-s3.yml"
+
+	// drop RBAC leftovers defensively before returning env to the shared pool
+	defer func() {
+		if !env.ch.IsOpen {
+			if err := env.connect(t, "60s"); err != nil {
+				log.Warn().Msgf("TestRBACIgnore cleanup connect error: %v", err)
+				return
+			}
+		}
+		for _, q := range []string{
+			"DROP USER IF EXISTS `test_rbac_ignore_user`",
+			"DROP ROLE IF EXISTS `test_rbac_ignore_role`",
+		} {
+			if err := env.ch.Query(q); err != nil {
+				log.Warn().Msgf("TestRBACIgnore cleanup query %q error: %v", q, err)
+			}
+		}
+	}()
+
+	env.connectWithWait(t, r, 1*time.Second, 1*time.Second, 1*time.Minute)
+
+	// ClickHouse `<replicated>` access storage (RBAC in Keeper) has a race, see TestRBAC createRBACQuery for details
+	createRBACQuery := func(query string) {
+		var err error
+		for attempt := 1; attempt <= 10; attempt++ {
+			if err = env.ch.Query(query); err == nil {
+				return
+			}
+			if !strings.Contains(err.Error(), "code: 511") {
+				break
+			}
+			log.Warn().Msgf("createRBACQuery(%s) attempt %d failed: %v, retrying", query, attempt, err)
+			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
+		}
+		r.NoError(err)
+	}
+
+	env.queryWithNoError(t, r, "DROP USER IF EXISTS `test_rbac_ignore_user`")
+	env.queryWithNoError(t, r, "DROP ROLE IF EXISTS `test_rbac_ignore_role`")
+	createRBACQuery("CREATE USER `test_rbac_ignore_user` IDENTIFIED BY 'original_password'")
+	createRBACQuery("CREATE ROLE `test_rbac_ignore_role`")
+
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup create --rbac --rbac-only test_rbac_ignore_backup")
+
+	// change user definition and drop role after backup created
+	env.queryWithNoError(t, r, "DROP USER `test_rbac_ignore_user`")
+	createRBACQuery("CREATE USER `test_rbac_ignore_user` IDENTIFIED BY 'changed_password'")
+	env.queryWithNoError(t, r, "DROP ROLE `test_rbac_ignore_role`")
+
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 RBAC_CONFLICT_RESOLUTION=ignore CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup restore --rbac-only test_rbac_ignore_backup")
+	log.Debug().Msg(out)
+	r.NoError(err, "%s\nunexpected restore --rbac-only error: %v", out, err)
+	r.Contains(out, "RBAC successfully restored")
+	r.Contains(out, "already present, will ignore")
+
+	env.ch.Close()
+	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
+	env.connectWithWait(t, r, 2*time.Second, 2*time.Second, 1*time.Minute)
+
+	// ClickHouse may still be loading RBAC objects after restart, retry with backoff
+	for attempt := 1; attempt <= 10; attempt++ {
+		out, err = env.DockerExecOut("clickhouse", "clickhouse-client", "--user", "test_rbac_ignore_user", "--password", "changed_password", "-q", "SELECT 1")
+		if err == nil {
+			break
+		}
+		log.Warn().Msgf("login test_rbac_ignore_user attempt %d failed: %v, output: %s, retrying", attempt, err, out)
+		time.Sleep(time.Duration(attempt) * time.Second)
+	}
+	// conflicted user shall be ignored during restore and keep `changed_password`
+	r.NoError(err, "%s\nexpect login with changed_password success: %v", out, err)
+	out, err = env.DockerExecOut("clickhouse", "clickhouse-client", "--user", "test_rbac_ignore_user", "--password", "original_password", "-q", "SELECT 1")
+	r.Error(err, "%s\nexpect login with original_password fail, user shall be ignored during restore", out)
+
+	// no duplicates for conflicted user, non-conflicted role shall be restored
+	env.checkCount(r, 1, 1, "SELECT count() FROM system.users WHERE name='test_rbac_ignore_user'")
+	env.checkCount(r, 1, 1, "SELECT count() FROM system.roles WHERE name='test_rbac_ignore_role'")
+
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", "test_rbac_ignore_backup")
+	env.queryWithNoError(t, r, "DROP USER `test_rbac_ignore_user`")
+	env.queryWithNoError(t, r, "DROP ROLE `test_rbac_ignore_role`")
+	env.ch.Close()
+}

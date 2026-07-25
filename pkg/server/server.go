@@ -173,7 +173,7 @@ func (api *APIServer) RunWatch(cliCtx *cli.Context) {
 	log.Info().Msg("Starting API Server in watch mode")
 	b := backup.NewBackuper(api.config)
 	commandId, _ := status.Current.Start("watch")
-	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), cliCtx.StringSlice("schedule"), "*.*", nil, nil, false, false, false, false, false, cliCtx.Bool("watch-delete-source"), api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
+	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), cliCtx.StringSlice("schedule"), "*.*", nil, nil, false, cliCtx.Bool("rbac"), cliCtx.Bool("configs"), cliCtx.Bool("named-collections"), false, cliCtx.Bool("watch-delete-source"), api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
 	api.handleWatchResponse(commandId, err)
 }
 
@@ -265,6 +265,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	r.HandleFunc("/backup/cas-status", api.httpCASStatusHandler).Methods("GET")
 	r.HandleFunc("/backup/download/{name}", api.httpDownloadHandler).Methods("POST")
 	r.HandleFunc("/backup/rebase/{name}", api.httpRebaseHandler).Methods("POST")
+	r.HandleFunc("/backup/rebalance/{name}", api.httpRebalanceHandler).Methods("POST")
 	r.HandleFunc("/backup/restore/{name}", api.httpRestoreHandler).Methods("POST")
 	r.HandleFunc("/backup/restore_remote/{name}", api.httpRestoreRemoteHandler).Methods("POST")
 	r.HandleFunc("/backup/delete/{where}/{name}", api.httpDeleteHandler).Methods("POST")
@@ -410,7 +411,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)
 				return
 			}
-		case "create", "restore", "upload", "download", "create_remote", "restore_remote", "list", "rebase":
+		case "create", "restore", "upload", "download", "create_remote", "restore_remote", "list", "rebase", "rebalance":
 			actionsResults, err = api.actionsAsyncCommandsHandler(command, args, row, actionsResults)
 			if err != nil {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)
@@ -1703,6 +1704,71 @@ func (api *APIServer) httpRebaseHandler(w http.ResponseWriter, r *http.Request) 
 	}{
 		Status:      "acknowledged",
 		Operation:   "rebase",
+		BackupName:  name,
+		OperationId: operationId.String(),
+	})
+}
+
+// httpRebalanceHandler - move data parts inside local backup between disks to match current system.parts layout and storage policy
+func (api *APIServer) httpRebalanceHandler(w http.ResponseWriter, r *http.Request) {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
+		log.Warn().Err(ErrAPILocked).Send()
+		api.writeError(w, http.StatusLocked, "rebalance", ErrAPILocked)
+		return
+	}
+	cfg, err := api.ReloadConfig(w, "rebalance")
+	if err != nil {
+		return
+	}
+	vars := mux.Vars(r)
+	query := r.URL.Query()
+	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
+	tablePattern := ""
+	dryRun := false
+	fullCommand := fmt.Sprint("rebalance ", name)
+	if tp, exist := query["table"]; exist {
+		tablePattern = tp[0]
+		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
+	}
+	if _, exist := api.getQueryParameter(query, "dry-run"); exist {
+		dryRun = true
+		fullCommand += " --dry-run"
+	}
+	operationId, _ := uuid.NewUUID()
+
+	callback, err := parseCallback(query)
+	if err != nil {
+		log.Error().Err(err).Send()
+		api.writeError(w, http.StatusBadRequest, "rebalance", err)
+		return
+	}
+
+	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	go func() {
+		err, _ := api.metrics.ExecuteWithMetrics("rebalance", 0, func() error {
+			b := backup.NewBackuper(cfg)
+			return b.Rebalance(name, tablePattern, dryRun, commandId)
+		})
+		if err != nil {
+			log.Error().Msgf("Rebalance error: %v", err)
+			status.Current.Stop(commandId, err)
+			api.errorCallback(context.Background(), err, operationId.String(), callback)
+			return
+		}
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
+		}
+		status.Current.Stop(commandId, nil)
+		api.successCallback(context.Background(), operationId.String(), callback)
+	}()
+	api.sendJSONEachRow(w, http.StatusOK, struct {
+		Status      string `json:"status"`
+		Operation   string `json:"operation"`
+		BackupName  string `json:"backup_name"`
+		OperationId string `json:"operation_id"`
+	}{
+		Status:      "acknowledged",
+		Operation:   "rebalance",
 		BackupName:  name,
 		OperationId: operationId.String(),
 	})

@@ -352,7 +352,7 @@ func (sftp *SFTP) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcK
 	// non-empty srcBucket means the source lives in a bucket-based storage (object disk),
 	// copy inside the SFTP server is impossible, fail fast so callers fall back to streaming
 	if srcBucket != "" {
-		return 0, errors.Errorf("CopyObject from bucket %s not supported for %s", srcBucket, sftp.Kind())
+		return 0, errors.Wrapf(ErrCopyObjectUnsupported, "CopyObject from bucket %s for %s", srcBucket, sftp.Kind())
 	}
 	sftp.Debug("[SFTP_DEBUG] CopyObject %s -> %s", srcKey, dstKey)
 	if err := sftp.sftpClient.MkdirAll(path.Dir(dstKey)); err != nil {

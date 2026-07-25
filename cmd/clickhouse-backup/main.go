@@ -477,6 +477,31 @@ func main() {
 			Flags: cliapp.Flags,
 		},
 		{
+			Name:      "rebalance",
+			Usage:     "Move data parts inside local backup between disks to match current system.parts layout and storage policy, skip parts on object disks",
+			UsageText: "clickhouse-backup rebalance [-t, --tables=<db>.<table>] [--dry-run] <backup_name>",
+			Action: func(c *cli.Context) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				if c.Args().First() == "" {
+					log.Err(fmt.Errorf("backup name must be defined")).Send()
+					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
+				}
+				return b.Rebalance(c.Args().First(), c.String("tables"), c.Bool("dry-run"), c.Int("command-id"))
+			},
+			Flags: append(cliapp.Flags,
+				cli.StringFlag{
+					Name:   "table, tables, t",
+					Usage:  "Rebalance only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
+					Hidden: false,
+				},
+				cli.BoolFlag{
+					Name:   "dry-run",
+					Hidden: false,
+					Usage:  "Only log which parts would move between disks, change nothing",
+				},
+			),
+		},
+		{
 			Name:      "restore",
 			Usage:     "Create schema and restore data from backup",
 			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] [--skip-empty-tables] <backup_name>",
@@ -928,6 +953,21 @@ func main() {
 					Name:   "schedule",
 					Usage:  "Named cron driven backup chain for watch in name=<name>,full=<cron>[,increment=<cron>][,full_type=create|rebase][,delete_previous_cycle=true|false] format, can be specified multiple times, mutually exclusive with --watch-interval and --full-interval",
 					Hidden: false,
+				},
+				cli.BoolFlag{
+					Name:   "rbac, backup-rbac, do-backup-rbac",
+					Hidden: false,
+					Usage:  "Backup RBAC related objects during --watch",
+				},
+				cli.BoolFlag{
+					Name:   "configs, backup-configs, do-backup-configs",
+					Hidden: false,
+					Usage:  "Backup `clickhouse-server' configuration files during --watch",
+				},
+				cli.BoolFlag{
+					Name:   "named-collections, backup-named-collections, do-backup-named-collections",
+					Hidden: false,
+					Usage:  "Backup named collections and settings during --watch",
 				},
 				cli.BoolFlag{
 					Name:   "watch-delete-source, watch-delete-local",

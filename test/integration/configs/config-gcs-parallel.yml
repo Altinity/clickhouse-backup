@@ -1,0 +1,27 @@
+general:
+  remote_storage: gcs
+  upload_concurrency: 4
+  download_concurrency: 4
+  restore_schema_on_cluster: "{cluster}"
+  allow_object_disk_streaming: true
+s3:
+  disable_ssl: false
+  disable_cert_verification: true
+clickhouse:
+  host: clickhouse
+  port: 9000
+  restart_command: bash -c 'echo "FAKE RESTART"'
+  timeout: 10m
+gcs:
+  bucket: altinity-qa-test
+  path: backup/{cluster}/{shard}/{version}
+  object_disk_path: object_disks/{cluster}/{shard}/{version}
+  credentials_file: /etc/clickhouse-backup/credentials.json
+  compression_format: tar
+  # experimental parallel composite upload and multipart download, see https://github.com/Altinity/clickhouse-backup/issues/1028
+  # low thresholds and 5MiB chunk_size so the ~30MB test archive splits into multiple parallel parts
+  allow_multipart_upload: true
+  multipart_upload_min_size: 1048576
+  allow_multipart_download: true
+  download_concurrency: 4
+  chunk_size: 5242880
