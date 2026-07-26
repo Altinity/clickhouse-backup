@@ -750,3 +750,18 @@ func TestConfig_ParseCallbackTimeout_FromYAML(t *testing.T) {
 		t.Fatalf("expected CallbackTimeoutDuration %v, got %v", 10*time.Second, cfg.General.CallbackTimeoutDuration)
 	}
 }
+
+func TestConfig_ParseCallbackTimeout_RejectsNonPositive(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	content := "general:\n  callback_timeout: \"0s\"\n"
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	_, err := LoadConfig(configPath)
+	if err == nil {
+		t.Fatal("expected LoadConfig to reject callback_timeout: 0s")
+	}
+	if !strings.Contains(err.Error(), "callback timeout") {
+		t.Fatalf("expected callback timeout validation error, got: %v", err)
+	}
+}

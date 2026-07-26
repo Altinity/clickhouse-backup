@@ -750,6 +750,8 @@ func ValidateConfig(cfg *Config) error {
 	if cfg.General.CallbackTimeout != "" {
 		if duration, err := time.ParseDuration(cfg.General.CallbackTimeout); err != nil {
 			return errors.Wrap(err, "invalid callback timeout")
+		} else if duration <= 0 {
+			return errors.Errorf("invalid callback timeout `%s`, it must be > 0", cfg.General.CallbackTimeout)
 		} else {
 			cfg.General.CallbackTimeoutDuration = duration
 		}
