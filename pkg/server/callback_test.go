@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 )
@@ -61,7 +62,7 @@ func TestParseCallback(t *testing.T) {
 	t.Run("Test empty callback",
 		func(t *testing.T) {
 			values := url.Values{}
-			cb, err := parseCallback(values)
+			cb, err := parseCallback(values, "")
 			if err != nil {
 				t.Fatalf("unexpected error when getting callback for empty values: %v", err)
 			}
@@ -79,7 +80,7 @@ func TestParseCallback(t *testing.T) {
 					"invalid%",
 				},
 			}
-			_, err := parseCallback(values)
+			_, err := parseCallback(values, "")
 			if err == nil {
 				t.Fatalf("expected error when passing invalid callback URL")
 			}
@@ -94,7 +95,7 @@ func TestParseCallback(t *testing.T) {
 					url.QueryEscape(srv.URL + goodEndpoint2),
 				},
 			}
-			cb, err := parseCallback(values)
+			cb, err := parseCallback(values, "")
 			if err != nil {
 				t.Fatalf("unexpected error when getting callback for good endpoints: %v", err)
 			}
@@ -120,7 +121,7 @@ func TestParseCallback(t *testing.T) {
 					url.QueryEscape("invalid.url.local"),
 				},
 			}
-			cb, err := parseCallback(values)
+			cb, err := parseCallback(values, "")
 			if err != nil {
 				t.Fatalf("unexpected error when getting callback for bad host: %v", err)
 			}
@@ -143,7 +144,7 @@ func TestParseCallback(t *testing.T) {
 					url.QueryEscape(srv.URL + badEndpoint),
 				},
 			}
-			cb, err := parseCallback(values)
+			cb, err := parseCallback(values, "")
 			if err != nil {
 				t.Fatalf("unexpected error when getting callback for bad endpoint: %v", err)
 			}
@@ -165,7 +166,7 @@ func TestParseCallback(t *testing.T) {
 					url.QueryEscape(srv.URL + goodEndpoint1),
 				},
 			}
-			cb, err := parseCallback(values)
+			cb, err := parseCallback(values, "")
 			if err != nil {
 				t.Fatalf("unexpected error when getting callback for good endpoint: %v", err)
 			}
@@ -183,7 +184,7 @@ func TestParseCallback(t *testing.T) {
 					url.QueryEscape(srv.URL + goodEndpoint1),
 				},
 			}
-			cb, err := parseCallback(values)
+			cb, err := parseCallback(values, "")
 			if err != nil {
 				t.Fatalf("unexpected error when getting callback for good endpoint: %v", err)
 			}
@@ -197,4 +198,112 @@ func TestParseCallback(t *testing.T) {
 			}
 		},
 	)
+}
+
+func TestAPIServer_GlobalCallbackFallback(t *testing.T) {
+	ctx := context.Background()
+	received := make(chan *CallbackResponse, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var data CallbackResponse
+		if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		received <- &data
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cb, err := parseCallback(url.Values{}, srv.URL)
+	if err != nil {
+		t.Fatalf("parseCallback: %v", err)
+	}
+	api := &APIServer{}
+	api.successCallback(ctx, "op-fallback", cb)
+
+	select {
+	case got := <-received:
+		if got.Status != "success" || got.OperationId != "op-fallback" || got.Error != "" {
+			t.Fatalf("unexpected payload: %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for global callback")
+	}
+}
+
+func TestAPIServer_QueryParamOverridesGlobalCallback(t *testing.T) {
+	ctx := context.Background()
+	globalHits := make(chan struct{}, 1)
+	overrideHits := make(chan *CallbackResponse, 1)
+
+	globalSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		globalHits <- struct{}{}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer globalSrv.Close()
+
+	overrideSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var data CallbackResponse
+		if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		overrideHits <- &data
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer overrideSrv.Close()
+
+	values := url.Values{"callback": []string{url.QueryEscape(overrideSrv.URL)}}
+	cb, err := parseCallback(values, globalSrv.URL)
+	if err != nil {
+		t.Fatalf("parseCallback: %v", err)
+	}
+	api := &APIServer{}
+	api.successCallback(ctx, "op-override", cb)
+
+	select {
+	case got := <-overrideHits:
+		if got.OperationId != "op-override" {
+			t.Fatalf("unexpected payload: %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for override callback")
+	}
+	select {
+	case <-globalHits:
+		t.Fatal("global callback URL should not have been called")
+	default:
+	}
+}
+
+func TestAPIServer_EmptyCallbackParamFallsBackToGlobal(t *testing.T) {
+	ctx := context.Background()
+	received := make(chan *CallbackResponse, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var data CallbackResponse
+		if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		received <- &data
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	values := url.Values{"callback": []string{""}}
+	cb, err := parseCallback(values, srv.URL)
+	if err != nil {
+		t.Fatalf("parseCallback: %v", err)
+	}
+	api := &APIServer{}
+	api.successCallback(ctx, "op-empty-param", cb)
+
+	select {
+	case got := <-received:
+		if got.OperationId != "op-empty-param" {
+			t.Fatalf("unexpected payload: %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("empty callback param should fall back to global callback URL")
+	}
 }
