@@ -251,9 +251,9 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 		diffFromRemote = st.prevBackupName
 	}
 	iterCommand := "watch create_remote " + backupName
-	iterCommandId, _, _, finishIteration := b.startWatchIteration(ctx, iterCommand)
+	_, finishIteration := b.startWatchIteration(iterCommand)
 	createRemote := func() error {
-		return b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, version, iterCommandId)
+		return b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, version, commandId)
 	}
 	var createRemoteErr error
 	var deleteLocalErr error
@@ -261,13 +261,13 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 		createRemoteErr, *createRemoteErrCount = metrics.ExecuteWithMetrics("create_remote", *createRemoteErrCount, createRemote)
 		if createRemoteErr == nil && rebaseRequired {
 			createRemoteErr, _ = metrics.ExecuteWithMetrics("rebase", 0, func() error {
-				return b.Rebase(backupName, iterCommandId)
+				return b.Rebase(backupName, commandId)
 			})
 		}
 	} else {
 		createRemoteErr = createRemote()
 		if createRemoteErr == nil && rebaseRequired {
-			createRemoteErr = b.Rebase(backupName, iterCommandId)
+			createRemoteErr = b.Rebase(backupName, commandId)
 		}
 	}
 	if createRemoteErr != nil {

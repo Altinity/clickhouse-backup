@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
@@ -9,42 +10,23 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// startWatchIteration registers a per-iteration status row and returns a finish
-// function that Stops the row and dispatches general.callback_url. Parent ctx
-// cancellation is bridged so mid-iteration kills do not leave "in progress" rows.
-func (b *Backuper) startWatchIteration(parentCtx context.Context, command string) (iterCommandId int, operationId string, start time.Time, finish func(error)) {
-	opUUID, err := uuid.NewUUID()
-	if err != nil {
-		operationId = ""
-	} else {
-		operationId = opUUID.String()
-	}
-	start = time.Now()
-	iterCommandId, _ = status.Current.StartWithOperationId(command, operationId)
-	_, iterCancel, ctxErr := status.Current.GetContextWithCancel(iterCommandId)
-	if ctxErr != nil {
-		iterCancel = func() {}
-	}
-	bridgeDone := make(chan struct{})
-	go func() {
-		select {
-		case <-parentCtx.Done():
-			iterCancel()
-		case <-bridgeDone:
-		}
-	}()
+// startWatchIteration returns a unique operation ID and an idempotent finish callback.
+//
+// Iterations deliberately bypass status.Current to avoid unbounded memory growth in
+// status.commands over long-running watch processes. Cancellation and progress are
+// instead tracked via the top-level watch command context.
+func (b *Backuper) startWatchIteration(command string) (string, func(error)) {
+	operationID := uuid.NewString()
+	start := time.Now()
+	var once sync.Once
 
-	finished := false
-	finish = func(cycleErr error) {
-		if finished {
-			return
-		}
-		finished = true
-		close(bridgeDone)
-		status.Current.Stop(iterCommandId, cycleErr)
-		b.dispatchWatchCallback(command, operationId, start, cycleErr)
+	finish := func(cycleErr error) {
+		once.Do(func() {
+			b.dispatchWatchCallback(command, operationID, start, cycleErr)
+		})
 	}
-	return iterCommandId, operationId, start, finish
+
+	return operationID, finish
 }
 
 func (b *Backuper) dispatchWatchCallback(command, operationId string, start time.Time, cycleErr error) {
@@ -64,9 +46,6 @@ func (b *Backuper) dispatchWatchCallback(command, operationId string, start time
 		payload.Error = ""
 	}
 	timeout := b.cfg.General.CallbackTimeoutDuration
-	if timeout <= 0 {
-		timeout = 5 * time.Second
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	if cbErr := status.SendCallback(ctx, b.cfg.General.CallbackURL, payload); cbErr != nil {

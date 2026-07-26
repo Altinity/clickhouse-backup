@@ -47,10 +47,9 @@ func TestWatch_CallbackDispatchedPerIteration(t *testing.T) {
 	cfg.General.CallbackTimeoutDuration = 2 * time.Second
 	b := NewBackuper(cfg)
 
-	parentCtx := context.Background()
 	seenOpIDs := map[string]struct{}{}
 	for i := 0; i < 3; i++ {
-		_, _, _, finish := b.startWatchIteration(parentCtx, "watch create_remote test")
+		_, finish := b.startWatchIteration("watch create_remote test")
 		finish(nil)
 	}
 
@@ -90,11 +89,10 @@ func TestWatch_CallbackDispatchedOnIterationFailure(t *testing.T) {
 	cfg.General.CallbackTimeoutDuration = 2 * time.Second
 	b := NewBackuper(cfg)
 
-	parentCtx := context.Background()
-	_, _, _, finish1 := b.startWatchIteration(parentCtx, "watch create_remote fail")
+	_, finish1 := b.startWatchIteration("watch create_remote fail")
 	finish1(errors.New("create_remote failed"))
 
-	_, _, _, finish2 := b.startWatchIteration(parentCtx, "watch create_remote ok")
+	_, finish2 := b.startWatchIteration("watch create_remote ok")
 	finish2(nil)
 
 	mu.Lock()
@@ -107,26 +105,58 @@ func TestWatch_CallbackDispatchedOnIterationFailure(t *testing.T) {
 	r.NotEqual(payloads[0].OperationId, payloads[1].OperationId)
 }
 
-func TestWatch_IterationStopClearsInProgress(t *testing.T) {
+// Verifies context cancellation mid-iteration triggers exactly one error callback,
+// and that calling finish multiple times is safely idempotent.
+func TestWatch_CanceledIterationFiresErrorCallbackOnce(t *testing.T) {
+	r := require.New(t)
+	var (
+		mu       sync.Mutex
+		payloads []status.CallbackPayload
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var p status.CallbackPayload
+		_ = json.NewDecoder(req.Body).Decode(&p)
+		mu.Lock()
+		payloads = append(payloads, p)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := config.DefaultConfig()
+	cfg.General.CallbackURL = srv.URL
+	cfg.General.CallbackTimeoutDuration = 2 * time.Second
+	b := NewBackuper(cfg)
+
+	watchCtx, cancel := context.WithCancel(context.Background())
+	_, finish := b.startWatchIteration("watch create_remote canceled")
+	cancel() // simulate SIGTERM mid-iteration
+	iterErr := watchCtx.Err()
+	r.Error(iterErr)
+	finish(iterErr)
+	finish(iterErr) // duplicate finish must be a no-op
+
+	mu.Lock()
+	defer mu.Unlock()
+	r.Len(payloads, 1, "exactly one callback per iteration, even if finish is called twice")
+	r.Equal(status.ErrorStatus, payloads[0].Status)
+	r.Equal(context.Canceled.Error(), payloads[0].Error)
+	r.Equal("watch create_remote canceled", payloads[0].Command)
+	r.NotEmpty(payloads[0].OperationId)
+}
+
+// Ensures watch iterations don't append to AsyncStatus.commands, preventing a memory leak
+// in long-running watch processes.
+func TestWatch_IterationDoesNotGrowStatusRegistry(t *testing.T) {
 	r := require.New(t)
 	cfg := config.DefaultConfig()
 	b := NewBackuper(cfg)
 
-	iterId, _, _, finish := b.startWatchIteration(context.Background(), "watch create_remote dangling")
-	rows := status.Current.GetStatus(true, "watch create_remote dangling", 1)
-	r.NotEmpty(rows)
-	r.Equal(status.InProgressStatus, rows[0].Status)
-
-	finish(nil)
-	rows = status.Current.GetStatus(false, "watch create_remote dangling", 0)
-	found := false
-	for _, row := range rows {
-		if row.Command == "watch create_remote dangling" {
-			found = true
-			r.Equal(status.SuccessStatus, row.Status)
-			r.NotEqual(status.InProgressStatus, row.Status)
-		}
+	before := len(status.Current.GetStatus(false, "", 0))
+	for i := 0; i < 5; i++ {
+		_, finish := b.startWatchIteration("watch create_remote registry-growth")
+		finish(nil)
 	}
-	r.True(found)
-	_ = iterId
+	after := len(status.Current.GetStatus(false, "", 0))
+	r.Equal(before, after, "watch iterations must not append rows to the async-status registry")
 }
