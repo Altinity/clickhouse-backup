@@ -122,6 +122,11 @@ type GeneralConfig struct {
 	WatchInterval                       string            `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
 	FullInterval                        string            `yaml:"full_interval" envconfig:"FULL_INTERVAL"`
 	WatchBackupNameTemplate             string            `yaml:"watch_backup_name_template" envconfig:"WATCH_BACKUP_NAME_TEMPLATE"`
+	// CallbackURL - optional HTTP endpoint notified when a backup command completes (API, CLI, or watch iteration).
+	// API query param `?callback=` overrides this when non-empty.
+	CallbackURL string `yaml:"callback_url" envconfig:"CALLBACK_URL"`
+	// CallbackTimeout - max wait for the completion callback HTTP POST (duration string, default "5s").
+	CallbackTimeout string `yaml:"callback_timeout" envconfig:"CALLBACK_TIMEOUT"`
 	// WatchSchedules - named cron driven watch chains, alternative to watch_interval/full_interval, in env use ';' as separator between schedules, see https://github.com/Altinity/clickhouse-backup/issues/1354
 	WatchSchedules               WatchSchedules `yaml:"watch_schedules" envconfig:"WATCH_SCHEDULES"`
 	ShardedOperationMode         string         `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
@@ -135,6 +140,7 @@ type GeneralConfig struct {
 	RetriesDuration              time.Duration
 	WatchDuration                time.Duration
 	FullDuration                 time.Duration
+	CallbackTimeoutDuration      time.Duration
 }
 
 // GCSConfig - GCS settings section
@@ -741,6 +747,16 @@ func ValidateConfig(cfg *Config) error {
 	} else {
 		return errors.New("empty retries pause")
 	}
+	if cfg.General.CallbackTimeout != "" {
+		if duration, err := time.ParseDuration(cfg.General.CallbackTimeout); err != nil {
+			return errors.Wrap(err, "invalid callback timeout")
+		} else {
+			cfg.General.CallbackTimeoutDuration = duration
+		}
+	} else {
+		cfg.General.CallbackTimeout = "5s"
+		cfg.General.CallbackTimeoutDuration = 5 * time.Second
+	}
 	if cfg.General.WatchInterval != "" {
 		if duration, err := time.ParseDuration(cfg.General.WatchInterval); err != nil {
 			return errors.Wrap(err, "invalid watch interval")
@@ -839,6 +855,8 @@ func DefaultConfig() *Config {
 			RetriesOnFailure:                    3,
 			RetriesPause:                        "5s",
 			RetriesDuration:                     5 * time.Second,
+			CallbackTimeout:                     "5s",
+			CallbackTimeoutDuration:             5 * time.Second,
 			WatchInterval:                       "1h",
 			WatchDuration:                       1 * time.Hour,
 			FullInterval:                        "24h",

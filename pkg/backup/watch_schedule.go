@@ -250,21 +250,24 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 	if rebaseRequired {
 		diffFromRemote = st.prevBackupName
 	}
+	iterCommand := "watch create_remote " + backupName
+	iterCommandId, _, _, finishIteration := b.startWatchIteration(ctx, iterCommand)
 	createRemote := func() error {
-		return b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, version, commandId)
+		return b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, version, iterCommandId)
 	}
 	var createRemoteErr error
+	var deleteLocalErr error
 	if metrics != nil {
 		createRemoteErr, *createRemoteErrCount = metrics.ExecuteWithMetrics("create_remote", *createRemoteErrCount, createRemote)
 		if createRemoteErr == nil && rebaseRequired {
 			createRemoteErr, _ = metrics.ExecuteWithMetrics("rebase", 0, func() error {
-				return b.Rebase(backupName, commandId)
+				return b.Rebase(backupName, iterCommandId)
 			})
 		}
 	} else {
 		createRemoteErr = createRemote()
 		if createRemoteErr == nil && rebaseRequired {
-			createRemoteErr = b.Rebase(backupName, commandId)
+			createRemoteErr = b.Rebase(backupName, iterCommandId)
 		}
 	}
 	if createRemoteErr != nil {
@@ -275,7 +278,6 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 		removeLocal := func() error {
 			return b.RemoveBackupLocal(ctx, backupName, nil)
 		}
-		var deleteLocalErr error
 		if metrics != nil {
 			deleteLocalErr, *deleteLocalErrCount = metrics.ExecuteWithMetrics("delete", *deleteLocalErrCount, removeLocal)
 		} else {
@@ -285,6 +287,7 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 			log.Error().Str("schedule", st.schedule.Name).Msgf("delete local `%s` return error: %v", backupName, deleteLocalErr)
 		}
 	}
+	finishIteration(watchCycleError(createRemoteErr, deleteLocalErr))
 	if createRemoteErr != nil {
 		return
 	}

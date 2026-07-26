@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -685,5 +686,67 @@ func TestDefaultCompleteResumableAfterRestartCommands(t *testing.T) {
 		if cfg.API.IsCompleteResumableAfterRestartCommand(command) {
 			t.Fatalf("expected %q to require explicit opt-in for automatic resume after restart", command)
 		}
+	}
+}
+
+func TestConfig_ParseCallbackURL_FromYAML(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	content := "general:\n  callback_url: \"http://example.com/webhook\"\n"
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.General.CallbackURL != "http://example.com/webhook" {
+		t.Fatalf("expected CallbackURL %q, got %q", "http://example.com/webhook", cfg.General.CallbackURL)
+	}
+}
+
+func TestConfig_ParseCallbackURL_FromENV(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	content := "general:\n  callback_url: \"http://from-yaml.example/webhook\"\n"
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	t.Setenv("CALLBACK_URL", "http://from-env.example/webhook")
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.General.CallbackURL != "http://from-env.example/webhook" {
+		t.Fatalf("expected CALLBACK_URL env override %q, got %q", "http://from-env.example/webhook", cfg.General.CallbackURL)
+	}
+}
+
+func TestConfig_ParseCallbackTimeout_Default(t *testing.T) {
+	cfg := DefaultConfig()
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("ValidateConfig: %v", err)
+	}
+	if cfg.General.CallbackTimeout != "5s" {
+		t.Fatalf("expected default CallbackTimeout %q, got %q", "5s", cfg.General.CallbackTimeout)
+	}
+	if cfg.General.CallbackTimeoutDuration != 5*time.Second {
+		t.Fatalf("expected default CallbackTimeoutDuration %v, got %v", 5*time.Second, cfg.General.CallbackTimeoutDuration)
+	}
+}
+
+func TestConfig_ParseCallbackTimeout_FromYAML(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	content := "general:\n  callback_timeout: \"10s\"\n"
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.General.CallbackTimeout != "10s" {
+		t.Fatalf("expected CallbackTimeout %q, got %q", "10s", cfg.General.CallbackTimeout)
+	}
+	if cfg.General.CallbackTimeoutDuration != 10*time.Second {
+		t.Fatalf("expected CallbackTimeoutDuration %v, got %v", 10*time.Second, cfg.General.CallbackTimeoutDuration)
 	}
 }
