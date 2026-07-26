@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/pkg/errors"
@@ -17,10 +18,11 @@ import (
 type callbackFn func(ctx context.Context, v interface{}) []error
 
 // parseCallback parses callback URL(s) from query values, falling back to fallbackURL
-// when the callback query param is absent or empty. Returns a closure that POSTs a
-// payload to the resolved URL(s). Prefers status.SendCallback for CallbackResponse /
+// when the callback query param is absent or empty. The returned callback detaches
+// caller cancellation while preserving context values, then applies callbackTimeout
+// to each outgoing POST. Prefers status.SendCallback for CallbackResponse /
 // status.CallbackPayload; other payload types use the legacy marshal path (tests).
-func parseCallback(query url.Values, fallbackURL string) (callbackFn, error) {
+func parseCallback(query url.Values, fallbackURL string, callbackTimeout time.Duration) (callbackFn, error) {
 	decodedURLs, err := resolveCallbackURLs(query, fallbackURL)
 	if err != nil {
 		return nil, err
@@ -33,9 +35,15 @@ func parseCallback(query url.Values, fallbackURL string) (callbackFn, error) {
 
 	client := &http.Client{}
 	return func(ctx context.Context, v interface{}) []error {
+		if ctx == nil {
+			return []error{errors.New("callback context must not be nil")}
+		}
 		var errs []error
 		for _, callBackURL := range decodedURLs {
-			if err := postCallback(ctx, client, callBackURL, v); err != nil {
+			callbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), callbackTimeout)
+			err := postCallback(callbackCtx, client, callBackURL, v)
+			cancel()
+			if err != nil {
 				errs = append(errs, err)
 			}
 		}

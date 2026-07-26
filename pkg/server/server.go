@@ -1114,7 +1114,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		fullCommand = fmt.Sprintf("%s %s", fullCommand, backupName)
 	}
 
-	callback, err := parseCallback(query, cfg.General.CallbackURL)
+	callback, err := parseCallback(query, cfg.General.CallbackURL, cfg.General.CallbackTimeoutDuration)
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "create", err)
@@ -1251,7 +1251,7 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 		fullCommand = fmt.Sprintf("%s %s", fullCommand, backupName)
 	}
 
-	callback, err := parseCallback(query, cfg.General.CallbackURL)
+	callback, err := parseCallback(query, cfg.General.CallbackURL, cfg.General.CallbackTimeoutDuration)
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "create_remote", err)
@@ -1564,7 +1564,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 
 	fullCommand = fmt.Sprint(fullCommand, " ", name)
 
-	callback, err := parseCallback(query, cfg.General.CallbackURL)
+	callback, err := parseCallback(query, cfg.General.CallbackURL, cfg.General.CallbackTimeoutDuration)
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "upload", err)
@@ -1623,7 +1623,7 @@ func (api *APIServer) httpRebaseHandler(w http.ResponseWriter, r *http.Request) 
 	fullCommand := fmt.Sprint("rebase ", name)
 	operationId, _ := uuid.NewUUID()
 
-	callback, err := parseCallback(query, cfg.General.CallbackURL)
+	callback, err := parseCallback(query, cfg.General.CallbackURL, cfg.General.CallbackTimeoutDuration)
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "rebase", err)
@@ -1688,7 +1688,7 @@ func (api *APIServer) httpRebalanceHandler(w http.ResponseWriter, r *http.Reques
 	}
 	operationId, _ := uuid.NewUUID()
 
-	callback, err := parseCallback(query, cfg.General.CallbackURL)
+	callback, err := parseCallback(query, cfg.General.CallbackURL, cfg.General.CallbackTimeoutDuration)
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "rebalance", err)
@@ -1932,7 +1932,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
 	fullCommand += fmt.Sprintf(" %s", name)
 
-	callback, err := parseCallback(query, cfg.General.CallbackURL)
+	callback, err := parseCallback(query, cfg.General.CallbackURL, cfg.General.CallbackTimeoutDuration)
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "restore", err)
@@ -2178,7 +2178,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
 	fullCommand += fmt.Sprintf(" %s", name)
 
-	callback, err := parseCallback(query, cfg.General.CallbackURL)
+	callback, err := parseCallback(query, cfg.General.CallbackURL, cfg.General.CallbackTimeoutDuration)
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "restore_remote", err)
@@ -2281,7 +2281,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 
 	fullCommand += fmt.Sprintf(" %s", name)
 
-	callback, err := parseCallback(query, cfg.General.CallbackURL)
+	callback, err := parseCallback(query, cfg.General.CallbackURL, cfg.General.CallbackTimeoutDuration)
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "download", err)

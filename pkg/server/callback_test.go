@@ -62,7 +62,7 @@ func TestParseCallback(t *testing.T) {
 	t.Run("Test empty callback",
 		func(t *testing.T) {
 			values := url.Values{}
-			cb, err := parseCallback(values, "")
+			cb, err := parseCallback(values, "", time.Second)
 			if err != nil {
 				t.Fatalf("unexpected error when getting callback for empty values: %v", err)
 			}
@@ -80,7 +80,7 @@ func TestParseCallback(t *testing.T) {
 					"invalid%",
 				},
 			}
-			_, err := parseCallback(values, "")
+			_, err := parseCallback(values, "", time.Second)
 			if err == nil {
 				t.Fatalf("expected error when passing invalid callback URL")
 			}
@@ -95,7 +95,7 @@ func TestParseCallback(t *testing.T) {
 					url.QueryEscape(srv.URL + goodEndpoint2),
 				},
 			}
-			cb, err := parseCallback(values, "")
+			cb, err := parseCallback(values, "", time.Second)
 			if err != nil {
 				t.Fatalf("unexpected error when getting callback for good endpoints: %v", err)
 			}
@@ -121,7 +121,7 @@ func TestParseCallback(t *testing.T) {
 					url.QueryEscape("invalid.url.local"),
 				},
 			}
-			cb, err := parseCallback(values, "")
+			cb, err := parseCallback(values, "", time.Second)
 			if err != nil {
 				t.Fatalf("unexpected error when getting callback for bad host: %v", err)
 			}
@@ -144,7 +144,7 @@ func TestParseCallback(t *testing.T) {
 					url.QueryEscape(srv.URL + badEndpoint),
 				},
 			}
-			cb, err := parseCallback(values, "")
+			cb, err := parseCallback(values, "", time.Second)
 			if err != nil {
 				t.Fatalf("unexpected error when getting callback for bad endpoint: %v", err)
 			}
@@ -166,7 +166,7 @@ func TestParseCallback(t *testing.T) {
 					url.QueryEscape(srv.URL + goodEndpoint1),
 				},
 			}
-			cb, err := parseCallback(values, "")
+			cb, err := parseCallback(values, "", time.Second)
 			if err != nil {
 				t.Fatalf("unexpected error when getting callback for good endpoint: %v", err)
 			}
@@ -184,7 +184,7 @@ func TestParseCallback(t *testing.T) {
 					url.QueryEscape(srv.URL + goodEndpoint1),
 				},
 			}
-			cb, err := parseCallback(values, "")
+			cb, err := parseCallback(values, "", time.Second)
 			if err != nil {
 				t.Fatalf("unexpected error when getting callback for good endpoint: %v", err)
 			}
@@ -198,6 +198,62 @@ func TestParseCallback(t *testing.T) {
 			}
 		},
 	)
+}
+
+func TestParseCallback_DetachesCallerCancellation(t *testing.T) {
+	received := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		received <- struct{}{}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	cb, err := parseCallback(url.Values{}, srv.URL, time.Second)
+	if err != nil {
+		t.Fatalf("parseCallback: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if errs := cb(ctx, &CallbackResponse{
+		Status:      "success",
+		Error:       "",
+		OperationId: "detached-context",
+	}); len(errs) != 0 {
+		t.Fatalf("callback should outlive caller cancellation, got: %v", errs)
+	}
+
+	select {
+	case <-received:
+	case <-time.After(time.Second):
+		t.Fatal("callback was canceled with its caller context")
+	}
+}
+
+func TestParseCallback_AppliesConfiguredTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	cb, err := parseCallback(url.Values{}, srv.URL, 20*time.Millisecond)
+	if err != nil {
+		t.Fatalf("parseCallback: %v", err)
+	}
+
+	start := time.Now()
+	errs := cb(context.Background(), &CallbackResponse{
+		Status:      "success",
+		Error:       "",
+		OperationId: "timed-callback",
+	})
+	if len(errs) != 1 {
+		t.Fatalf("expected one timeout error, got: %v", errs)
+	}
+	if elapsed := time.Since(start); elapsed >= 150*time.Millisecond {
+		t.Fatalf("callback ignored configured timeout, elapsed: %s", elapsed)
+	}
 }
 
 func TestAPIServer_GlobalCallbackFallback(t *testing.T) {
@@ -214,7 +270,7 @@ func TestAPIServer_GlobalCallbackFallback(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cb, err := parseCallback(url.Values{}, srv.URL)
+	cb, err := parseCallback(url.Values{}, srv.URL, time.Second)
 	if err != nil {
 		t.Fatalf("parseCallback: %v", err)
 	}
@@ -254,7 +310,7 @@ func TestAPIServer_QueryParamOverridesGlobalCallback(t *testing.T) {
 	defer overrideSrv.Close()
 
 	values := url.Values{"callback": []string{url.QueryEscape(overrideSrv.URL)}}
-	cb, err := parseCallback(values, globalSrv.URL)
+	cb, err := parseCallback(values, globalSrv.URL, time.Second)
 	if err != nil {
 		t.Fatalf("parseCallback: %v", err)
 	}
@@ -291,7 +347,7 @@ func TestAPIServer_EmptyCallbackParamFallsBackToGlobal(t *testing.T) {
 	defer srv.Close()
 
 	values := url.Values{"callback": []string{""}}
-	cb, err := parseCallback(values, srv.URL)
+	cb, err := parseCallback(values, srv.URL, time.Second)
 	if err != nil {
 		t.Fatalf("parseCallback: %v", err)
 	}
