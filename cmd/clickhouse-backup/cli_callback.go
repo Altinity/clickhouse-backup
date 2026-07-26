@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"strconv"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -15,19 +14,36 @@ import (
 // cliCallbackCommands are one-shot commands that should fire general.callback_url
 // on completion. watch/server are excluded (watch is per-iteration inside Watch).
 var cliCallbackCommands = map[string]struct{}{
-	"create":                {},
-	"create_remote":         {},
-	"upload":                {},
-	"download":              {},
-	"restore":               {},
-	"restore_remote":        {},
-	"delete":                {},
-	"rebase":                {},
-	"rebalance":             {},
-	"clean":                 {},
-	"clean_remote_broken":   {},
-	"clean_local_broken":    {},
+	"create":                 {},
+	"create_remote":          {},
+	"upload":                 {},
+	"download":               {},
+	"restore":                {},
+	"restore_remote":         {},
+	"delete":                 {},
+	"rebase":                 {},
+	"rebalance":              {},
+	"clean":                  {},
+	"clean_remote_broken":    {},
+	"clean_local_broken":     {},
 	"clean_broken_retention": {},
+}
+
+// applyCLICallbacks wraps top-level command Actions listed in cliCallbackCommands.
+// Nested Subcommands are not walked — all allowlisted names must be top-level.
+func applyCLICallbacks(commands []cli.Command) {
+	for i := range commands {
+		cmd := &commands[i]
+		if _, ok := cliCallbackCommands[cmd.Name]; !ok || cmd.Action == nil {
+			continue
+		}
+		original, ok := cmd.Action.(func(*cli.Context) error)
+		if !ok {
+			continue
+		}
+		name := cmd.Name
+		cmd.Action = wrapWithCLICallback(name, original)
+	}
 }
 
 func wrapWithCLICallback(commandName string, action func(*cli.Context) error) func(*cli.Context) error {
@@ -43,6 +59,12 @@ func wrapWithCLICallback(commandName string, action func(*cli.Context) error) fu
 }
 
 func dispatchCLICallback(c *cli.Context, commandName string, start time.Time, cmdErr error) {
+	// "command-id" is set when spawned by the API server,
+	// which already sends a callback via pkg/server.
+	// Skip here to prevent double notifications.
+	if c.Int("command-id") != status.NotFromAPI {
+		return
+	}
 	cfg := config.GetConfigFromCli(c)
 	if cfg == nil || cfg.General.CallbackURL == "" {
 		return
@@ -50,7 +72,7 @@ func dispatchCLICallback(c *cli.Context, commandName string, start time.Time, cm
 	payload := status.CallbackPayload{
 		Command:     commandName,
 		Duration:    time.Since(start).String(),
-		OperationId: resolveCLIOperationId(c.Int("command-id")),
+		OperationId: newCLIOperationId(),
 	}
 	if cmdErr != nil {
 		payload.Status = status.ErrorStatus
@@ -60,9 +82,6 @@ func dispatchCLICallback(c *cli.Context, commandName string, start time.Time, cm
 		payload.Error = ""
 	}
 	timeout := cfg.General.CallbackTimeoutDuration
-	if timeout <= 0 {
-		timeout = 5 * time.Second
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	if cbErr := status.SendCallback(ctx, cfg.General.CallbackURL, payload); cbErr != nil {
@@ -70,16 +89,6 @@ func dispatchCLICallback(c *cli.Context, commandName string, start time.Time, cm
 	}
 }
 
-func resolveCLIOperationId(commandId int) string {
-	if commandId != status.NotFromAPI {
-		if opId := status.Current.GetOperationId(commandId); opId != "" {
-			return opId
-		}
-		return strconv.Itoa(commandId)
-	}
-	id, err := uuid.NewUUID()
-	if err != nil {
-		return ""
-	}
-	return id.String()
+func newCLIOperationId() string {
+	return uuid.NewString()
 }

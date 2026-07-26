@@ -325,13 +325,3 @@ func (status *AsyncStatus) GetStatusByOperationId(operationId string) []ActionRo
 	}
 	return make([]ActionRowStatus, 0)
 }
-
-// GetOperationId returns the operation_id stored for commandId, or "" if missing.
-func (status *AsyncStatus) GetOperationId(commandId int) string {
-	status.RLock()
-	defer status.RUnlock()
-	if commandId < 0 || commandId >= len(status.commands) {
-		return ""
-	}
-	return status.commands[commandId].OperationId
-}

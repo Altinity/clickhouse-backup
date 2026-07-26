@@ -983,18 +983,7 @@ func main() {
 		}
 		return cli.ShowAppHelp(c)
 	}
-	for i := range cliapp.Commands {
-		cmd := &cliapp.Commands[i]
-		if _, ok := cliCallbackCommands[cmd.Name]; !ok || cmd.Action == nil {
-			continue
-		}
-		original, ok := cmd.Action.(func(*cli.Context) error)
-		if !ok {
-			continue
-		}
-		name := cmd.Name
-		cmd.Action = wrapWithCLICallback(name, original)
-	}
+	applyCLICallbacks(cliapp.Commands)
 	if err := cliapp.Run(os.Args); err != nil {
 		log.Fatal().Stack().Err(err).Send()
 	}
