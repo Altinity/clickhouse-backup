@@ -526,7 +526,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 					if sizeErr := b.ch.SelectContext(ctx, &systemBackupResult, backupSizeSQL); sizeErr != nil {
 						return errors.Wrap(sizeErr, "system.backups query")
 					}
-					if len(systemBackupResult) == 0 && len(systemBackupResult) > 1 {
+					if len(systemBackupResult) != 1 {
 						return errors.Errorf("wrong system.backup results: %v", systemBackupResult)
 					}
 					backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: systemBackupResult[0].CompressedSize})
