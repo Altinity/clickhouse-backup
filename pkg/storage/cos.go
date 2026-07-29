@@ -405,6 +405,11 @@ func (c *COS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, 
 	sourceURL := fmt.Sprintf("%s/%s", srcHost, strings.TrimPrefix(srcKey, "/"))
 	log.Debug().Msgf("COS->CopyObject %s -> %s", sourceURL, dstKey)
 	if _, _, err := c.client.Object.MultiCopy(ctx, dstKey, sourceURL, nil); err != nil {
+		// cos-go-sdk-v5 rejects the source URL client-side (unexported invalidBucketErr, only matchable
+		// by message) when it is not a valid COS bucket host, e.g. an object disk over MinIO/GCS
+		if strings.Contains(err.Error(), "invalid bucket format") {
+			return 0, errors.Wrapf(ErrCopyObjectUnsupported, "COS CopyObject MultiCopy %s -> %s: %v", sourceURL, dstKey, err)
+		}
 		return 0, errors.Wrapf(err, "COS CopyObject MultiCopy %s -> %s", sourceURL, dstKey)
 	}
 	return srcSize, nil

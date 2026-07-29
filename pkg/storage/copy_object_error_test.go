@@ -3,12 +3,15 @@ package storage
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/aws/smithy-go"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tencentyun/cos-go-sdk-v5"
 	"google.golang.org/api/googleapi"
 )
 
@@ -41,4 +44,15 @@ func TestIsPermanentCopyObjectError(t *testing.T) {
 			assert.Equal(t, tc.expect, IsPermanentCopyObjectError(tc.err))
 		})
 	}
+}
+
+// source bucket name with underscores (object disk over MinIO/GCS) is not a valid COS bucket host,
+// cos-go-sdk-v5 rejects it client-side and the error shall be classified as permanent
+func TestCOSCopyObjectInvalidBucketIsPermanent(t *testing.T) {
+	u, err := url.Parse("https://bucket-1250000000.cos.na-ashburn.myqcloud.com")
+	require.NoError(t, err)
+	c := &COS{client: cos.NewClient(&cos.BaseURL{BucketURL: u}, &http.Client{})}
+	_, copyErr := c.CopyObject(context.Background(), 0, "clickhouse_backup_disk_gcs_over_s3", "src/key", "dst/key")
+	require.Error(t, copyErr)
+	assert.True(t, IsPermanentCopyObjectError(copyErr), "expected permanent CopyObject error, got: %v", copyErr)
 }
