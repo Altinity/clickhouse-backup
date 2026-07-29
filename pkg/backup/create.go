@@ -1407,7 +1407,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 							}
 						}
 					}
-					if isCopyFailed.Load() {
+					if isCopyFailed.Load() || copyObjectErr != nil {
 						retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 						copyObjectErr = retry.RunCtx(uploadCtx, func(ctx context.Context) error {
 							return object_disk.CopyObjectStreaming(uploadCtx, srcDiskConnection.GetRemoteStorage(), b.dst, srcKey, dstKey, b.dst.UploadLimiter(b.cfg.General.UploadMaxBytesPerSecond))
