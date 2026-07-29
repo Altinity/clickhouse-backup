@@ -80,7 +80,9 @@ def regression(self, local, stress=False, fips=True, fips_godebug="only"):
     config_dir = f"{cwd}/configs/backup_{os.getpid()}"
     shutil.copytree(base_config_dir, config_dir, dirs_exist_ok=True)
 
-    storage_prefix = f"testflows_{os.getpid()}"
+    # GITHUB_RUN_ID isolates concurrent CI workflow runs sharing the same real bucket
+    # (pid alone is not unique across runners), pid isolates parallel runs on one host
+    storage_prefix = f"testflows_{os.environ.get('GITHUB_RUN_ID', 'local')}_{os.getpid()}"
     origin_path = f"{config_dir}/config.yml.origin"
     config_path = f"{config_dir}/config.yml"
     with open(origin_path) as f:

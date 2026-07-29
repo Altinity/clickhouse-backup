@@ -448,7 +448,7 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 
 	// transfermanager.UploadObject sends the part checksum as a trailer, which S3 Object Lock rejects on UploadPart. Fall back to manual multipart with per-part x-amz-checksum-crc32 header, fix https://github.com/Altinity/clickhouse-backup/issues/829
 	if s.Config.CheckSumAlgorithm == string(s3types.ChecksumAlgorithmCrc32) && localSize > partSize {
-		return s.putFileMultipartCRC32(ctx, &params, r, localSize, partSize)
+		return s.putFileMultipartCRC32(ctx, s.client, &params, r, localSize, partSize)
 	}
 
 	uploadInput := &transfermanager.UploadObjectInput{
@@ -480,7 +480,15 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 	return nil
 }
 
-func (s *S3) putFileMultipartCRC32(ctx context.Context, putParams *s3.PutObjectInput, r io.Reader, localSize, partSize int64) error {
+// s3MultipartAPI is the subset of *s3.Client used by putFileMultipartCRC32, extracted for unit testing
+type s3MultipartAPI interface {
+	CreateMultipartUpload(ctx context.Context, params *s3.CreateMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error)
+	UploadPart(ctx context.Context, params *s3.UploadPartInput, optFns ...func(*s3.Options)) (*s3.UploadPartOutput, error)
+	CompleteMultipartUpload(ctx context.Context, params *s3.CompleteMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error)
+	AbortMultipartUpload(ctx context.Context, params *s3.AbortMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error)
+}
+
+func (s *S3) putFileMultipartCRC32(ctx context.Context, s3MultipartAPIClient s3MultipartAPI, putParams *s3.PutObjectInput, r io.Reader, localSize, partSize int64) error {
 	createParams := &s3.CreateMultipartUploadInput{
 		Bucket:       putParams.Bucket,
 		Key:          putParams.Key,
@@ -488,7 +496,7 @@ func (s *S3) putFileMultipartCRC32(ctx context.Context, putParams *s3.PutObjectI
 	}
 	s.enrichCreateMultipartUploadParams(createParams)
 
-	initResp, err := s.client.CreateMultipartUpload(ctx, createParams)
+	initResp, err := s3MultipartAPIClient.CreateMultipartUpload(ctx, createParams)
 	if err != nil {
 		return errors.Wrap(err, "S3 putFileMultipartCRC32 CreateMultipartUpload")
 	}
@@ -503,54 +511,57 @@ func (s *S3) putFileMultipartCRC32(ctx context.Context, putParams *s3.PutObjectI
 		if s.Config.RequestPayer != "" {
 			abortParams.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
 		}
-		if _, abortErr := s.client.AbortMultipartUpload(context.Background(), abortParams); abortErr != nil {
+		if _, abortErr := s3MultipartAPIClient.AbortMultipartUpload(context.Background(), abortParams); abortErr != nil {
 			return errors.Wrapf(cause, "aborting putFileMultipartCRC32 multipart upload: %v, original error was", abortErr)
 		}
 		return cause
 	}
 
+	// localSize is only a capacity hint: for compressed streams UploadCompressedStream declares the
+	// sum of raw file sizes, while the actual tar stream is larger (headers/padding/trailer), so read
+	// until EOF instead of stopping at localSize, fix https://github.com/Altinity/clickhouse-backup/issues/1471
 	buf := make([]byte, partSize)
 	parts := make([]s3types.CompletedPart, 0, (localSize+partSize-1)/partSize)
 	var partNumber int32 = 1
-	remaining := localSize
-	for remaining > 0 {
-		toRead := partSize
-		if remaining < toRead {
-			toRead = remaining
-		}
-		if _, readErr := io.ReadFull(r, buf[:toRead]); readErr != nil {
+	for {
+		n, readErr := io.ReadFull(r, buf)
+		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
 			return abort(errors.Wrapf(readErr, "S3 putFileMultipartCRC32 read part=%d", partNumber))
 		}
-		h := crc32.NewIEEE()
-		if _, writeErr := h.Write(buf[:toRead]); writeErr != nil {
-			return errors.Wrapf(writeErr, "S3 putFileMultipartCRC32 write part=%d", partNumber)
+		if n > 0 {
+			h := crc32.NewIEEE()
+			if _, writeErr := h.Write(buf[:n]); writeErr != nil {
+				return errors.Wrapf(writeErr, "S3 putFileMultipartCRC32 write part=%d", partNumber)
+			}
+			uploadParams := &s3.UploadPartInput{
+				Bucket:            putParams.Bucket,
+				Key:               putParams.Key,
+				UploadId:          uploadID,
+				PartNumber:        aws.Int32(partNumber),
+				Body:              bytes.NewReader(buf[:n]),
+				ChecksumAlgorithm: s3types.ChecksumAlgorithmCrc32,
+				ChecksumCRC32:     aws.String(base64.StdEncoding.EncodeToString(h.Sum(nil))),
+			}
+			if s.Config.RequestPayer != "" {
+				uploadParams.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
+			}
+			partResp, uploadErr := s3MultipartAPIClient.UploadPart(ctx, uploadParams)
+			if uploadErr != nil {
+				return abort(errors.Wrapf(uploadErr, "S3 putFileMultipartCRC32 UploadPart part=%d", partNumber))
+			}
+			parts = append(parts, s3types.CompletedPart{
+				ETag:          partResp.ETag,
+				PartNumber:    aws.Int32(partNumber),
+				ChecksumCRC32: partResp.ChecksumCRC32,
+			})
+			partNumber++
 		}
-		uploadParams := &s3.UploadPartInput{
-			Bucket:            putParams.Bucket,
-			Key:               putParams.Key,
-			UploadId:          uploadID,
-			PartNumber:        aws.Int32(partNumber),
-			Body:              bytes.NewReader(buf[:toRead]),
-			ChecksumAlgorithm: s3types.ChecksumAlgorithmCrc32,
-			ChecksumCRC32:     aws.String(base64.StdEncoding.EncodeToString(h.Sum(nil))),
+		if readErr != nil {
+			break
 		}
-		if s.Config.RequestPayer != "" {
-			uploadParams.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
-		}
-		partResp, uploadErr := s.client.UploadPart(ctx, uploadParams)
-		if uploadErr != nil {
-			return abort(errors.Wrapf(uploadErr, "S3 putFileMultipartCRC32 UploadPart part=%d", partNumber))
-		}
-		parts = append(parts, s3types.CompletedPart{
-			ETag:          partResp.ETag,
-			PartNumber:    aws.Int32(partNumber),
-			ChecksumCRC32: partResp.ChecksumCRC32,
-		})
-		partNumber++
-		remaining -= toRead
 	}
 
-	if _, completeErr := s.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+	if _, completeErr := s3MultipartAPIClient.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
 		Bucket:          putParams.Bucket,
 		Key:             putParams.Key,
 		UploadId:        uploadID,

@@ -785,7 +785,7 @@ func (bd *BackupDestination) UploadPath(ctx context.Context, baseLocalPath strin
 		}
 		retry := retrier.New(retrier.ExponentialBackoff(RetriesOnFailure, common.AddRandomJitter(RetriesDuration, RetriesJitter)), RertierClassifier)
 		err = retry.RunCtx(ctx, func(ctx context.Context) error {
-			return bd.PutFile(ctx, path.Join(remotePath, filename), bwlimit.ReadCloser(ctx, f, limiter), 0)
+			return bd.PutFile(ctx, path.Join(remotePath, filename), bwlimit.ReadCloser(ctx, f, limiter), fInfo.Size())
 		})
 		if err != nil {
 			closeFile()

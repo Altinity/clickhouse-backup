@@ -274,6 +274,7 @@ func IsFileInPartition(disk, fileName string, partitionsBackupMap common.EmptyMa
 func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap, table *clickhouse.Table, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk, skipProjections []string, version int, computeChecksums bool) ([]metadata.Part, int64, map[string]uint64, error) {
 	size := int64(0)
 	parts := make([]metadata.Part, 0)
+	partSizes := make(map[string]uint64)
 	checksums := make(map[string]uint64)
 	calcChecksums := func(partName, partPath string) error {
 		if !computeChecksums {
@@ -344,6 +345,9 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 			return nil
 		}
 		size += info.Size()
+		// pathParts[3] is `<part_name>/<file>` for regular files, accumulate per-part size
+		// to calculate required free space before download, https://github.com/Altinity/clickhouse-backup/issues/1268
+		partSizes[strings.SplitN(pathParts[3], "/", 2)[0]] += uint64(info.Size())
 		if version < 21004000 {
 			return os.Rename(filePath, dstFilePath)
 		} else {
@@ -352,6 +356,9 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 	})
 	if walkErr != nil {
 		return nil, 0, nil, walkErr
+	}
+	for i := range parts {
+		parts[i].Size = partSizes[parts[i].Name]
 	}
 	// https://github.com/ClickHouse/ClickHouse/issues/71009
 	metadata.SortPartsByMinBlock(parts)

@@ -112,6 +112,9 @@ general:
                                  # the oldest kept increment is rebased first (same as the `rebase` command, requires `upload_by_part: true` and the same `compression_format` for the whole chain),
                                  # so the whole out-of-window chain becomes deletable; rebase failure is not fatal and falls back to the legacy keep-required behavior.
   log_level: info                # LOG_LEVEL, a choice from `debug`, `info`, `warning`, `error`
+  disable_environment_override: false # can be set ONLY in the config file (has no environment variable name on purpose); when `true` config values come only from the config file,
+                                 # all environment variables and the `--env` CLI flag are ignored during config loading;
+                                 # protects against accidental overrides such as Kubernetes service-discovery variables (a `clickhouse` Service in the same namespace exports `CLICKHOUSE_PORT=tcp://...`)
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
   # Concurrency means parallel tables and parallel parts inside tables
   # For example, 4 means max 4 parallel tables and 4 parallel parts inside one table, so equals 16 concurrent streams
@@ -364,6 +367,15 @@ gcs:
   client_pool_size: 500        # GCS_CLIENT_POOL_SIZE, default max(upload_concurrency, download concurrency) * 3, should be at least 3 times bigger than `UPLOAD_CONCURRENCY` or `DOWNLOAD_CONCURRENCY` in each upload and download case to avoid stuck
   delete_concurrency: 50       # GCS_DELETE_CONCURRENCY, how many objects delete in parallel during clean/delete operations
   upload_buffer_size: 131072   # GCS_UPLOAD_BUFFER_SIZE, io.CopyBuffer size in bytes feeding the GCS object writer, default 128KB; raise (e.g. 1048576 = 1MB) on high-bandwidth networks, see https://github.com/Altinity/clickhouse-backup/issues/1376
+  # GCS_ALLOW_MULTIPART_UPLOAD, experimental: upload files bigger than `multipart_upload_min_size` as multiple parts (part size is `chunk_size`, minimum 5MiB) in parallel and compose them into the final object, see https://github.com/Altinity/clickhouse-backup/issues/1028
+  # requires direct gRPC connection to storage.googleapis.com, not compatible with `endpoint`, `force_http` and `encryption_key`
+  # temporary parts are written to the `gcs-go-sdk-pu-tmp/` prefix in the bucket root and deleted after compose; setup a bucket lifecycle rule for this prefix to clean up leftovers after crashes
+  allow_multipart_upload: false
+  upload_concurrency: 0        # GCS_UPLOAD_CONCURRENCY, how many parts of one file upload in parallel when `allow_multipart_upload` enabled, default min(4 + CPU/2, 16)
+  multipart_upload_min_size: 1073741824 # GCS_MULTIPART_UPLOAD_MIN_SIZE, files smaller than this size in bytes use the regular single-stream upload, default 1GB
+  # GCS_ALLOW_MULTIPART_DOWNLOAD, download each file as parallel range reads (part size is `chunk_size`) into a temporary file, requires additional disk space, see https://github.com/Altinity/clickhouse-backup/issues/1028
+  allow_multipart_download: false
+  download_concurrency: 1      # GCS_DOWNLOAD_CONCURRENCY, how many parts of one file download in parallel when `allow_multipart_download` enabled, default `max(CPU/2, 1) + 1`
   # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
   object_labels: {}
@@ -634,6 +646,16 @@ Note: this operation is asynchronous, so the API will return once the operation 
 
 Copy required parts from the `required_backup` chain into remote backup and remove the `required_backup` dependency, so the incremental backup becomes a full one: `curl -s localhost:7171/backup/rebase/<BACKUP_NAME> -X POST | jq .`
 
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
+
+Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
+
+### POST /backup/rebalance
+
+Move data parts inside local backup between disks to match the current `system.parts` layout and the table storage policy, skip parts on object disks: `curl -s localhost:7171/backup/rebalance/<BACKUP_NAME> -X POST | jq .`
+
+- Optional string query argument `table` works the same as the `--tables value` CLI argument.
+- Optional boolean query argument `dry-run` works the same as the `--dry-run` CLI argument (only log which parts would move between disks, change nothing).
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
@@ -921,6 +943,21 @@ USAGE:
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
+   
+```
+### CLI command - rebalance
+```
+NAME:
+   clickhouse-backup rebalance - Move data parts inside local backup between disks to match current system.parts layout and storage policy, skip parts on object disks
+
+USAGE:
+   clickhouse-backup rebalance [-t, --tables=<db>.<table>] [--dry-run] <backup_name>
+
+OPTIONS:
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   --table value, --tables value, -t value    Rebalance only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
+   --dry-run                                  Only log which parts would move between disks, change nothing
    
 ```
 ### CLI command - restore

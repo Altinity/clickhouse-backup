@@ -1106,6 +1106,7 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 					if linkErr != nil {
 						return nil, nil, nil, nil, nil, nil, errors.Wrapf(linkErr, "LinkPartFromShadow part %s", name)
 					}
+					parts[idx].Size = uint64(linkedSize)
 					realSize[disk.Name] += linkedSize
 				}
 			}
@@ -1391,13 +1392,22 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 					}
 				} else {
 					if !isCopyFailed.Load() {
-						objSize, copyObjectErr = b.dst.CopyObject(ctx, storageObject.ObjectSize, srcBucket, srcKey, dstKey)
+						copyRetry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), copyObjectRetryClassifier{b: b})
+						copyObjectErr = copyRetry.RunCtx(uploadCtx, func(ctx context.Context) error {
+							var copyErr error
+							objSize, copyErr = b.dst.CopyObject(ctx, storageObject.ObjectSize, srcBucket, srcKey, dstKey)
+							return copyErr
+						})
 						if copyObjectErr != nil {
-							log.Warn().Msgf("b.dst.CopyObject in %s error: %v, will try upload via streaming (possible high network traffic)", backupShadowPath, copyObjectErr)
-							isCopyFailed.Store(true)
+							if storage.IsPermanentCopyObjectError(copyObjectErr) {
+								log.Warn().Msgf("b.dst.CopyObject in %s error: %v, will try upload via streaming (possible high network traffic)", backupShadowPath, copyObjectErr)
+								isCopyFailed.Store(true)
+							} else {
+								log.Warn().Msgf("b.dst.CopyObject in %s for srcKey=%s error: %v, will try upload via streaming for this object only", backupShadowPath, srcKey, copyObjectErr)
+							}
 						}
 					}
-					if isCopyFailed.Load() {
+					if isCopyFailed.Load() || copyObjectErr != nil {
 						retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 						copyObjectErr = retry.RunCtx(uploadCtx, func(ctx context.Context) error {
 							return object_disk.CopyObjectStreaming(uploadCtx, srcDiskConnection.GetRemoteStorage(), b.dst, srcKey, dstKey, b.dst.UploadLimiter(b.cfg.General.UploadMaxBytesPerSecond))

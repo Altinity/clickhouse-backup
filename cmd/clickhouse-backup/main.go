@@ -472,6 +472,31 @@ func main() {
 			Flags: cliapp.Flags,
 		},
 		{
+			Name:      "rebalance",
+			Usage:     "Move data parts inside local backup between disks to match current system.parts layout and storage policy, skip parts on object disks",
+			UsageText: "clickhouse-backup rebalance [-t, --tables=<db>.<table>] [--dry-run] <backup_name>",
+			Action: func(c *cli.Context) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				if c.Args().First() == "" {
+					log.Err(fmt.Errorf("backup name must be defined")).Send()
+					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
+				}
+				return b.Rebalance(c.Args().First(), c.String("tables"), c.Bool("dry-run"), c.Int("command-id"))
+			},
+			Flags: append(cliapp.Flags,
+				cli.StringFlag{
+					Name:   "table, tables, t",
+					Usage:  "Rebalance only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
+					Hidden: false,
+				},
+				cli.BoolFlag{
+					Name:   "dry-run",
+					Hidden: false,
+					Usage:  "Only log which parts would move between disks, change nothing",
+				},
+			),
+		},
+		{
 			Name:      "restore",
 			Usage:     "Create schema and restore data from backup",
 			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] [--skip-empty-tables] <backup_name>",

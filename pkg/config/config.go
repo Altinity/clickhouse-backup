@@ -76,9 +76,13 @@ type GeneralConfig struct {
 	BackupsToKeepLocal  int    `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
 	BackupsToKeepRemote int    `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
 	LogLevel            string `yaml:"log_level" envconfig:"LOG_LEVEL"`
-	AllowEmptyBackups   bool   `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
-	DownloadConcurrency uint8  `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
-	UploadConcurrency   uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	// DisableEnvironmentOverride - when true, config values come only from the YAML config file: environment variables (envconfig) and the `--env` CLI flag are ignored during config loading.
+	// Protects against accidental overrides such as Kubernetes service-discovery variables (a `clickhouse` Service in the same namespace exports CLICKHOUSE_PORT=tcp://...), see https://github.com/Altinity/clickhouse-backup/issues/1079
+	// `ignored:"true"` makes this option settable only from the config file, never from the environment it disables
+	DisableEnvironmentOverride bool  `yaml:"disable_environment_override" ignored:"true"`
+	AllowEmptyBackups          bool  `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
+	DownloadConcurrency        uint8 `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
+	UploadConcurrency          uint8 `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
 	// RebaseConcurrency - how many tables process in parallel during `rebase` command execution
 	RebaseConcurrency uint8 `yaml:"rebase_concurrency" envconfig:"REBASE_CONCURRENCY"`
 	// RebaseBeforeRemoveOldRemote - when `backups_to_keep_remote` deletion is blocked by `required_backup` links from kept backups,
@@ -172,6 +176,21 @@ type GCSConfig struct {
 	EncryptionKey string `yaml:"encryption_key" envconfig:"GCS_ENCRYPTION_KEY"`
 	// UploadBufferSize - io.CopyBuffer size feeding the GCS object writer, see https://github.com/Altinity/clickhouse-backup/issues/1376
 	UploadBufferSize int `yaml:"upload_buffer_size" envconfig:"GCS_UPLOAD_BUFFER_SIZE"`
+	// AllowMultipartUpload enables experimental parallel composite uploads via a gRPC client for files
+	// bigger than MultipartUploadMinSize, part size is chunk_size, see https://github.com/Altinity/clickhouse-backup/issues/1028.
+	// Not compatible with `endpoint`, `force_http` and `encryption_key`.
+	AllowMultipartUpload bool `yaml:"allow_multipart_upload" envconfig:"GCS_ALLOW_MULTIPART_UPLOAD"`
+	// UploadConcurrency - how many parts of one file upload in parallel when allow_multipart_upload enabled,
+	// 0 means SDK default min(4 + NumCPU/2, 16)
+	UploadConcurrency int `yaml:"upload_concurrency" envconfig:"GCS_UPLOAD_CONCURRENCY"`
+	// MultipartUploadMinSize - files smaller than this size use the regular single-stream upload
+	MultipartUploadMinSize int64 `yaml:"multipart_upload_min_size" envconfig:"GCS_MULTIPART_UPLOAD_MIN_SIZE"`
+	// AllowMultipartDownload - download each file as parallel range reads into a temporary file
+	// (requires additional disk space), part size is chunk_size, mirrors s3.allow_multipart_download,
+	// see https://github.com/Altinity/clickhouse-backup/issues/1028
+	AllowMultipartDownload bool `yaml:"allow_multipart_download" envconfig:"GCS_ALLOW_MULTIPART_DOWNLOAD"`
+	// DownloadConcurrency - how many parts of one file download in parallel when allow_multipart_download enabled
+	DownloadConcurrency int `yaml:"download_concurrency" envconfig:"GCS_DOWNLOAD_CONCURRENCY"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
@@ -539,8 +558,10 @@ func LoadConfig(configLocation string) (*Config, error) {
 	if err := yaml.Unmarshal(configYaml, &cfg); err != nil {
 		return nil, errors.Wrap(err, "can't parse config file")
 	}
-	if err := envconfig.Process("", cfg); err != nil {
-		return nil, errors.Wrap(err, "LoadConfig envconfig.Process")
+	if !cfg.General.DisableEnvironmentOverride {
+		if err := envconfig.Process("", cfg); err != nil {
+			return nil, errors.Wrap(err, "LoadConfig envconfig.Process")
+		}
 	}
 
 	// auto-tuning upload_concurrency for storage types which not have SDK level concurrency, https://github.com/Altinity/clickhouse-backup/issues/658
@@ -548,8 +569,10 @@ func LoadConfig(configLocation string) (*Config, error) {
 	if err := yaml.Unmarshal(configYaml, &cfgWithoutDefault); err != nil {
 		return nil, errors.Wrap(err, "can't parse config file")
 	}
-	if err := envconfig.Process("", cfgWithoutDefault); err != nil {
-		return nil, errors.Wrap(err, "LoadConfig envconfig.Process cfgWithoutDefault")
+	if !cfg.General.DisableEnvironmentOverride {
+		if err := envconfig.Process("", cfgWithoutDefault); err != nil {
+			return nil, errors.Wrap(err, "LoadConfig envconfig.Process cfgWithoutDefault")
+		}
 	}
 	if (cfg.General.RemoteStorage == "gcs" || cfg.General.RemoteStorage == "azblob" || cfg.General.RemoteStorage == "cos") && cfgWithoutDefault.General.UploadConcurrency == 0 {
 		cfg.General.UploadConcurrency = uint8(runtime.NumCPU() / 2)
@@ -599,6 +622,25 @@ func ValidateConfig(cfg *Config) error {
 				return errors.Wrap(err, "invalid s3 http_idle_conn_timeout")
 			}
 		}
+	}
+	if cfg.General.RemoteStorage == "gcs" && cfg.GCS.AllowMultipartUpload {
+		// parallel composite upload works only via gRPC client to storage.googleapis.com,
+		// and Compose requires the same CSEK for source parts and destination object
+		if cfg.GCS.Endpoint != "" {
+			return errors.New("gcs `allow_multipart_upload` requires gRPC client and is not compatible with `endpoint`")
+		}
+		if cfg.GCS.ForceHttp {
+			return errors.New("gcs `allow_multipart_upload` requires gRPC client and is not compatible with `force_http`")
+		}
+		if cfg.GCS.EncryptionKey != "" {
+			return errors.New("gcs `allow_multipart_upload` is not compatible with `encryption_key`")
+		}
+	}
+	if cfg.General.RemoteStorage == "gcs" && cfg.GCS.AllowMultipartDownload && cfg.GCS.DownloadConcurrency <= 1 {
+		return errors.Errorf(
+			"`allow_multipart_download` require `download_concurrency` in `gcs` section more than 1 (3-4 recommends) current value: %d",
+			cfg.GCS.DownloadConcurrency,
+		)
 	}
 	if cfg.GetCompressionFormat() == "unknown" {
 		return errors.Errorf("'%s' is unknown remote storage", cfg.General.RemoteStorage)
@@ -876,9 +918,11 @@ func DefaultConfig() *Config {
 			StorageClass:      "STANDARD",
 			ClientPoolSize:    int(max(uploadConcurrency*3, downloadConcurrency*3, objectDiskServerSideCopyConcurrency)),
 			// 16Mb default chunk size, fix https://github.com/Altinity/clickhouse-backup/issues/1292
-			ChunkSize:         16 * 1024 * 1024,
-			DeleteConcurrency: 50,
-			UploadBufferSize:  128 * 1024,
+			ChunkSize:              16 * 1024 * 1024,
+			DeleteConcurrency:      50,
+			UploadBufferSize:       128 * 1024,
+			MultipartUploadMinSize: 1024 * 1024 * 1024,
+			DownloadConcurrency:    int(downloadConcurrency + 1),
 		},
 		COS: COSConfig{
 			RowURL:                 "",
@@ -921,7 +965,16 @@ func DefaultConfig() *Config {
 }
 
 func GetConfigFromCli(ctx *cli.Context) *Config {
-	oldEnvValues := OverrideEnvVars(ctx)
+	var oldEnvValues map[string]oldEnvValues
+	// peek disable_environment_override from the config file before applying --env,
+	// deliberately ignoring the environment, so the option can't be bypassed by the mechanisms it disables
+	if envOverrideDisabled(GetConfigPath(ctx)) {
+		if len(ctx.StringSlice("env")) > 0 {
+			log.Warn().Msg("--env is ignored because general->disable_environment_override is enabled in the config file")
+		}
+	} else {
+		oldEnvValues = OverrideEnvVars(ctx)
+	}
 	configPath := GetConfigPath(ctx)
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
@@ -950,6 +1003,20 @@ func GetConfigPath(ctx *cli.Context) string {
 		return os.Getenv("CLICKHOUSE_BACKUP_CONFIG")
 	}
 	return DefaultConfigPath
+}
+
+// envOverrideDisabled reads disable_environment_override directly from the config file,
+// see https://github.com/Altinity/clickhouse-backup/issues/1079
+func envOverrideDisabled(configLocation string) bool {
+	configYaml, err := os.ReadFile(configLocation)
+	if err != nil {
+		return false
+	}
+	cfg := Config{}
+	if err := yaml.Unmarshal(configYaml, &cfg); err != nil {
+		return false
+	}
+	return cfg.General.DisableEnvironmentOverride
 }
 
 type oldEnvValues struct {
