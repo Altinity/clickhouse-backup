@@ -14,6 +14,7 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	azlog "github.com/Azure/azure-sdk-for-go/sdk/azcore/log"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
@@ -193,6 +194,38 @@ func (a *AzureBlob) PutFileAbsolute(ctx context.Context, key string, r io.ReadCl
 		return errors.Wrap(err, "AzureBlob PutFileAbsolute UploadStream")
 	}
 	return nil
+}
+
+// PutFileAbsoluteIfAbsent atomically uploads the blob at key only if it
+// doesn't already exist, using the Azure If-None-Match: "*" access condition.
+// Azure returns HTTP 409 BlobAlreadyExists (not 412) when the blob is present.
+// Returns (true, nil) on successful creation, (false, nil) if the blob already
+// existed, or (false, err) on any other error.
+func (a *AzureBlob) PutFileAbsoluteIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	a.logf("AZBLOB->PutFileAbsoluteIfAbsent %s", key)
+	b := a.Container.NewBlockBlobClient(key)
+	_, err := b.UploadStream(ctx, r, &blockblob.UploadStreamOptions{
+		Concurrency: 1,
+		CPKInfo:     a.CPK,
+		AccessConditions: &blob.AccessConditions{
+			ModifiedAccessConditions: &blob.ModifiedAccessConditions{
+				IfNoneMatch: to.Ptr(azcore.ETagAny),
+			},
+		},
+	})
+	if err != nil {
+		if bloberror.HasCode(err, bloberror.BlobAlreadyExists) {
+			return false, nil
+		}
+		return false, errors.WithMessage(err, "AzureBlob PutFileAbsoluteIfAbsent UploadStream")
+	}
+	return true, nil
+}
+
+// PutFileIfAbsent is the path-prefixed variant of PutFileAbsoluteIfAbsent.
+// It prepends a.Config.Path to key, matching PutFile semantics.
+func (a *AzureBlob) PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (bool, error) {
+	return a.PutFileAbsoluteIfAbsent(ctx, path.Join(a.Config.Path, key), r, localSize)
 }
 
 func (a *AzureBlob) DeleteFile(ctx context.Context, key string) error {

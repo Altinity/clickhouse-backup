@@ -112,7 +112,7 @@ func (b *Backuper) rebaseRequiredLiveBackups(ctx context.Context, backupList []s
 // rebaseBackup - read remote backup metadata and dispatch to the embedded/regular implementation,
 // requires connected b.dst (separated from Rebase so unit tests can inject a mock destination)
 func (b *Backuper) rebaseBackup(ctx context.Context, backupName string) error {
-	backupList, err := b.dst.BackupList(ctx, true, backupName)
+	backupList, err := b.dst.BackupList(ctx, true, backupName, b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return errors.Wrap(err, "BackupList")
 	}
