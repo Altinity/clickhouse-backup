@@ -36,6 +36,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/net/http2"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -175,43 +176,49 @@ func (s *S3) Connect(ctx context.Context) error {
 		}
 	}
 
-	httpTransport := http.DefaultTransport
-	// Build a custom HTTP transport only when cert verification is disabled or any HTTP tuning
-	// knob is set, otherwise keep the AWS SDK default transport untouched.
-	// See https://github.com/Altinity/clickhouse-backup/issues/1376
-	needCustomTransport := s.Config.DisableCertVerification ||
-		s.Config.HTTPMaxIdleConns > 0 || s.Config.HTTPMaxIdleConnsPerHost > 0 ||
-		s.Config.HTTPMaxConnsPerHost > 0 || s.Config.HTTPWriteBufferSize > 0 ||
-		s.Config.HTTPReadBufferSize > 0 || s.Config.HTTPIdleConnTimeout != ""
-	if needCustomTransport {
-		customTransport := http.DefaultTransport.(*http.Transport).Clone()
-		if s.Config.DisableCertVerification {
-			customTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-		}
-		if s.Config.HTTPMaxIdleConns > 0 {
-			customTransport.MaxIdleConns = s.Config.HTTPMaxIdleConns
-		}
-		if s.Config.HTTPMaxIdleConnsPerHost > 0 {
-			customTransport.MaxIdleConnsPerHost = s.Config.HTTPMaxIdleConnsPerHost
-		}
-		if s.Config.HTTPMaxConnsPerHost > 0 {
-			customTransport.MaxConnsPerHost = s.Config.HTTPMaxConnsPerHost
-		}
-		if s.Config.HTTPWriteBufferSize > 0 {
-			customTransport.WriteBufferSize = s.Config.HTTPWriteBufferSize
-		}
-		if s.Config.HTTPReadBufferSize > 0 {
-			customTransport.ReadBufferSize = s.Config.HTTPReadBufferSize
-		}
-		if s.Config.HTTPIdleConnTimeout != "" {
-			// already validated in config.ValidateConfig
-			if d, parseErr := time.ParseDuration(s.Config.HTTPIdleConnTimeout); parseErr == nil {
-				customTransport.IdleConnTimeout = d
-			}
-		}
-		httpTransport = customTransport
-		awsConfig.HTTPClient = &http.Client{Transport: httpTransport}
+	// Always build a custom transport so HTTP/2 keep-alive and write timeouts can
+	// be installed. The S3 client sets no per-request timeout, so a stalled
+	// connection (a throttling/back-pressuring endpoint that stops reading or
+	// responding) otherwise wedges an in-flight request forever -- e.g.
+	// UploadPartCopy goroutines stuck in http2 writeRequest during object-disk
+	// server-side copy. https://github.com/Altinity/clickhouse-backup/issues/1490
+	// See also https://github.com/Altinity/clickhouse-backup/issues/1376
+	customTransport := http.DefaultTransport.(*http.Transport).Clone()
+	if s.Config.DisableCertVerification {
+		customTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
+	if s.Config.HTTPMaxIdleConns > 0 {
+		customTransport.MaxIdleConns = s.Config.HTTPMaxIdleConns
+	}
+	if s.Config.HTTPMaxIdleConnsPerHost > 0 {
+		customTransport.MaxIdleConnsPerHost = s.Config.HTTPMaxIdleConnsPerHost
+	}
+	if s.Config.HTTPMaxConnsPerHost > 0 {
+		customTransport.MaxConnsPerHost = s.Config.HTTPMaxConnsPerHost
+	}
+	if s.Config.HTTPWriteBufferSize > 0 {
+		customTransport.WriteBufferSize = s.Config.HTTPWriteBufferSize
+	}
+	if s.Config.HTTPReadBufferSize > 0 {
+		customTransport.ReadBufferSize = s.Config.HTTPReadBufferSize
+	}
+	if s.Config.HTTPIdleConnTimeout != "" {
+		// already validated in config.ValidateConfig
+		if d, parseErr := time.ParseDuration(s.Config.HTTPIdleConnTimeout); parseErr == nil {
+			customTransport.IdleConnTimeout = d
+		}
+	}
+	// Detect and drop connections that stop making progress instead of blocking
+	// forever: PING the peer when the connection goes idle, and cap how long a
+	// single write may stall. Closing the connection makes the in-flight request
+	// fail so it is retried on a fresh connection.
+	if h2Transport, h2Err := http2.ConfigureTransports(customTransport); h2Err == nil {
+		h2Transport.ReadIdleTimeout = 30 * time.Second
+		h2Transport.PingTimeout = 15 * time.Second
+		h2Transport.WriteByteTimeout = 60 * time.Second
+	}
+	httpTransport := http.RoundTripper(customTransport)
+	awsConfig.HTTPClient = &http.Client{Transport: httpTransport}
 
 	// The aws-sdk default (WhenSupported) adds an aws-chunked flexible-checksum trailer to streaming (unseekable) uploads.
 	// Non-AWS S3-compatible providers reject it ("aws-chunked encoding is not supported...", GCS SignatureDoesNotMatch via
