@@ -687,3 +687,36 @@ func TestDefaultCompleteResumableAfterRestartCommands(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateConfigHTTPTimeouts(t *testing.T) {
+	cases := []struct {
+		name    string
+		apply   func(cfg *Config)
+		wantErr bool
+	}{
+		{"defaults", func(cfg *Config) {}, false},
+		{"http2 timeouts disabled", func(cfg *Config) {
+			cfg.S3.HTTP2SendPingTimeout = ""
+			cfg.S3.HTTP2PingTimeout = ""
+			cfg.S3.HTTP2WriteByteTimeout = ""
+		}, false},
+		{"invalid http_idle_conn_timeout", func(cfg *Config) { cfg.S3.HTTPIdleConnTimeout = "30" }, true},
+		{"invalid http2_send_ping_timeout", func(cfg *Config) { cfg.S3.HTTP2SendPingTimeout = "wrong" }, true},
+		{"invalid http2_ping_timeout", func(cfg *Config) { cfg.S3.HTTP2PingTimeout = "wrong" }, true},
+		{"invalid http2_write_byte_timeout", func(cfg *Config) { cfg.S3.HTTP2WriteByteTimeout = "wrong" }, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.General.RemoteStorage = "s3"
+			tc.apply(cfg)
+			err := ValidateConfig(cfg)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}

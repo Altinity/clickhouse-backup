@@ -332,12 +332,17 @@ s3:
   delete_concurrency: 10           # S3_DELETE_CONCURRENCY, how many parallel DeleteObjects requests during clean/delete operations
 
   # HTTP transport and buffer tuning for high-bandwidth (10Gbit+) networks, see https://github.com/Altinity/clickhouse-backup/issues/1376 and Examples.md#tuning-for-high-bandwidth-10gbit-networks
-  http_max_idle_conns: 0              # S3_HTTP_MAX_IDLE_CONNS, http.Transport.MaxIdleConns, 0 keeps the AWS SDK default
-  http_max_idle_conns_per_host: 0     # S3_HTTP_MAX_IDLE_CONNS_PER_HOST, http.Transport.MaxIdleConnsPerHost, 0 keeps the Go default (2); raise (e.g. 128) to avoid serializing parallel up/downloads to the same endpoint when concurrency is high
-  http_max_conns_per_host: 0          # S3_HTTP_MAX_CONNS_PER_HOST, http.Transport.MaxConnsPerHost, 0 means unlimited
+  http_max_idle_conns: 0              # S3_HTTP_MAX_IDLE_CONNS, http.Transport.MaxIdleConns, 0 keeps the AWS SDK default (100)
+  http_max_idle_conns_per_host: 0     # S3_HTTP_MAX_IDLE_CONNS_PER_HOST, http.Transport.MaxIdleConnsPerHost, 0 keeps the AWS SDK default (10); raise (e.g. 128) to avoid serializing parallel up/downloads to the same endpoint when concurrency is high
+  http_max_conns_per_host: 0          # S3_HTTP_MAX_CONNS_PER_HOST, http.Transport.MaxConnsPerHost, 0 keeps the AWS SDK default (2048)
   http_write_buffer_size: 0           # S3_HTTP_WRITE_BUFFER_SIZE, http.Transport.WriteBufferSize in bytes, 0 keeps the Go default (4KB); raise (e.g. 1048576 = 1MB) on fast networks
   http_read_buffer_size: 0            # S3_HTTP_READ_BUFFER_SIZE, http.Transport.ReadBufferSize in bytes, 0 keeps the Go default (4KB); raise (e.g. 1048576 = 1MB) on fast networks
-  http_idle_conn_timeout: ""          # S3_HTTP_IDLE_CONN_TIMEOUT, http.Transport.IdleConnTimeout as a duration string, empty keeps the Go default (90s)
+  http_idle_conn_timeout: ""          # S3_HTTP_IDLE_CONN_TIMEOUT, http.Transport.IdleConnTimeout as a duration string, empty keeps the AWS SDK default (90s)
+
+  # HTTP/2 health checks, only apply to endpoints which negotiate HTTP/2 (AWS S3 doesn't, most S3-compatible providers do), see https://github.com/Altinity/clickhouse-backup/issues/1490
+  http2_send_ping_timeout: 30s        # S3_HTTP2_SEND_PING_TIMEOUT, PING the peer when no frame was received on the connection for that long, empty or 0s disables the health check
+  http2_ping_timeout: 15s             # S3_HTTP2_PING_TIMEOUT, close the connection when the PING response doesn't arrive in time
+  http2_write_byte_timeout: 60s       # S3_HTTP2_WRITE_BYTE_TIMEOUT, close the connection when a single write stalls for longer, in-flight requests fail and are retried on a fresh connection, empty or 0s disables it
 
   # S3_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
