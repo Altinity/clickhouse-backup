@@ -62,7 +62,7 @@ func runDownloadRequiredBackupConnectionCase(t *testing.T, tc restoreResolveIncr
 		fullCleanup(t, r, env, backups, []string{"remote", "local"}, []string{dbName}, false, false, false, tc.configFile)
 	}()
 
-	for _, backupName := range backups {
+	for _, backupName := range childrenFirst(backups) {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+tc.configFile+" delete remote "+backupName+" 2>/dev/null || true")
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+tc.configFile+" delete local "+backupName+" 2>/dev/null || true")
 	}
@@ -80,7 +80,7 @@ func runDownloadRequiredBackupConnectionCase(t *testing.T, tc restoreResolveIncr
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+tc.configFile, "create_remote", "--delete-source", "--diff-from-remote="+fullBackup, "--tables="+dbName+".*", incrBackup)
 
 	// make sure nothing is cached locally so the download must pull both backups from remote
-	for _, backupName := range backups {
+	for _, backupName := range childrenFirst(backups) {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+tc.configFile+" delete local "+backupName+" 2>/dev/null || true")
 	}
 

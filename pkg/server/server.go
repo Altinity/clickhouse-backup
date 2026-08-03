@@ -2331,17 +2331,21 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	vars := mux.Vars(r)
+	force := boolQueryParameter(r.URL.Query(), "force")
 	fullCommand := fmt.Sprintf("delete %s %s", vars["where"], vars["name"])
+	if force {
+		fullCommand += " --force"
+	}
 	commandId, ctx := status.Current.Start(fullCommand)
 	b := backup.NewBackuper(cfg)
 	switch vars["where"] {
 	case "local":
 		err, _ = api.metrics.ExecuteWithMetrics("delete", 0, func() error {
-			return b.RemoveBackupLocal(ctx, vars["name"], nil)
+			return b.RemoveBackupLocal(ctx, vars["name"], nil, force)
 		})
 	case "remote":
 		err, _ = api.metrics.ExecuteWithMetrics("delete", 0, func() error {
-			return b.RemoveBackupRemote(ctx, vars["name"])
+			return b.RemoveBackupRemote(ctx, vars["name"], force)
 		})
 	default:
 		err = errors.New("backup location must be 'local' or 'remote'")

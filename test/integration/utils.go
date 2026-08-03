@@ -1346,8 +1346,19 @@ func generateIncrementTestData(t *testing.T, r *require.Assertions, ch *TestEnvi
 
 // Cleanup functions
 
+// childrenFirst - `delete local|remote <parent>` refuses to break a `required_backup` chain (see
+// https://github.com/Altinity/clickhouse-backup/issues/1493), test backup name lists are ordered
+// full -> increment1 -> increment2, so cleanup must walk them backwards
+func childrenFirst(backupNames []string) []string {
+	reversed := make([]string, 0, len(backupNames))
+	for i := len(backupNames) - 1; i >= 0; i-- {
+		reversed = append(reversed, backupNames[i])
+	}
+	return reversed
+}
+
 func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, backupNames, backupTypes, databaseList []string, useTestName, checkDeleteErr, checkDeleteOtherErr bool, backupConfig string) {
-	for _, backupName := range backupNames {
+	for _, backupName := range childrenFirst(backupNames) {
 		for _, backupType := range backupTypes {
 			out, err := env.DockerExecOut("clickhouse-backup", "bash", "-xce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" delete "+backupType+" "+backupName)
 			if checkDeleteErr {
@@ -1550,7 +1561,8 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 
 	log.Debug().Msg("check delete remote > delete local")
 
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", fullBackupName)
+	// incrementBackupName still requires fullBackupName on remote and is not restored anymore, only deleted at the end, see #1493
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "--force", "remote", fullBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
 
 	log.Debug().Msg("check create --partitions > upload > delete local > restore_remote")
