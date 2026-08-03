@@ -14,7 +14,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.1
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.1
 	github.com/aws/smithy-go v1.27.5
-	github.com/buger/jsonparser v1.6.0
+	github.com/buger/jsonparser v1.6.1
 	github.com/djherbis/buffer v1.2.0
 	github.com/djherbis/nio/v3 v3.0.1
 	github.com/docker/docker v28.5.2+incompatible
