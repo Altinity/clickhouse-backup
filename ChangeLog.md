@@ -1,3 +1,7 @@
+# v2.8.1
+BUG FIXES
+- drop a stale `upload.state2` when `upload --resume` runs for a backup which doesn't exist on remote storage anymore — the resumable state survives a successful upload and is removed only together with the local backup, so `create_remote --resume` + `delete remote` + `upload --resume` skipped every data file and uploaded a backup containing `metadata.json` only, which looked valid in `list remote`; an interrupted upload still leaves the backup folder on remote, so a real resume is not affected, fix [#1492](https://github.com/Altinity/clickhouse-backup/issues/1492)
+
 # v2.8.0
 NEW FEATURES
 - add `rebase` command and `POST /backup/rebase/{name}` API endpoint — copy `required` parts from the `required_backup` chain into a remote incremental backup via server-side `CopyObject` (with streaming fallback) and remove the `required_backup` dependency, so the incremental backup becomes a full one without re-uploading data from the ClickHouse host; per-table parallelism is controlled by `general.rebase_concurrency` (env `REBASE_CONCURRENCY`, default = `download_concurrency`); requires backups made with `upload_by_part: true` and the same `compression_format` across the chain, fix [#1344](https://github.com/Altinity/clickhouse-backup/issues/1344), [#1444](https://github.com/Altinity/clickhouse-backup/issues/1444)
