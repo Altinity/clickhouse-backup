@@ -1532,7 +1532,8 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	checkRestoredDataWithPartitions(20)
 
 	log.Debug().Msg("delete local > download > restore --partitions > restore")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
+	// --force: `restore_remote` above downloaded incrementBackupName, which requires fullBackupName locally, see #1493
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "--force", "local", fullBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", fullBackupName)
 
 	expectedLines = "17"
@@ -1561,9 +1562,10 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 
 	log.Debug().Msg("check delete remote > delete local")
 
-	// incrementBackupName still requires fullBackupName on remote and is not restored anymore, only deleted at the end, see #1493
+	// --force: incrementBackupName requires fullBackupName both on remote and locally, and is not restored
+	// anymore, it's only deleted at the end of this scenario, see #1493
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "--force", "remote", fullBackupName)
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "--force", "local", fullBackupName)
 
 	log.Debug().Msg("check create --partitions > upload > delete local > restore_remote")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables="+dbName+".t1", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", partitionBackupName)
