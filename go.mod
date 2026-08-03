@@ -26,7 +26,7 @@ require (
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
-	github.com/jlaffaye/ftp v0.2.1
+	github.com/jlaffaye/ftp v0.2.2
 	github.com/jolestar/go-commons-pool/v2 v2.1.2
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/klauspost/compress v1.19.1

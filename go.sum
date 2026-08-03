@@ -213,8 +213,8 @@ github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0/go.mod h1:Hyl3n6Twe1hvtd9XUXDe
 github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs4luLUK2k=
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/jessevdk/go-flags v1.4.0/go.mod h1:4FA24M0QyGHXBuZZK/XkWh8h0e1EYbRYJSGM75WSRxI=
-github.com/jlaffaye/ftp v0.2.1 h1:AICcTYPMkaXlmjLMm9I+lB36f6jXCsCvBqVQc6EfC1Y=
-github.com/jlaffaye/ftp v0.2.1/go.mod h1:gXSIr1pA9NhynDNigiFHs4+yL7o7I6bGF9Za9wi9tcE=
+github.com/jlaffaye/ftp v0.2.2 h1:JwjrXCAIjN9ZYrF1/8qlmHFXDteh9MHYaiEIh/Oqtd8=
+github.com/jlaffaye/ftp v0.2.2/go.mod h1:zuLAKdqFqFvNgkCrH0SC7K1XyUiydS7BFCmmoHUWWg0=
 github.com/jolestar/go-commons-pool/v2 v2.1.2 h1:E+XGo58F23t7HtZiC/W6jzO2Ux2IccSH/yx4nD+J1CM=
 github.com/jolestar/go-commons-pool/v2 v2.1.2/go.mod h1:r4NYccrkS5UqP1YQI1COyTZ9UjPJAAGTUxzcsK1kqhY=
 github.com/kelseyhightower/envconfig v1.4.0 h1:Im6hONhd3pLkfDFsbRgu68RDNkGF1r3dvMUtDTo2cv8=
