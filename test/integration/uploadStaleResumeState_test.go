@@ -57,11 +57,11 @@ func TestUploadStaleResumeStateAfterRemoteDelete(t *testing.T) {
 
 	// the only reliable check that data was really uploaded is a full restore from remote
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+configFile, "delete", "local", backupName)
-	dropSQL := "DROP DATABASE " + dbName
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.1") >= 0 {
-		dropSQL += " SYNC"
+	dropSuffix := ""
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") > 0 {
+		dropSuffix = " NO DELAY"
 	}
-	env.queryWithNoError(t, r, dropSQL)
+	env.queryWithNoError(t, r, "DROP DATABASE "+dbName+dropSuffix)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+configFile, "restore_remote", "--rm", backupName)
 
 	var restoredRows uint64
