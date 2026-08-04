@@ -1466,7 +1466,8 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	fillTables([]string{"2022-01-05"})
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create_remote", "--delete-source", "--diff-from-remote="+fullBackupName, "--tables="+dbName+".t*", incrementBackupName)
 
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
+	// --force: `custom` remote storage ignores `--delete-source`, so the local incrementBackupName still requires fullBackupName, see https://github.com/Altinity/clickouse-backup/1493
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "--force", "local", fullBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", "--partitions="+dbName+".t?:(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName)
 	fullBackupDir := "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/" + dbName + "/t?/default/"
 	// embedded storage with embedded disks contains object disk files and will download additional data parts
