@@ -41,6 +41,9 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	r.NoError(err, "%s\nunexpected list local error: %v", out, err)
 	for _, backupName := range backupNames {
 		r.Contains(out, backupName)
+	}
+	// increments are created with `--diff-from-remote`, so local metadata keeps `required_backup` links too
+	for _, backupName := range childrenFirst(backupNames) {
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
 	}
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml list remote")

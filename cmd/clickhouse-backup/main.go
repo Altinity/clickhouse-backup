@@ -733,7 +733,7 @@ func main() {
 		{
 			Name:      "delete",
 			Usage:     "Delete specific backup",
-			UsageText: "clickhouse-backup delete <local|remote> <backup_name>",
+			UsageText: "clickhouse-backup delete [--force] <local|remote> <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				if c.Args().Get(0) != "local" && c.Args().Get(0) != "remote" {
@@ -744,9 +744,15 @@ func main() {
 					log.Err(fmt.Errorf("backup name must be defined")).Send()
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
-				return b.Delete(c.Args().Get(0), c.Args().Get(1), c.Int("command-id"))
+				return b.Delete(c.Args().Get(0), c.Args().Get(1), c.Bool("force"), c.Int("command-id"))
 			},
-			Flags: cliapp.Flags,
+			Flags: append(cliapp.Flags,
+				cli.BoolFlag{
+					Name:   "force, f",
+					Hidden: false,
+					Usage:  "Delete the backup even when other backups depend on it via required_backup, breaks the incremental backups chain, also skips general.rebase_during_delete",
+				},
+			),
 		},
 		{
 			Name:  "default-config",

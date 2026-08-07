@@ -58,7 +58,7 @@ func runDiffFromChecksumsCase(t *testing.T, r *require.Assertions, env *TestEnvi
 	}
 
 	// Clean any leftovers from previous runs
-	for _, b := range []string{fullBackup, incrementBackup} {
+	for _, b := range childrenFirst([]string{fullBackup, incrementBackup}) {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote "+b+" 2>/dev/null || true")
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local "+b+" 2>/dev/null || true")
 	}

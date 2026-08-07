@@ -1346,8 +1346,19 @@ func generateIncrementTestData(t *testing.T, r *require.Assertions, ch *TestEnvi
 
 // Cleanup functions
 
+// childrenFirst - `delete local|remote <parent>` refuses to break a `required_backup` chain (see
+// https://github.com/Altinity/clickhouse-backup/issues/1493), test backup name lists are ordered
+// full -> increment1 -> increment2, so cleanup must walk them backwards
+func childrenFirst(backupNames []string) []string {
+	reversed := make([]string, 0, len(backupNames))
+	for i := len(backupNames) - 1; i >= 0; i-- {
+		reversed = append(reversed, backupNames[i])
+	}
+	return reversed
+}
+
 func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, backupNames, backupTypes, databaseList []string, useTestName, checkDeleteErr, checkDeleteOtherErr bool, backupConfig string) {
-	for _, backupName := range backupNames {
+	for _, backupName := range childrenFirst(backupNames) {
 		for _, backupType := range backupTypes {
 			out, err := env.DockerExecOut("clickhouse-backup", "bash", "-xce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" delete "+backupType+" "+backupName)
 			if checkDeleteErr {
@@ -1455,7 +1466,8 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	fillTables([]string{"2022-01-05"})
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create_remote", "--delete-source", "--diff-from-remote="+fullBackupName, "--tables="+dbName+".t*", incrementBackupName)
 
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
+	// --force: `custom` remote storage ignores `--delete-source`, so the local incrementBackupName still requires fullBackupName, see https://github.com/Altinity/clickouse-backup/1493
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "--force", "local", fullBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", "--partitions="+dbName+".t?:(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName)
 	fullBackupDir := "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/" + dbName + "/t?/default/"
 	// embedded storage with embedded disks contains object disk files and will download additional data parts
@@ -1521,7 +1533,8 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	checkRestoredDataWithPartitions(20)
 
 	log.Debug().Msg("delete local > download > restore --partitions > restore")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
+	// --force: `restore_remote` above downloaded incrementBackupName, which requires fullBackupName locally, see #1493
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "--force", "local", fullBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", fullBackupName)
 
 	expectedLines = "17"
@@ -1550,8 +1563,10 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 
 	log.Debug().Msg("check delete remote > delete local")
 
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", fullBackupName)
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
+	// --force: incrementBackupName requires fullBackupName both on remote and locally, and is not restored
+	// anymore, it's only deleted at the end of this scenario, see #1493
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "--force", "remote", fullBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "--force", "local", fullBackupName)
 
 	log.Debug().Msg("check create --partitions > upload > delete local > restore_remote")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables="+dbName+".t1", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", partitionBackupName)

@@ -335,7 +335,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 
 	// explicitly delete local backup after successful upload, fix https://github.com/Altinity/clickhouse-backup/issues/777
 	if b.cfg.General.BackupsToKeepLocal >= 0 && deleteSource {
-		if err = b.RemoveBackupLocal(ctx, backupName, disks); err != nil {
+		if err = b.RemoveBackupLocal(ctx, backupName, disks, true); err != nil {
 			return errors.Wrap(err, "can't explicitly delete local source backup")
 		}
 	}
