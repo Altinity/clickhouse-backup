@@ -93,9 +93,9 @@ type GeneralConfig struct {
 	// rebase every dependent increment first (same as the `rebase` command), so the chain stays restorable and the backup becomes deletable;
 	// rebase copies the deleted backup parts into its dependents, so deletion time grows with the copied data size,
 	// rebase failure is fatal and the backup is not deleted, see https://github.com/Altinity/clickhouse-backup/issues/1493
-	RebaseDuringDelete      bool   `yaml:"rebase_during_delete" envconfig:"REBASE_DURING_DELETE"`
-	UploadMaxBytesPerSecond uint64 `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
-	DownloadMaxBytesPerSecond   uint64 `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
+	RebaseDuringDelete        bool   `yaml:"rebase_during_delete" envconfig:"REBASE_DURING_DELETE"`
+	UploadMaxBytesPerSecond   uint64 `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
+	DownloadMaxBytesPerSecond uint64 `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
 	// MaxBrokenPartRatio - maximum allowed fraction (0..1) of broken data parts that still produces a
 	// successful but partial backup during backup creation (`create`, and the create stage of
 	// `create_remote`). 0 (default) preserves legacy behavior where any broken part aborts the whole
