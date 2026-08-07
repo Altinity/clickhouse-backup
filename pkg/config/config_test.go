@@ -765,3 +765,45 @@ func TestConfig_ParseCallbackTimeout_RejectsNonPositive(t *testing.T) {
 		t.Fatalf("expected callback timeout validation error, got: %v", err)
 	}
 }
+
+func TestConfig_StatusHistorySize_Default(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(configPath, []byte("general:\n  remote_storage: none\n"), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.General.StatusHistorySize != 1000 {
+		t.Fatalf("expected default StatusHistorySize 1000, got %d", cfg.General.StatusHistorySize)
+	}
+}
+
+func TestConfig_StatusHistorySize_FromYAML(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(configPath, []byte("general:\n  status_history_size: 25\n"), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.General.StatusHistorySize != 25 {
+		t.Fatalf("expected StatusHistorySize 25, got %d", cfg.General.StatusHistorySize)
+	}
+}
+
+func TestConfig_StatusHistorySize_RejectsNonPositive(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(configPath, []byte("general:\n  status_history_size: 0\n"), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	_, err := LoadConfig(configPath)
+	if err == nil {
+		t.Fatal("expected LoadConfig to reject status_history_size: 0")
+	}
+	if !strings.Contains(err.Error(), "status_history_size") {
+		t.Fatalf("expected status_history_size validation error, got: %v", err)
+	}
+}

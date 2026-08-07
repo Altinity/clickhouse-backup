@@ -9,8 +9,10 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	cron "github.com/robfig/cron/v3"
 	"github.com/rs/zerolog/log"
@@ -250,8 +252,7 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 	if rebaseRequired {
 		diffFromRemote = st.prevBackupName
 	}
-	iterCommand := "watch create_remote " + backupName
-	_, finishIteration := b.startWatchIteration(iterCommand)
+	iterationCommandId, _ := status.Current.StartWithCallback("create_remote "+backupName, uuid.NewString(), b.watchIterationCallback())
 	createRemote := func() error {
 		return b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, version, commandId)
 	}
@@ -287,7 +288,11 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 			log.Error().Str("schedule", st.schedule.Name).Msgf("delete local `%s` return error: %v", backupName, deleteLocalErr)
 		}
 	}
-	finishIteration(watchCycleError(createRemoteErr, deleteLocalErr))
+	if createRemoteErr != nil {
+		status.Current.Stop(iterationCommandId, createRemoteErr)
+	} else {
+		status.Current.Stop(iterationCommandId, deleteLocalErr)
+	}
 	if createRemoteErr != nil {
 		return
 	}

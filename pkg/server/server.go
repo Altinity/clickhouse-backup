@@ -79,6 +79,9 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 		cfg *config.Config
 		err error
 	)
+	// from here on every re-entry into cliApp comes from an API handler which owns
+	// its own status row, see status.SetAPIServerMode
+	status.SetAPIServerMode()
 	log.Debug().Msg("Wait for ClickHouse")
 	for {
 		cfg, err = config.LoadConfig(configPath)
@@ -1121,7 +1124,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	commandId, _ := status.Current.StartWithCallback(fullCommand, operationId.String(), callback)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create", 0, func() error {
 			b := backup.NewBackuper(cfg)
@@ -1130,7 +1133,6 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			log.Error().Msgf("API /backup/create error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
@@ -1138,7 +1140,6 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		}
 
 		status.Current.Stop(commandId, nil)
-		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusCreated, struct {
 		Status      string `json:"status"`
@@ -1258,7 +1259,7 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	commandId, _ := status.Current.StartWithCallback(fullCommand, operationId.String(), callback)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create_remote", 0, func() error {
 			b := backup.NewBackuper(cfg)
@@ -1267,7 +1268,6 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 		if err != nil {
 			log.Error().Msgf("API /backup/create_remote error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
@@ -1275,7 +1275,6 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 		}
 
 		status.Current.Stop(commandId, nil)
-		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusCreated, struct {
 		Status      string `json:"status"`
@@ -1571,7 +1570,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	commandId, _ := status.Current.StartWithCallback(fullCommand, operationId.String(), callback)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
@@ -1580,14 +1579,12 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			log.Error().Msgf("Upload error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
 			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
 		}
 		status.Current.Stop(commandId, nil)
-		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status      string `json:"status"`
@@ -1630,7 +1627,7 @@ func (api *APIServer) httpRebaseHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	commandId, _ := status.Current.StartWithCallback(fullCommand, operationId.String(), callback)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("rebase", 0, func() error {
 			b := backup.NewBackuper(cfg)
@@ -1639,14 +1636,12 @@ func (api *APIServer) httpRebaseHandler(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			log.Error().Msgf("Rebase error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
 			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
 		}
 		status.Current.Stop(commandId, nil)
-		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status      string `json:"status"`
@@ -1695,7 +1690,7 @@ func (api *APIServer) httpRebalanceHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	commandId, _ := status.Current.StartWithCallback(fullCommand, operationId.String(), callback)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("rebalance", 0, func() error {
 			b := backup.NewBackuper(cfg)
@@ -1704,14 +1699,12 @@ func (api *APIServer) httpRebalanceHandler(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			log.Error().Msgf("Rebalance error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
 			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
 		}
 		status.Current.Stop(commandId, nil)
-		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status      string `json:"status"`
@@ -1939,7 +1932,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	commandId, _ := status.Current.StartWithCallback(fullCommand, operationId.String(), callback)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(cfg)
@@ -1951,10 +1944,8 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		status.Current.Stop(commandId, err)
 		if err != nil {
 			log.Error().Msgf("API /backup/restore error: %v", err)
-			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
-		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status      string `json:"status"`
@@ -2185,7 +2176,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	commandId, _ := status.Current.StartWithCallback(fullCommand, operationId.String(), callback)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore_remote", 0, func() error {
 			b := backup.NewBackuper(cfg)
@@ -2197,10 +2188,8 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		status.Current.Stop(commandId, err)
 		if err != nil {
 			log.Error().Msgf("API /backup/restore_remote error: %v", err)
-			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
-		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status      string `json:"status"`
@@ -2288,7 +2277,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	commandId, _ := status.Current.StartWithCallback(fullCommand, operationId.String(), callback)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("download", 0, func() error {
 			b := backup.NewBackuper(cfg)
@@ -2297,14 +2286,12 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			log.Error().Msgf("API /backup/download error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
 			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
 		}
 		status.Current.Stop(commandId, nil)
-		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status      string `json:"status"`
@@ -2584,6 +2571,7 @@ func (api *APIServer) ReloadConfig(w http.ResponseWriter, command string) (*conf
 	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
 	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
 	status.SetCancelWaitTimeout(cfg.API.CancelOperationTimeoutDuration)
+	status.SetMaxFinishedRows(cfg.General.StatusHistorySize)
 	return cfg, nil
 }
 

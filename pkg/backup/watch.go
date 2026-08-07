@@ -12,12 +12,26 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli"
 )
 
 var watchBackupTemplateTimeRE = regexp.MustCompile(`{time:([^}]+)}`)
+
+// watchIterationCallback builds the completion callback attached to every watch
+// iteration, so each cycle notifies general.callback_url separately with its own
+// operation_id. Returns nil when no callback URL is configured.
+func (b *Backuper) watchIterationCallback() *status.CallbackConfig {
+	if b.cfg == nil || b.cfg.General.CallbackURL == "" {
+		return nil
+	}
+	return &status.CallbackConfig{
+		URLs:    []string{b.cfg.General.CallbackURL},
+		Timeout: b.cfg.General.CallbackTimeoutDuration,
+	}
+}
 
 func (b *Backuper) NewBackupWatchName(ctx context.Context, backupType string) (string, error) {
 	return b.newBackupWatchNameFromTemplate(ctx, b.cfg.General.WatchBackupNameTemplate, backupType)
@@ -92,6 +106,9 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 	}
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
+	// every iteration registers a status row, so the history bound matters here even
+	// for a standalone CLI `watch` which never goes through the API config reload
+	status.SetMaxFinishedRows(b.cfg.General.StatusHistorySize)
 	// standalone CLI graceful shutdown, server mode cancels the command context via status.Current.CancelAll on SIGTERM
 	if commandId == status.NotFromAPI {
 		var stopSignals context.CancelFunc
@@ -155,8 +172,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 			if backupType == "increment" {
 				diffFromRemote = prevBackupName
 			}
-			iterCommand := "watch create_remote " + backupName
-			_, finishIteration := b.startWatchIteration(iterCommand)
+			iterationCommandId, _ := status.Current.StartWithCallback("create_remote "+backupName, uuid.NewString(), b.watchIterationCallback())
 			if metrics != nil {
 				createRemoteErr, createRemoteErrCount = metrics.ExecuteWithMetrics("create_remote", createRemoteErrCount, func() error {
 					return b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, version, commandId)
@@ -215,7 +231,11 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 				}
 
 			}
-			finishIteration(watchCycleError(createRemoteErr, deleteLocalErr))
+			if createRemoteErr != nil {
+				status.Current.Stop(iterationCommandId, createRemoteErr)
+			} else {
+				status.Current.Stop(iterationCommandId, deleteLocalErr)
+			}
 
 			if (createRemoteErrCount > b.cfg.General.BackupsToKeepRemote && b.cfg.General.BackupsToKeepRemote >= 0) || (deleteLocalErrCount > b.cfg.General.BackupsToKeepLocal && b.cfg.General.BackupsToKeepLocal >= 0) {
 				return errors.Errorf("too many errors create_remote: %d, delete local: %d, during watch full_interval: %s, abort watching", createRemoteErrCount, deleteLocalErrCount, b.cfg.General.FullInterval)

@@ -142,10 +142,15 @@ type GeneralConfig struct {
 	ConfigBackupAlways           bool           `yaml:"config_backup_always" envconfig:"CONFIG_BACKUP_ALWAYS"`
 	NamedCollectionsBackupAlways bool           `yaml:"named_collections_backup_always" envconfig:"NAMED_COLLECTIONS_BACKUP_ALWAYS"`
 	DeleteBatchSize              int            `yaml:"delete_batch_size" envconfig:"DELETE_BATCH_SIZE"`
-	RetriesDuration              time.Duration
-	WatchDuration                time.Duration
-	FullDuration                 time.Duration
-	CallbackTimeoutDuration      time.Duration
+	// StatusHistorySize bounds how many finished operations are kept in the in-memory
+	// async status (`/backup/status`, `system.backup_actions`). Long living `watch`
+	// processes record one operation per iteration, so the history needs an upper bound.
+	// Operations still running are never dropped, whatever their age.
+	StatusHistorySize       int `yaml:"status_history_size" envconfig:"STATUS_HISTORY_SIZE"`
+	RetriesDuration         time.Duration
+	WatchDuration           time.Duration
+	FullDuration            time.Duration
+	CallbackTimeoutDuration time.Duration
 }
 
 // GCSConfig - GCS settings section
@@ -764,6 +769,9 @@ func ValidateConfig(cfg *Config) error {
 		cfg.General.CallbackTimeout = "5s"
 		cfg.General.CallbackTimeoutDuration = 5 * time.Second
 	}
+	if cfg.General.StatusHistorySize <= 0 {
+		return errors.Errorf("invalid status_history_size `%d`, it must be > 0", cfg.General.StatusHistorySize)
+	}
 	if cfg.General.WatchInterval != "" {
 		if duration, err := time.ParseDuration(cfg.General.WatchInterval); err != nil {
 			return errors.Wrap(err, "invalid watch interval")
@@ -864,6 +872,7 @@ func DefaultConfig() *Config {
 			RetriesDuration:                     5 * time.Second,
 			CallbackTimeout:                     "5s",
 			CallbackTimeoutDuration:             5 * time.Second,
+			StatusHistorySize:                   1000,
 			WatchInterval:                       "1h",
 			WatchDuration:                       1 * time.Hour,
 			FullInterval:                        "24h",

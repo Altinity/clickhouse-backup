@@ -174,11 +174,16 @@ general:
 
   # callback_url - CALLBACK_URL, optional HTTP endpoint notified with POST application/json when a backup command completes
   # (API, one-shot CLI commands, and each watch-loop iteration). API `?callback=` overrides this when non-empty.
-  # Payload always includes status, error (empty string on success), and operation_id (same as the existing API callback).
-  # CLI and watch also send optional command and duration fields.
-  # Callback failures are logged and never change the backup command exit code / result.
+  # Payload always includes status (success|error|cancel), error (empty string on success), operation_id, command and duration.
+  # Read-only commands (list, tables, status, ...) never send a callback.
+  # Callbacks are sent asynchronously; failures are logged and never change the backup command exit code / result.
   callback_url: ""
   callback_timeout: 5s           # CALLBACK_TIMEOUT, max wait for the completion callback HTTP POST
+
+  # status_history_size - STATUS_HISTORY_SIZE, how many finished operations are kept in the in-memory
+  # status list exposed by `/backup/status` and `system.backup_actions`. `watch` records one operation
+  # per iteration, so the history needs an upper bound. Operations still running are never dropped.
+  status_history_size: 1000
 
   watch_interval: 1h       # WATCH_INTERVAL, use only for `watch` command, backup will create every 1h
   full_interval: 24h       # FULL_INTERVAL, use only for `watch` command, full backup will create every 24h
@@ -550,7 +555,7 @@ Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 - Optional boolean query argument `configs-only` or `configs_only` works the same as the `--configs-only` CLI argument (backup only configs).
 - Optional boolean query argument `skip-check-parts-columns` or `skip_check_parts_columns` works the same as the `--skip-check-parts-columns` CLI argument (allow backup inconsistent column types for data parts).
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume upload for object disk data).
-- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success|cancel","error":"not empty when error happens", "operation_id" : "<random_uuid>", "command":"<full command line>", "duration":"<elapsed>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
 
 Additional example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test' -X POST`
 
@@ -574,7 +579,7 @@ Create new backup and upload to remote storage: `curl -s localhost:7171/backup/c
 - Optional string query argument `skip-projections` or `skip_projections` works the same as the `--skip-projections` CLI argument.
 - Optional boolean query argument `delete-source` or `delete_source` works the same as `--delete-source` CLI argument.
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume upload for object disk data).
-- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success|cancel","error":"not empty when error happens", "operation_id" : "<random_uuid>", "command":"<full command line>", "duration":"<elapsed>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
 
@@ -626,7 +631,7 @@ Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_N
 - Optional boolean query argument `configs-only` works the same as the `--configs-only` CLI argument (upload configs
   only).
 - Optional boolean query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate upload state and resume upload if data already exists on remote storage).
-- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success|cancel","error":"not empty when error happens", "operation_id" : "<random_uuid>", "command":"<full command line>", "duration":"<elapsed>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
 
@@ -650,7 +655,7 @@ Download backup from remote storage: `curl -s localhost:7171/backup/download/<BA
 - Optional boolean query argument `configs-only` works the same as the `--configs-only` CLI argument (download configs
   only).
 - Optional boolean query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate download state and resume download if it already exists on local storage).
-- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success|cancel","error":"not empty when error happens", "operation_id" : "<random_uuid>", "command":"<full command line>", "duration":"<elapsed>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
 
@@ -658,7 +663,7 @@ Note: this operation is asynchronous, so the API will return once the operation 
 
 Copy required parts from the `required_backup` chain into remote backup and remove the `required_backup` dependency, so the incremental backup becomes a full one: `curl -s localhost:7171/backup/rebase/<BACKUP_NAME> -X POST | jq .`
 
-- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success|cancel","error":"not empty when error happens", "operation_id" : "<random_uuid>", "command":"<full command line>", "duration":"<elapsed>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
 
@@ -668,7 +673,7 @@ Move data parts inside local backup between disks to match the current `system.p
 
 - Optional string query argument `table` works the same as the `--tables value` CLI argument.
 - Optional boolean query argument `dry-run` works the same as the `--dry-run` CLI argument (only log which parts would move between disks, change nothing).
-- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success|cancel","error":"not empty when error happens", "operation_id" : "<random_uuid>", "command":"<full command line>", "duration":"<elapsed>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
 
@@ -692,7 +697,7 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
 - Optional boolean query argument `skip_empty_tables` or `skip-empty-tables` works the same as the `--skip-empty-tables` CLI argument (skip restoring tables that have no data).
 - Optional boolean query argument `rebind_replica_path_if_exists` or `rebind-replica-path-if-exists` works the same as the `--rebind-replica-path-if-exists` CLI argument (overrides `clickhouse.rebind_replica_path_if_exists` for this request, rebind a restored ReplicatedMergeTree to `default_replica_path` when the original ZK path still has leftover state but our replica entry is absent). WARNING: never set during a concurrent HA multi-replica restore.
-- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success|cancel","error":"not empty when error happens", "operation_id" : "<random_uuid>", "command":"<full command line>", "duration":"<elapsed>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
 
@@ -719,7 +724,7 @@ Download and restore data from remote backup: `curl -s localhost:7171/backup/res
 - Optional boolean query argument `hardlink_exists_files` or `hardlink-exists-files` works the same as the `--hardlink-exists-files` CLI argument (Create hardlinks for existing files instead of downloading).
 - Optional boolean query argument `skip_empty_tables` or `skip-empty-tables` works the same as the `--skip-empty-tables` CLI argument (skip restoring tables that have no data).
 - Optional boolean query argument `rebind_replica_path_if_exists` or `rebind-replica-path-if-exists` works the same as the `--rebind-replica-path-if-exists` CLI argument (overrides `clickhouse.rebind_replica_path_if_exists` for this request, rebind a restored ReplicatedMergeTree to `default_replica_path` when the original ZK path still has leftover state but our replica entry is absent). WARNING: never set during a concurrent HA multi-replica restore.
-- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success|cancel","error":"not empty when error happens", "operation_id" : "<random_uuid>", "command":"<full command line>", "duration":"<elapsed>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
 

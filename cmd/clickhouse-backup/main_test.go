@@ -9,55 +9,26 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync"
-	"sync/atomic"
+	"reflect"
 	"testing"
+	"time"
 
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli"
 )
 
-func TestCLI_CallbackDispatchedOnCommandSuccess(t *testing.T) {
+func TestCLIStatus_CallbackDispatchedOnCommandSuccess(t *testing.T) {
 	r := require.New(t)
-	var (
-		mu   sync.Mutex
-		got  status.CallbackPayload
-		hits int
-	)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		body, err := io.ReadAll(req.Body)
-		if err != nil {
-			t.Errorf("read body: %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		var p status.CallbackPayload
-		if err := json.Unmarshal(body, &p); err != nil {
-			t.Errorf("unmarshal: %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		mu.Lock()
-		got = p
-		hits++
-		mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-	}))
+	payloads, srv := callbackReceiver(t)
 	defer srv.Close()
 
-	cfg := config.DefaultConfig()
-	cfg.General.CallbackURL = srv.URL
-
-	err := wrapWithCLICallback("create", func(c *cli.Context) error {
+	err := runWithCLIStatus(newTestCLIContext(t, srv.URL, "create"), "create", func(c *cli.Context) error {
 		return nil
-	})(newTestCLIContext(t, cfg, "create"))
+	})
 	r.NoError(err)
 
-	mu.Lock()
-	defer mu.Unlock()
-	r.Equal(1, hits)
+	got := awaitCallback(t, payloads)
 	r.Equal(status.SuccessStatus, got.Status)
 	r.Equal("", got.Error)
 	r.Equal("create", got.Command)
@@ -65,149 +36,191 @@ func TestCLI_CallbackDispatchedOnCommandSuccess(t *testing.T) {
 	r.NotEmpty(got.OperationId)
 }
 
-func TestCLI_CallbackDispatchedOnCommandFailure(t *testing.T) {
+func TestCLIStatus_CallbackDispatchedOnCommandFailure(t *testing.T) {
 	r := require.New(t)
-	var (
-		mu  sync.Mutex
-		got status.CallbackPayload
-	)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		body, _ := io.ReadAll(req.Body)
-		var p status.CallbackPayload
-		_ = json.Unmarshal(body, &p)
-		mu.Lock()
-		got = p
-		mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-	}))
+	payloads, srv := callbackReceiver(t)
 	defer srv.Close()
 
-	cfg := config.DefaultConfig()
-	cfg.General.CallbackURL = srv.URL
-
 	actionErr := errors.New("invalid table pattern")
-	err := wrapWithCLICallback("create", func(c *cli.Context) error {
+	err := runWithCLIStatus(newTestCLIContext(t, srv.URL, "create"), "create", func(c *cli.Context) error {
 		return actionErr
-	})(newTestCLIContext(t, cfg, "create"))
-	r.Equal(actionErr, err)
+	})
+	r.ErrorIs(err, actionErr)
 
-	mu.Lock()
-	defer mu.Unlock()
+	got := awaitCallback(t, payloads)
 	r.Equal(status.ErrorStatus, got.Status)
-	r.Equal("invalid table pattern", got.Error)
+	r.Equal(actionErr.Error(), got.Error)
 	r.Equal("create", got.Command)
 }
 
-func TestCLI_CallbackFailureDoesNotAffectExitCode(t *testing.T) {
+// A broken or slow callback receiver must not change what the command returns.
+func TestCLIStatus_CallbackFailureDoesNotAffectExitCode(t *testing.T) {
 	r := require.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
 
-	cfg := config.DefaultConfig()
-	cfg.General.CallbackURL = srv.URL
-
-	err := wrapWithCLICallback("create", func(c *cli.Context) error {
+	err := runWithCLIStatus(newTestCLIContext(t, srv.URL, "create"), "create", func(c *cli.Context) error {
 		return nil
-	})(newTestCLIContext(t, cfg, "create"))
-	r.NoError(err, "callback HTTP failure must not change the command result")
+	})
+	r.NoError(err)
 }
 
-// Ensures API-spawned CLI runs (with --command-id) skip callbacks on both success
-// and failure, leaving notification handling to pkg/server.
-func TestCLI_CallbackSkippedWhenSpawnedFromAPI(t *testing.T) {
+// Runs re-entered by the API server carry --command-id and are already tracked
+// and notified by the handler which started them, so they must not notify twice.
+func TestCLIStatus_SkippedWhenSpawnedFromAPI(t *testing.T) {
 	r := require.New(t)
-	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits.Add(1)
+	payloads, srv := callbackReceiver(t)
+	defer srv.Close()
+
+	ctx := newTestCLIContextWithCommandId(t, srv.URL, "create", 7)
+	err := runWithCLIStatus(ctx, "create", func(c *cli.Context) error { return nil })
+	r.NoError(err)
+
+	select {
+	case p := <-payloads:
+		r.Failf("unexpected callback", "API spawned run must not notify, got %+v", p)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// The command line reported to the callback keeps the command name first, so
+// status.CallbackEligible and /backup/status filters see the same shape as API runs.
+func TestCLIStatus_FullCommandIncludesArguments(t *testing.T) {
+	r := require.New(t)
+	payloads, srv := callbackReceiver(t)
+	defer srv.Close()
+
+	ctx := newTestCLIContext(t, srv.URL, "create_remote")
+	err := runWithCLIStatus(ctx, "create_remote", func(c *cli.Context) error { return nil })
+	r.NoError(err)
+
+	got := awaitCallback(t, payloads)
+	r.Equal("create_remote backup-name", got.Command)
+}
+
+// registerCLIStatus must wrap eligible commands wherever they are declared and
+// leave everything else untouched, without any command name list of its own.
+func TestRegisterCLIStatus_WrapsEligibleCommandsRecursively(t *testing.T) {
+	r := require.New(t)
+	noop := func(c *cli.Context) error { return nil }
+	commands := []cli.Command{
+		{Name: "create", Action: noop},
+		{Name: "list", Action: noop},
+		{Name: "server", Action: noop, Subcommands: []cli.Command{{Name: "restore", Action: noop}}},
+	}
+	original := commands[1].Action
+
+	registerCLIStatus(commands)
+
+	r.NotNil(commands[0].Action)
+	r.False(sameAction(commands[0].Action, noop), "eligible command `create` must be wrapped")
+	r.True(sameAction(commands[1].Action, original), "read-only command `list` must stay untouched")
+	r.True(sameAction(commands[2].Action, noop), "supervisor command `server` must stay untouched")
+	r.False(sameAction(commands[2].Subcommands[0].Action, noop), "nested eligible command `restore` must be wrapped")
+}
+
+func sameAction(a, b interface{}) bool {
+	return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
+}
+
+func callbackReceiver(t *testing.T) (chan status.CallbackPayload, *httptest.Server) {
+	t.Helper()
+	payloads := make(chan status.CallbackPayload, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		var p status.CallbackPayload
+		if err := json.Unmarshal(body, &p); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		payloads <- p
 		w.WriteHeader(http.StatusOK)
 	}))
-	t.Cleanup(srv.Close)
-
-	cfg := config.DefaultConfig()
-	cfg.General.CallbackURL = srv.URL
-
-	actionRan := false
-	err := wrapWithCLICallback("create", func(c *cli.Context) error {
-		actionRan = true
-		return nil
-	})(newTestCLIContextWithCommandId(t, cfg, "create", 42))
-	r.NoError(err)
-	r.True(actionRan, "wrapped action must still run for API-spawned invocations")
-	r.Equal(int32(0), hits.Load(), "API-spawned run must not fire the CLI callback (the API server already dispatches one)")
-
-	// same guard applies when the command fails: the API errorCallback owns it
-	actionErr := errors.New("create failed")
-	err = wrapWithCLICallback("create", func(c *cli.Context) error {
-		return actionErr
-	})(newTestCLIContextWithCommandId(t, cfg, "create", 42))
-	r.Equal(actionErr, err)
-	r.Equal(int32(0), hits.Load(), "API-spawned failed run must not fire the CLI callback either")
+	return payloads, srv
 }
 
-// Ensures every cliCallbackCommands entry names a real top-level command from main.go,
-// and that applyCLICallbacks can wrap each of them. Nested Subcommands are not supported.
-func TestCLI_CallbackAllowlistMatchesTopLevelCommands(t *testing.T) {
-	r := require.New(t)
-	// Keep in sync with top-level Name fields in main.go's cliapp.Commands.
-	topLevelNames := []string{
-		"tables", "create", "create_remote", "upload", "list", "download",
-		"rebase", "rebalance", "restore", "restore_remote", "delete",
-		"default-config", "print-config", "clean", "clean_remote_broken",
-		"clean_local_broken", "clean_broken_retention", "watch", "acvp", "server",
-	}
-	topLevel := make(map[string]struct{}, len(topLevelNames))
-	commands := make([]cli.Command, 0, len(topLevelNames))
-	for _, name := range topLevelNames {
-		topLevel[name] = struct{}{}
-		name := name
-		commands = append(commands, cli.Command{
-			Name: name,
-			Action: func(_ *cli.Context) error {
-				return nil
-			},
-		})
-	}
-
-	for name := range cliCallbackCommands {
-		_, ok := topLevel[name]
-		r.True(ok, "cliCallbackCommands entry %q is not a known top-level command in main.go", name)
-	}
-	for _, excluded := range []string{"watch", "server", "tables", "list", "default-config", "print-config", "acvp"} {
-		_, ok := cliCallbackCommands[excluded]
-		r.False(ok, "%q must not be in cliCallbackCommands", excluded)
-	}
-
-	applyCLICallbacks(commands)
-	for _, cmd := range commands {
-		if _, ok := cliCallbackCommands[cmd.Name]; !ok {
-			continue
-		}
-		_, ok := cmd.Action.(func(*cli.Context) error)
-		r.True(ok, "allowlisted command %q must keep a wrapable Action after applyCLICallbacks", cmd.Name)
-		r.Nil(cmd.Subcommands, "allowlisted command %q must be top-level (no Subcommands); wrapping does not walk nested commands", cmd.Name)
-	}
-}
-
-func newTestCLIContext(t *testing.T, cfg *config.Config, commandName string) *cli.Context {
+func awaitCallback(t *testing.T, payloads chan status.CallbackPayload) status.CallbackPayload {
 	t.Helper()
-	return newTestCLIContextWithCommandId(t, cfg, commandName, status.NotFromAPI)
+	select {
+	case p := <-payloads:
+		return p
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for callback")
+		return status.CallbackPayload{}
+	}
 }
 
-func newTestCLIContextWithCommandId(t *testing.T, cfg *config.Config, commandName string, commandId int) *cli.Context {
+func newTestCLIContext(t *testing.T, callbackURL, commandName string) *cli.Context {
+	t.Helper()
+	return newTestCLIContextWithCommandId(t, callbackURL, commandName, status.NotFromAPI)
+}
+
+func newTestCLIContextWithCommandId(t *testing.T, callbackURL, commandName string, commandId int) *cli.Context {
 	t.Helper()
 	configPath := filepath.Join(t.TempDir(), "config.yml")
-	content := "general:\n  callback_url: \"" + cfg.General.CallbackURL + "\"\n  callback_timeout: \"2s\"\n"
+	content := "general:\n  callback_url: \"" + callbackURL + "\"\n  callback_timeout: \"2s\"\n"
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	app := cli.NewApp()
 	app.Commands = []cli.Command{{Name: commandName}}
-	flagSet := flag.NewFlagSet("test", flag.ContinueOnError)
-	flagSet.String("config", configPath, "")
-	flagSet.Int("command-id", commandId, "")
-	ctx := cli.NewContext(app, flagSet, nil)
+
+	// Mirror the real flag layout: main.go declares command-id at app level and
+	// every command re-declares it via `Flags: append(cliapp.Flags, ...)`. The API
+	// server passes --command-id *before* the command name, so it lands in the app
+	// flag set while the command keeps its own default. A helper that puts it only
+	// on the command flag set cannot catch a lookup reading the wrong one.
+	appSet := flag.NewFlagSet("clickhouse-backup", flag.ContinueOnError)
+	appSet.String("config", configPath, "")
+	appSet.Int("command-id", commandId, "")
+	parent := cli.NewContext(app, appSet, nil)
+
+	cmdSet := flag.NewFlagSet(commandName, flag.ContinueOnError)
+	cmdSet.String("config", configPath, "")
+	cmdSet.Int("command-id", status.NotFromAPI, "")
+	if commandName == "create_remote" {
+		if err := cmdSet.Parse([]string{"backup-name"}); err != nil {
+			t.Fatalf("parse args: %v", err)
+		}
+	}
+	ctx := cli.NewContext(app, cmdSet, parent)
 	ctx.Command = app.Commands[0]
 	return ctx
+}
+
+// commandIdFromCli must find --command-id where the API server actually puts it:
+// before the command name, i.e. in the app flag set, not the command's own copy.
+func TestCommandIdFromCli(t *testing.T) {
+	r := require.New(t)
+	r.Equal(7, commandIdFromCli(newTestCLIContextWithCommandId(t, "", "create", 7)),
+		"--command-id passed by the API server before the command name must be visible")
+	r.Equal(status.NotFromAPI, commandIdFromCli(newTestCLIContext(t, "", "create")),
+		"a plain CLI run must report NotFromAPI")
+}
+
+// In an API server process no CLI re-entry may register a status row, even when
+// the handler deliberately passes NotFromAPI because the command is listed in
+// api.backup_actions_skip_commands.
+func TestCLIStatus_SkippedInAPIServerMode(t *testing.T) {
+	r := require.New(t)
+	payloads, srv := callbackReceiver(t)
+	defer srv.Close()
+
+	status.SetAPIServerMode()
+	defer status.ResetAPIServerModeForTest()
+
+	err := runWithCLIStatus(newTestCLIContext(t, srv.URL, "create"), "create", func(c *cli.Context) error { return nil })
+	r.NoError(err)
+
+	select {
+	case p := <-payloads:
+		r.Failf("unexpected callback", "API server mode must not register CLI rows, got %+v", p)
+	case <-time.After(300 * time.Millisecond):
+	}
 }

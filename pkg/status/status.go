@@ -5,6 +5,7 @@ import (
 	stderrors "errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
@@ -23,9 +24,50 @@ var Current = &AsyncStatus{}
 
 const NotFromAPI = int(-1)
 
+// apiServerMode is set once when the API server starts. The server re-enters the
+// same cli.App in process for POST /backup/actions, and every such re-entry comes
+// from a handler which already owns its status row — or deliberately has none,
+// when the command is listed in api.backup_actions_skip_commands. Either way the
+// CLI wrapper must not register anything of its own in this process.
+var apiServerMode atomic.Bool
+
+// SetAPIServerMode marks this process as an API server. Never reset.
+func SetAPIServerMode() {
+	apiServerMode.Store(true)
+}
+
+// APIServerMode reports whether this process runs the API server.
+func APIServerMode() bool {
+	return apiServerMode.Load()
+}
+
 type AsyncStatus struct {
-	commands []ActionRow
+	// commands is the ordered history. Rows are addressed by a monotonic id
+	// rather than by position, because trimLocked drops finished rows from
+	// anywhere in the history while ids handed out earlier must stay valid.
+	commands []*ActionRow
+	byId     map[int]*ActionRow
+	nextId   int
 	sync.RWMutex
+}
+
+// DefaultMaxFinishedRows is used until SetMaxFinishedRows is called from a loaded
+// config, so a status list created before any config is read is still bounded.
+const DefaultMaxFinishedRows = 1000
+
+// maxFinishedRows bounds how many finished rows are kept in memory. Long running
+// `watch` processes register one row per iteration, so without a bound the history
+// grows for as long as the process lives, see
+// https://github.com/Altinity/clickhouse-backup/issues/1481
+var maxFinishedRows = DefaultMaxFinishedRows
+
+// SetMaxFinishedRows applies general.status_history_size. Safe to call from the
+// API server on config reload, and from `watch` before its first iteration.
+// Non-positive values are ignored, ValidateConfig already rejects them.
+func SetMaxFinishedRows(n int) {
+	if n > 0 {
+		maxFinishedRows = n
+	}
 }
 
 type ActionRowStatus struct {
@@ -39,12 +81,19 @@ type ActionRowStatus struct {
 
 type ActionRow struct {
 	ActionRowStatus
+	// id is the value handed to callers as commandId, stable for the row's life.
+	id     int
 	Ctx    context.Context
 	Cancel context.CancelFunc
 	// Done is closed by Stop when the command goroutine has fully returned.
 	// Cancel/CancelAll wait on this so callers know the operation really
 	// finished (e.g. defers like pidlock.RemovePidFile have already run).
 	Done chan struct{}
+	// startedAt is the monotonic counterpart of ActionRowStatus.Start, used to
+	// report an exact duration in the completion callback.
+	startedAt time.Time
+	// callback is nil when the command must not produce a completion callback.
+	callback *CallbackConfig
 }
 
 // CancelWaitTimeout bounds how long Cancel/CancelAll wait for the command
@@ -67,23 +116,97 @@ func (status *AsyncStatus) Start(command string) (int, context.Context) {
 }
 
 func (status *AsyncStatus) StartWithOperationId(command string, operationId string) (int, context.Context) {
+	return status.StartWithCallback(command, operationId, nil)
+}
+
+// StartWithCallback registers a command and attaches the completion callback
+// configuration to it. Passing a nil callback, an empty URL list or a command
+// which is not CallbackEligible means no callback is sent when it finishes.
+func (status *AsyncStatus) StartWithCallback(command string, operationId string, callback *CallbackConfig) (int, context.Context) {
 	status.Lock()
 	defer status.Unlock()
+	now := time.Now()
 	ctx, cancel := context.WithCancel(context.Background())
-	status.commands = append(status.commands, ActionRow{
+	if callback != nil && (len(callback.URLs) == 0 || !CallbackEligible(command)) {
+		callback = nil
+	}
+	if status.byId == nil {
+		status.byId = map[int]*ActionRow{}
+	}
+	row := &ActionRow{
 		ActionRowStatus: ActionRowStatus{
 			Command:     command,
-			Start:       time.Now().Format(common.TimeFormat),
+			Start:       now.Format(common.TimeFormat),
 			Status:      InProgressStatus,
 			OperationId: operationId,
 		},
-		Ctx:    ctx,
-		Cancel: cancel,
-		Done:   make(chan struct{}),
-	})
-	lastCommandId := len(status.commands) - 1
-	log.Debug().Msgf("api.status.Start -> status.commands[%d] == %+v", lastCommandId, status.commands[lastCommandId])
-	return lastCommandId, ctx
+		id:        status.nextId,
+		Ctx:       ctx,
+		Cancel:    cancel,
+		Done:      make(chan struct{}),
+		startedAt: now,
+		callback:  callback,
+	}
+	status.nextId++
+	status.commands = append(status.commands, row)
+	status.byId[row.id] = row
+	log.Debug().Msgf("api.status.Start -> status.commands[%d] == %+v", row.id, *row)
+	status.trimLocked()
+	return row.id, ctx
+}
+
+// trimLocked drops the oldest finished rows once more than maxFinishedRows of
+// them accumulate. Rows still in progress are always kept regardless of age, so
+// a long living `watch` or `server` row does not block trimming of the finished
+// iterations recorded after it. Lock MUST be held.
+func (status *AsyncStatus) trimLocked() {
+	finished := 0
+	for _, row := range status.commands {
+		if trimmableLocked(row) {
+			finished++
+		}
+	}
+	drop := finished - maxFinishedRows
+	if drop <= 0 {
+		return
+	}
+	kept := make([]*ActionRow, 0, len(status.commands)-drop)
+	for _, row := range status.commands {
+		if drop > 0 && trimmableLocked(row) {
+			delete(status.byId, row.id)
+			drop--
+			continue
+		}
+		kept = append(kept, row)
+	}
+	status.commands = kept
+}
+
+// trimmableLocked reports whether a row can be forgotten. A terminal status is
+// not enough: Cancel/CancelAll mark a row canceled while its command goroutine
+// is still running, and that goroutine still has to reach Stop to close Done,
+// release the Cancel waiter and send the callback it owes. Dropping the row
+// before that would strand /backup/kill for CancelWaitTimeout and lose the
+// notification. Lock MUST be held.
+func trimmableLocked(row *ActionRow) bool {
+	if row.Status == InProgressStatus {
+		return false
+	}
+	if row.Done == nil {
+		return true
+	}
+	select {
+	case <-row.Done:
+		return true
+	default:
+		return false
+	}
+}
+
+// rowLocked resolves a commandId to a row, or nil when it was already trimmed
+// or never existed. Lock MUST be held.
+func (status *AsyncStatus) rowLocked(commandId int) *ActionRow {
+	return status.byId[commandId]
 }
 
 func (status *AsyncStatus) CheckCommandInProgress(command string) bool {
@@ -119,40 +242,81 @@ func (status *AsyncStatus) GetContextWithCancel(commandId int) (context.Context,
 		ctx, cancel := context.WithCancel(context.Background())
 		return ctx, cancel, nil
 	}
-	if commandId >= len(status.commands) {
+	row := status.rowLocked(commandId)
+	if row == nil {
 		return nil, nil, errors.Errorf("commandId=%d not exists in current running commands", commandId)
 	}
-	if status.commands[commandId].Ctx == nil {
-		return nil, nil, errors.Errorf("commands[%d]=%s have nil context ", commandId, status.commands[commandId].Command)
+	if row.Ctx == nil {
+		return nil, nil, errors.Errorf("commands[%d]=%s have nil context ", commandId, row.Command)
 	}
 	// for create_remote and restore_remote API call
-	if stderrors.Is(status.commands[commandId].Ctx.Err(), context.Canceled) && strings.Contains(status.commands[commandId].Command, "_remote") {
-		status.commands[commandId].Ctx, status.commands[commandId].Cancel = context.WithCancel(context.Background())
+	if stderrors.Is(row.Ctx.Err(), context.Canceled) && strings.Contains(row.Command, "_remote") {
+		row.Ctx, row.Cancel = context.WithCancel(context.Background())
 	}
-	return status.commands[commandId].Ctx, status.commands[commandId].Cancel, nil
+	return row.Ctx, row.Cancel, nil
 }
 
 func (status *AsyncStatus) Stop(commandId int, err error) {
 	status.Lock()
-	defer status.Unlock()
+	row := status.rowLocked(commandId)
+	if row == nil {
+		status.Unlock()
+		log.Warn().Msgf("api.status.stop -> commandId=%d not found", commandId)
+		return
+	}
 	// Always signal "goroutine finished" to any Cancel waiter, even if the
 	// row was already moved to cancel/error/success state by a concurrent
 	// Cancel() call.
-	closeDoneLocked(&status.commands[commandId])
-	if status.commands[commandId].Status != InProgressStatus {
+	closeDoneLocked(row)
+	if row.Status != InProgressStatus {
+		// Already terminal, typically moved to CancelStatus by Cancel/CancelAll.
+		// The callback is still owed to the caller, Cancel() itself does not send
+		// it because the command goroutine has not returned yet at that point.
+		callback, payload := status.finishLocked(row)
+		status.Unlock()
+		if callback != nil {
+			go notify(callback, payload)
+		}
 		return
 	}
-	status.commands[commandId].Cancel()
+	row.Cancel()
 	s := SuccessStatus
 	if err != nil {
 		s = ErrorStatus
-		status.commands[commandId].Error = err.Error()
+		row.Error = err.Error()
 	}
-	status.commands[commandId].Status = s
-	status.commands[commandId].Finish = time.Now().Format(common.TimeFormat)
-	status.commands[commandId].Ctx = nil
-	status.commands[commandId].Cancel = nil
-	log.Debug().Msgf("api.status.stop -> status.commands[%d] == %+v", commandId, status.commands[commandId])
+	row.Status = s
+	row.Finish = time.Now().Format(common.TimeFormat)
+	row.Ctx = nil
+	row.Cancel = nil
+	log.Debug().Msgf("api.status.stop -> status.commands[%d] == %+v", commandId, *row)
+
+	callback, payload := status.finishLocked(row)
+	status.Unlock()
+
+	// Fired outside the lock and asynchronously, a slow or broken callback
+	// receiver must never stall or fail the command which just finished.
+	if callback != nil {
+		go notify(callback, payload)
+	}
+}
+
+// finishLocked builds the completion callback for a row which reached a terminal
+// state and clears it, so a command notifies at most once. It returns a nil
+// config when the row has no callback or was already notified. Lock MUST be held.
+func (status *AsyncStatus) finishLocked(row *ActionRow) (*CallbackConfig, CallbackPayload) {
+	callback := row.callback
+	if callback == nil {
+		return nil, CallbackPayload{}
+	}
+	row.callback = nil
+	return callback, CallbackPayload{
+		Status:      row.Status,
+		Error:       row.Error,
+		OperationId: row.OperationId,
+		Command:     row.Command,
+		Duration:    time.Since(row.startedAt).String(),
+	}
 }
 
 // closeDoneLocked closes row.Done idempotently. Must be called with the
@@ -324,4 +488,9 @@ func (status *AsyncStatus) GetStatusByOperationId(operationId string) []ActionRo
 		}
 	}
 	return make([]ActionRowStatus, 0)
+}
+
+// ResetAPIServerModeForTest clears the API server marker. Tests only.
+func ResetAPIServerModeForTest() {
+	apiServerMode.Store(false)
 }
