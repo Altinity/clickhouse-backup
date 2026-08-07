@@ -23,10 +23,10 @@ import (
 // the cancellation. status.Cancel sets CancelStatus itself and status.Stop leaves
 // an already terminal row alone, so the row reads "cancel" even when the worker
 // ignored its context and ran to completion (verified by re-running these tests
-// against the pre-fix c.Int("command-id") lookup: they still passed). The check
-// that actually has teeth is assertBackupAbsent / the row-count check in
-// TestKillRestore — a command which was not canceled finishes its work and leaves
-// a complete artifact behind.
+// against the pre-fix c.Int("command-id") lookup: they still passed). The checks
+// that actually have teeth are assertBackupNotComplete, assertBackupAbsent and the
+// row-count check in TestKillRestore — a command which was not canceled finishes
+// its work and leaves a complete artifact behind.
 func assertActionCanceled(r *require.Assertions, env *TestEnvironment, cmdPrefix, nameNeedle string, timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	for {
@@ -55,15 +55,32 @@ func assertActionCanceled(r *require.Assertions, env *TestEnvironment, cmdPrefix
 	}
 }
 
-// assertBackupAbsent proves the killed command never finished its work: it asks
-// the server to delete the backup the command was producing and requires the
-// answer "is not found on <where> storage". A command which ignored cancellation
-// runs to completion and leaves a usable backup, so this delete would succeed
-// instead — that is exactly how these tests passed while cancellation did nothing.
+// assertBackupNotComplete proves the killed command never finished writing its
+// backup: no row in system.backup_list for it is a complete one.
 //
-// This cannot race with a command that finished on its own just before the kill:
-// the caller already requires /backup/kill to answer "success", and status.Cancel
-// only matches a row whose context is still live, i.e. a command still running.
+// `desc` carries the data format for a usable backup and the GetLocalBackups
+// "broken ..." reason for an unusable one, so "no non-broken row" covers both
+// legitimate post-kill states — the directory was never created, or it exists
+// without the metadata.json that create/download/upload write last. A command
+// which ignored cancellation runs to completion and leaves a complete backup.
+//
+// Unlike a `delete` based check this does not depend on how far the command got
+// before the kill landed: deleting works for a broken backup too, so its result
+// cannot tell a canceled command from a finished one.
+func assertBackupNotComplete(r *require.Assertions, env *TestEnvironment, location, backupName string) {
+	var complete uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&complete,
+		"SELECT count() FROM system.backup_list WHERE location=? AND name=? AND desc NOT LIKE '%broken%' SETTINGS empty_result_for_aggregation_by_empty_set=0",
+		location, backupName))
+	r.Equal(uint64(0), complete,
+		"%s backup %q is complete after kill, so the killed command ran to completion instead of being canceled",
+		location, backupName)
+}
+
+// assertBackupAbsent is the stricter variant used for `create` only: a canceled
+// create removes the partial backup it was building, so nothing must be left at
+// all. Do not use it for download/upload, which have no such cleanup — there the
+// leftovers are legitimate and only assertBackupNotComplete applies.
 //
 // It doubles as the stale pid lock regression check (issue #1365): a leftover pid
 // file makes delete answer "another clickhouse-backup ..." instead.
@@ -75,13 +92,19 @@ func assertBackupAbsent(r *require.Assertions, env *TestEnvironment, where, back
 		where, backupName, out)
 }
 
-// TestKill reproduces https://github.com/Altinity/clickhouse-backup/issues/1365.
-// An `upload` action is started via the REST API and killed while in-progress; the
-// .pid file must be removed by the kill handler so that subsequent operations
-// (delete in particular) do not falsely report "another command is already running".
+// TestKillUpload reproduces https://github.com/Altinity/clickhouse-backup/issues/1365.
+// An `upload` is started via the REST API and killed while in-progress; the .pid
+// file must be removed by the kill handler so that subsequent operations (delete in
+// particular) do not falsely report "another command is already running".
 // Also verifies that /backup/kill blocks until the upload goroutine actually
 // finished (sync wait), observable via the upload_finish metric.
-func TestKill(t *testing.T) {
+//
+// It is not just "the upload variant" of the other TestKill* tests: it is the only
+// one exercising the `GET /backup/kill` endpoint and the only one killing a command
+// started through a dedicated REST endpoint (POST /backup/upload/{name}, which keeps
+// the commandId in process). The others start and kill through POST /backup/actions,
+// which re-enters the CLI app with --command-id. Keep both paths covered.
+func TestKillUpload(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	r.NoError(env.DockerCP("configs/config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
@@ -110,7 +133,7 @@ func TestKill(t *testing.T) {
 	}()
 	defer func() {
 		if out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "delete", "remote", backupName); err != nil && !strings.Contains(out, fmt.Sprintf("'%s' is not found on remote storage", backupName)) {
-			t.Errorf("TestKill teardown error=%+v: delete remote %s: %s", err, backupName, out)
+			t.Errorf("TestKillUpload teardown error=%+v: delete remote %s: %s", err, backupName, out)
 		}
 		// The killed mid-flight upload leaves an incomplete remote backup that
 		// `delete remote` reports as "not found" and never removes. Purge the
@@ -119,7 +142,7 @@ func TestKill(t *testing.T) {
 		// asserts the remote backup path is empty).
 		_ = env.DockerExec("minio", "rm", "-rf", env.minioBackupFSPath(r, "config-s3.yml", backupName))
 		if err := env.dropDatabase(dbName, true); err != nil {
-			t.Errorf("TestKill teardown: drop database %s, error=%+v", dbName, err)
+			t.Errorf("TestKillUpload teardown: drop database %s, error=%+v", dbName, err)
 		}
 	}()
 	time.Sleep(3 * time.Second)
@@ -196,10 +219,11 @@ func TestKill(t *testing.T) {
 		"delete must not see a stale pid lock: %s", deleteOut)
 	r.NotContains(deleteOut, "\"status\":\"error\"", "delete must succeed: %s", deleteOut)
 
-	// No completion check on the remote backup here on purpose: `delete remote`
-	// removes the backup prefix whether or not the upload finished writing it, so
-	// its result cannot tell a canceled upload from a finished one. Cancellation
-	// itself is proven by TestKillCreate and TestKillRestore, see assertBackupAbsent.
+	// 7. The killed upload must not have finished: Upload writes the remote
+	// metadata.json after every data file, so an interrupted one leaves either no
+	// remote backup at all or one the listing reports as broken. An upload which
+	// ignored cancellation runs to completion and leaves a usable remote backup.
+	assertBackupNotComplete(r, env, "remote", backupName)
 
 	// Remote backup, database, and env-pool return are handled by the defers
 	// registered above so they run on both success and mid-test failure.
@@ -253,13 +277,17 @@ func TestKillDownload(t *testing.T) {
 	// 2. start download and kill it mid-flight (start happens inside observeInProgressAndKill).
 	observeInProgressAndKill(r, env, "download "+backupName, backupName, "download", 15*time.Second)
 
-	// 3. a follow-up delete must not trip on a stale pid lock.
-	//
-	// There is no completion check here on purpose: `delete local` removes the
-	// backup directory whether or not the download filled it, so its result cannot
-	// tell a canceled download from a finished one. Cancellation itself is proven
-	// by TestKillCreate and TestKillRestore, see assertBackupAbsent.
-	delOut = postAction(r, env, "delete local "+backupName)
+	// 3. The killed download must not have finished: Download writes the local
+	// metadata.json as its very last step, so an interrupted one leaves either no
+	// backup directory at all or a directory GetLocalBackups reports as broken.
+	// A download which ignored cancellation runs to completion and shows up as a
+	// regular, complete local backup instead.
+	assertBackupNotComplete(r, env, "local", backupName)
+
+	// 4. a follow-up delete must not trip on a stale pid lock. It has to tolerate
+	// both post-kill states: the backup directory is removed when it exists, and
+	// reported as missing when the kill landed before it was created.
+	delOut, _ = postActionAllowError(env, "delete local "+backupName)
 	r.NotContains(delOut, "another clickhouse-backup", "delete must not see a stale pid lock: %s", delOut)
 }
 
