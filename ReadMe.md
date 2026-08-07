@@ -111,6 +111,10 @@ general:
   rebase_before_remove_old_remote: false # REBASE_BEFORE_REMOVE_OLD_REMOTE, makes `backups_to_keep_remote` a strict limit: when deletion is blocked by `required_backup` links from kept backups,
                                  # the oldest kept increment is rebased first (same as the `rebase` command, requires `upload_by_part: true` and the same `compression_format` for the whole chain),
                                  # so the whole out-of-window chain becomes deletable; rebase failure is not fatal and falls back to the legacy keep-required behavior.
+  rebase_during_delete: false    # REBASE_DURING_DELETE, `delete remote <backup_name>` refuses to delete a backup which other backups require via `required_backup`,
+                                 # when `true` every dependent increment is rebased first (same as the `rebase` command, requires `upload_by_part: true` and the same `compression_format` for the whole chain),
+                                 # so the chain stays restorable and the backup becomes deletable; rebase copies data, so deletion time grows with the copied size, rebase failure is fatal and the backup is not deleted.
+                                 # `delete local|remote --force` skips both the check and the rebase.
   log_level: info                # LOG_LEVEL, a choice from `debug`, `info`, `warning`, `error`
   disable_environment_override: false # can be set ONLY in the config file (has no environment variable name on purpose); when `true` config values come only from the config file,
                                  # all environment variables and the `--env` CLI flag are ignored during config loading;
@@ -725,6 +729,10 @@ Delete specific remote backup: `curl -s localhost:7171/backup/delete/remote/<BAC
 
 Delete specific local backup: `curl -s localhost:7171/backup/delete/local/<BACKUP_NAME> -X POST | jq .`
 
+Deleting a backup which other backups require via `required_backup` returns an error and keeps the backup, so an incremental backups chain can't be broken by accident, see `general.rebase_during_delete` to rebase the dependent backups instead.
+
+- Optional boolean query argument `force` works the same as the `--force` CLI argument (delete the backup even when other backups depend on it via `required_backup`, breaks the incremental backups chain and skips `general.rebase_during_delete`).
+
 ### GET /backup/status
 
 Display list of currently running asynchronous operations: `curl -s localhost:7171/backup/status | jq .`
@@ -1052,11 +1060,12 @@ NAME:
    clickhouse-backup delete - Delete specific backup
 
 USAGE:
-   clickhouse-backup delete <local|remote> <backup_name>
+   clickhouse-backup delete [--force] <local|remote> <backup_name>
 
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
+   --force, -f                                Delete the backup even when other backups depend on it via required_backup, breaks the incremental backups chain, also skips general.rebase_during_delete
    
 ```
 ### CLI command - default-config

@@ -274,7 +274,14 @@ func backupListed(env *TestEnvironment, configFile, location, backupName string)
 	if err != nil {
 		return false, out
 	}
-	return strings.Contains(out, backupName), out
+	// a partially uploaded backup is already listed by name but marked broken;
+	// treating it as present races with the still running server-side resume
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, backupName) && !strings.Contains(line, "broken") && !strings.Contains(line, "error") {
+			return true, out
+		}
+	}
+	return false, out
 }
 
 func backupFileExists(env *TestEnvironment, backupName, fileName string) (bool, string) {

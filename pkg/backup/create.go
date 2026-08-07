@@ -161,7 +161,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	if err != nil {
 		log.Error().Msgf("backup failed error: %v", err)
 		// delete local backup when creation failure
-		if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
+		if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks, true); removeBackupErr != nil {
 			log.Error().Msgf("creating failed -> b.RemoveBackupLocal error: %v", removeBackupErr)
 		}
 		// fix corner cases after https://github.com/Altinity/clickhouse-backup/issues/379
@@ -526,7 +526,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 					if sizeErr := b.ch.SelectContext(ctx, &systemBackupResult, backupSizeSQL); sizeErr != nil {
 						return errors.Wrap(sizeErr, "system.backups query")
 					}
-					if len(systemBackupResult) == 0 && len(systemBackupResult) > 1 {
+					if len(systemBackupResult) != 1 {
 						return errors.Errorf("wrong system.backup results: %v", systemBackupResult)
 					}
 					backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: systemBackupResult[0].CompressedSize})

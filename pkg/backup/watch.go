@@ -164,7 +164,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 				// If backups_to_keep_local=-1 then the local backup is deleted in the upload step when RemoveOldBackupsLocal is called
 				if !deleteSource && b.cfg.General.BackupsToKeepLocal >= 0 {
 					deleteLocalErr, deleteLocalErrCount = metrics.ExecuteWithMetrics("delete", deleteLocalErrCount, func() error {
-						return b.RemoveBackupLocal(ctx, backupName, nil)
+						return b.RemoveBackupLocal(ctx, backupName, nil, true)
 					})
 				}
 			} else {
@@ -202,7 +202,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 					createRemoteErrCount = 0
 				}
 				if !deleteSource && b.cfg.General.BackupsToKeepLocal >= 0 {
-					deleteLocalErr = b.RemoveBackupLocal(ctx, backupName, nil)
+					deleteLocalErr = b.RemoveBackupLocal(ctx, backupName, nil, true)
 					if deleteLocalErr != nil {
 						log.Error().Fields(map[string]interface{}{
 							"backup":    backupName,

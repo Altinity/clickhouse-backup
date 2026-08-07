@@ -276,7 +276,7 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 	// If backups_to_keep_local=-1 then the local backup is deleted in the upload step when RemoveOldBackupsLocal is called
 	if !deleteSource && b.cfg.General.BackupsToKeepLocal >= 0 {
 		removeLocal := func() error {
-			return b.RemoveBackupLocal(ctx, backupName, nil)
+			return b.RemoveBackupLocal(ctx, backupName, nil, true)
 		}
 		if metrics != nil {
 			deleteLocalErr, *deleteLocalErrCount = metrics.ExecuteWithMetrics("delete", *deleteLocalErrCount, removeLocal)
@@ -323,7 +323,7 @@ func (b *Backuper) deletePreviousWatchCycle(ctx context.Context, st *watchSchedu
 			continue
 		}
 		log.Info().Str("schedule", st.schedule.Name).Msgf("delete previous cycle backup `%s`", remoteBackup.BackupName)
-		if err = b.RemoveBackupRemote(ctx, remoteBackup.BackupName); err != nil {
+		if err = b.RemoveBackupRemote(ctx, remoteBackup.BackupName, true); err != nil {
 			return errors.Wrapf(err, "can't delete `%s`", remoteBackup.BackupName)
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -98,7 +99,7 @@ func (b *Backuper) cleanDir(dirName string) error {
 }
 
 // Delete - remove local or remote backup
-func (b *Backuper) Delete(backupType, backupName string, commandId int) error {
+func (b *Backuper) Delete(backupType, backupName string, force bool, commandId int) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "delete"); pidCheckErr != nil {
 		return pidCheckErr
 	}
@@ -113,12 +114,50 @@ func (b *Backuper) Delete(backupType, backupName string, commandId int) error {
 
 	switch backupType {
 	case "local":
-		return b.RemoveBackupLocal(ctx, backupName, nil)
+		return b.RemoveBackupLocal(ctx, backupName, nil, force)
 	case "remote":
-		return b.RemoveBackupRemote(ctx, backupName)
+		return b.RemoveBackupRemote(ctx, backupName, force)
 	default:
 		return errors.New("unknown backup type")
 	}
+}
+
+// backupChainLink - `required_backup` link of one backup, allows to check incremental chains
+// dependencies for both local (LocalBackup) and remote (storage.Backup) backup lists
+type backupChainLink struct {
+	backupName     string
+	requiredBackup string
+}
+
+// findDependentBackups - return names of backups which reference backupName via `required_backup`,
+// removing such a backup breaks the incremental chain: descendants stay unrestorable, and for object disks
+// their `required` parts blobs are deleted together with the <object_disk_path>/<backup_name> prefix,
+// see https://github.com/Altinity/clickhouse-backup/issues/1493
+func findDependentBackups(backupName string, links []backupChainLink) []string {
+	dependentBackups := make([]string, 0)
+	for _, link := range links {
+		if link.backupName != backupName && link.requiredBackup == backupName {
+			dependentBackups = append(dependentBackups, link.backupName)
+		}
+	}
+	sort.Strings(dependentBackups)
+	return dependentBackups
+}
+
+func localBackupsChainLinks(backupList []LocalBackup) []backupChainLink {
+	links := make([]backupChainLink, len(backupList))
+	for i := range backupList {
+		links[i] = backupChainLink{backupName: backupList[i].BackupName, requiredBackup: backupList[i].RequiredBackup}
+	}
+	return links
+}
+
+func remoteBackupsChainLinks(backupList []storage.Backup) []backupChainLink {
+	links := make([]backupChainLink, len(backupList))
+	for i := range backupList {
+		links[i] = backupChainLink{backupName: backupList[i].BackupName, requiredBackup: backupList[i].RequiredBackup}
+	}
+	return links
 }
 
 func (b *Backuper) RemoveOldBackupsLocal(ctx context.Context, keepLastBackup bool, disks []clickhouse.Disk) error {
@@ -140,14 +179,17 @@ func (b *Backuper) RemoveOldBackupsLocal(ctx context.Context, keepLastBackup boo
 	}
 	backupsToDelete := GetBackupsToDeleteLocal(backupList, keep)
 	for _, backup := range backupsToDelete {
-		if deleteErr := b.RemoveBackupLocal(ctx, backup.BackupName, disks); deleteErr != nil {
+		// retention deletes backups by `backups_to_keep_local` position, `required_backup` links are not checked, same as before #1493
+		if deleteErr := b.RemoveBackupLocal(ctx, backup.BackupName, disks, true); deleteErr != nil {
 			return errors.Wrap(deleteErr, "b.RemoveBackupLocal")
 		}
 	}
 	return nil
 }
 
-func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, disks []clickhouse.Disk) error {
+// RemoveBackupLocal - delete backupName from local disks, when force is false and some other local backup
+// requires backupName via `required_backup`, the backup is kept and an error is returned, see https://github.com/Altinity/clickhouse-backup/issues/1493
+func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, disks []clickhouse.Disk, force bool) error {
 	var err error
 	start := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
@@ -175,6 +217,14 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 	}
 	if backup == nil {
 		return errors.Errorf("'%s' is not found on local storage", backupName)
+	}
+	if !force {
+		if dependentBackups := findDependentBackups(backupName, localBackupsChainLinks(backupList)); len(dependentBackups) > 0 {
+			return errors.Errorf(
+				"'%s' is required by local backup(s) %s, deleting it breaks the incremental backups chain, delete the dependent backup(s) first or use `--force`",
+				backupName, strings.Join(dependentBackups, ", "),
+			)
+		}
 	}
 	b.isEmbedded = strings.Contains(backup.Tags, "embedded")
 	if hasObjectDisks || (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "") {
@@ -306,7 +356,11 @@ func (b *Backuper) skipIfTheSameRemoteBackupPresent(ctx context.Context, backupN
 	return false, nil
 }
 
-func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) error {
+// RemoveBackupRemote - delete backupName from remote storage, when some other remote backup requires backupName
+// via `required_backup`, the behavior depends on `general.rebase_during_delete`: when enabled every dependent backup is
+// rebased first (so the chain stays restorable), otherwise the backup is kept and an error is returned unless force is set,
+// see https://github.com/Altinity/clickhouse-backup/issues/1493
+func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string, force bool) error {
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	start := time.Now()
 	if b.cfg.General.RemoteStorage == "none" {
@@ -338,6 +392,10 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 
 	b.dst = bd
 
+	if err = b.processDependentRemoteBackups(ctx, backupName, force); err != nil {
+		return err
+	}
+
 	backupList, err := bd.BackupList(ctx, true, backupName)
 	if err != nil {
 		return errors.Wrap(err, "bd.BackupList")
@@ -363,6 +421,41 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 		}
 	}
 	return errors.Errorf("'%s' is not found on remote storage", backupName)
+}
+
+// processDependentRemoteBackups - handle `required_backup` links which point to backupName before it will be deleted,
+// requires connected b.dst; `force` skips the whole check and keeps the legacy chain-breaking behavior
+func (b *Backuper) processDependentRemoteBackups(ctx context.Context, backupName string, force bool) error {
+	if force {
+		return nil
+	}
+	// RemoveBackupRemote reads metadata only for backupName via the BackupList fast path,
+	// while `required_backup` links which reference it live in the metadata of the other backups
+	backupList, err := b.dst.BackupList(ctx, true, "")
+	if err != nil {
+		return errors.Wrap(err, "bd.BackupList")
+	}
+	dependentBackups := findDependentBackups(backupName, remoteBackupsChainLinks(backupList))
+	if len(dependentBackups) == 0 {
+		return nil
+	}
+	if !b.cfg.General.RebaseDuringDelete {
+		return errors.Errorf(
+			"'%s' is required by remote backup(s) %s, deleting it breaks the incremental backups chain, delete the dependent backup(s) first, run `rebase` for them, set `general.rebase_during_delete: true` or use `--force`",
+			backupName, strings.Join(dependentBackups, ", "),
+		)
+	}
+	for _, dependentBackup := range dependentBackups {
+		log.Info().Fields(map[string]interface{}{
+			"operation":       "delete",
+			"backup":          dependentBackup,
+			"required_backup": backupName,
+		}).Msg("rebase dependent backup before delete")
+		if rebaseErr := b.rebaseBackup(ctx, dependentBackup); rebaseErr != nil {
+			return errors.Wrapf(rebaseErr, "can't rebase %s which requires %s, %s is not deleted", dependentBackup, backupName, backupName)
+		}
+	}
+	return nil
 }
 
 func (b *Backuper) cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx context.Context, backup storage.Backup) error {
@@ -544,7 +637,7 @@ func (b *Backuper) CleanLocalBroken(commandId int) error {
 	}
 	for _, backup := range localBackups {
 		if backup.Broken != "" {
-			if err = b.RemoveBackupLocal(ctx, backup.BackupName, nil); err != nil {
+			if err = b.RemoveBackupLocal(ctx, backup.BackupName, nil, true); err != nil {
 				return errors.Wrap(err, "b.RemoveBackupLocal")
 			}
 		}
@@ -586,7 +679,7 @@ func (b *Backuper) CleanRemoteBroken(commandId int, includeGlobs []string) error
 				continue
 			}
 		}
-		if err = b.RemoveBackupRemote(ctx, backup.BackupName); err != nil {
+		if err = b.RemoveBackupRemote(ctx, backup.BackupName, true); err != nil {
 			return errors.Wrap(err, "b.RemoveBackupRemote")
 		}
 	}
@@ -877,7 +970,7 @@ func (b *Backuper) cleanPartialRequiredBackup(ctx context.Context, disks []click
 	if localBackups, _, err := b.GetLocalBackups(ctx, disks); err == nil {
 		for _, localBackup := range localBackups {
 			if localBackup.BackupName != currentBackupName && localBackup.DataSize+localBackup.CompressedSize+localBackup.MetadataSize+localBackup.RBACSize == 0 {
-				if err = b.RemoveBackupLocal(ctx, localBackup.BackupName, disks); err != nil {
+				if err = b.RemoveBackupLocal(ctx, localBackup.BackupName, disks, true); err != nil {
 					return errors.Wrapf(err, "CleanPartialRequiredBackups %s -> RemoveBackupLocal cleaning error", localBackup.BackupName)
 				}
 
