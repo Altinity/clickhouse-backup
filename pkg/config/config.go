@@ -93,9 +93,9 @@ type GeneralConfig struct {
 	// rebase every dependent increment first (same as the `rebase` command), so the chain stays restorable and the backup becomes deletable;
 	// rebase copies the deleted backup parts into its dependents, so deletion time grows with the copied data size,
 	// rebase failure is fatal and the backup is not deleted, see https://github.com/Altinity/clickhouse-backup/issues/1493
-	RebaseDuringDelete      bool   `yaml:"rebase_during_delete" envconfig:"REBASE_DURING_DELETE"`
-	UploadMaxBytesPerSecond uint64 `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
-	DownloadMaxBytesPerSecond   uint64 `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
+	RebaseDuringDelete        bool   `yaml:"rebase_during_delete" envconfig:"REBASE_DURING_DELETE"`
+	UploadMaxBytesPerSecond   uint64 `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
+	DownloadMaxBytesPerSecond uint64 `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
 	// MaxBrokenPartRatio - maximum allowed fraction (0..1) of broken data parts that still produces a
 	// successful but partial backup during backup creation (`create`, and the create stage of
 	// `create_remote`). 0 (default) preserves legacy behavior where any broken part aborts the whole
@@ -127,6 +127,11 @@ type GeneralConfig struct {
 	WatchInterval                       string            `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
 	FullInterval                        string            `yaml:"full_interval" envconfig:"FULL_INTERVAL"`
 	WatchBackupNameTemplate             string            `yaml:"watch_backup_name_template" envconfig:"WATCH_BACKUP_NAME_TEMPLATE"`
+	// CallbackURL - optional HTTP endpoint notified when a backup command completes (API, CLI, or watch iteration).
+	// API query param `?callback=` overrides this when non-empty.
+	CallbackURL string `yaml:"callback_url" envconfig:"CALLBACK_URL"`
+	// CallbackTimeout - max wait for the completion callback HTTP POST (duration string, default "5s").
+	CallbackTimeout string `yaml:"callback_timeout" envconfig:"CALLBACK_TIMEOUT"`
 	// WatchSchedules - named cron driven watch chains, alternative to watch_interval/full_interval, in env use ';' as separator between schedules, see https://github.com/Altinity/clickhouse-backup/issues/1354
 	WatchSchedules               WatchSchedules `yaml:"watch_schedules" envconfig:"WATCH_SCHEDULES"`
 	ShardedOperationMode         string         `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
@@ -137,9 +142,15 @@ type GeneralConfig struct {
 	ConfigBackupAlways           bool           `yaml:"config_backup_always" envconfig:"CONFIG_BACKUP_ALWAYS"`
 	NamedCollectionsBackupAlways bool           `yaml:"named_collections_backup_always" envconfig:"NAMED_COLLECTIONS_BACKUP_ALWAYS"`
 	DeleteBatchSize              int            `yaml:"delete_batch_size" envconfig:"DELETE_BATCH_SIZE"`
-	RetriesDuration              time.Duration
-	WatchDuration                time.Duration
-	FullDuration                 time.Duration
+	// StatusHistorySize bounds how many finished operations are kept in the in-memory
+	// async status (`/backup/status`, `system.backup_actions`). Long living `watch`
+	// processes record one operation per iteration, so the history needs an upper bound.
+	// Operations still running are never dropped, whatever their age.
+	StatusHistorySize       int `yaml:"status_history_size" envconfig:"STATUS_HISTORY_SIZE"`
+	RetriesDuration         time.Duration
+	WatchDuration           time.Duration
+	FullDuration            time.Duration
+	CallbackTimeoutDuration time.Duration
 }
 
 // GCSConfig - GCS settings section
@@ -746,6 +757,21 @@ func ValidateConfig(cfg *Config) error {
 	} else {
 		return errors.New("empty retries pause")
 	}
+	if cfg.General.CallbackTimeout != "" {
+		if duration, err := time.ParseDuration(cfg.General.CallbackTimeout); err != nil {
+			return errors.Wrap(err, "invalid callback timeout")
+		} else if duration <= 0 {
+			return errors.Errorf("invalid callback timeout `%s`, it must be > 0", cfg.General.CallbackTimeout)
+		} else {
+			cfg.General.CallbackTimeoutDuration = duration
+		}
+	} else {
+		cfg.General.CallbackTimeout = "5s"
+		cfg.General.CallbackTimeoutDuration = 5 * time.Second
+	}
+	if cfg.General.StatusHistorySize <= 0 {
+		return errors.Errorf("invalid status_history_size `%d`, it must be > 0", cfg.General.StatusHistorySize)
+	}
 	if cfg.General.WatchInterval != "" {
 		if duration, err := time.ParseDuration(cfg.General.WatchInterval); err != nil {
 			return errors.Wrap(err, "invalid watch interval")
@@ -844,6 +870,9 @@ func DefaultConfig() *Config {
 			RetriesOnFailure:                    3,
 			RetriesPause:                        "5s",
 			RetriesDuration:                     5 * time.Second,
+			CallbackTimeout:                     "5s",
+			CallbackTimeoutDuration:             5 * time.Second,
+			StatusHistorySize:                   1000,
 			WatchInterval:                       "1h",
 			WatchDuration:                       1 * time.Hour,
 			FullInterval:                        "24h",
