@@ -161,7 +161,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	if err != nil {
 		log.Error().Msgf("backup failed error: %v", err)
 		// delete local backup when creation failure
-		if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
+		if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks, true); removeBackupErr != nil {
 			log.Error().Msgf("creating failed -> b.RemoveBackupLocal error: %v", removeBackupErr)
 		}
 		// fix corner cases after https://github.com/Altinity/clickhouse-backup/issues/379
@@ -526,7 +526,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 					if sizeErr := b.ch.SelectContext(ctx, &systemBackupResult, backupSizeSQL); sizeErr != nil {
 						return errors.Wrap(sizeErr, "system.backups query")
 					}
-					if len(systemBackupResult) == 0 && len(systemBackupResult) > 1 {
+					if len(systemBackupResult) != 1 {
 						return errors.Errorf("wrong system.backup results: %v", systemBackupResult)
 					}
 					backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: systemBackupResult[0].CompressedSize})
@@ -1392,13 +1392,22 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 					}
 				} else {
 					if !isCopyFailed.Load() {
-						objSize, copyObjectErr = b.dst.CopyObject(ctx, storageObject.ObjectSize, srcBucket, srcKey, dstKey)
+						copyRetry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), copyObjectRetryClassifier{b: b})
+						copyObjectErr = copyRetry.RunCtx(uploadCtx, func(ctx context.Context) error {
+							var copyErr error
+							objSize, copyErr = b.dst.CopyObject(ctx, storageObject.ObjectSize, srcBucket, srcKey, dstKey)
+							return copyErr
+						})
 						if copyObjectErr != nil {
-							log.Warn().Msgf("b.dst.CopyObject in %s error: %v, will try upload via streaming (possible high network traffic)", backupShadowPath, copyObjectErr)
-							isCopyFailed.Store(true)
+							if storage.IsPermanentCopyObjectError(copyObjectErr) {
+								log.Warn().Msgf("b.dst.CopyObject in %s error: %v, will try upload via streaming (possible high network traffic)", backupShadowPath, copyObjectErr)
+								isCopyFailed.Store(true)
+							} else {
+								log.Warn().Msgf("b.dst.CopyObject in %s for srcKey=%s error: %v, will try upload via streaming for this object only", backupShadowPath, srcKey, copyObjectErr)
+							}
 						}
 					}
-					if isCopyFailed.Load() {
+					if isCopyFailed.Load() || copyObjectErr != nil {
 						retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 						copyObjectErr = retry.RunCtx(uploadCtx, func(ctx context.Context) error {
 							return object_disk.CopyObjectStreaming(uploadCtx, srcDiskConnection.GetRemoteStorage(), b.dst, srcKey, dstKey, b.dst.UploadLimiter(b.cfg.General.UploadMaxBytesPerSecond))

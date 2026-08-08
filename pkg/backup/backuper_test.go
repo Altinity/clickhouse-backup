@@ -7,10 +7,12 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/aws/smithy-go"
 	"github.com/eapache/go-resiliency/retrier"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 )
 
 func TestClassify(t *testing.T) {
@@ -32,6 +34,30 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+func TestCopyObjectRetryClassify(t *testing.T) {
+	c := copyObjectRetryClassifier{b: NewBackuper(&config.Config{})}
+	_, ftpCopyErr := (&storage.FTP{}).CopyObject(context.Background(), 0, "bucket", "srcKey", "dstKey")
+	_, sftpCopyErr := (&storage.SFTP{}).CopyObject(context.Background(), 0, "bucket", "srcKey", "dstKey")
+	testcases := []struct {
+		err    error
+		expect retrier.Action
+	}{
+		{nil, retrier.Succeed},
+		{context.Canceled, retrier.Fail},
+		{fmt.Errorf("S3->CopyObject src -> dst return error: %w", &smithy.GenericAPIError{Code: "AccessDenied", Message: "Access Denied"}), retrier.Fail},
+		{ftpCopyErr, retrier.Fail},
+		{sftpCopyErr, retrier.Fail},
+		{&smithy.GenericAPIError{Code: "SlowDown"}, retrier.Retry},
+		{errors.New("failed to get rate limit token, retry quota exceeded, 0 available, 5 requested"), retrier.Retry},
+		{errors.New("write tcp 1.2.3.4:1->5.6.7.8:443: use of closed network connection"), retrier.Retry},
+	}
+	for _, tc := range testcases {
+		if got := c.Classify(tc.err); got != tc.expect {
+			t.Fatalf("Classify(%v) = %v, expected %v", tc.err, got, tc.expect)
+		}
+	}
+}
+
 type testVersioner struct {
 	err error
 }
@@ -40,7 +66,7 @@ func newTestVersioner(err error) *testVersioner {
 	return &testVersioner{err: err}
 }
 
-func (v *testVersioner) CanShardOperation(ctx context.Context) error {
+func (v *testVersioner) CanShardOperation(_ context.Context) error {
 	return v.err
 }
 

@@ -29,6 +29,28 @@ var (
 	buildArch = "unknown"
 )
 
+// commandIdFromCli reads --command-id from wherever urfave/cli v1 parsed it.
+//
+// `command-id` is declared once in cliapp.Flags, but every command re-declares it
+// through `Flags: append(cliapp.Flags, ...)`, so it exists in two flag sets. In
+// urfave/cli v1 (unlike v2) c.Int does NOT walk the lineage: it reads only the
+// command's own copy, which holds the default unless the flag follows the command
+// name. The API server passes `--command-id N` *before* the command name
+// (APIServer.actionsAsyncCommandsHandler and friends), so the value lands in the
+// app flag set and is only reachable via c.GlobalInt.
+//
+// Reading just c.Int made every command started through POST /backup/actions see
+// status.NotFromAPI, so it ran with a fresh background context instead of the one
+// owned by its status row and /backup/kill could not cancel it. Broken since
+// 0a26ee69 (v2.1.0), which moved the flag from the commands to the app but kept
+// the c.Int lookups. config.GetConfigPath handles the same duplication the same way.
+func commandIdFromCli(c *cli.Context) int {
+	if id := c.GlobalInt("command-id"); id != status.NotFromAPI {
+		return id
+	}
+	return c.Int("command-id")
+}
+
 func main() {
 	log.Logger = log_helper.SetupLogger(os.Stderr)
 	//log.Logger = zerolog.New(os.Stdout).With().Timestamp().Caller().Logger()
@@ -142,7 +164,7 @@ func main() {
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("skip-check-parts-columns"), c.StringSlice("skip-projections"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("skip-check-parts-columns"), c.StringSlice("skip-projections"), c.Bool("resume"), version, commandIdFromCli(c))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -225,7 +247,7 @@ func main() {
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("skip-check-parts-columns"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("skip-check-parts-columns"), c.Bool("resume"), version, commandIdFromCli(c))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -317,7 +339,7 @@ func main() {
 			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("named-collections-only"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("named-collections-only"), c.Bool("resume"), version, commandIdFromCli(c))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -406,7 +428,7 @@ func main() {
 			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("hardlink-exists-files"), version, c.Int("command-id"))
+				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("hardlink-exists-files"), version, commandIdFromCli(c))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -467,7 +489,7 @@ func main() {
 					log.Err(fmt.Errorf("backup name must be defined")).Send()
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
-				return b.Rebase(c.Args().First(), c.Int("command-id"))
+				return b.Rebase(c.Args().First(), commandIdFromCli(c))
 			},
 			Flags: cliapp.Flags,
 		},
@@ -481,7 +503,7 @@ func main() {
 					log.Err(fmt.Errorf("backup name must be defined")).Send()
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
-				return b.Rebalance(c.Args().First(), c.String("tables"), c.Bool("dry-run"), c.Int("command-id"))
+				return b.Rebalance(c.Args().First(), c.String("tables"), c.Bool("dry-run"), commandIdFromCli(c))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -502,7 +524,7 @@ func main() {
 			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] [--skip-empty-tables] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Restore(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), version, c.Int("command-id"))
+				return b.Restore(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), version, commandIdFromCli(c))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -619,7 +641,7 @@ func main() {
 			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), c.Bool("hardlink-exists-files"), version, c.Int("command-id"))
+				return b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), c.Bool("hardlink-exists-files"), version, commandIdFromCli(c))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -733,7 +755,7 @@ func main() {
 		{
 			Name:      "delete",
 			Usage:     "Delete specific backup",
-			UsageText: "clickhouse-backup delete <local|remote> <backup_name>",
+			UsageText: "clickhouse-backup delete [--force] <local|remote> <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				if c.Args().Get(0) != "local" && c.Args().Get(0) != "remote" {
@@ -744,9 +766,15 @@ func main() {
 					log.Err(fmt.Errorf("backup name must be defined")).Send()
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
-				return b.Delete(c.Args().Get(0), c.Args().Get(1), c.Int("command-id"))
+				return b.Delete(c.Args().Get(0), c.Args().Get(1), c.Bool("force"), commandIdFromCli(c))
 			},
-			Flags: cliapp.Flags,
+			Flags: append(cliapp.Flags,
+				cli.BoolFlag{
+					Name:   "force, f",
+					Hidden: false,
+					Usage:  "Delete the backup even when other backups depend on it via required_backup, breaks the incremental backups chain, also skips general.rebase_during_delete",
+				},
+			),
 		},
 		{
 			Name:  "default-config",
@@ -829,7 +857,7 @@ func main() {
 			Description: "Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups. Use `--schedule` instead of intervals to run backups on cron expressions",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.StringSlice("schedule"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), c.Bool("named-collections"), c.Bool("skip-check-parts-columns"), c.Bool("delete-source"), version, c.Int("command-id"), nil, c)
+				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.StringSlice("schedule"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), c.Bool("named-collections"), c.Bool("skip-check-parts-columns"), c.Bool("delete-source"), version, commandIdFromCli(c), nil, c)
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -983,6 +1011,7 @@ func main() {
 		}
 		return cli.ShowAppHelp(c)
 	}
+	registerCLIStatus(cliapp.Commands)
 	if err := cliapp.Run(os.Args); err != nil {
 		log.Fatal().Stack().Err(err).Send()
 	}

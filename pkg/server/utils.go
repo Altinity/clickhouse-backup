@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -64,36 +63,5 @@ func (api *APIServer) sendJSONEachRow(w http.ResponseWriter, statusCode int, v i
 		flusher.Flush()
 	} else {
 		log.Warn().Msgf("%#v doesn't support Flusher interface", w)
-	}
-}
-
-// CallbackResponse is the response that is returned to callers
-type CallbackResponse struct {
-	Status      string `json:"status"`
-	Error       string `json:"error"`
-	OperationId string `json:"operation_id"`
-}
-
-// errorCallback executes callbacks with a payload notifying callers that the operation has failed
-func (api *APIServer) errorCallback(ctx context.Context, err error, operationId string, callback callbackFn) {
-	payload := &CallbackResponse{
-		Status:      "error",
-		Error:       err.Error(),
-		OperationId: operationId,
-	}
-	for _, e := range callback(ctx, payload) {
-		log.Error().Err(e).Send()
-	}
-}
-
-// successCallback executes callbacks with a payload notifying callers that the operation succeeded
-func (api *APIServer) successCallback(ctx context.Context, operationId string, callback callbackFn) {
-	payload := &CallbackResponse{
-		Status:      "success",
-		Error:       "",
-		OperationId: operationId,
-	}
-	for _, e := range callback(ctx, payload) {
-		log.Error().Err(e).Send()
 	}
 }

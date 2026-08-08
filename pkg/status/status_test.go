@@ -130,3 +130,83 @@ func TestSetCancelWaitTimeout(t *testing.T) {
 	SetCancelWaitTimeout(-1 * time.Second)
 	r.Equal(42*time.Second, CancelWaitTimeout)
 }
+
+// Long running `watch` registers one row per iteration, so finished rows must be
+// dropped while already handed out commandIds keep resolving to their own row.
+func TestTrimFinishedRows_KeepsCommandIdStable(t *testing.T) {
+	r := require.New(t)
+	defer func(old int) { maxFinishedRows = old }(maxFinishedRows)
+	maxFinishedRows = 5
+
+	s := &AsyncStatus{}
+	// a `watch`/`server` row stays in progress for the whole process lifetime and
+	// must not keep the finished iterations recorded after it alive
+	stuckId, _ := s.Start("watch")
+	firstIterationId, _ := s.Start("create_remote iteration-0")
+	s.Stop(firstIterationId, nil)
+	var lastId int
+	for i := 1; i < 50; i++ {
+		lastId, _ = s.Start("create_remote iteration")
+		s.Stop(lastId, nil)
+	}
+
+	s.RLock()
+	kept := len(s.commands)
+	s.RUnlock()
+	// trimming runs on Start, so the row finished after the last Start may linger,
+	// plus the one still in progress
+	r.LessOrEqual(kept, maxFinishedRows+2, "finished rows must be trimmed")
+
+	// the in progress row is never dropped, and its id still resolves
+	_, _, err := s.GetContextWithCancel(stuckId)
+	r.NoError(err)
+
+	// the newest row still resolves to itself, not to a shifted neighbour
+	_, _, err = s.GetContextWithCancel(lastId)
+	r.Error(err, "finished rows have no context")
+	r.Equal(SuccessStatus, s.GetStatus(false, "iteration", 1)[0].Status)
+
+	// a trimmed id resolves to nothing instead of hitting the wrong row
+	_, _, err = s.GetContextWithCancel(firstIterationId)
+	r.Error(err)
+	r.Empty(s.GetStatus(false, "iteration-0", 1), "trimmed row must be gone from history")
+}
+
+// A row canceled via /backup/kill is terminal but its command goroutine may still
+// be running, and that goroutine must still reach Stop to close Done and release
+// the Cancel waiter. Trimming it early would strand Cancel for CancelWaitTimeout.
+func TestTrimKeepsCanceledRowUntilGoroutineReturns(t *testing.T) {
+	r := require.New(t)
+	defer func(old int) { maxFinishedRows = old }(maxFinishedRows)
+	maxFinishedRows = 1
+	// Cancel waits for the goroutine, which in this test only returns later
+	defer func(old time.Duration) { CancelWaitTimeout = old }(CancelWaitTimeout)
+	CancelWaitTimeout = 100 * time.Millisecond
+
+	s := &AsyncStatus{}
+	canceledId, _ := s.Start("restore my_backup")
+	_, err := s.Cancel("restore my_backup", stderrors.New("canceled by user"))
+	r.NoError(err)
+
+	// push far past the limit while the canceled goroutine has not returned yet
+	for i := 0; i < 20; i++ {
+		id, _ := s.Start("create iteration")
+		s.Stop(id, nil)
+	}
+
+	s.RLock()
+	row := s.byId[canceledId]
+	s.RUnlock()
+	r.NotNil(row, "canceled row must survive trimming until its goroutine returns")
+
+	// once the goroutine reaches Stop the row becomes trimmable
+	s.Stop(canceledId, nil)
+	for i := 0; i < 20; i++ {
+		id, _ := s.Start("create iteration")
+		s.Stop(id, nil)
+	}
+	s.RLock()
+	_, stillThere := s.byId[canceledId]
+	s.RUnlock()
+	r.False(stillThere, "canceled row must be trimmed after its goroutine returned")
+}

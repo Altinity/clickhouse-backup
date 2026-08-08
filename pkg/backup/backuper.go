@@ -81,6 +81,23 @@ func (b *Backuper) Classify(err error) retrier.Action {
 	return retrier.Retry
 }
 
+// copyObjectRetryClassifier retries transient server-side CopyObject errors but fails fast
+// when the copy can't succeed at all (unsupported operation, missing permissions), so the
+// caller falls back to streaming without waiting out the whole backoff budget.
+type copyObjectRetryClassifier struct {
+	b *Backuper
+}
+
+func (c copyObjectRetryClassifier) Classify(err error) retrier.Action {
+	if err == nil {
+		return retrier.Succeed
+	}
+	if storage.IsPermanentCopyObjectError(err) {
+		return retrier.Fail
+	}
+	return c.b.Classify(err)
+}
+
 func WithVersioner(v versioner) BackuperOpt {
 	return func(b *Backuper) {
 		b.vers = v
