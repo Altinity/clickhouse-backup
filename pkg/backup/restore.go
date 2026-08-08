@@ -746,20 +746,24 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 			"SETTINGS PROFILE": "settings_profiles",
 			"QUOTA":            "quotas",
 			"USER":             "users",
+			"MASKING POLICY":   "masking_policies",
 		}
 		systemTable, systemTableExists := rbacSystemTableNames[kind]
 		if !systemTableExists {
 			log.Error().Msgf("unsupported RBAC object kind: %s", kind)
 			return false, "", nil
 		}
-		isRBACExistsSQL := fmt.Sprintf("SELECT toString(id) AS id, name FROM `system`.`%s` WHERE name=? LIMIT 1", systemTable)
-		existsRBACRow := make([]clickhouse.RBACObject, 0)
-		if err := b.ch.SelectContext(ctx, &existsRBACRow, isRBACExistsSQL, name); err != nil {
-			log.Warn().Msgf("RBAC object resolve failed, check SQL GRANTS or <access_management> settings for user which you use to connect to clickhouse-server, kind: %s, name: %s, error: %v", kind, name, err)
-			return false, "", nil
-		}
-		if len(existsRBACRow) != 0 {
-			return true, "sql", []string{existsRBACRow[0].Id}
+		// system.masking_policies exists only in 26.8+, on older versions check only local and keeper user directories
+		if systemTable != "masking_policies" || version >= 26008000 {
+			isRBACExistsSQL := fmt.Sprintf("SELECT toString(id) AS id, name FROM `system`.`%s` WHERE name=? LIMIT 1", systemTable)
+			existsRBACRow := make([]clickhouse.RBACObject, 0)
+			if err := b.ch.SelectContext(ctx, &existsRBACRow, isRBACExistsSQL, name); err != nil {
+				log.Warn().Msgf("RBAC object resolve failed, check SQL GRANTS or <access_management> settings for user which you use to connect to clickhouse-server, kind: %s, name: %s, error: %v", kind, name, err)
+				return false, "", nil
+			}
+			if len(existsRBACRow) != 0 {
+				return true, "sql", []string{existsRBACRow[0].Id}
+			}
 		}
 	}
 
@@ -859,6 +863,7 @@ func (b *Backuper) dropExistsRBAC(ctx context.Context, kind string, name string,
 		"SETTINGS PROFILE": "S",
 		"QUOTA":            "Q",
 		"USER":             "U",
+		"MASKING POLICY":   "M",
 	}
 	keeperRBACTypePrefix, isKeeperRBACTypePrefixExists := keeperPrefixesRBAC[kind]
 	if !isKeeperRBACTypePrefixExists {
@@ -904,6 +909,7 @@ func (b *Backuper) detectRBACObject(sql string) (string, string, error) {
 		"ATTACH SETTINGS PROFILE": "SETTINGS PROFILE",
 		"ATTACH QUOTA":            "QUOTA",
 		"ATTACH USER":             "USER",
+		"ATTACH MASKING POLICY":   "MASKING POLICY",
 	}
 
 	// Iterate over the prefixes to find a match.
@@ -932,7 +938,7 @@ func (b *Backuper) detectRBACObject(sql string) (string, string, error) {
 	} else {
 		name = names[0]
 	}
-	if kind != "ROW POLICY" {
+	if kind != "ROW POLICY" && kind != "MASKING POLICY" {
 		name = strings.Trim(name, "`")
 	}
 	name = strings.TrimSpace(name)
