@@ -268,18 +268,25 @@ type S3Config struct {
 	DeleteConcurrency       int               `yaml:"delete_concurrency" envconfig:"S3_DELETE_CONCURRENCY"`
 	Debug                   bool              `yaml:"debug" envconfig:"S3_DEBUG"`
 	// HTTP transport and buffer tuning for high-bandwidth networks, see https://github.com/Altinity/clickhouse-backup/issues/1376
-	// HTTPMaxIdleConns - http.Transport.MaxIdleConns, 0 keeps the AWS SDK default
+	// HTTPMaxIdleConns - http.Transport.MaxIdleConns, 0 keeps the AWS SDK default (100)
 	HTTPMaxIdleConns int `yaml:"http_max_idle_conns" envconfig:"S3_HTTP_MAX_IDLE_CONNS"`
-	// HTTPMaxIdleConnsPerHost - http.Transport.MaxIdleConnsPerHost, 0 keeps the Go default (2), raise it to avoid serializing parallel up/downloads to the same endpoint
+	// HTTPMaxIdleConnsPerHost - http.Transport.MaxIdleConnsPerHost, 0 keeps the AWS SDK default (10), raise it to avoid serializing parallel up/downloads to the same endpoint
 	HTTPMaxIdleConnsPerHost int `yaml:"http_max_idle_conns_per_host" envconfig:"S3_HTTP_MAX_IDLE_CONNS_PER_HOST"`
-	// HTTPMaxConnsPerHost - http.Transport.MaxConnsPerHost, 0 means unlimited
+	// HTTPMaxConnsPerHost - http.Transport.MaxConnsPerHost, 0 keeps the AWS SDK default (2048)
 	HTTPMaxConnsPerHost int `yaml:"http_max_conns_per_host" envconfig:"S3_HTTP_MAX_CONNS_PER_HOST"`
 	// HTTPWriteBufferSize - http.Transport.WriteBufferSize, 0 keeps the Go default (4KB)
 	HTTPWriteBufferSize int `yaml:"http_write_buffer_size" envconfig:"S3_HTTP_WRITE_BUFFER_SIZE"`
 	// HTTPReadBufferSize - http.Transport.ReadBufferSize, 0 keeps the Go default (4KB)
 	HTTPReadBufferSize int `yaml:"http_read_buffer_size" envconfig:"S3_HTTP_READ_BUFFER_SIZE"`
-	// HTTPIdleConnTimeout - http.Transport.IdleConnTimeout as a duration string, empty keeps the Go default (90s)
+	// HTTPIdleConnTimeout - http.Transport.IdleConnTimeout as a duration string, empty keeps the AWS SDK default (90s)
 	HTTPIdleConnTimeout string `yaml:"http_idle_conn_timeout" envconfig:"S3_HTTP_IDLE_CONN_TIMEOUT"`
+	// HTTP/2 health checks, they only apply to endpoints which negotiate HTTP/2 (AWS S3 itself doesn't), see https://github.com/Altinity/clickhouse-backup/issues/1490
+	// HTTP2SendPingTimeout - http.HTTP2Config.SendPingTimeout as a duration string, empty or 0s disables the health check
+	HTTP2SendPingTimeout string `yaml:"http2_send_ping_timeout" envconfig:"S3_HTTP2_SEND_PING_TIMEOUT"`
+	// HTTP2PingTimeout - http.HTTP2Config.PingTimeout as a duration string, how long to wait for the PING response before closing the connection
+	HTTP2PingTimeout string `yaml:"http2_ping_timeout" envconfig:"S3_HTTP2_PING_TIMEOUT"`
+	// HTTP2WriteByteTimeout - http.HTTP2Config.WriteByteTimeout as a duration string, close the connection when a single write stalls for longer, empty or 0s disables it
+	HTTP2WriteByteTimeout string `yaml:"http2_write_byte_timeout" envconfig:"S3_HTTP2_WRITE_BYTE_TIMEOUT"`
 }
 
 // COSConfig - cos settings section
@@ -633,9 +640,17 @@ func ValidateConfig(cfg *Config) error {
 		if _, err := aws.ParseRetryMode(cfg.S3.RetryMode); err != nil {
 			return errors.Wrap(err, "ValidateConfig ParseRetryMode")
 		}
-		if cfg.S3.HTTPIdleConnTimeout != "" {
-			if _, err := time.ParseDuration(cfg.S3.HTTPIdleConnTimeout); err != nil {
-				return errors.Wrap(err, "invalid s3 http_idle_conn_timeout")
+		for name, value := range map[string]string{
+			"http_idle_conn_timeout":   cfg.S3.HTTPIdleConnTimeout,
+			"http2_send_ping_timeout":  cfg.S3.HTTP2SendPingTimeout,
+			"http2_ping_timeout":       cfg.S3.HTTP2PingTimeout,
+			"http2_write_byte_timeout": cfg.S3.HTTP2WriteByteTimeout,
+		} {
+			if value == "" {
+				continue
+			}
+			if _, err := time.ParseDuration(value); err != nil {
+				return errors.Wrapf(err, "invalid s3 %s", name)
 			}
 		}
 	}
@@ -945,6 +960,9 @@ func DefaultConfig() *Config {
 			RetryMode:               string(aws.RetryModeStandard),
 			ChunkSize:               5 * 1024 * 1024,
 			DeleteConcurrency:       10,
+			HTTP2SendPingTimeout:    "30s",
+			HTTP2PingTimeout:        "15s",
+			HTTP2WriteByteTimeout:   "60s",
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
