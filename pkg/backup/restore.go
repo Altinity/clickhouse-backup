@@ -2288,7 +2288,7 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 	if err := b.prepareRequiredPartsForRestore(ctx, backupName, backupMetadata, backupTable, diskMap, disks); err != nil {
 		return errors.Wrapf(err, "can't prepare required data parts '%s.%s'", backupTable.Database, backupTable.Table)
 	}
-	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, backupTable, disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, copyToDetached); err != nil {
+	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, b.filterOutPlainDiskParts(backupMetadata, backupTable), disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, copyToDetached); err != nil {
 		if copyToDetached {
 			return errors.Wrapf(err, "can't copy data to detached '%s.%s'", backupTable.Database, backupTable.Table)
 		}
@@ -2310,6 +2310,11 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 		Msg("download object_disks start")
 	if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, backupTable, diskMap, diskTypes, disks, needsKeyRewrite); err != nil {
 		return errors.Wrapf(err, "can't restore object_disk server-side copy data parts '%s.%s'", backupTable.Database, backupTable.Table)
+	}
+	if plainSize, plainErr := b.restorePlainDiskParts(ctx, backupName, backupMetadata, backupTable, dstTable, disks); plainErr != nil {
+		return errors.Wrapf(plainErr, "can't restore plain disk data parts '%s.%s'", backupTable.Database, backupTable.Table)
+	} else {
+		size += plainSize
 	}
 	if size > 0 {
 		logger.
@@ -2350,7 +2355,7 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 	if err := b.prepareRequiredPartsForRestore(ctx, backupName, backupMetadata, backupTable, diskMap, disks); err != nil {
 		return errors.Wrapf(err, "can't prepare required data parts '%s.%s'", backupTable.Database, backupTable.Table)
 	}
-	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, backupTable, disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, true); err != nil {
+	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, b.filterOutPlainDiskParts(backupMetadata, backupTable), disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, true); err != nil {
 		return errors.Wrapf(err, "can't copy data to detached `%s`.`%s`", dstTable.Database, dstTable.Name)
 	}
 	logger.Debug().Msg("data to 'detached' copied")
@@ -2360,6 +2365,11 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 	start := time.Now()
 	if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, backupTable, diskMap, diskTypes, disks, needsKeyRewrite); err != nil {
 		return errors.Wrapf(err, "can't restore object_disk server-side copy data parts '%s.%s'", backupTable.Database, backupTable.Table)
+	}
+	if plainSize, plainErr := b.restorePlainDiskParts(ctx, backupName, backupMetadata, backupTable, dstTable, disks); plainErr != nil {
+		return errors.Wrapf(plainErr, "can't restore plain disk data parts '%s.%s'", backupTable.Database, backupTable.Table)
+	} else {
+		size += plainSize
 	}
 	log.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Str("database", backupTable.Database).Str("table", backupTable.Table).Msg("download object_disks finish")
 	// Skip ATTACH PART for Replicated*MergeTree tables if replicatedCopyToDetached is true
@@ -2584,6 +2594,166 @@ func (b *Backuper) findRestoreRequiredPartRemote(ctx context.Context, requiredBa
 	return map[string]string{tableRemotePath: tableLocalDir}, nil, true
 }
 
+// filterOutPlainDiskParts returns a copy of backupTable without parts stored on plain/plain_rewritable
+// disks: such parts have no local files inside the backup, so they must not participate in the
+// hardlink-to-detached step, restorePlainDiskParts copies them on the bucket level instead
+func (b *Backuper) filterOutPlainDiskParts(backupMetadata metadata.BackupMetadata, backupTable metadata.TableMetadata) metadata.TableMetadata {
+	containsPlain := false
+	for diskName := range backupTable.Parts {
+		if backupMetadata.IsPlainDisk(diskName) {
+			containsPlain = true
+			break
+		}
+	}
+	if !containsPlain {
+		return backupTable
+	}
+	filteredTable := backupTable
+	filteredTable.Parts = make(map[string][]metadata.Part, len(backupTable.Parts))
+	for diskName, parts := range backupTable.Parts {
+		if !backupMetadata.IsPlainDisk(diskName) {
+			filteredTable.Parts[diskName] = parts
+		}
+	}
+	return filteredTable
+}
+
+// restorePlainDiskParts restores data parts of plain/plain_rewritable disks: it server-side copies the
+// backup data objects from <object_disk_path>/<backup>/<disk>/shadow/<db>/<table>/<part>/... into the
+// destination table `detached` directory on the bucket level (creating __meta/<token>/prefix.path
+// objects for plain_rewritable), then drops the server in-memory path map cache via
+// SYSTEM DROP DISK METADATA CACHE so the subsequent ATTACH PART sees the new parts
+func (b *Backuper) restorePlainDiskParts(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, backupTable metadata.TableMetadata, dstTable clickhouse.Table, disks []clickhouse.Disk) (int64, error) {
+	size := int64(0)
+	dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
+	logger := log.With().Fields(map[string]interface{}{
+		"operation": "restorePlainDiskParts",
+		"table":     fmt.Sprintf("%s.%s", backupTable.Database, backupTable.Table),
+	}).Logger()
+	for diskName, parts := range backupTable.Parts {
+		if !backupMetadata.IsPlainDisk(diskName) {
+			continue
+		}
+		if b.shouldDiskNameSkipByNameOrType(diskName, disks) {
+			log.Warn().Str("database", backupTable.Database).Str("table", backupTable.Table).Str("disk.Name", diskName).Msg("skipped")
+			continue
+		}
+		dstDisk := b.findDiskByName(disks, diskName)
+		if dstDisk == nil {
+			return 0, errors.Errorf("restorePlainDiskParts: disk %s not found in system.disks, restore plain disk parts to another disk is not supported", diskName)
+		}
+		if !b.isDiskPlain(*dstDisk) {
+			return 0, errors.Errorf("restorePlainDiskParts: disk %s has metadata_type=%q, restore of plain disk backup to non-plain disk is not supported", diskName, dstDisk.MetadataType)
+		}
+		if dstDisk.MetadataType != "plain_rewritable" {
+			return 0, errors.Errorf("restorePlainDiskParts: disk %s has metadata_type=plain (write-once), restore into such disk is not supported", diskName)
+		}
+		version, versionErr := b.ch.GetVersion(ctx)
+		if versionErr != nil {
+			return 0, errors.Wrap(versionErr, "restorePlainDiskParts: b.ch.GetVersion")
+		}
+		// SYSTEM DROP DISK METADATA CACHE reloads the plain_rewritable in-memory path map only since 25.11,
+		// without it the server can't see objects written behind its back until restart
+		if version < 25011000 {
+			return 0, errors.Errorf("restorePlainDiskParts: restore into plain_rewritable disk %s requires ClickHouse >= 25.11 (SYSTEM DROP DISK METADATA CACHE), current version %d", diskName, version)
+		}
+		if err := object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, diskName); err != nil {
+			return 0, errors.Wrap(err, "restorePlainDiskParts: object_disk.InitCredentialsAndConnections")
+		}
+		layout, layoutErr := object_disk.NewPlainDiskLayout(ctx, diskName)
+		if layoutErr != nil {
+			return 0, errors.Wrap(layoutErr, "restorePlainDiskParts: object_disk.NewPlainDiskLayout")
+		}
+		// destination table data path relative to the disk root
+		tableRelPath := plainDiskTableRelPath(dstTable.DataPaths, *dstDisk)
+		if tableRelPath == "" {
+			return 0, errors.Errorf("restorePlainDiskParts: can't find data path on disk %s (path %s) among %v for table `%s`.`%s`", diskName, dstDisk.Path, dstTable.DataPaths, dstTable.Database, dstTable.Name)
+		}
+		objectDiskPath, objectDiskPathErr := b.getObjectDiskPath()
+		if objectDiskPathErr != nil {
+			return 0, errors.Wrap(objectDiskPathErr, "restorePlainDiskParts: b.getObjectDiskPath")
+		}
+		srcBucket := ""
+		if b.cfg.General.RemoteStorage == "s3" {
+			srcBucket = b.cfg.S3.Bucket
+		} else if b.cfg.General.RemoteStorage == "gcs" {
+			srcBucket = b.cfg.GCS.Bucket
+		} else if b.cfg.General.RemoteStorage == "azblob" {
+			srcBucket = b.cfg.AzureBlob.Container
+		}
+		dstConnection, connectionExists := object_disk.DisksConnections.Load(diskName)
+		if !connectionExists {
+			return 0, errors.Errorf("restorePlainDiskParts: unknown object_disk.DisksConnections %s", diskName)
+		}
+		start := time.Now()
+		for _, part := range parts {
+			srcBackupName := backupName
+			srcDiskName := diskName
+			if part.Required && backupMetadata.RequiredBackup != "" {
+				var findRecursiveErr error
+				srcBackupName, srcDiskName, findRecursiveErr = b.findObjectDiskPartRecursive(ctx, backupMetadata, backupTable, part, diskName, logger)
+				if findRecursiveErr != nil {
+					return 0, errors.Wrap(findRecursiveErr, "restorePlainDiskParts: findObjectDiskPartRecursive")
+				}
+			}
+			partRemotePrefix := path.Join(objectDiskPath, srcBackupName, srcDiskName, "shadow", dbAndTableDir, part.Name)
+			partFiles := map[string]int64{}
+			if walkErr := b.dst.WalkAbsolute(ctx, partRemotePrefix, true, func(_ context.Context, f storage.RemoteFile) error {
+				name := strings.Trim(f.Name(), "/")
+				if name != "" {
+					partFiles[name] = f.Size()
+				}
+				return nil
+			}); walkErr != nil {
+				return 0, errors.Wrapf(walkErr, "restorePlainDiskParts: can't list %s", partRemotePrefix)
+			}
+			if len(partFiles) == 0 {
+				return 0, errors.Errorf("restorePlainDiskParts: no files found under %s for part %s", partRemotePrefix, part.Name)
+			}
+			for relName, fileSize := range partFiles {
+				dstLogicalDir := path.Join(tableRelPath, "detached", part.Name)
+				if fileDir := path.Dir(relName); fileDir != "." {
+					dstLogicalDir = path.Join(dstLogicalDir, fileDir)
+				}
+				dstDirPrefix, ensureDirErr := layout.EnsureDir(ctx, dstLogicalDir)
+				if ensureDirErr != nil {
+					return 0, errors.Wrap(ensureDirErr, "restorePlainDiskParts: layout.EnsureDir")
+				}
+				srcKey := path.Join(partRemotePrefix, relName)
+				dstObjectPath := path.Join(dstDirPrefix, path.Base(relName))
+				copiedSize := int64(0)
+				var copyObjectErr error
+				if srcBucket != "" {
+					retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), copyObjectRetryClassifier{b: b})
+					copyObjectErr = retry.RunCtx(ctx, func(ctx context.Context) error {
+						var retryErr error
+						copiedSize, retryErr = object_disk.CopyObject(ctx, diskName, fileSize, srcBucket, srcKey, dstObjectPath)
+						return retryErr
+					})
+				}
+				if srcBucket == "" || (copyObjectErr != nil && b.cfg.General.AllowObjectDiskStreaming) {
+					dstKey := path.Join(dstConnection.GetRemoteObjectDiskPath(), dstObjectPath)
+					retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
+					copyObjectErr = retry.RunCtx(ctx, func(ctx context.Context) error {
+						return object_disk.CopyObjectStreaming(ctx, b.dst, dstConnection.GetRemoteStorage(), srcKey, dstKey, b.dst.DownloadLimiter(b.cfg.General.DownloadMaxBytesPerSecond))
+					})
+					copiedSize = fileSize
+				}
+				if copyObjectErr != nil {
+					return 0, errors.Wrapf(copyObjectErr, "restorePlainDiskParts: can't copy %s to %s on disk %s", srcKey, dstObjectPath, diskName)
+				}
+				size += copiedSize
+			}
+		}
+		// make the server reload its in-memory path map, otherwise ATTACH PART can't see the copied parts
+		if err := b.ch.QueryContext(ctx, fmt.Sprintf("SYSTEM DROP DISK METADATA CACHE '%s'", diskName)); err != nil {
+			return 0, errors.Wrapf(err, "restorePlainDiskParts: SYSTEM DROP DISK METADATA CACHE '%s'", diskName)
+		}
+		logger.Info().Str("disk", diskName).Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Msg("plain disk data restored")
+	}
+	return size, nil
+}
+
 func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, backupTable metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, needsKeyRewrite bool) (int64, error) {
 	logger := log.With().Fields(map[string]interface{}{
 		"operation": "downloadObjectDiskParts",
@@ -2598,6 +2768,10 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 	for diskName, parts := range backupTable.Parts {
 		if b.shouldDiskNameSkipByNameOrType(diskName, disks) {
 			log.Warn().Str("database", backupTable.Database).Str("table", backupTable.Table).Str("disk.Name", diskName).Msg("skipped")
+			continue
+		}
+		// plain/plain_rewritable disk parts are restored by restorePlainDiskParts (no local metadata files to walk)
+		if backupMetadata.IsPlainDisk(diskName) {
 			continue
 		}
 		diskType, exists := diskTypes[diskName]
