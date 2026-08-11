@@ -315,6 +315,20 @@ func (tc *TestContainers) GetMappedPort(ctx context.Context, name string, contai
 	return host, port, nil
 }
 
+// restartHealthTimeout bounds a single restart attempt and restartMaxAttempts caps how many
+// times RestartContainer retries. The old entrypoint.sh (ClickHouse 21.x/22.x) starts an
+// init-time clickhouse-server whenever /docker-entrypoint-initdb.d is non-empty (it always is,
+// dynamic_settings.sh lives there), SIGTERMs it and blocks in `wait "$pid"` before exec'ing the
+// real server. That init-time server sometimes hangs during shutdown - its log ends at
+// "BackgroundSchedulePool/BgSchPool: Waiting for threads to finish." and nothing follows - so the
+// entrypoint never reaches exec and the container stays running-but-unhealthy until the deadline.
+// A fresh restart kills the hung process and normally succeeds, so spend the budget on retries
+// instead of on one long wait.
+const (
+	restartHealthTimeout = 4 * time.Minute
+	restartMaxAttempts   = 3
+)
+
 // RestartContainer restarts a container by name and waits for it to become healthy.
 // Waiting for healthy avoids racing with the entrypoint's init-time clickhouse-server,
 // which entrypoint.sh SIGTERMs before exec'ing the real server when
@@ -326,13 +340,33 @@ func (tc *TestContainers) RestartContainer(t *testing.T, name string) error {
 		return fmt.Errorf("no container %s", name)
 	}
 	timeout := 30
-	if err := tc.client.ContainerRestart(ctx, info.ID, container.StopOptions{Timeout: &timeout}); err != nil {
-		return err
+	var err error
+	for attempt := 1; attempt <= restartMaxAttempts; attempt++ {
+		if restartErr := tc.client.ContainerRestart(ctx, info.ID, container.StopOptions{Timeout: &timeout}); restartErr != nil {
+			return restartErr
+		}
+		if err = tc.pollHealthy(ctx, name, restartHealthTimeout); err == nil {
+			return nil
+		}
+		if attempt < restartMaxAttempts {
+			log.Warn().Msgf("%s%v, restarting again (attempt %d/%d)", testLogPrefix(t.Name()), err, attempt+1, restartMaxAttempts)
+		}
 	}
-	return tc.waitHealthy(ctx, name, 12*time.Minute, t.Name())
+	tc.dumpUnhealthy(ctx, name, t.Name())
+	return err
 }
 
 func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout time.Duration, testName string) error {
+	if err := tc.pollHealthy(ctx, name, timeout); err != nil {
+		tc.dumpUnhealthy(ctx, name, testName)
+		return err
+	}
+	return nil
+}
+
+// pollHealthy waits for the container healthcheck to report healthy, without dumping diagnostics
+// on timeout, so callers that retry don't flood the log with a full container dump per attempt.
+func (tc *TestContainers) pollHealthy(ctx context.Context, name string, timeout time.Duration) error {
 	info := tc.containers[name]
 	if info == nil {
 		return fmt.Errorf("no container %s", name)
@@ -347,6 +381,11 @@ func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout 
 		}
 		time.Sleep(2 * time.Second)
 	}
+	return fmt.Errorf("container %s not healthy after %v", name, timeout)
+}
+
+// dumpUnhealthy dumps the diagnostics for a container that never became healthy.
+func (tc *TestContainers) dumpUnhealthy(ctx context.Context, name string, testName string) {
 	tc.dumpContainerInfo(ctx, name, testName)
 	if name == "clickhouse" {
 		// ClickHouse depends on Keeper; a "not healthy" clickhouse is frequently a
@@ -362,7 +401,6 @@ func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout 
 			tc.DumpContainerLogsSince(ctx, "azure", tc.containerStartedAt(ctx, "clickhouse"), testName)
 		}
 	}
-	return fmt.Errorf("container %s not healthy after %v", name, timeout)
 }
 
 // testLogPrefix returns a "[TestName] " prefix for dump banners so that, under
