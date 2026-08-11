@@ -463,6 +463,114 @@ fi
 fi
 
 
+# plain_rewritable disks (flat __meta layout exists since 24.8), restore into them requires 25.11+
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^24\.[89] || "${CLICKHOUSE_VERSION}" =~ ^24\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[5-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
+
+cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3_plain_rewritable.xml
+<?xml version="1.0"?>
+<clickhouse>
+  <storage_configuration>
+    <disks>
+      <disk_s3_plain_rewritable>
+        <!-- legacy disk type spelling, modern spelling is object_storage + object_storage_type + metadata_type -->
+        <type>s3_plain_rewritable</type>
+        <endpoint>https://minio:9000/clickhouse/disk_s3_plain_rewritable/{cluster}/{shard}/</endpoint>
+        <use_environment_credentials>1</use_environment_credentials>
+        <send_metadata>false</send_metadata>
+      </disk_s3_plain_rewritable>
+    </disks>
+    <policies>
+      <s3_plain_rewritable_only>
+        <volumes>
+          <s3_plain_rewritable_only>
+            <disk>disk_s3_plain_rewritable</disk>
+          </s3_plain_rewritable_only>
+        </volumes>
+      </s3_plain_rewritable_only>
+    </policies>
+  </storage_configuration>
+</clickhouse>
+EOT
+
+# azure plain / plain_rewritable disks in SEPARATE azurite containers,
+# common_key_prefix for azure defaults to empty, so __meta lands in the container root
+cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_azblob_plain.xml
+<?xml version="1.0"?>
+<clickhouse>
+  <storage_configuration>
+    <disks>
+      <disk_azblob_plain>
+        <type>object_storage</type>
+        <object_storage_type>azure_blob_storage</object_storage_type>
+        <metadata_type>plain</metadata_type>
+        <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
+        <container_name>azure-plain-disk</container_name>
+        <!--  https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools -->
+        <account_name>devstoreaccount1</account_name>
+        <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
+        <cache_enabled>false</cache_enabled>
+      </disk_azblob_plain>
+      <disk_azblob_plain_rewritable>
+        <type>object_storage</type>
+        <object_storage_type>azure_blob_storage</object_storage_type>
+        <metadata_type>plain_rewritable</metadata_type>
+        <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
+        <container_name>azure-plain-rewritable-disk</container_name>
+        <!--  https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools -->
+        <account_name>devstoreaccount1</account_name>
+        <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
+        <cache_enabled>false</cache_enabled>
+        <use_native_copy>true</use_native_copy>
+      </disk_azblob_plain_rewritable>
+    </disks>
+    <policies>
+      <azure_plain_rewritable_only>
+        <volumes>
+          <azure_plain_rewritable_only>
+            <disk>disk_azblob_plain_rewritable</disk>
+          </azure_plain_rewritable_only>
+        </volumes>
+      </azure_plain_rewritable_only>
+    </policies>
+  </storage_configuration>
+</clickhouse>
+EOT
+
+# GCS over S3 protocol plain_rewritable disk, real bucket, same credentials as disk_gcs
+if [[ "" != "${QA_GCS_OVER_S3_BUCKET}" ]]; then
+
+cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_gcs_plain_rewritable.xml
+<?xml version="1.0"?>
+<clickhouse>
+  <storage_configuration>
+    <disks>
+      <disk_gcs_plain_rewritable>
+        <type>s3_plain_rewritable</type>
+        <endpoint>https://storage.googleapis.com/${QA_GCS_OVER_S3_BUCKET}/clickhouse_backup_disk_gcs_plain_rewritable/${HOSTNAME}/{cluster}/{shard}/</endpoint>
+        <access_key_id>${QA_GCS_OVER_S3_ACCESS_KEY}</access_key_id>
+        <secret_access_key>${QA_GCS_OVER_S3_SECRET_KEY}</secret_access_key>
+        <!-- to avoid slow startup -->
+        <send_metadata>false</send_metadata>
+        <support_batch_delete>false</support_batch_delete>
+      </disk_gcs_plain_rewritable>
+    </disks>
+    <policies>
+      <gcs_plain_rewritable_only>
+        <volumes>
+          <gcs_plain_rewritable_only>
+            <disk>disk_gcs_plain_rewritable</disk>
+          </gcs_plain_rewritable_only>
+        </volumes>
+      </gcs_plain_rewritable_only>
+    </policies>
+  </storage_configuration>
+</clickhouse>
+EOT
+
+fi
+
+fi
+
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[7-9]|^22\.[0-9]{2}|^2[3-9]\.|^[3-9] ]]; then
 
 cat <<EOT > /etc/clickhouse-server/users.d/allow_deprecated_database_ordinary.xml

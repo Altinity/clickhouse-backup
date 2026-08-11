@@ -258,7 +258,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 		if b.shouldSkipByDiskNameOrType(disk) {
 			continue
 		}
-		if b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, disks) {
+		if b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, disks) || b.isDiskPlain(disk) {
 			for _, table := range tables {
 				sort.Slice(table.DataPaths, func(i, j int) bool { return len(table.DataPaths[i]) > len(table.DataPaths[j]) })
 				for _, tableDataPath := range table.DataPaths {
@@ -983,7 +983,23 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		}
 		return nil, nil, nil, nil, nil, nil, nil
 	}
-	if err := b.ch.FreezeTable(ctx, table, shadowBackupUUID); err != nil {
+	// ALTER TABLE FREEZE/UNFREEZE are not supported for plain_rewritable disks
+	// (see checkAlterPartitionIsPossible in ClickHouse MergeTreeData.cpp), backup such tables
+	// from the live data with merges stopped instead
+	tableOnPlainDisks := b.isTableDataOnPlainDisks(table, diskList)
+	if tableOnPlainDisks {
+		if err := b.checkTablePartsOnlyOnPlainDisks(ctx, table, diskList); err != nil {
+			return nil, nil, nil, nil, nil, nil, err
+		}
+		if err := b.ch.QueryContext(ctx, fmt.Sprintf("SYSTEM STOP MERGES `%s`.`%s`", table.Database, table.Name)); err != nil {
+			return nil, nil, nil, nil, nil, nil, errors.Wrap(err, "SYSTEM STOP MERGES")
+		}
+		defer func() {
+			if err := b.ch.Query(fmt.Sprintf("SYSTEM START MERGES `%s`.`%s`", table.Database, table.Name)); err != nil {
+				log.Warn().Msgf("can't SYSTEM START MERGES `%s`.`%s`: %v", table.Database, table.Name, err)
+			}
+		}()
+	} else if err := b.ch.FreezeTable(ctx, table, shadowBackupUUID); err != nil {
 		return nil, nil, nil, nil, nil, nil, errors.Wrap(err, "b.ch.FreezeTable")
 	}
 	// brokenParts collects, per disk, the data parts that could not be moved/uploaded into the backup
@@ -1007,6 +1023,35 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		case <-ctx.Done():
 			return nil, nil, nil, nil, nil, nil, ctx.Err()
 		default:
+			// plain/plain_rewritable disks have no local shadow, the live parts are enumerated in the bucket
+			if b.isDiskPlain(disk) {
+				if !tableOnPlainDisks {
+					continue
+				}
+				plainParts, plainSize, plainErr := b.uploadPlainDiskParts(ctx, backupName, table, disk, partitionsIdsMap)
+				if plainErr != nil {
+					return nil, nil, nil, nil, nil, nil, errors.Wrap(plainErr, "b.uploadPlainDiskParts")
+				}
+				if len(plainParts) == 0 {
+					continue
+				}
+				disksToPartsMap[disk.Name] = plainParts
+				objectDiskSize[disk.Name] = plainSize
+				if version >= 19011000 {
+					partNames := make([]string, 0, len(plainParts))
+					for _, p := range plainParts {
+						partNames = append(partNames, p.Name)
+					}
+					diskHashes, hashErr := b.fetchHashOfAllFiles(ctx, table.Database, table.Name, disk.Name, partNames)
+					if hashErr != nil {
+						return nil, nil, nil, nil, nil, nil, errors.Wrap(hashErr, "fetchHashOfAllFiles")
+					}
+					for pName, h := range diskHashes {
+						hashOfAllFiles[pName] = h
+					}
+				}
+				continue
+			}
 			shadowPath := path.Join(disk.Path, "shadow", shadowBackupUUID)
 			if _, err := os.Stat(shadowPath); err != nil && os.IsNotExist(err) {
 				continue
@@ -1170,7 +1215,8 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		}
 	}
 	// Unfreeze to unlock data on S3 disks, https://github.com/Altinity/clickhouse-backup/issues/423
-	if version > 21004000 {
+	// UNFREEZE is not supported for plain_rewritable disks and nothing was frozen there
+	if version > 21004000 && !tableOnPlainDisks {
 		if err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` UNFREEZE WITH NAME '%s'", table.Database, table.Name, shadowBackupUUID)); err != nil {
 			if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81") || strings.Contains(err.Error(), "code: 218")) && b.cfg.ClickHouse.IgnoreNotExistsErrorDuringFreeze {
 				logger.Warn().Msgf("can't unfreeze table: %v", err)
@@ -1456,16 +1502,186 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 	return size, brokenParts, nil
 }
 
+// isTableDataOnPlainDisks returns true when any of table data paths lives on a plain/plain_rewritable disk
+func (b *Backuper) isTableDataOnPlainDisks(table *clickhouse.Table, diskList []clickhouse.Disk) bool {
+	for _, disk := range diskList {
+		if !b.isDiskPlain(disk) {
+			continue
+		}
+		for _, dataPath := range table.DataPaths {
+			if strings.HasPrefix(dataPath, disk.Path) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// checkTablePartsOnlyOnPlainDisks - tables on plain disks are backed up without FREEZE, so mixing
+// plain and non-plain disks in one storage policy is not supported (non-plain parts would be lost)
+func (b *Backuper) checkTablePartsOnlyOnPlainDisks(ctx context.Context, table *clickhouse.Table, diskList []clickhouse.Disk) error {
+	var partDisks []struct {
+		DiskName string `ch:"disk_name"`
+	}
+	if err := b.ch.SelectContext(ctx, &partDisks, "SELECT DISTINCT disk_name FROM system.parts WHERE database=? AND `table`=? AND active", table.Database, table.Name); err != nil {
+		return errors.Wrap(err, "checkTablePartsOnlyOnPlainDisks: select disk_name from system.parts")
+	}
+	for _, partDisk := range partDisks {
+		disk := b.findDiskByName(diskList, partDisk.DiskName)
+		if disk == nil || !b.isDiskPlain(*disk) {
+			return errors.Errorf("`%s`.`%s` have parts on both plain and non-plain (%s) disks, such storage policies are not supported for backup", table.Database, table.Name, partDisk.DiskName)
+		}
+	}
+	return nil
+}
+
+// uploadPlainDiskParts enumerates the live data parts of a plain/plain_rewritable disk on the bucket
+// level (FREEZE is not supported for such disks and they have no local metadata files at all) and
+// server-side copies every data object of the active parts into the backup destination under its
+// logical path: <object_disk_path>/<backupName>/<diskName>/shadow/<db>/<table>/<partName>/<file...>.
+// The caller stops merges for the table before calling this function.
+func (b *Backuper) uploadPlainDiskParts(ctx context.Context, backupName string, table *clickhouse.Table, disk clickhouse.Disk, partitionsIdsMap common.EmptyMap) ([]metadata.Part, int64, error) {
+	// table data path relative to the disk root, checked BEFORE any bucket access:
+	// most tables have no data on this disk at all
+	tableRelPath := ""
+	for _, dataPath := range table.DataPaths {
+		if strings.HasPrefix(dataPath, disk.Path) {
+			tableRelPath = strings.Trim(strings.TrimPrefix(dataPath, disk.Path), "/")
+			break
+		}
+	}
+	if tableRelPath == "" {
+		return nil, 0, nil
+	}
+	// snapshot of the active parts on this disk, merges are already stopped by the caller
+	var activeParts []struct {
+		Name string `ch:"name"`
+	}
+	if err := b.ch.SelectContext(ctx, &activeParts, "SELECT name FROM system.parts WHERE database=? AND `table`=? AND disk_name=? AND active", table.Database, table.Name, disk.Name); err != nil {
+		return nil, 0, errors.Wrap(err, "uploadPlainDiskParts: select active parts")
+	}
+	if len(activeParts) == 0 {
+		return nil, 0, nil
+	}
+	activePartsMap := make(map[string]struct{}, len(activeParts))
+	for _, p := range activeParts {
+		activePartsMap[p.Name] = struct{}{}
+	}
+	if err := object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, disk.Name); err != nil {
+		return nil, 0, errors.Wrap(err, "object_disk.InitCredentialsAndConnections")
+	}
+	srcDiskConnection, exists := object_disk.DisksConnections.Load(disk.Name)
+	if !exists {
+		return nil, 0, errors.Errorf("uploadPlainDiskParts: %s not present in object_disk.DisksConnections", disk.Name)
+	}
+	layout, layoutErr := object_disk.NewPlainDiskLayout(ctx, disk.Name)
+	if layoutErr != nil {
+		return nil, 0, errors.Wrap(layoutErr, "object_disk.NewPlainDiskLayout")
+	}
+	tree, treeErr := layout.ListTree(ctx, tableRelPath)
+	if treeErr != nil {
+		return nil, 0, errors.Wrap(treeErr, "layout.ListTree")
+	}
+	if len(tree) == 0 {
+		return nil, 0, nil
+	}
+	objectDiskPath, err := b.getObjectDiskPath()
+	if err != nil {
+		return nil, 0, errors.Wrap(err, "b.getObjectDiskPath")
+	}
+	srcBucket := srcDiskConnection.GetRemoteBucket()
+	dbAndTableDir := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Name))
+	uploadPlainDiskPartsWorkingGroup, uploadCtx := errgroup.WithContext(ctx)
+	uploadPlainDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.ObjectDiskServerSideCopyConcurrency))
+	var partsMu sync.Mutex
+	partSizes := map[string]uint64{}
+	var isCopyFailed atomic.Bool
+	for relPath, plainFile := range tree {
+		partName := strings.SplitN(relPath, "/", 2)[0]
+		// only active data parts, this also filters detached/, tmp_* and table-level files like format_version.txt
+		if _, active := activePartsMap[partName]; !active {
+			continue
+		}
+		if len(partitionsIdsMap) != 0 && !filesystemhelper.IsPartInPartition(partName, partitionsIdsMap) {
+			continue
+		}
+		srcKey := path.Join(srcDiskConnection.GetRemotePath(), plainFile.RemoteKey)
+		dstKey := path.Join(objectDiskPath, backupName, disk.Name, "shadow", dbAndTableDir, relPath)
+		capturedSize := plainFile.Size
+		partsMu.Lock()
+		partSizes[partName] += uint64(capturedSize)
+		partsMu.Unlock()
+		uploadPlainDiskPartsWorkingGroup.Go(func() error {
+			if b.resume {
+				isAlreadyProcessed, _, resumeErr := b.resumableState.IsAlreadyProcessed(path.Join(srcBucket, srcKey))
+				if resumeErr != nil {
+					return errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+				}
+				if isAlreadyProcessed {
+					return nil
+				}
+			}
+			var copyObjectErr error
+			if !isCopyFailed.Load() {
+				copyRetry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), copyObjectRetryClassifier{b: b})
+				copyObjectErr = copyRetry.RunCtx(uploadCtx, func(ctx context.Context) error {
+					_, copyErr := b.dst.CopyObject(ctx, capturedSize, srcBucket, srcKey, dstKey)
+					return copyErr
+				})
+				if copyObjectErr != nil && !b.cfg.General.AllowObjectDiskStreaming {
+					return errors.Wrapf(copyObjectErr, "b.dst.CopyObject for srcKey=%s error", srcKey)
+				}
+				if copyObjectErr != nil && storage.IsPermanentCopyObjectError(copyObjectErr) {
+					isCopyFailed.Store(true)
+				}
+			}
+			if b.cfg.General.AllowObjectDiskStreaming && (isCopyFailed.Load() || copyObjectErr != nil) {
+				retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
+				copyObjectErr = retry.RunCtx(uploadCtx, func(ctx context.Context) error {
+					return object_disk.CopyObjectStreaming(ctx, srcDiskConnection.GetRemoteStorage(), b.dst, srcKey, dstKey, b.dst.UploadLimiter(b.cfg.General.UploadMaxBytesPerSecond))
+				})
+				if copyObjectErr != nil {
+					return errors.Wrapf(copyObjectErr, "object_disk.CopyObjectStreaming for srcKey=%s error", srcKey)
+				}
+			}
+			if b.resume {
+				if appendErr := b.resumableState.AppendToState(path.Join(srcBucket, srcKey), capturedSize); appendErr != nil {
+					return errors.Wrap(appendErr, "resumableState.AppendToState")
+				}
+			}
+			return nil
+		})
+	}
+	if wgWaitErr := uploadPlainDiskPartsWorkingGroup.Wait(); wgWaitErr != nil {
+		return nil, 0, errors.Wrap(wgWaitErr, "one of uploadPlainDiskParts go-routine return error")
+	}
+	parts := make([]metadata.Part, 0, len(partSizes))
+	size := int64(0)
+	for partName, partSize := range partSizes {
+		parts = append(parts, metadata.Part{Name: partName, Size: partSize})
+		size += int64(partSize)
+	}
+	sort.Slice(parts, func(i, j int) bool { return parts[i].Name < parts[j].Name })
+	return parts, size, nil
+}
+
 func (b *Backuper) createBackupMetadata(ctx context.Context, backupMetaFile, backupName, requiredBackup, version, tags string, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, backupDataSize, backupObjectDiskSize, backupMetadataSize, backupRBACSize, backupConfigSize, backupNamedCollectionsSize uint64, tableMetas []metadata.TableTitle, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
+		diskMetadataTypes := map[string]string{}
+		for _, d := range disks {
+			if d.IsPlain() {
+				diskMetadataTypes[d.Name] = d.MetadataType
+			}
+		}
 		backupMetadata := metadata.BackupMetadata{
 			BackupName:              backupName,
 			RequiredBackup:          requiredBackup,
 			Disks:                   diskMap,
 			DiskTypes:               diskTypes,
+			DiskMetadataTypes:       diskMetadataTypes,
 			ClickhouseBackupVersion: version,
 			CreationDate:            time.Now(),
 			Tags:                    tags,

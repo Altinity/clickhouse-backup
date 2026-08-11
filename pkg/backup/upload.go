@@ -622,6 +622,11 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 			continue
 		}
 		uploadedParts[diskName] = tableParts
+		// plain/plain_rewritable disks have no local files in the backup, their data objects
+		// were already copied to object_disk_path during create
+		if disk := b.findDiskByName(disks, diskName); disk != nil && b.isDiskPlain(*disk) {
+			continue
+		}
 		backupPath := b.getLocalBackupDataPathForTable(backupName, diskName, dbAndTablePath)
 		splitPartsList, err := b.splitPartFiles(backupPath, table.Parts[diskName], table.Database, table.Table, skipProjections)
 		if err != nil {

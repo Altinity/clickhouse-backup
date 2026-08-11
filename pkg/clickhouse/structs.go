@@ -41,9 +41,15 @@ type Disk struct {
 	Name            string   `ch:"name"`
 	Path            string   `ch:"path"`
 	Type            string   `ch:"type"`
+	MetadataType    string   `ch:"metadata_type"`
 	FreeSpace       uint64   `ch:"free_space"`
 	StoragePolicies []string `ch:"storage_policies"`
 	IsBackup        bool
+}
+
+// IsPlain returns true for disks without local VFS metadata files (metadata_type=plain or plain_rewritable)
+func (d Disk) IsPlain() bool {
+	return d.MetadataType == "plain" || d.MetadataType == "plain_rewritable"
 }
 
 // Database - Clickhouse system.databases struct

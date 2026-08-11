@@ -247,6 +247,22 @@ func (b *Backuper) isDiskTypeObject(diskType string) bool {
 	return diskType == "s3" || diskType == "azure_blob_storage" || diskType == "azure"
 }
 
+// findDiskByName returns the disk with the given name from live system.disks list, nil when absent
+func (b *Backuper) findDiskByName(disks []clickhouse.Disk, diskName string) *clickhouse.Disk {
+	for i := range disks {
+		if disks[i].Name == diskName {
+			return &disks[i]
+		}
+	}
+	return nil
+}
+
+// isDiskPlain returns true for object storage disks with metadata_type=plain or plain_rewritable:
+// they have no local VFS metadata files, part enumeration and data copy happen on the bucket level
+func (b *Backuper) isDiskPlain(disk clickhouse.Disk) bool {
+	return disk.IsPlain() && (b.isDiskTypeObject(disk.Type) || disk.Type == "s3_plain" || disk.Type == "s3_plain_rewritable")
+}
+
 func (b *Backuper) isDiskTypeEncryptedObject(disk clickhouse.Disk, disks []clickhouse.Disk) bool {
 	if disk.Type != "encrypted" {
 		return false
@@ -272,6 +288,10 @@ func (b *Backuper) checkDisksConsistency(disks []clickhouse.Disk) error {
 	var problems []string
 	for _, disk := range disks {
 		if disk.IsBackup || b.shouldSkipByDiskNameOrType(disk) {
+			continue
+		}
+		// plain/plain_rewritable disks have no local filesystem presence at all
+		if b.isDiskPlain(disk) {
 			continue
 		}
 		st, err := os.Stat(disk.Path)

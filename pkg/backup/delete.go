@@ -293,6 +293,14 @@ func (b *Backuper) hasObjectDisksLocal(backupList []LocalBackup, backupName stri
 	for _, backup := range backupList {
 		if backup.BackupName == backupName && !b.isEmbedded {
 			for _, disk := range disks {
+				// plain/plain_rewritable disks never have a local backup directory, but their data
+				// objects are copied to object_disk_path during create and require cleanup;
+				// object_disk_path is resolvable only for remote storages with object disk support
+				if !disk.IsBackup && b.isDiskPlain(disk) && backup.IsPlainDisk(disk.Name) &&
+					b.cfg.General.RemoteStorage != "custom" && b.cfg.General.RemoteStorage != "none" {
+					log.Debug().Msgf("hasObjectDisksLocal: found plain disk %s", disk.Name)
+					return true
+				}
 				if !disk.IsBackup && (b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, disks)) {
 					backupExists, err := os.ReadDir(path.Join(disk.Path, "backup", backup.BackupName))
 					if err == nil && len(backupExists) > 0 {

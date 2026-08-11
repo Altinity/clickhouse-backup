@@ -10,9 +10,13 @@ import (
 )
 
 type BackupMetadata struct {
-	BackupName              string            `json:"backup_name"`
-	Disks                   map[string]string `json:"disks"`      // "default": "/var/lib/clickhouse"
-	DiskTypes               map[string]string `json:"disk_types"` // "default": "local"
+	BackupName string            `json:"backup_name"`
+	Disks      map[string]string `json:"disks"`      // "default": "/var/lib/clickhouse"
+	DiskTypes  map[string]string `json:"disk_types"` // "default": "local"
+	// DiskMetadataTypes - system.disks.metadata_type for object storage disks, "disk_name": "plain_rewritable",
+	// disks with `plain` and `plain_rewritable` metadata have no local VFS metadata files and require
+	// bucket-level part enumeration during backup/restore
+	DiskMetadataTypes       map[string]string `json:"disk_metadata_types,omitempty"`
 	ClickhouseBackupVersion string            `json:"version"`
 	CreationDate            time.Time         `json:"creation_date"`
 	Tags                    string            `json:"tags,omitempty"` // "regular,embedded"
@@ -29,6 +33,13 @@ type BackupMetadata struct {
 	Functions               []FunctionsMeta   `json:"functions"`
 	DataFormat              string            `json:"data_format"`
 	RequiredBackup          string            `json:"required_backup,omitempty"`
+}
+
+// IsPlainDisk returns true when the disk had metadata_type=plain or plain_rewritable at backup time,
+// such disks have no local metadata files inside the backup, the data objects live only in object_disk_path
+func (b *BackupMetadata) IsPlainDisk(diskName string) bool {
+	metadataType, exists := b.DiskMetadataTypes[diskName]
+	return exists && (metadataType == "plain" || metadataType == "plain_rewritable")
 }
 
 func (b *BackupMetadata) GetFullSize() uint64 {
