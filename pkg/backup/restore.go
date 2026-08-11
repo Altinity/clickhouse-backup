@@ -2665,13 +2665,7 @@ func (b *Backuper) restorePlainDiskParts(ctx context.Context, backupName string,
 			return 0, errors.Wrap(layoutErr, "restorePlainDiskParts: object_disk.NewPlainDiskLayout")
 		}
 		// destination table data path relative to the disk root
-		tableRelPath := ""
-		for _, dataPath := range dstTable.DataPaths {
-			if strings.HasPrefix(dataPath, dstDisk.Path) {
-				tableRelPath = strings.Trim(strings.TrimPrefix(dataPath, dstDisk.Path), "/")
-				break
-			}
-		}
+		tableRelPath := plainDiskTableRelPath(dstTable.DataPaths, *dstDisk)
 		if tableRelPath == "" {
 			return 0, errors.Errorf("restorePlainDiskParts: can't find data path on disk %s (path %s) among %v for table `%s`.`%s`", diskName, dstDisk.Path, dstTable.DataPaths, dstTable.Database, dstTable.Name)
 		}

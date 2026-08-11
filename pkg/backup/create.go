@@ -986,11 +986,11 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 	// ALTER TABLE FREEZE/UNFREEZE are not supported for plain_rewritable disks
 	// (see checkAlterPartitionIsPossible in ClickHouse MergeTreeData.cpp), backup such tables
 	// from the live data with merges stopped instead
-	tableOnPlainDisks := b.isTableDataOnPlainDisks(table, diskList)
+	tableOnPlainDisks, plainDisksErr := b.isTableDataOnPlainDisks(ctx, table, diskList)
+	if plainDisksErr != nil {
+		return nil, nil, nil, nil, nil, nil, plainDisksErr
+	}
 	if tableOnPlainDisks {
-		if err := b.checkTablePartsOnlyOnPlainDisks(ctx, table, diskList); err != nil {
-			return nil, nil, nil, nil, nil, nil, err
-		}
 		if err := b.ch.QueryContext(ctx, fmt.Sprintf("SYSTEM STOP MERGES `%s`.`%s`", table.Database, table.Name)); err != nil {
 			return nil, nil, nil, nil, nil, nil, errors.Wrap(err, "SYSTEM STOP MERGES")
 		}
@@ -1502,37 +1502,34 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 	return size, brokenParts, nil
 }
 
-// isTableDataOnPlainDisks returns true when any of table data paths lives on a plain/plain_rewritable disk
-func (b *Backuper) isTableDataOnPlainDisks(table *clickhouse.Table, diskList []clickhouse.Disk) bool {
+// isTableDataOnPlainDisks returns true when the table data lives on plain/plain_rewritable disks.
+// Tables on plain disks are backed up without FREEZE, so mixing plain and non-plain disks in one storage
+// policy is not supported (non-plain parts would be lost), such tables are rejected here.
+func (b *Backuper) isTableDataOnPlainDisks(ctx context.Context, table *clickhouse.Table, diskList []clickhouse.Disk) (bool, error) {
+	onPlainDisk := false
 	for _, disk := range diskList {
-		if !b.isDiskPlain(disk) {
-			continue
-		}
-		for _, dataPath := range table.DataPaths {
-			if strings.HasPrefix(dataPath, disk.Path) {
-				return true
-			}
+		if b.isDiskPlain(disk) && plainDiskTableRelPath(table.DataPaths, disk) != "" {
+			onPlainDisk = true
+			break
 		}
 	}
-	return false
-}
-
-// checkTablePartsOnlyOnPlainDisks - tables on plain disks are backed up without FREEZE, so mixing
-// plain and non-plain disks in one storage policy is not supported (non-plain parts would be lost)
-func (b *Backuper) checkTablePartsOnlyOnPlainDisks(ctx context.Context, table *clickhouse.Table, diskList []clickhouse.Disk) error {
+	if !onPlainDisk {
+		return false, nil
+	}
+	// data paths list every disk of the table storage policy, system.parts.disk_name tells where the parts really are
 	var partDisks []struct {
 		DiskName string `ch:"disk_name"`
 	}
 	if err := b.ch.SelectContext(ctx, &partDisks, "SELECT DISTINCT disk_name FROM system.parts WHERE database=? AND `table`=? AND active", table.Database, table.Name); err != nil {
-		return errors.Wrap(err, "checkTablePartsOnlyOnPlainDisks: select disk_name from system.parts")
+		return false, errors.Wrap(err, "isTableDataOnPlainDisks: select disk_name from system.parts")
 	}
 	for _, partDisk := range partDisks {
 		disk := b.findDiskByName(diskList, partDisk.DiskName)
 		if disk == nil || !b.isDiskPlain(*disk) {
-			return errors.Errorf("`%s`.`%s` have parts on both plain and non-plain (%s) disks, such storage policies are not supported for backup", table.Database, table.Name, partDisk.DiskName)
+			return false, errors.Errorf("`%s`.`%s` have parts on both plain and non-plain (%s) disks, such storage policies are not supported for backup", table.Database, table.Name, partDisk.DiskName)
 		}
 	}
-	return nil
+	return true, nil
 }
 
 // uploadPlainDiskParts enumerates the live data parts of a plain/plain_rewritable disk on the bucket
@@ -1543,13 +1540,7 @@ func (b *Backuper) checkTablePartsOnlyOnPlainDisks(ctx context.Context, table *c
 func (b *Backuper) uploadPlainDiskParts(ctx context.Context, backupName string, table *clickhouse.Table, disk clickhouse.Disk, partitionsIdsMap common.EmptyMap) ([]metadata.Part, int64, error) {
 	// table data path relative to the disk root, checked BEFORE any bucket access:
 	// most tables have no data on this disk at all
-	tableRelPath := ""
-	for _, dataPath := range table.DataPaths {
-		if strings.HasPrefix(dataPath, disk.Path) {
-			tableRelPath = strings.Trim(strings.TrimPrefix(dataPath, disk.Path), "/")
-			break
-		}
-	}
+	tableRelPath := plainDiskTableRelPath(table.DataPaths, disk)
 	if tableRelPath == "" {
 		return nil, 0, nil
 	}

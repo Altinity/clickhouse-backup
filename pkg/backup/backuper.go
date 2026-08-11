@@ -263,6 +263,26 @@ func (b *Backuper) isDiskPlain(disk clickhouse.Disk) bool {
 	return disk.IsPlain() && (b.isDiskTypeObject(disk.Type) || disk.Type == "s3_plain" || disk.Type == "s3_plain_rewritable")
 }
 
+// plainDiskTableRelPath returns the table data path relative to the plain disk root, "" when the table
+// has no data path on this disk. Disks which report a non-empty bucket key prefix are matched by prefix
+// (GetDisks rewrites the prefix to a pseudo local path and normalizeRelativeDataPaths rewrites data paths
+// the same way), while data paths of a disk in the bucket root stay relative and carry no disk prefix at all,
+// such a path is already relative to the disk root
+func plainDiskTableRelPath(dataPaths []string, disk clickhouse.Disk) string {
+	for _, dataPath := range dataPaths {
+		if disk.RawPath == "" {
+			if dataPath != "" && !strings.HasPrefix(dataPath, "/") {
+				return strings.Trim(dataPath, "/")
+			}
+			continue
+		}
+		if strings.HasPrefix(dataPath, disk.Path) {
+			return strings.Trim(strings.TrimPrefix(dataPath, disk.Path), "/")
+		}
+	}
+	return ""
+}
+
 func (b *Backuper) isDiskTypeEncryptedObject(disk clickhouse.Disk, disks []clickhouse.Disk) bool {
 	if disk.Type != "encrypted" {
 		return false

@@ -196,8 +196,10 @@ func (ch *ClickHouse) GetDisks(ctx context.Context, enrich bool) ([]Disk, error)
 		if disks[i].Name == ch.Config.EmbeddedBackupDisk {
 			disks[i].IsBackup = true
 		}
+		disks[i].RawPath = disks[i].Path
 		// s3_plain disk could contain relative remote disks path, need transform it to `/var/lib/clickhouse/disks/disk_name`
-		if disks[i].Path != "" && !strings.HasPrefix(disks[i].Path, "/") {
+		// a plain disk in the bucket root reports an empty path, keeping it empty would make it a prefix of every table data path
+		if (disks[i].Path != "" && !strings.HasPrefix(disks[i].Path, "/")) || (disks[i].Path == "" && disks[i].IsPlain()) {
 			for _, d := range disks {
 				if d.Name == "default" {
 					disks[i].Path = path.Join(d.Path, "disks", disks[i].Name) + "/"
@@ -375,6 +377,10 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		if len(diskFields) > 0 && diskFields[0].MetadataTypePresent > 0 {
 			diskMetadataTypeSQL = "any(lower(d.metadata_type))"
 		}
+		// a plain/plain_rewritable disk reports a bucket key prefix instead of a local path and the prefix is
+		// empty for a disk in the bucket root, `d.path` is not an identity for such disks, group them by name
+		// to avoid collapsing several different plain disks into one row
+		groupBySQL := "d.path, if(d.path='', d.name, '')"
 
 		diskFreeSpaceSQL := "toUInt64(0)"
 		if len(diskFields) > 0 && diskFields[0].FreeSpacePresent > 0 {
@@ -391,8 +397,8 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		var result []Disk
 		query := fmt.Sprintf(
 			"SELECT d.path AS path, %s AS name, %s AS type, %s AS metadata_type, %s AS free_space, %s AS storage_policies "+
-				"FROM system.disks AS d %s GROUP BY d.path",
-			diskNameSQL, diskTypeSQL, diskMetadataTypeSQL, diskFreeSpaceSQL, storagePoliciesSQL, joinStoragePoliciesSQL,
+				"FROM system.disks AS d %s GROUP BY %s",
+			diskNameSQL, diskTypeSQL, diskMetadataTypeSQL, diskFreeSpaceSQL, storagePoliciesSQL, joinStoragePoliciesSQL, groupBySQL,
 		)
 		if err := ch.SelectContext(ctx, &result, query); err != nil {
 			return nil, errors.Wrap(err, "getDisksFromSystemDisks: select disks")

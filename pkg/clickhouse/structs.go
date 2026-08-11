@@ -45,6 +45,10 @@ type Disk struct {
 	FreeSpace       uint64   `ch:"free_space"`
 	StoragePolicies []string `ch:"storage_policies"`
 	IsBackup        bool
+	// RawPath - `system.disks.path` as reported by clickhouse-server, before GetDisks rewrites the
+	// bucket key prefix of plain/plain_rewritable disks to a pseudo local path. Empty for a plain disk
+	// which lives in the bucket root (azure disk without `common_key_prefix` on ClickHouse 24.8/25.3)
+	RawPath string
 }
 
 // IsPlain returns true for disks without local VFS metadata files (metadata_type=plain or plain_rewritable)
