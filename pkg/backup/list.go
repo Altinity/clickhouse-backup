@@ -81,7 +81,9 @@ func (b *Backuper) List(what, ptype, format string) error {
 }
 
 func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
+	// machine-readable formats write to os.Stdout in one Write. tabwriter emits the payload and its
+	// terminating newline separately, so a zerolog line on stderr can splice itself in between when
+	// both streams are merged (`docker exec`): `...}]2026-01-01 00:00:00 INF ...`.
 	switch format {
 	case "json":
 		bytes, err := json.Marshal(backupInfos)
@@ -89,7 +91,7 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 			log.Error().Msgf("json.Marshal return error: %v", err)
 			return errors.Wrap(err, "PrintBackup json.Marshal")
 		}
-		if _, err := fmt.Fprintln(w, string(bytes)); err != nil {
+		if _, err := fmt.Fprintln(os.Stdout, string(bytes)); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
 			return errors.Wrap(err, "PrintBackup json Fprintln")
 		}
@@ -100,7 +102,7 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 			log.Error().Msgf("yaml.Marshal return error: %v", err)
 			return errors.Wrap(err, "PrintBackup yaml.Marshal")
 		}
-		if _, err := fmt.Fprintln(w, string(bytes)); err != nil {
+		if _, err := fmt.Fprintln(os.Stdout, string(bytes)); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
 			return errors.Wrap(err, "PrintBackup yaml Fprintln")
 		}
@@ -112,7 +114,7 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 			log.Error().Msgf("gocsv.MarshalString return error: %v", err)
 			return errors.Wrap(err, "PrintBackup csv MarshalString")
 		}
-		if _, err := fmt.Fprintln(w, csvString); err != nil {
+		if _, err := fmt.Fprintln(os.Stdout, csvString); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", len(csvString), err)
 			return errors.Wrap(err, "PrintBackup csv Fprintln")
 		}
@@ -128,12 +130,13 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 			log.Error().Msgf("gocsv.MarshalString return error: %v", err)
 			return errors.Wrap(err, "PrintBackup tsv MarshalString")
 		}
-		if _, err := fmt.Fprintln(w, csvString); err != nil {
+		if _, err := fmt.Fprintln(os.Stdout, csvString); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", len(csvString), err)
 			return errors.Wrap(err, "PrintBackup tsv Fprintln")
 		}
 		return nil
 	case "text", "":
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
 		for _, backup := range backupInfos {
 			creationDate := backup.CreationDate.In(time.Local).Format("2006-01-02 15:04:05")
 			if bytes, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, creationDate, backup.Type, backup.RequiredBackup, backup.Size, backup.Description); err != nil {
