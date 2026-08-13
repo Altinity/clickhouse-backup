@@ -498,11 +498,17 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 		return []storage.Backup{}, errors.Wrap(err, "GetRemoteBackups BackupList")
 	}
 	// ugly hack to fix https://github.com/Altinity/clickhouse-backup/issues/309
+	// parse metadata only for the last backup and keep the full list, since #1361
+	// BackupList with parseMetadataOnly returns only the requested backup,
+	// replacing the whole list broke NumberBackupsRemote, see https://github.com/Altinity/clickhouse-backup/issues/1502
 	if parseMetadata == false && len(backupList) > 0 {
 		lastBackup := backupList[len(backupList)-1]
-		backupList, err = bd.BackupList(ctx, true, lastBackup.BackupName)
+		lastParsed, err := bd.BackupList(ctx, true, lastBackup.BackupName)
 		if err != nil {
 			return []storage.Backup{}, errors.Wrap(err, "GetRemoteBackups BackupList last")
+		}
+		if len(lastParsed) == 1 {
+			backupList[len(backupList)-1] = lastParsed[0]
 		}
 	}
 	return backupList, nil
