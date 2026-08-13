@@ -118,7 +118,10 @@ func TestPlainRewritableGCSOverS3(t *testing.T) {
 
 	env, r := NewTestEnvironment(t)
 	defer env.Cleanup(t, r)
-	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	// 5m query timeout: DROP DATABASE on a real-GCS plain_rewritable disk crawls when the
+	// pooled TLS connections to storage.googleapis.com go stale (every first request eats a
+	// full SSL_read timeout before the retry succeeds) and exceeds the usual 1m read timeout
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 5*time.Minute)
 
 	env.runPlainRewritableScenario(t, r, "config-gcs.yml", "test_plain_rewritable_gcs", "gcs_plain_rewritable_only")
 }
