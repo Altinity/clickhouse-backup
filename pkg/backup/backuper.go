@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/binary"
 	"fmt"
 	"net/url"
@@ -626,6 +627,10 @@ func (b *Backuper) GetLocalDataSize(ctx context.Context) (float64, error) {
 		defer b.ch.Close()
 	}
 	err := b.ch.SelectSingleRow(ctx, &localDataSize, "SELECT value FROM system.asynchronous_metrics WHERE metric='TotalBytesOfMergeTreeTables'")
+	// TotalBytesOfMergeTreeTables present only in 21.1+, look https://github.com/ClickHouse/ClickHouse/pull/17639
+	if err != nil && errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
 	return localDataSize, err
 }
 

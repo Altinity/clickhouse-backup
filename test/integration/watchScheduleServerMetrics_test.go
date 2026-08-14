@@ -18,6 +18,7 @@ func TestWatchScheduleServerMetrics(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
 
 	dbName := "test_watch_schedule_metrics"
 	prefix := "sched1502"
@@ -85,7 +86,7 @@ func TestWatchScheduleServerMetrics(t *testing.T) {
 	for time.Now().Before(metricsDeadline) {
 		remoteNames = listRemote()
 		expected = fmt.Sprintf("%d", len(remoteNames))
-		out, err := env.DockerExecOut("clickhouse-backup", "wget", "-qO-", "http://localhost:7171/metrics")
+		out, err := env.DockerExecOut("clickhouse-backup", "curl", "-sSL", "http://localhost:7171/metrics")
 		r.NoError(err)
 		if m := metricRE.FindStringSubmatch(out); m != nil {
 			metricValue = m[1]
