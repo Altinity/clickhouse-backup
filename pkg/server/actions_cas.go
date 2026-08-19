@@ -1,9 +1,7 @@
 package server
 
 import (
-	"context"
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
 
@@ -38,9 +36,9 @@ func (api *APIServer) actionsCASHandler(command string, args []string, row statu
 	}
 
 	operationId, _ := uuid.NewUUID()
+	// No callback URL in the /backup/actions protocol — StartWithOperationId
+	// registers a nil callback, so status.Current.Stop notifies nobody.
 	commandId, _ := status.Current.StartWithOperationId(row.Command, operationId.String())
-	// No callback URL in the /backup/actions protocol — use the no-op callback.
-	noopCb, _ := parseCallback(url.Values{})
 
 	switch command {
 	case "cas-upload":
@@ -57,9 +55,6 @@ func (api *APIServer) actionsCASHandler(command string, args []string, row statu
 			status.Current.Stop(commandId, err)
 			if err != nil {
 				log.Error().Msgf("actions cas-upload error: %v", err)
-				api.errorCallback(context.Background(), err, operationId.String(), noopCb)
-			} else {
-				api.successCallback(context.Background(), operationId.String(), noopCb)
 			}
 		}()
 
@@ -77,9 +72,6 @@ func (api *APIServer) actionsCASHandler(command string, args []string, row statu
 			status.Current.Stop(commandId, err)
 			if err != nil {
 				log.Error().Msgf("actions cas-download error: %v", err)
-				api.errorCallback(context.Background(), err, operationId.String(), noopCb)
-			} else {
-				api.successCallback(context.Background(), operationId.String(), noopCb)
 			}
 		}()
 
@@ -108,9 +100,6 @@ func (api *APIServer) actionsCASHandler(command string, args []string, row statu
 			status.Current.Stop(commandId, err)
 			if err != nil {
 				log.Error().Msgf("actions cas-restore error: %v", err)
-				api.errorCallback(context.Background(), err, operationId.String(), noopCb)
-			} else {
-				api.successCallback(context.Background(), operationId.String(), noopCb)
 			}
 		}()
 
@@ -128,9 +117,6 @@ func (api *APIServer) actionsCASHandler(command string, args []string, row statu
 			status.Current.Stop(commandId, err)
 			if err != nil {
 				log.Error().Msgf("actions cas-delete error: %v", err)
-				api.errorCallback(context.Background(), err, operationId.String(), noopCb)
-			} else {
-				api.successCallback(context.Background(), operationId.String(), noopCb)
 			}
 		}()
 
@@ -149,9 +135,6 @@ func (api *APIServer) actionsCASHandler(command string, args []string, row statu
 			status.Current.Stop(commandId, err)
 			if err != nil {
 				log.Error().Msgf("actions cas-verify error: %v", err)
-				api.errorCallback(context.Background(), err, operationId.String(), noopCb)
-			} else {
-				api.successCallback(context.Background(), operationId.String(), noopCb)
 			}
 		}()
 
@@ -168,9 +151,6 @@ func (api *APIServer) actionsCASHandler(command string, args []string, row statu
 			status.Current.Stop(commandId, err)
 			if err != nil {
 				log.Error().Msgf("actions cas-prune error: %v", err)
-				api.errorCallback(context.Background(), err, operationId.String(), noopCb)
-			} else {
-				api.successCallback(context.Background(), operationId.String(), noopCb)
 			}
 		}()
 

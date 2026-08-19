@@ -6,11 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type fakeS3MultipartAPI struct {
@@ -195,4 +199,33 @@ func TestCommonObjectParams_NilSafe(t *testing.T) {
 	if p.SSEKMSKeyId != nil || p.SSECustomerKey != nil || p.Tagging != nil {
 		t.Error("expected all fields to remain unset when config has no values")
 	}
+}
+
+func TestBuildHTTPTransport(t *testing.T) {
+	// defaults must stay on top of the AWS SDK transport, not http.DefaultTransport (MaxIdleConnsPerHost=2),
+	// see https://github.com/Altinity/clickhouse-backup/issues/1376
+	cfg := config.DefaultConfig().S3
+	transport := buildHTTPTransport(&cfg)
+	assert.Equal(t, awshttp.DefaultHTTPTransportMaxIdleConnsPerHost, transport.MaxIdleConnsPerHost)
+	assert.Equal(t, awshttp.DefaultHTTPTransportMaxIdleConns, transport.MaxIdleConns)
+	assert.Equal(t, awshttp.DefaultHTTPTransportMaxConnsPerHost, transport.MaxConnsPerHost)
+	assert.Equal(t, awshttp.DefaultHTTPTransportIdleConnTimeout, transport.IdleConnTimeout)
+	require.NotNil(t, transport.HTTP2)
+	assert.Equal(t, 30*time.Second, transport.HTTP2.SendPingTimeout)
+	assert.Equal(t, 15*time.Second, transport.HTTP2.PingTimeout)
+	assert.Equal(t, 60*time.Second, transport.HTTP2.WriteByteTimeout)
+
+	// explicit config values win, empty http2 durations disable the health checks
+	cfg.HTTPMaxIdleConnsPerHost = 128
+	cfg.HTTPMaxConnsPerHost = 256
+	cfg.HTTPIdleConnTimeout = "120s"
+	cfg.HTTP2SendPingTimeout = ""
+	cfg.HTTP2WriteByteTimeout = ""
+	transport = buildHTTPTransport(&cfg)
+	assert.Equal(t, 128, transport.MaxIdleConnsPerHost)
+	assert.Equal(t, 256, transport.MaxConnsPerHost)
+	assert.Equal(t, 120*time.Second, transport.IdleConnTimeout)
+	require.NotNil(t, transport.HTTP2)
+	assert.Equal(t, time.Duration(0), transport.HTTP2.SendPingTimeout)
+	assert.Equal(t, time.Duration(0), transport.HTTP2.WriteByteTimeout)
 }

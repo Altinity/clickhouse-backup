@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -74,14 +73,14 @@ func (api *APIServer) httpCASUploadHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	operationId, _ := uuid.NewUUID()
-	callback, err := parseCallback(query)
+	callback, err := parseCallback(query, cfg.General.CallbackURL, cfg.General.CallbackTimeoutDuration)
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "cas-upload", err)
 		return
 	}
 
-	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	commandId, _ := status.Current.StartWithCallback(fullCommand, operationId.String(), callback)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("cas-upload", 0, func() error {
 			b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
@@ -90,11 +89,9 @@ func (api *APIServer) httpCASUploadHandler(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			log.Error().Msgf("cas-upload error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
 		status.Current.Stop(commandId, nil)
-		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 
 	api.sendJSONEachRow(w, http.StatusOK, newAsyncAck("cas-upload", name, operationId.String()))
@@ -148,14 +145,14 @@ func (api *APIServer) httpCASDownloadHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	operationId, _ := uuid.NewUUID()
-	callback, err := parseCallback(query)
+	callback, err := parseCallback(query, cfg.General.CallbackURL, cfg.General.CallbackTimeoutDuration)
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "cas-download", err)
 		return
 	}
 
-	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	commandId, _ := status.Current.StartWithCallback(fullCommand, operationId.String(), callback)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("cas-download", 0, func() error {
 			b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
@@ -164,11 +161,9 @@ func (api *APIServer) httpCASDownloadHandler(w http.ResponseWriter, r *http.Requ
 		if err != nil {
 			log.Error().Msgf("cas-download error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
 		status.Current.Stop(commandId, nil)
-		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 
 	api.sendJSONEachRow(w, http.StatusOK, newAsyncAck("cas-download", name, operationId.String()))
@@ -366,14 +361,14 @@ func (api *APIServer) httpCASRestoreHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	operationId, _ := uuid.NewUUID()
-	callback, err := parseCallback(query)
+	callback, err := parseCallback(query, cfg.General.CallbackURL, cfg.General.CallbackTimeoutDuration)
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "cas-restore", err)
 		return
 	}
 
-	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	commandId, _ := status.Current.StartWithCallback(fullCommand, operationId.String(), callback)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("cas-restore", 0, func() error {
 			b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
@@ -393,11 +388,9 @@ func (api *APIServer) httpCASRestoreHandler(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			log.Error().Msgf("cas-restore error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
 		status.Current.Stop(commandId, nil)
-		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 
 	api.sendJSONEachRow(w, http.StatusOK, newAsyncAck("cas-restore", name, operationId.String()))
@@ -441,14 +434,14 @@ func (api *APIServer) httpCASDeleteHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	operationId, _ := uuid.NewUUID()
-	callback, err := parseCallback(query)
+	callback, err := parseCallback(query, cfg.General.CallbackURL, cfg.General.CallbackTimeoutDuration)
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "cas-delete", err)
 		return
 	}
 
-	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	commandId, _ := status.Current.StartWithCallback(fullCommand, operationId.String(), callback)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("cas-delete", 0, func() error {
 			b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
@@ -457,11 +450,9 @@ func (api *APIServer) httpCASDeleteHandler(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			log.Error().Msgf("cas-delete error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
 		status.Current.Stop(commandId, nil)
-		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 
 	api.sendJSONEachRow(w, http.StatusOK, newAsyncAck("cas-delete", name, operationId.String()))
@@ -488,14 +479,14 @@ func (api *APIServer) httpCASVerifyHandler(w http.ResponseWriter, r *http.Reques
 	fullCommand := fmt.Sprintf("cas-verify %s", name)
 	query := r.URL.Query()
 	operationId, _ := uuid.NewUUID()
-	callback, err := parseCallback(query)
+	callback, err := parseCallback(query, cfg.General.CallbackURL, cfg.General.CallbackTimeoutDuration)
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "cas-verify", err)
 		return
 	}
 
-	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	commandId, _ := status.Current.StartWithCallback(fullCommand, operationId.String(), callback)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("cas-verify", 0, func() error {
 			b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
@@ -504,11 +495,9 @@ func (api *APIServer) httpCASVerifyHandler(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			log.Error().Msgf("cas-verify error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
 		status.Current.Stop(commandId, nil)
-		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 
 	api.sendJSONEachRow(w, http.StatusOK, newAsyncAck("cas-verify", name, operationId.String()))
@@ -551,14 +540,14 @@ func (api *APIServer) httpCASPruneHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	operationId, _ := uuid.NewUUID()
-	callback, err := parseCallback(query)
+	callback, err := parseCallback(query, cfg.General.CallbackURL, cfg.General.CallbackTimeoutDuration)
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "cas-prune", err)
 		return
 	}
 
-	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
+	commandId, _ := status.Current.StartWithCallback(fullCommand, operationId.String(), callback)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("cas-prune", 0, func() error {
 			b := backup.NewBackuper(cfg, backup.WithCASProbeState(api.casProbeState))
@@ -567,11 +556,9 @@ func (api *APIServer) httpCASPruneHandler(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			log.Error().Msgf("cas-prune error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
 		status.Current.Stop(commandId, nil)
-		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 
 	api.sendJSONEachRow(w, http.StatusOK, newAsyncAck("cas-prune", "", operationId.String()))

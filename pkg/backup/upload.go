@@ -91,8 +91,10 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	if err != nil {
 		return errors.Wrap(err, "b.dst.BackupList return error")
 	}
+	backupExistsOnRemote := false
 	for i := range remoteBackups {
 		if backupName == remoteBackups[i].BackupName {
+			backupExistsOnRemote = true
 			if !b.resume {
 				return errors.Errorf("'%s' already exists on remote storage", backupName)
 			}
@@ -137,6 +139,20 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 			return errors.Wrap(err, "b.getTablesDiffFromRemote return error")
 		}
 		backupMetadata.RequiredBackup = diffFromRemote
+	}
+	if b.resume && !backupExistsOnRemote {
+		// upload.state2 survives a successful upload and is only removed together with the local backup,
+		// so it can describe a remote backup which was deleted meanwhile; resuming on top of it skips
+		// every data file and uploads a backup which contains metadata.json only,
+		// fix https://github.com/Altinity/clickhouse-backup/issues/1492
+		// an interrupted upload always leaves the backup folder on remote, so a real resume is not affected
+		staleStateFile := path.Join(b.GetStateDir(), "backup", backupName, "upload.state2")
+		if _, statErr := os.Stat(staleStateFile); statErr == nil {
+			log.Warn().Msgf("'%s' doesn't exist on remote storage, %s is stale and will be removed, upload will start from scratch", backupName, staleStateFile)
+			if removeErr := os.Remove(staleStateFile); removeErr != nil {
+				return errors.Wrapf(removeErr, "can't remove stale %s", staleStateFile)
+			}
+		}
 	}
 	if b.resume {
 		b.resumableState = resumable.NewState(b.GetStateDir(), backupName, "upload", map[string]interface{}{
@@ -320,7 +336,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 
 	// explicitly delete local backup after successful upload, fix https://github.com/Altinity/clickhouse-backup/issues/777
 	if b.cfg.General.BackupsToKeepLocal >= 0 && deleteSource {
-		if err = b.RemoveBackupLocal(ctx, backupName, disks); err != nil {
+		if err = b.RemoveBackupLocal(ctx, backupName, disks, true); err != nil {
 			return errors.Wrap(err, "can't explicitly delete local source backup")
 		}
 	}
@@ -421,7 +437,10 @@ func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, 
 		return errors.New("general->remote_storage shall not be \"none\" for upload, change you config or use REMOTE_STORAGE environment variable")
 	}
 	if backupName == "" {
-		localBackups := b.CollectLocalBackups(ctx, "all")
+		localBackups, listErr := b.CollectLocalBackups(ctx, "all")
+		if listErr != nil {
+			log.Warn().Msgf("CollectLocalBackups return error: %v", listErr)
+		}
 		_ = b.PrintBackup(localBackups, "text")
 		return errors.New("select backup for upload")
 	}
@@ -610,6 +629,11 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 			continue
 		}
 		uploadedParts[diskName] = tableParts
+		// plain/plain_rewritable disks have no local files in the backup, their data objects
+		// were already copied to object_disk_path during create
+		if disk := b.findDiskByName(disks, diskName); disk != nil && b.isDiskPlain(*disk) {
+			continue
+		}
 		backupPath := b.getLocalBackupDataPathForTable(backupName, diskName, dbAndTablePath)
 		splitPartsList, err := b.splitPartFiles(backupPath, table.Parts[diskName], table.Database, table.Table, skipProjections)
 		if err != nil {

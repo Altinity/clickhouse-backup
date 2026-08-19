@@ -125,9 +125,18 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 		}
 		a.Container = svc.NewContainerClient(a.Config.Container)
 		if !a.Config.AssumeContainerExists {
-			_, err = a.Container.Create(ctx, nil)
-			if err != nil && !bloberror.HasCode(err, bloberror.ContainerAlreadyExists) {
-				return errors.Wrap(err, "AzureBlob Connect Container.Create")
+			// check existence first: Create requires write permissions on the account
+			// even when the container already exists, GetProperties only needs read access
+			if _, err = a.Container.GetProperties(ctx, nil); err != nil {
+				if !bloberror.HasCode(err, bloberror.ContainerNotFound) {
+					return errors.Wrapf(err, "AzureBlob Connect Container.GetProperties, check azblob->account_key or azblob->sas, if container %s exists you can set azblob->assume_container_exists: true", a.Config.Container)
+				}
+				if _, err = a.Container.Create(ctx, nil); err != nil && !bloberror.HasCode(err, bloberror.ContainerAlreadyExists) {
+					if bloberror.HasCode(err, bloberror.AuthenticationFailed, bloberror.AuthorizationFailure, bloberror.InsufficientAccountPermissions) {
+						return errors.Wrapf(err, "AzureBlob Connect Container.Create: container %s not found and credentials not allow to create it, check azblob->account_key or azblob->sas, or create container manually and set azblob->assume_container_exists: true", a.Config.Container)
+					}
+					return errors.Wrap(err, "AzureBlob Connect Container.Create")
+				}
 			}
 		}
 		if a.Config.SSEKey != "" {

@@ -90,9 +90,14 @@ type GeneralConfig struct {
 	// RebaseBeforeRemoveOldRemote - when `backups_to_keep_remote` deletion is blocked by `required_backup` links from kept backups,
 	// rebase the oldest kept increment (same as the `rebase` command), so the whole out-of-window chain becomes deletable;
 	// rebase failure is not fatal and falls back to the legacy behavior where required backups stay on remote storage
-	RebaseBeforeRemoveOldRemote bool   `yaml:"rebase_before_remove_old_remote" envconfig:"REBASE_BEFORE_REMOVE_OLD_REMOTE"`
-	UploadMaxBytesPerSecond     uint64 `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
-	DownloadMaxBytesPerSecond   uint64 `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
+	RebaseBeforeRemoveOldRemote bool `yaml:"rebase_before_remove_old_remote" envconfig:"REBASE_BEFORE_REMOVE_OLD_REMOTE"`
+	// RebaseDuringDelete - when `delete remote <backup>` is blocked because other backups depend on it via `required_backup`,
+	// rebase every dependent increment first (same as the `rebase` command), so the chain stays restorable and the backup becomes deletable;
+	// rebase copies the deleted backup parts into its dependents, so deletion time grows with the copied data size,
+	// rebase failure is fatal and the backup is not deleted, see https://github.com/Altinity/clickhouse-backup/issues/1493
+	RebaseDuringDelete        bool   `yaml:"rebase_during_delete" envconfig:"REBASE_DURING_DELETE"`
+	UploadMaxBytesPerSecond   uint64 `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
+	DownloadMaxBytesPerSecond uint64 `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
 	// MaxBrokenPartRatio - maximum allowed fraction (0..1) of broken data parts that still produces a
 	// successful but partial backup during backup creation (`create`, and the create stage of
 	// `create_remote`). 0 (default) preserves legacy behavior where any broken part aborts the whole
@@ -124,6 +129,11 @@ type GeneralConfig struct {
 	WatchInterval                       string            `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
 	FullInterval                        string            `yaml:"full_interval" envconfig:"FULL_INTERVAL"`
 	WatchBackupNameTemplate             string            `yaml:"watch_backup_name_template" envconfig:"WATCH_BACKUP_NAME_TEMPLATE"`
+	// CallbackURL - optional HTTP endpoint notified when a backup command completes (API, CLI, or watch iteration).
+	// API query param `?callback=` overrides this when non-empty.
+	CallbackURL string `yaml:"callback_url" envconfig:"CALLBACK_URL"`
+	// CallbackTimeout - max wait for the completion callback HTTP POST (duration string, default "5s").
+	CallbackTimeout string `yaml:"callback_timeout" envconfig:"CALLBACK_TIMEOUT"`
 	// WatchSchedules - named cron driven watch chains, alternative to watch_interval/full_interval, in env use ';' as separator between schedules, see https://github.com/Altinity/clickhouse-backup/issues/1354
 	WatchSchedules               WatchSchedules `yaml:"watch_schedules" envconfig:"WATCH_SCHEDULES"`
 	ShardedOperationMode         string         `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
@@ -134,9 +144,15 @@ type GeneralConfig struct {
 	ConfigBackupAlways           bool           `yaml:"config_backup_always" envconfig:"CONFIG_BACKUP_ALWAYS"`
 	NamedCollectionsBackupAlways bool           `yaml:"named_collections_backup_always" envconfig:"NAMED_COLLECTIONS_BACKUP_ALWAYS"`
 	DeleteBatchSize              int            `yaml:"delete_batch_size" envconfig:"DELETE_BATCH_SIZE"`
-	RetriesDuration              time.Duration
-	WatchDuration                time.Duration
-	FullDuration                 time.Duration
+	// StatusHistorySize bounds how many finished operations are kept in the in-memory
+	// async status (`/backup/status`, `system.backup_actions`). Long living `watch`
+	// processes record one operation per iteration, so the history needs an upper bound.
+	// Operations still running are never dropped, whatever their age.
+	StatusHistorySize       int `yaml:"status_history_size" envconfig:"STATUS_HISTORY_SIZE"`
+	RetriesDuration         time.Duration
+	WatchDuration           time.Duration
+	FullDuration            time.Duration
+	CallbackTimeoutDuration time.Duration
 }
 
 // GCSConfig - GCS settings section
@@ -254,18 +270,25 @@ type S3Config struct {
 	DeleteConcurrency       int               `yaml:"delete_concurrency" envconfig:"S3_DELETE_CONCURRENCY"`
 	Debug                   bool              `yaml:"debug" envconfig:"S3_DEBUG"`
 	// HTTP transport and buffer tuning for high-bandwidth networks, see https://github.com/Altinity/clickhouse-backup/issues/1376
-	// HTTPMaxIdleConns - http.Transport.MaxIdleConns, 0 keeps the AWS SDK default
+	// HTTPMaxIdleConns - http.Transport.MaxIdleConns, 0 keeps the AWS SDK default (100)
 	HTTPMaxIdleConns int `yaml:"http_max_idle_conns" envconfig:"S3_HTTP_MAX_IDLE_CONNS"`
-	// HTTPMaxIdleConnsPerHost - http.Transport.MaxIdleConnsPerHost, 0 keeps the Go default (2), raise it to avoid serializing parallel up/downloads to the same endpoint
+	// HTTPMaxIdleConnsPerHost - http.Transport.MaxIdleConnsPerHost, 0 keeps the AWS SDK default (10), raise it to avoid serializing parallel up/downloads to the same endpoint
 	HTTPMaxIdleConnsPerHost int `yaml:"http_max_idle_conns_per_host" envconfig:"S3_HTTP_MAX_IDLE_CONNS_PER_HOST"`
-	// HTTPMaxConnsPerHost - http.Transport.MaxConnsPerHost, 0 means unlimited
+	// HTTPMaxConnsPerHost - http.Transport.MaxConnsPerHost, 0 keeps the AWS SDK default (2048)
 	HTTPMaxConnsPerHost int `yaml:"http_max_conns_per_host" envconfig:"S3_HTTP_MAX_CONNS_PER_HOST"`
 	// HTTPWriteBufferSize - http.Transport.WriteBufferSize, 0 keeps the Go default (4KB)
 	HTTPWriteBufferSize int `yaml:"http_write_buffer_size" envconfig:"S3_HTTP_WRITE_BUFFER_SIZE"`
 	// HTTPReadBufferSize - http.Transport.ReadBufferSize, 0 keeps the Go default (4KB)
 	HTTPReadBufferSize int `yaml:"http_read_buffer_size" envconfig:"S3_HTTP_READ_BUFFER_SIZE"`
-	// HTTPIdleConnTimeout - http.Transport.IdleConnTimeout as a duration string, empty keeps the Go default (90s)
+	// HTTPIdleConnTimeout - http.Transport.IdleConnTimeout as a duration string, empty keeps the AWS SDK default (90s)
 	HTTPIdleConnTimeout string `yaml:"http_idle_conn_timeout" envconfig:"S3_HTTP_IDLE_CONN_TIMEOUT"`
+	// HTTP/2 health checks, they only apply to endpoints which negotiate HTTP/2 (AWS S3 itself doesn't), see https://github.com/Altinity/clickhouse-backup/issues/1490
+	// HTTP2SendPingTimeout - http.HTTP2Config.SendPingTimeout as a duration string, empty or 0s disables the health check
+	HTTP2SendPingTimeout string `yaml:"http2_send_ping_timeout" envconfig:"S3_HTTP2_SEND_PING_TIMEOUT"`
+	// HTTP2PingTimeout - http.HTTP2Config.PingTimeout as a duration string, how long to wait for the PING response before closing the connection
+	HTTP2PingTimeout string `yaml:"http2_ping_timeout" envconfig:"S3_HTTP2_PING_TIMEOUT"`
+	// HTTP2WriteByteTimeout - http.HTTP2Config.WriteByteTimeout as a duration string, close the connection when a single write stalls for longer, empty or 0s disables it
+	HTTP2WriteByteTimeout string `yaml:"http2_write_byte_timeout" envconfig:"S3_HTTP2_WRITE_BYTE_TIMEOUT"`
 }
 
 // COSConfig - cos settings section
@@ -619,9 +642,17 @@ func ValidateConfig(cfg *Config) error {
 		if _, err := aws.ParseRetryMode(cfg.S3.RetryMode); err != nil {
 			return errors.Wrap(err, "ValidateConfig ParseRetryMode")
 		}
-		if cfg.S3.HTTPIdleConnTimeout != "" {
-			if _, err := time.ParseDuration(cfg.S3.HTTPIdleConnTimeout); err != nil {
-				return errors.Wrap(err, "invalid s3 http_idle_conn_timeout")
+		for name, value := range map[string]string{
+			"http_idle_conn_timeout":   cfg.S3.HTTPIdleConnTimeout,
+			"http2_send_ping_timeout":  cfg.S3.HTTP2SendPingTimeout,
+			"http2_ping_timeout":       cfg.S3.HTTP2PingTimeout,
+			"http2_write_byte_timeout": cfg.S3.HTTP2WriteByteTimeout,
+		} {
+			if value == "" {
+				continue
+			}
+			if _, err := time.ParseDuration(value); err != nil {
+				return errors.Wrapf(err, "invalid s3 %s", name)
 			}
 		}
 	}
@@ -743,6 +774,21 @@ func ValidateConfig(cfg *Config) error {
 	} else {
 		return errors.New("empty retries pause")
 	}
+	if cfg.General.CallbackTimeout != "" {
+		if duration, err := time.ParseDuration(cfg.General.CallbackTimeout); err != nil {
+			return errors.Wrap(err, "invalid callback timeout")
+		} else if duration <= 0 {
+			return errors.Errorf("invalid callback timeout `%s`, it must be > 0", cfg.General.CallbackTimeout)
+		} else {
+			cfg.General.CallbackTimeoutDuration = duration
+		}
+	} else {
+		cfg.General.CallbackTimeout = "5s"
+		cfg.General.CallbackTimeoutDuration = 5 * time.Second
+	}
+	if cfg.General.StatusHistorySize <= 0 {
+		return errors.Errorf("invalid status_history_size `%d`, it must be > 0", cfg.General.StatusHistorySize)
+	}
 	if cfg.General.WatchInterval != "" {
 		if duration, err := time.ParseDuration(cfg.General.WatchInterval); err != nil {
 			return errors.Wrap(err, "invalid watch interval")
@@ -844,6 +890,9 @@ func DefaultConfig() *Config {
 			RetriesOnFailure:                    3,
 			RetriesPause:                        "5s",
 			RetriesDuration:                     5 * time.Second,
+			CallbackTimeout:                     "5s",
+			CallbackTimeoutDuration:             5 * time.Second,
+			StatusHistorySize:                   1000,
 			WatchInterval:                       "1h",
 			WatchDuration:                       1 * time.Hour,
 			FullInterval:                        "24h",
@@ -916,6 +965,9 @@ func DefaultConfig() *Config {
 			RetryMode:               string(aws.RetryModeStandard),
 			ChunkSize:               5 * 1024 * 1024,
 			DeleteConcurrency:       10,
+			HTTP2SendPingTimeout:    "30s",
+			HTTP2PingTimeout:        "15s",
+			HTTP2WriteByteTimeout:   "60s",
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,

@@ -105,7 +105,10 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	b.adjustResumeFlag(resume)
 
 	if backupName == "" {
-		remoteBackups := b.CollectRemoteBackups(ctx, "all")
+		remoteBackups, listErr := b.CollectRemoteBackups(ctx, "all")
+		if listErr != nil {
+			log.Warn().Msgf("CollectRemoteBackups return error: %v", listErr)
+		}
 		_ = b.PrintBackup(remoteBackups, "text")
 		return errors.New("select backup for download")
 	}
@@ -881,6 +884,11 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 		log.Debug().Msgf("start %s.%s with concurrency=%d len(table.Parts[...])=%d", table.Database, table.Table, b.cfg.General.DownloadConcurrency, capacity)
 
 		for disk, parts := range table.Parts {
+			// plain/plain_rewritable disk parts have no files under backup shadow,
+			// their data objects live in object_disk_path and are copied during restore
+			if remoteBackup.IsPlainDisk(disk) {
+				continue
+			}
 			tableRemotePath := path.Join(remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
 			diskPath, diskExists := b.DiskToPathMap[disk]
 			tableLocalPath := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)

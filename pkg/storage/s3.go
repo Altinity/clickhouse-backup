@@ -121,6 +121,53 @@ func (s *S3) ResolveEndpoint(ctx context.Context, params s3.EndpointParameters) 
 	return resolvedEndpoint, nil
 }
 
+// buildHTTPTransport - http.Transport for the S3 client, built on top of the AWS SDK defaults
+// (MaxIdleConnsPerHost=10, MaxConnsPerHost=2048, dial timeouts), not http.DefaultTransport which
+// would silently drop MaxIdleConnsPerHost to 2, see https://github.com/Altinity/clickhouse-backup/issues/1376
+func buildHTTPTransport(cfg *config.S3Config) *http.Transport {
+	transport := awshttp.NewBuildableClient().GetTransport()
+	if cfg.DisableCertVerification {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	if cfg.HTTPMaxIdleConns > 0 {
+		transport.MaxIdleConns = cfg.HTTPMaxIdleConns
+	}
+	if cfg.HTTPMaxIdleConnsPerHost > 0 {
+		transport.MaxIdleConnsPerHost = cfg.HTTPMaxIdleConnsPerHost
+	}
+	if cfg.HTTPMaxConnsPerHost > 0 {
+		transport.MaxConnsPerHost = cfg.HTTPMaxConnsPerHost
+	}
+	if cfg.HTTPWriteBufferSize > 0 {
+		transport.WriteBufferSize = cfg.HTTPWriteBufferSize
+	}
+	if cfg.HTTPReadBufferSize > 0 {
+		transport.ReadBufferSize = cfg.HTTPReadBufferSize
+	}
+	// durations already validated in config.ValidateConfig
+	if d, parseErr := time.ParseDuration(cfg.HTTPIdleConnTimeout); parseErr == nil {
+		transport.IdleConnTimeout = d
+	}
+	// On endpoints which negotiate HTTP/2 (AWS S3 doesn't, most S3-compatible providers do) a stalled
+	// connection wedges every request multiplexed over it forever, there is no per-request timeout,
+	// e.g. hundreds of UploadPartCopy goroutines stuck in http2 writeRequest during object-disk
+	// server-side copy. PING the peer when the connection goes idle and cap how long a single write may
+	// stall, closing the connection makes in-flight requests fail so they are retried on a fresh one.
+	// See https://github.com/Altinity/clickhouse-backup/issues/1490
+	h2Config := http.HTTP2Config{}
+	if d, parseErr := time.ParseDuration(cfg.HTTP2SendPingTimeout); parseErr == nil {
+		h2Config.SendPingTimeout = d
+	}
+	if d, parseErr := time.ParseDuration(cfg.HTTP2PingTimeout); parseErr == nil {
+		h2Config.PingTimeout = d
+	}
+	if d, parseErr := time.ParseDuration(cfg.HTTP2WriteByteTimeout); parseErr == nil {
+		h2Config.WriteByteTimeout = d
+	}
+	transport.HTTP2 = &h2Config
+	return transport
+}
+
 // Connect - connect to s3
 func (s *S3) Connect(ctx context.Context) error {
 	var err error
@@ -177,43 +224,8 @@ func (s *S3) Connect(ctx context.Context) error {
 		}
 	}
 
-	httpTransport := http.DefaultTransport
-	// Build a custom HTTP transport only when cert verification is disabled or any HTTP tuning
-	// knob is set, otherwise keep the AWS SDK default transport untouched.
-	// See https://github.com/Altinity/clickhouse-backup/issues/1376
-	needCustomTransport := s.Config.DisableCertVerification ||
-		s.Config.HTTPMaxIdleConns > 0 || s.Config.HTTPMaxIdleConnsPerHost > 0 ||
-		s.Config.HTTPMaxConnsPerHost > 0 || s.Config.HTTPWriteBufferSize > 0 ||
-		s.Config.HTTPReadBufferSize > 0 || s.Config.HTTPIdleConnTimeout != ""
-	if needCustomTransport {
-		customTransport := http.DefaultTransport.(*http.Transport).Clone()
-		if s.Config.DisableCertVerification {
-			customTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-		}
-		if s.Config.HTTPMaxIdleConns > 0 {
-			customTransport.MaxIdleConns = s.Config.HTTPMaxIdleConns
-		}
-		if s.Config.HTTPMaxIdleConnsPerHost > 0 {
-			customTransport.MaxIdleConnsPerHost = s.Config.HTTPMaxIdleConnsPerHost
-		}
-		if s.Config.HTTPMaxConnsPerHost > 0 {
-			customTransport.MaxConnsPerHost = s.Config.HTTPMaxConnsPerHost
-		}
-		if s.Config.HTTPWriteBufferSize > 0 {
-			customTransport.WriteBufferSize = s.Config.HTTPWriteBufferSize
-		}
-		if s.Config.HTTPReadBufferSize > 0 {
-			customTransport.ReadBufferSize = s.Config.HTTPReadBufferSize
-		}
-		if s.Config.HTTPIdleConnTimeout != "" {
-			// already validated in config.ValidateConfig
-			if d, parseErr := time.ParseDuration(s.Config.HTTPIdleConnTimeout); parseErr == nil {
-				customTransport.IdleConnTimeout = d
-			}
-		}
-		httpTransport = customTransport
-		awsConfig.HTTPClient = &http.Client{Transport: httpTransport}
-	}
+	httpTransport := http.RoundTripper(buildHTTPTransport(s.Config))
+	awsConfig.HTTPClient = &http.Client{Transport: httpTransport}
 
 	// The aws-sdk default (WhenSupported) adds an aws-chunked flexible-checksum trailer to streaming (unseekable) uploads.
 	// Non-AWS S3-compatible providers reject it ("aws-chunked encoding is not supported...", GCS SignatureDoesNotMatch via

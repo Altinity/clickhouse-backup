@@ -672,19 +672,38 @@ func testAPIBackupActionsSkipCommands(t *testing.T, r *require.Assertions, env *
 	var createRows uint64
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{"create skip_commands_test"}, true)
 	r.NoError(env.ch.SelectSingleRowNoCtx(&createRows, "SELECT count() FROM system.backup_actions WHERE command='create skip_commands_test' AND status=?", status.SuccessStatus))
+	actionsDump := ""
 	if createRows != 1 {
-		// The command was recorded but ended non-success (CI-only flake). Surface the
-		// actual status/error and the server log so the root cause is diagnosable.
-		createActions := make([]struct {
-			Status string `ch:"status"`
-			Error  string `ch:"error"`
-		}, 0)
-		r.NoError(env.ch.StructSelect(&createActions, "SELECT status, error FROM system.backup_actions WHERE command='create skip_commands_test'"))
+		// Either the command ended non-success, or it was recorded more than once
+		// (e.g. registered both by the API handler and by the CLI it re-enters).
+		// Dump every row so the assertion message says which of the two happened.
+		actionsDump = dumpBackupActions(r, env)
 		logOut, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "tail -n 200 /tmp/clickhouse-backup-server.log")
-		log.Error().Msgf("create skip_commands_test did not succeed, actions=%+v\nclickhouse-backup server log tail:\n%s", createActions, logOut)
+		log.Error().Msgf("unexpected `create skip_commands_test` rows\n%s\nclickhouse-backup server log tail:\n%s", actionsDump, logOut)
 	}
-	r.Equal(uint64(1), createRows, "non-skipped commands must still be recorded in system.backup_actions")
+	r.Equal(uint64(1), createRows, "`create skip_commands_test` must be recorded in system.backup_actions exactly once with status=%s, got %d\n%s", status.SuccessStatus, createRows, actionsDump)
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{"delete local skip_commands_test"}, false)
+}
+
+// dumpBackupActions renders the whole in-memory async status list, so an assertion
+// about system.backup_actions can report what is actually recorded there instead of
+// just a row count.
+func dumpBackupActions(r *require.Assertions, env *TestEnvironment) string {
+	rows := make([]struct {
+		Command     string `ch:"command"`
+		Status      string `ch:"status"`
+		Start       string `ch:"start"`
+		Finish      string `ch:"finish"`
+		Error       string `ch:"error"`
+		OperationId string `ch:"operation_id"`
+	}, 0)
+	r.NoError(env.ch.StructSelect(&rows, "SELECT command, status, start, finish, error, operation_id FROM system.backup_actions ORDER BY start"))
+	dump := fmt.Sprintf("system.backup_actions (%d rows):", len(rows))
+	for _, row := range rows {
+		dump += fmt.Sprintf("\n  command=%q status=%q start=%q finish=%q operation_id=%q error=%q",
+			row.Command, row.Status, row.Start, row.Finish, row.OperationId, row.Error)
+	}
+	return dump
 }
 
 func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {

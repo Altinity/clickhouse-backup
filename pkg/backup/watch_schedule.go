@@ -9,8 +9,10 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	cron "github.com/robfig/cron/v3"
 	"github.com/rs/zerolog/log"
@@ -250,10 +252,12 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 	if rebaseRequired {
 		diffFromRemote = st.prevBackupName
 	}
+	iterationCommandId, _ := status.Current.StartWithCallback("create_remote "+backupName, uuid.NewString(), b.watchIterationCallback())
 	createRemote := func() error {
 		return b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, version, commandId)
 	}
 	var createRemoteErr error
+	var deleteLocalErr error
 	if metrics != nil {
 		createRemoteErr, *createRemoteErrCount = metrics.ExecuteWithMetrics("create_remote", *createRemoteErrCount, createRemote)
 		if createRemoteErr == nil && rebaseRequired {
@@ -273,9 +277,8 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 	// If backups_to_keep_local=-1 then the local backup is deleted in the upload step when RemoveOldBackupsLocal is called
 	if !deleteSource && b.cfg.General.BackupsToKeepLocal >= 0 {
 		removeLocal := func() error {
-			return b.RemoveBackupLocal(ctx, backupName, nil)
+			return b.RemoveBackupLocal(ctx, backupName, nil, true)
 		}
-		var deleteLocalErr error
 		if metrics != nil {
 			deleteLocalErr, *deleteLocalErrCount = metrics.ExecuteWithMetrics("delete", *deleteLocalErrCount, removeLocal)
 		} else {
@@ -284,6 +287,11 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 		if deleteLocalErr != nil {
 			log.Error().Str("schedule", st.schedule.Name).Msgf("delete local `%s` return error: %v", backupName, deleteLocalErr)
 		}
+	}
+	if createRemoteErr != nil {
+		status.Current.Stop(iterationCommandId, createRemoteErr)
+	} else {
+		status.Current.Stop(iterationCommandId, deleteLocalErr)
 	}
 	if createRemoteErr != nil {
 		return
@@ -320,7 +328,7 @@ func (b *Backuper) deletePreviousWatchCycle(ctx context.Context, st *watchSchedu
 			continue
 		}
 		log.Info().Str("schedule", st.schedule.Name).Msgf("delete previous cycle backup `%s`", remoteBackup.BackupName)
-		if err = b.RemoveBackupRemote(ctx, remoteBackup.BackupName); err != nil {
+		if err = b.RemoveBackupRemote(ctx, remoteBackup.BackupName, true); err != nil {
 			return errors.Wrapf(err, "can't delete `%s`", remoteBackup.BackupName)
 		}
 	}

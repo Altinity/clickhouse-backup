@@ -218,7 +218,10 @@ type ObjectStorageCredentials struct {
 var DisksCredentials = xsync.NewMapOf[ObjectStorageCredentials]()
 
 type ObjectStorageConnection struct {
-	Type         string
+	Type string
+	// MetadataType - `local` for VFS disks with local metadata files, `plain` / `plain_rewritable` for disks
+	// whose object keys are derived from logical paths (no local metadata files)
+	MetadataType string
 	S3           *storage.S3
 	AzureBlob    *storage.AzureBlob
 	MetadataPath string
@@ -359,13 +362,13 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 				diskType = strings.Trim(diskTypeNode.InnerText(), "\r\n \t")
 				if metadataTypeNode := d.SelectElement("metadata_type"); metadataTypeNode != nil {
 					metadataType := strings.Trim(metadataTypeNode.InnerText(), "\r\n \t")
-					if metadataType != "local" {
+					if metadataType != "local" && metadataType != "plain" && metadataType != "plain_rewritable" {
 						return errors.Errorf("/%s/storage_configuration/disks/%s, unsupported <metadata_type>%s</metadata_type>", root.Data, diskName, metadataType)
 					}
 				}
 			}
 			switch diskType {
-			case "s3", "s3_plain":
+			case "s3", "s3_plain", "s3_plain_rewritable":
 				creds := ObjectStorageCredentials{
 					Type: "s3",
 				}
@@ -417,7 +420,7 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 				}
 				DisksCredentials.Store(diskName, creds)
 				break
-			case "azure", "azure_blob_storage":
+			case "azure", "azure_blob_storage", "azure_plain", "azure_plain_rewritable":
 				creds := ObjectStorageCredentials{
 					Type: "azblob",
 				}
@@ -507,9 +510,10 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 	if !exists {
 		return nil, errors.Errorf("%s is not presnet in object_disk.SystemDisks", diskName)
 	}
-	if disk.Type != "s3" && disk.Type != "s3_plain" && disk.Type != "azure_blob_storage" && disk.Type != "azure" && disk.Type != "encrypted" {
+	if disk.Type != "s3" && disk.Type != "s3_plain" && disk.Type != "s3_plain_rewritable" && disk.Type != "azure_blob_storage" && disk.Type != "azure" && disk.Type != "encrypted" {
 		return nil, errors.Errorf("%s have unsupported type %s", diskName, disk.Type)
 	}
+	connection.MetadataType = disk.MetadataType
 	connection.MetadataPath = disk.Path
 
 	switch creds.Type {

@@ -70,20 +70,26 @@ func getBackupSizeString(backup interface{}) string {
 func (b *Backuper) List(what, ptype, format string) error {
 	ctx, cancel, _ := status.Current.GetContextWithCancel(status.NotFromAPI)
 	defer cancel()
-	backupInfos := make([]BackupInfo, 0, 10)
+	var backupInfos []BackupInfo
+	var err error
 	switch what {
 	case "local":
-		backupInfos = append(backupInfos, b.CollectLocalBackups(ctx, ptype)...)
+		backupInfos, err = b.CollectLocalBackups(ctx, ptype)
 	case "remote":
-		backupInfos = append(backupInfos, b.CollectRemoteBackups(ctx, ptype)...)
+		backupInfos, err = b.CollectRemoteBackups(ctx, ptype)
 	case "all", "":
-		backupInfos = append(backupInfos, b.CollectAllBackups(ctx, ptype)...)
+		backupInfos, err = b.CollectAllBackups(ctx, ptype)
+	}
+	if err != nil {
+		return err
 	}
 	return b.PrintBackup(backupInfos, format)
 }
 
 func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
+	// machine-readable formats write to os.Stdout in one Write. tabwriter emits the payload and its
+	// terminating newline separately, so a zerolog line on stderr can splice itself in between when
+	// both streams are merged (`docker exec`): `...}]2026-01-01 00:00:00 INF ...`.
 	switch format {
 	case "json":
 		bytes, err := json.Marshal(backupInfos)
@@ -91,7 +97,7 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 			log.Error().Msgf("json.Marshal return error: %v", err)
 			return errors.Wrap(err, "PrintBackup json.Marshal")
 		}
-		if _, err := fmt.Fprintln(w, string(bytes)); err != nil {
+		if _, err := fmt.Fprintln(os.Stdout, string(bytes)); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
 			return errors.Wrap(err, "PrintBackup json Fprintln")
 		}
@@ -102,7 +108,7 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 			log.Error().Msgf("yaml.Marshal return error: %v", err)
 			return errors.Wrap(err, "PrintBackup yaml.Marshal")
 		}
-		if _, err := fmt.Fprintln(w, string(bytes)); err != nil {
+		if _, err := fmt.Fprintln(os.Stdout, string(bytes)); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
 			return errors.Wrap(err, "PrintBackup yaml Fprintln")
 		}
@@ -114,7 +120,7 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 			log.Error().Msgf("gocsv.MarshalString return error: %v", err)
 			return errors.Wrap(err, "PrintBackup csv MarshalString")
 		}
-		if _, err := fmt.Fprintln(w, csvString); err != nil {
+		if _, err := fmt.Fprintln(os.Stdout, csvString); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", len(csvString), err)
 			return errors.Wrap(err, "PrintBackup csv Fprintln")
 		}
@@ -130,12 +136,13 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 			log.Error().Msgf("gocsv.MarshalString return error: %v", err)
 			return errors.Wrap(err, "PrintBackup tsv MarshalString")
 		}
-		if _, err := fmt.Fprintln(w, csvString); err != nil {
+		if _, err := fmt.Fprintln(os.Stdout, csvString); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", len(csvString), err)
 			return errors.Wrap(err, "PrintBackup tsv Fprintln")
 		}
 		return nil
 	case "text", "":
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
 		for _, backup := range backupInfos {
 			creationDate := backup.CreationDate.In(time.Local).Format("2006-01-02 15:04:05")
 			if bytes, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, creationDate, backup.Type, backup.RequiredBackup, backup.Size, backup.Description); err != nil {
@@ -147,17 +154,24 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 	return nil
 }
 
-func (b *Backuper) CollectAllBackups(ctx context.Context, ptype string) []BackupInfo {
-	backupInfos := append(b.CollectLocalBackups(ctx, ptype), b.CollectRemoteBackups(ctx, ptype)...)
-	return backupInfos
+func (b *Backuper) CollectAllBackups(ctx context.Context, ptype string) ([]BackupInfo, error) {
+	localBackups, err := b.CollectLocalBackups(ctx, ptype)
+	if err != nil {
+		return nil, err
+	}
+	remoteBackups, err := b.CollectRemoteBackups(ctx, ptype)
+	if err != nil {
+		return nil, err
+	}
+	return append(localBackups, remoteBackups...), nil
 }
 
-func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []BackupInfo {
+func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) ([]BackupInfo, error) {
 	backupInfos := make([]BackupInfo, 0, 10)
 	if b.cfg.General.RemoteStorage != "none" {
 		backupList, err := b.GetRemoteBackups(ctx, true)
 		if err != nil {
-			return backupInfos
+			return backupInfos, err
 		}
 		// if err = printBackupsRemote( remoteBackups, format); err != nil {
 		// 	log.Warn().Msgf("printBackupsRemote return error: %v", err)
@@ -165,7 +179,7 @@ func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []Bac
 		switch ptype {
 		case "latest", "last", "l":
 			if len(backupList) < 1 {
-				return backupInfos
+				return backupInfos, nil
 			}
 			// fmt.Println(backupList[len(backupList)-1].BackupName)
 			backupInfos = append(backupInfos, BackupInfo{
@@ -181,10 +195,10 @@ func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []Bac
 					return ""
 				}(),
 			})
-			return backupInfos
+			return backupInfos, nil
 		case "penult", "prev", "previous", "p":
 			if len(backupList) < 2 {
-				return backupInfos
+				return backupInfos, nil
 			}
 			// fmt.Println(backupList[len(backupList)-2].BackupName)
 			backupInfos = append(backupInfos, BackupInfo{
@@ -200,7 +214,7 @@ func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []Bac
 					return ""
 				}(),
 			})
-			return backupInfos
+			return backupInfos, nil
 		case "all", "":
 			for _, backup := range backupList {
 				size := getBackupSizeString(backup)
@@ -232,10 +246,10 @@ func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []Bac
 			// v1 BackupList walk above (which now skips that prefix).
 			backupInfos = append(backupInfos, b.CollectRemoteCASBackups(ctx)...)
 		default:
-			return backupInfos
+			return backupInfos, nil
 		}
 	}
-	return backupInfos
+	return backupInfos, nil
 }
 
 // CollectRemoteCASBackups enumerates CAS-mode remote backups and returns
@@ -309,11 +323,11 @@ func (b *Backuper) CollectRemoteCASBackups(ctx context.Context) []BackupInfo {
 	return out
 }
 
-func (b *Backuper) CollectLocalBackups(ctx context.Context, ptype string) []BackupInfo {
+func (b *Backuper) CollectLocalBackups(ctx context.Context, ptype string) ([]BackupInfo, error) {
 	backupInfos := make([]BackupInfo, 0, 10)
 	if !b.ch.IsOpen {
 		if err := b.ch.Connect(); err != nil {
-			return backupInfos
+			return backupInfos, err
 		}
 		defer b.ch.Close()
 	}
@@ -325,12 +339,12 @@ func (b *Backuper) CollectLocalBackups(ctx context.Context, ptype string) []Back
 	}()
 	backupList, _, err := b.GetLocalBackups(ctx, nil)
 	if err != nil && !os.IsNotExist(err) {
-		return backupInfos
+		return backupInfos, errors.Wrap(err, "CollectLocalBackups GetLocalBackups")
 	}
 	switch ptype {
 	case "latest", "last", "l":
 		if len(backupList) < 1 {
-			return backupInfos
+			return backupInfos, nil
 		}
 		// fmt.Println(backupList[len(backupList)-1].BackupName)
 		backupInfos = append(backupInfos, BackupInfo{
@@ -346,10 +360,10 @@ func (b *Backuper) CollectLocalBackups(ctx context.Context, ptype string) []Back
 			}(),
 			Type: "local",
 		})
-		return backupInfos
+		return backupInfos, nil
 	case "penult", "prev", "previous", "p":
 		if len(backupList) < 2 {
-			return backupInfos
+			return backupInfos, nil
 		}
 		// fmt.Println(backupList[len(backupList)-2].BackupName)
 		backupInfos = append(backupInfos, BackupInfo{
@@ -365,12 +379,12 @@ func (b *Backuper) CollectLocalBackups(ctx context.Context, ptype string) []Back
 			}(),
 			Type: "local",
 		})
-		return backupInfos
+		return backupInfos, nil
 	case "all", "":
 		for _, backup := range backupList {
 			select {
 			case <-ctx.Done():
-				return backupInfos
+				return backupInfos, nil
 			default:
 				size := getBackupSizeString(backup)
 				description := backup.DataFormat
@@ -399,9 +413,9 @@ func (b *Backuper) CollectLocalBackups(ctx context.Context, ptype string) []Back
 			}
 		}
 	default:
-		return backupInfos
+		return backupInfos, nil
 	}
-	return backupInfos
+	return backupInfos, nil
 }
 
 // GetLocalBackups - return slice of all backups stored locally
@@ -576,11 +590,17 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 		return []storage.Backup{}, errors.Wrap(err, "GetRemoteBackups BackupList")
 	}
 	// ugly hack to fix https://github.com/Altinity/clickhouse-backup/issues/309
+	// parse metadata only for the last backup and keep the full list, since #1361
+	// BackupList with parseMetadataOnly returns only the requested backup,
+	// replacing the whole list broke NumberBackupsRemote, see https://github.com/Altinity/clickhouse-backup/issues/1502
 	if parseMetadata == false && len(backupList) > 0 {
 		lastBackup := backupList[len(backupList)-1]
-		backupList, err = bd.BackupList(ctx, true, lastBackup.BackupName, b.cfg.CAS.SkipPrefixes())
+		lastParsed, err := bd.BackupList(ctx, true, lastBackup.BackupName, b.cfg.CAS.SkipPrefixes())
 		if err != nil {
 			return []storage.Backup{}, errors.Wrap(err, "GetRemoteBackups BackupList last")
+		}
+		if len(lastParsed) == 1 {
+			backupList[len(backupList)-1] = lastParsed[0]
 		}
 	}
 	return backupList, nil
