@@ -14,11 +14,12 @@ clickhouse:
   timeout: 10m
 sftp:
   address: "sshd"
-  username: "root"
+  port: 2222
+  username: "sftpuser"
   password: "JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ"
   key: ""
-  path: "/root"
-  object_disk_path: "/object_disk"
+  path: "/config"
+  object_disk_path: "/config/object_disk"
   compression_format: none
   compression_level: 1
 api:

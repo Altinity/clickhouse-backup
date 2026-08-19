@@ -65,11 +65,11 @@ func (env *TestEnvironment) casBootstrapWith(r *require.Assertions, clusterID, b
 		// unique cluster IDs and the tests' own cas-delete + cas-prune
 		// cleanup at the end.
 	case "config-sftp-auth-password.yaml", "config-sftp-emulator.yaml":
-		// SFTP: path: /root -> /root/cas/<id>/ on the sshd container.
+		// SFTP: path: /config -> /config/cas/<id>/ on the sshd container.
 		// Create the directory after wiping: sftp.Walk fails on non-existent
 		// directories, so we need it to exist before cas-upload runs cold-list.
 		_ = env.DockerExec("sshd", "sh", "-c",
-			fmt.Sprintf("rm -rf /root/cas/%s/ && mkdir -p /root/cas/%s/", clusterID, clusterID))
+			fmt.Sprintf("rm -rf /config/cas/%s/ && mkdir -p /config/cas/%s/ && chown -R sftpuser:sftpuser /config/cas/", clusterID, clusterID))
 	case "config-ftp.yaml", "config-ftp-emulator.yaml":
 		// FTP: path: /backup -> /backup/cas/<id>/ on the ftp container.
 		_ = env.DockerExec("ftp", "sh", "-c",

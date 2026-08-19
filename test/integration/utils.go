@@ -525,7 +525,7 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	if strings.HasPrefix(t.Name(), "TestCAS") {
 		_ = env.DockerExec("minio", "bash", "-c", "rm -rf /minio/data/clickhouse/backup")
 		_ = env.DockerExec("gcs", "sh", "-c", "rm -rf /data/altinity-qa-test/backup 2>/dev/null || true")
-		_ = env.DockerExec("sshd", "sh", "-c", "rm -rf /root/cas/ 2>/dev/null || true")
+		_ = env.DockerExec("sshd", "sh", "-c", "rm -rf /config/cas/ 2>/dev/null || true")
 		_ = env.DockerExec("ftp", "sh", "-c", "rm -rf /home/test_backup/backup/cas/ /home/ftpusers/test_backup/backup/cas/ /backup/cas/ 2>/dev/null || true")
 
 		// Local clickhouse-backup state + leaked cas_* databases — backstop
@@ -540,7 +540,7 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	} else {
 		_ = env.DockerExec("minio", "bash", "-c", "rm -rf /minio/data/clickhouse/backup/cluster/*/cas/ 2>/dev/null; find /minio/data/clickhouse/backup -mindepth 1 -type d -empty -delete 2>/dev/null; rmdir /minio/data/clickhouse/backup 2>/dev/null || true")
 		_ = env.DockerExec("gcs", "sh", "-c", "rm -rf /data/altinity-qa-test/backup/cluster/*/cas/ 2>/dev/null; find /data/altinity-qa-test/backup -mindepth 1 -type d -empty -delete 2>/dev/null; rmdir /data/altinity-qa-test/backup 2>/dev/null || true")
-		_ = env.DockerExec("sshd", "sh", "-c", "rm -rf /root/cas/ 2>/dev/null || true")
+		_ = env.DockerExec("sshd", "sh", "-c", "rm -rf /config/cas/ 2>/dev/null || true")
 		_ = env.DockerExec("ftp", "sh", "-c", "rm -rf /home/test_backup/backup/cas/ /home/ftpusers/test_backup/backup/cas/ /backup/cas/ 2>/dev/null || true")
 	}
 
