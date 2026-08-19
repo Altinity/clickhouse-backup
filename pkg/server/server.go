@@ -470,7 +470,7 @@ func (api *APIServer) actionsAsyncCommandsHandler(command string, args []string,
 			status.Current.Stop(commandId, err)
 		}
 		if err != nil {
-			log.Error().Msgf("API /backup/actions error: %v", err)
+			log.Error().Stack().Err(err).Msg("API /backup/actions error")
 			return
 		}
 	}()

@@ -260,7 +260,7 @@ func (m *APIMetrics) ExecuteWithMetrics(command string, errCounter int, f func()
 	err := f()
 	m.Finish(command, startTime)
 	if err != nil {
-		log.Error().Msgf("metrics.ExecuteWithMetrics(%s) return error: %v", command, err)
+		log.Error().Stack().Err(err).Msgf("metrics.ExecuteWithMetrics(%s) return error", command)
 		errCounter += 1
 		m.Failure(command)
 	} else {

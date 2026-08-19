@@ -68,14 +68,18 @@ func getBackupSizeString(backup interface{}) string {
 func (b *Backuper) List(what, ptype, format string) error {
 	ctx, cancel, _ := status.Current.GetContextWithCancel(status.NotFromAPI)
 	defer cancel()
-	backupInfos := make([]BackupInfo, 0, 10)
+	var backupInfos []BackupInfo
+	var err error
 	switch what {
 	case "local":
-		backupInfos = append(backupInfos, b.CollectLocalBackups(ctx, ptype)...)
+		backupInfos, err = b.CollectLocalBackups(ctx, ptype)
 	case "remote":
-		backupInfos = append(backupInfos, b.CollectRemoteBackups(ctx, ptype)...)
+		backupInfos, err = b.CollectRemoteBackups(ctx, ptype)
 	case "all", "":
-		backupInfos = append(backupInfos, b.CollectAllBackups(ctx, ptype)...)
+		backupInfos, err = b.CollectAllBackups(ctx, ptype)
+	}
+	if err != nil {
+		return err
 	}
 	return b.PrintBackup(backupInfos, format)
 }
@@ -148,17 +152,24 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 	return nil
 }
 
-func (b *Backuper) CollectAllBackups(ctx context.Context, ptype string) []BackupInfo {
-	backupInfos := append(b.CollectLocalBackups(ctx, ptype), b.CollectRemoteBackups(ctx, ptype)...)
-	return backupInfos
+func (b *Backuper) CollectAllBackups(ctx context.Context, ptype string) ([]BackupInfo, error) {
+	localBackups, err := b.CollectLocalBackups(ctx, ptype)
+	if err != nil {
+		return nil, err
+	}
+	remoteBackups, err := b.CollectRemoteBackups(ctx, ptype)
+	if err != nil {
+		return nil, err
+	}
+	return append(localBackups, remoteBackups...), nil
 }
 
-func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []BackupInfo {
+func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) ([]BackupInfo, error) {
 	backupInfos := make([]BackupInfo, 0, 10)
 	if b.cfg.General.RemoteStorage != "none" {
 		backupList, err := b.GetRemoteBackups(ctx, true)
 		if err != nil {
-			return backupInfos
+			return backupInfos, err
 		}
 		// if err = printBackupsRemote( remoteBackups, format); err != nil {
 		// 	log.Warn().Msgf("printBackupsRemote return error: %v", err)
@@ -166,7 +177,7 @@ func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []Bac
 		switch ptype {
 		case "latest", "last", "l":
 			if len(backupList) < 1 {
-				return backupInfos
+				return backupInfos, nil
 			}
 			// fmt.Println(backupList[len(backupList)-1].BackupName)
 			backupInfos = append(backupInfos, BackupInfo{
@@ -182,10 +193,10 @@ func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []Bac
 					return ""
 				}(),
 			})
-			return backupInfos
+			return backupInfos, nil
 		case "penult", "prev", "previous", "p":
 			if len(backupList) < 2 {
-				return backupInfos
+				return backupInfos, nil
 			}
 			// fmt.Println(backupList[len(backupList)-2].BackupName)
 			backupInfos = append(backupInfos, BackupInfo{
@@ -201,7 +212,7 @@ func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []Bac
 					return ""
 				}(),
 			})
-			return backupInfos
+			return backupInfos, nil
 		case "all", "":
 			for _, backup := range backupList {
 				size := getBackupSizeString(backup)
@@ -228,17 +239,17 @@ func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []Bac
 
 			}
 		default:
-			return backupInfos
+			return backupInfos, nil
 		}
 	}
-	return backupInfos
+	return backupInfos, nil
 }
 
-func (b *Backuper) CollectLocalBackups(ctx context.Context, ptype string) []BackupInfo {
+func (b *Backuper) CollectLocalBackups(ctx context.Context, ptype string) ([]BackupInfo, error) {
 	backupInfos := make([]BackupInfo, 0, 10)
 	if !b.ch.IsOpen {
 		if err := b.ch.Connect(); err != nil {
-			return backupInfos
+			return backupInfos, err
 		}
 		defer b.ch.Close()
 	}
@@ -250,12 +261,12 @@ func (b *Backuper) CollectLocalBackups(ctx context.Context, ptype string) []Back
 	}()
 	backupList, _, err := b.GetLocalBackups(ctx, nil)
 	if err != nil && !os.IsNotExist(err) {
-		return backupInfos
+		return backupInfos, errors.Wrap(err, "CollectLocalBackups GetLocalBackups")
 	}
 	switch ptype {
 	case "latest", "last", "l":
 		if len(backupList) < 1 {
-			return backupInfos
+			return backupInfos, nil
 		}
 		// fmt.Println(backupList[len(backupList)-1].BackupName)
 		backupInfos = append(backupInfos, BackupInfo{
@@ -271,10 +282,10 @@ func (b *Backuper) CollectLocalBackups(ctx context.Context, ptype string) []Back
 			}(),
 			Type: "local",
 		})
-		return backupInfos
+		return backupInfos, nil
 	case "penult", "prev", "previous", "p":
 		if len(backupList) < 2 {
-			return backupInfos
+			return backupInfos, nil
 		}
 		// fmt.Println(backupList[len(backupList)-2].BackupName)
 		backupInfos = append(backupInfos, BackupInfo{
@@ -290,12 +301,12 @@ func (b *Backuper) CollectLocalBackups(ctx context.Context, ptype string) []Back
 			}(),
 			Type: "local",
 		})
-		return backupInfos
+		return backupInfos, nil
 	case "all", "":
 		for _, backup := range backupList {
 			select {
 			case <-ctx.Done():
-				return backupInfos
+				return backupInfos, nil
 			default:
 				size := getBackupSizeString(backup)
 				description := backup.DataFormat
@@ -324,9 +335,9 @@ func (b *Backuper) CollectLocalBackups(ctx context.Context, ptype string) []Back
 			}
 		}
 	default:
-		return backupInfos
+		return backupInfos, nil
 	}
-	return backupInfos
+	return backupInfos, nil
 }
 
 // GetLocalBackups - return slice of all backups stored locally

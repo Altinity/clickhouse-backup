@@ -104,7 +104,10 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	b.adjustResumeFlag(resume)
 
 	if backupName == "" {
-		remoteBackups := b.CollectRemoteBackups(ctx, "all")
+		remoteBackups, listErr := b.CollectRemoteBackups(ctx, "all")
+		if listErr != nil {
+			log.Warn().Msgf("CollectRemoteBackups return error: %v", listErr)
+		}
 		_ = b.PrintBackup(remoteBackups, "text")
 		return errors.New("select backup for download")
 	}

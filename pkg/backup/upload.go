@@ -436,7 +436,10 @@ func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, 
 		return errors.New("general->remote_storage shall not be \"none\" for upload, change you config or use REMOTE_STORAGE environment variable")
 	}
 	if backupName == "" {
-		localBackups := b.CollectLocalBackups(ctx, "all")
+		localBackups, listErr := b.CollectLocalBackups(ctx, "all")
+		if listErr != nil {
+			log.Warn().Msgf("CollectLocalBackups return error: %v", listErr)
+		}
 		_ = b.PrintBackup(localBackups, "text")
 		return errors.New("select backup for upload")
 	}

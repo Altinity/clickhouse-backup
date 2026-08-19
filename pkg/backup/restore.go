@@ -92,7 +92,10 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	}
 
 	if backupName == "" {
-		localBackups := b.CollectLocalBackups(ctx, "all")
+		localBackups, listErr := b.CollectLocalBackups(ctx, "all")
+		if listErr != nil {
+			log.Warn().Msgf("CollectLocalBackups return error: %v", listErr)
+		}
 		_ = b.PrintBackup(localBackups, "text")
 		return errors.New("select backup for restore")
 	}
