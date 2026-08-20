@@ -1100,6 +1100,24 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		keyHex = key
 	}
 
+	// DROP/CREATE NAMED COLLECTION ... ON CLUSTER is broken before 23.7:
+	// the distributed DDL log entry loses IF EXISTS (remote hosts raise
+	// NAMED_COLLECTION_DOESNT_EXIST) and CREATE silently drops the ON CLUSTER
+	// clause, see https://github.com/ClickHouse/ClickHouse/issues/51609.
+	// Fall back to local DDL there — that is all such versions can do anyway.
+	onCluster := ""
+	if b.cfg.General.RestoreSchemaOnCluster != "" {
+		version, versionErr := b.ch.GetVersion(ctx)
+		if versionErr != nil {
+			return errors.Wrap(versionErr, "restoreNamedCollections: b.ch.GetVersion")
+		}
+		if version != 0 && version < 23007000 {
+			log.Warn().Msgf("NAMED COLLECTION DDL ON CLUSTER doesn't work before 23.7 (https://github.com/ClickHouse/ClickHouse/issues/51609), restoring named collections without ON CLUSTER")
+		} else {
+			onCluster = fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
+		}
+	}
+
 	// Handle JSONL files
 	for _, jsonlFile := range jsonlFiles {
 		file, openErr := os.Open(jsonlFile)
@@ -1156,17 +1174,14 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 			collectionName := matches[1]
 
 			// Drop existing collection first
-			dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collectionName)
-			if b.cfg.General.RestoreSchemaOnCluster != "" {
-				dropQuery += fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
-			}
+			dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s%s", collectionName, onCluster)
 			if err := b.ch.QueryContext(ctx, dropQuery); err != nil {
 				return errors.Wrapf(err, "failed to drop named collection %s", collectionName)
 			}
 
 			// Create new collection
-			if b.cfg.General.RestoreSchemaOnCluster != "" {
-				sqlQuery = strings.Replace(sqlQuery, " AS ", fmt.Sprintf(" ON CLUSTER '%s' AS ", b.cfg.General.RestoreSchemaOnCluster), 1)
+			if onCluster != "" {
+				sqlQuery = strings.Replace(sqlQuery, " AS ", onCluster+" AS ", 1)
 			}
 			if err := b.ch.QueryContext(ctx, sqlQuery); err != nil {
 				return errors.Wrapf(err, "failed to create named collection %s", collectionName)
@@ -1217,17 +1232,14 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		collectionName := matches[1]
 
 		// Drop existing collection first
-		dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collectionName)
-		if b.cfg.General.RestoreSchemaOnCluster != "" {
-			dropQuery += fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
-		}
+		dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s%s", collectionName, onCluster)
 		if err := b.ch.QueryContext(ctx, dropQuery); err != nil {
 			return errors.Wrapf(err, "failed to drop named collection %s", collectionName)
 		}
 
 		// Create new collection
-		if b.cfg.General.RestoreSchemaOnCluster != "" {
-			sqlQuery = strings.Replace(sqlQuery, " AS ", fmt.Sprintf(" ON CLUSTER '%s' AS ", b.cfg.General.RestoreSchemaOnCluster), 1)
+		if onCluster != "" {
+			sqlQuery = strings.Replace(sqlQuery, " AS ", onCluster+" AS ", 1)
 		}
 		if err := b.ch.QueryContext(ctx, sqlQuery); err != nil {
 			return errors.Wrapf(err, "failed to create named collection %s", collectionName)
