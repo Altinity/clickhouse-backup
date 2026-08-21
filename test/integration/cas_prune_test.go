@@ -47,17 +47,14 @@ func TestCASPruneSmoke(t *testing.T) {
 	env.casBackupNoError(r, "cas-upload", backupName)
 
 	pruneOut := env.casBackupNoError(r, "cas-prune")
-	t.Logf("cas-prune (live):\n%s", pruneOut)
 	r.Contains(pruneOut, "Live backups        : 1", "expected 1 live backup; got: %s", pruneOut)
 	r.Contains(pruneOut, "Orphans deleted     : 0", "no orphans expected before delete; got: %s", pruneOut)
 
 	dryOut := env.casBackupNoError(r, "cas-prune", "--dry-run")
-	t.Logf("cas-prune --dry-run:\n%s", dryOut)
 	r.Contains(dryOut, "cas-prune (dry-run):", "dry-run header missing; got: %s", dryOut)
 
 	env.casBackupNoError(r, "cas-delete", backupName)
 	pruneOut2 := env.casBackupNoError(r, "cas-prune", "--grace-blob=0s")
-	t.Logf("cas-prune (after delete, grace=0):\n%s", pruneOut2)
 	r.Contains(pruneOut2, "Live backups        : 0", "expected 0 live backups; got: %s", pruneOut2)
 
 	probe, err := env.casBackup("cas-prune")
@@ -108,17 +105,14 @@ func TestCASPruneEndToEndDedupeReclaim(t *testing.T) {
 	}
 
 	statusBefore := env.casBackupNoError(r, "cas-status")
-	t.Logf("statusBefore:\n%s", statusBefore)
 	r.Contains(statusBefore, "Backups: 3", "expected 3 backups uploaded; got: %s", statusBefore)
 
 	// Delete the middle backup; prune must reclaim ONLY blobs unique to it.
 	env.casBackupNoError(r, "cas-delete", "cas_prune_e2e_bk2")
 	pruneMid := env.casBackupNoError(r, "cas-prune", "--grace-blob=0s")
-	t.Logf("first cas-prune:\n%s", pruneMid)
 	r.Contains(pruneMid, "Live backups        : 2", "expected 2 live backups; got: %s", pruneMid)
 
 	statusMid := env.casBackupNoError(r, "cas-status")
-	t.Logf("statusMid:\n%s", statusMid)
 	r.Contains(statusMid, "Backups: 2", "expected Backups: 2; got: %s", statusMid)
 	r.NotContains(statusMid, "Blobs:   0 ", "shared blobs from bk1+bk3 must survive; got: %s", statusMid)
 
@@ -126,11 +120,9 @@ func TestCASPruneEndToEndDedupeReclaim(t *testing.T) {
 	env.casBackupNoError(r, "cas-delete", "cas_prune_e2e_bk1")
 	env.casBackupNoError(r, "cas-delete", "cas_prune_e2e_bk3")
 	pruneFinal := env.casBackupNoError(r, "cas-prune", "--grace-blob=0s")
-	t.Logf("final cas-prune:\n%s", pruneFinal)
 	r.Contains(pruneFinal, "Live backups        : 0", "expected 0 live backups; got: %s", pruneFinal)
 
 	finalStatus := env.casBackupNoError(r, "cas-status")
-	t.Logf("finalStatus:\n%s", finalStatus)
 	r.Contains(finalStatus, "Backups: 0", "expected 0 backups after full delete; got: %s", finalStatus)
 	r.Contains(finalStatus, "Blobs:   0 ", "expected 0 blobs after full delete + prune; got: %s", finalStatus)
 

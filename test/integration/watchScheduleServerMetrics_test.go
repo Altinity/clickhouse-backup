@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/rs/zerolog/log"
 )
 
 // TestWatchScheduleServerMetrics - reproduce https://github.com/Altinity/clickhouse-backup/issues/1502
@@ -46,7 +44,9 @@ func TestWatchScheduleServerMetrics(t *testing.T) {
 	defer func() {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "pkill -f '[c]lickhouse-backup.*server' || true; for i in $(seq 1 30); do pgrep -f '[c]lickhouse-backup.*server' >/dev/null || break; sleep 1; done")
 		out, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "cat /tmp/watch_schedule_server.log; rm -f /tmp/watch_schedule_server.log")
-		log.Info().Msg(out)
+		if t.Failed() {
+			t.Logf("watch server log:\n%s", out)
+		}
 		cleanBackups()
 		r.NoError(env.dropDatabase(dbName, true))
 	}()
@@ -71,7 +71,7 @@ func TestWatchScheduleServerMetrics(t *testing.T) {
 	for time.Now().Before(deadline) {
 		time.Sleep(10 * time.Second)
 		remoteNames = listRemote()
-		log.Info().Msgf("remote backups: %v", remoteNames)
+		t.Logf("remote backups: %v", remoteNames)
 		if matchedCount(remoteNames) >= 3 {
 			break
 		}
@@ -91,7 +91,7 @@ func TestWatchScheduleServerMetrics(t *testing.T) {
 		if m := metricRE.FindStringSubmatch(out); m != nil {
 			metricValue = m[1]
 		}
-		log.Info().Msgf("clickhouse_backup_number_backups_remote=%s, list remote count=%s", metricValue, expected)
+		t.Logf("clickhouse_backup_number_backups_remote=%s, list remote count=%s", metricValue, expected)
 		if metricValue == expected {
 			break
 		}
