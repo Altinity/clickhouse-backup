@@ -3,12 +3,28 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
+
+type backupMetadataSizes struct {
+	ConfigSize           uint64 `json:"config_size"`
+	NamedCollectionsSize uint64 `json:"named_collections_size"`
+}
+
+func readBackupMetadataSizes(env *TestEnvironment, r *require.Assertions, container string, cmd ...string) backupMetadataSizes {
+	out, err := env.DockerExecOut(container, cmd...)
+	r.NoError(err, "%s on %s: %s", strings.Join(cmd, " "), container, out)
+	var sizes backupMetadataSizes
+	r.NoError(json.Unmarshal([]byte(out), &sizes), "unmarshal metadata.json from %s: %s", container, out)
+	return sizes
+}
 
 func TestNamedCollections(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.12") < 0 {
@@ -113,6 +129,20 @@ func TestNamedCollections(t *testing.T) {
 				cmd = fmt.Sprintf("%sclickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload %s", backupEnvVar, backupArg)
 				env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", cmd)
 			}
+			// upload used to write the named collections size into config_size instead of named_collections_size,
+			// verify the remote metadata.json carries the sizes in the right fields; minio only sees objects
+			// that went through its S3 API, so read via `mc cat`, not from the container filesystem
+			const mcAliasCmd = "mc alias set local https://localhost:9000 access_key it_is_my_super_secret_key >/dev/null 2>&1"
+			cfgPath, _ := env.resolveConfigPaths(r, "config-s3.yml")
+			remoteMeta := readBackupMetadataSizes(env, r, "minio", "bash", "-c",
+				mcAliasCmd+" && mc cat local/clickhouse/"+cfgPath+"/"+backupArg+"/metadata.json")
+			r.Zero(remoteMeta.ConfigSize, "configs are not backed up in this test, remote config_size shall stay 0")
+			if tc.expectCollectionExists {
+				r.Greater(remoteMeta.NamedCollectionsSize, uint64(0), "remote named_collections_size shall contain the uploaded named collections size")
+			} else {
+				r.Zero(remoteMeta.NamedCollectionsSize, "backup without named collections shall keep remote named_collections_size=0")
+			}
+
 			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupArg)
 
 			// cleanup before restore — drop database first because CH 26.3+ forbids
@@ -156,6 +186,16 @@ func TestNamedCollections(t *testing.T) {
 						r.Equal(uint64(10), expected, "expect count=10")
 					}
 				}
+			}
+
+			// download used to drop the named collections size when rewriting the local metadata.json,
+			// verify the re-downloaded backup carries it too
+			localMeta := readBackupMetadataSizes(env, r, "clickhouse-backup", "cat", "/var/lib/clickhouse/backup/"+backupArg+"/metadata.json")
+			r.Zero(localMeta.ConfigSize, "configs are not backed up in this test, local config_size shall stay 0")
+			if tc.expectCollectionExists {
+				r.Greater(localMeta.NamedCollectionsSize, uint64(0), "local named_collections_size shall contain the downloaded named collections size")
+			} else {
+				r.Zero(localMeta.NamedCollectionsSize, "backup without named collections shall keep local named_collections_size=0")
 			}
 
 			// cleanup — drop database before named collection (CH 26.3+ forbids drop while tables reference it)

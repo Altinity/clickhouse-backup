@@ -333,7 +333,7 @@ type actionsResultsRow struct {
 	Operation string `json:"operation"`
 }
 
-// CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String, operation_id String) ENGINE=URL('http://127.0.0.1:7171/backup/actions?user=user&pass=pass', JSONEachRow)
+// CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String, operation_id String, result String) ENGINE=URL('http://127.0.0.1:7171/backup/actions?user=user&pass=pass', JSONEachRow)
 // INSERT INTO system.backup_actions (command) VALUES ('create backup_name')
 // INSERT INTO system.backup_actions (command) VALUES ('upload backup_name')
 func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
@@ -1028,9 +1028,25 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 	stopStatus(nil)
 }
 
+// sendDryRunReport - respond with the report calculated by a `dry-run` request, https://github.com/Altinity/clickhouse-backup/issues/1012
+func (api *APIServer) sendDryRunReport(w http.ResponseWriter, operation string, b *backup.Backuper, err error) {
+	if err != nil {
+		log.Error().Msgf("API /backup/%s --dry-run error: %v", operation, err)
+		api.writeError(w, http.StatusInternalServerError, operation, err)
+		return
+	}
+	if b.DryRunResult == nil {
+		api.writeError(w, http.StatusInternalServerError, operation, errors.Errorf("%s --dry-run returns empty report", operation))
+		return
+	}
+	api.sendJSONEachRow(w, http.StatusOK, b.DryRunResult)
+}
+
 // httpCreateHandler - create a backup
 func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
+	// dry-run has no side effects, so it doesn't respect API.AllowParallel
+	_, dryRun := api.getQueryParameter(r.URL.Query(), "dry-run")
+	if !dryRun && !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "create", ErrAPILocked)
 		return
@@ -1112,6 +1128,10 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		fullCommand += " --resume"
 	}
 
+	if dryRun {
+		fullCommand += " --dry-run"
+	}
+
 	if name, exist := query["name"]; exist {
 		backupName = utils.CleanBackupNameRE.ReplaceAllString(name[0], "")
 		fullCommand = fmt.Sprintf("%s %s", fullCommand, backupName)
@@ -1121,6 +1141,18 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "create", err)
+		return
+	}
+
+	// dry-run runs synchronously and returns the report in the response body
+	if dryRun {
+		commandId, _ := status.Current.Start(fullCommand)
+		b := backup.NewBackuper(cfg)
+		b.DryRun = true
+		err = b.CreateBackup(backupName, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, createNamedCollections, namedCollectionsOnly, checkPartsColumns, skipProjections, resume, api.clickhouseBackupVersion, commandId)
+		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
+		status.Current.Stop(commandId, err)
+		api.sendDryRunReport(w, "create", b, err)
 		return
 	}
 
@@ -1156,7 +1188,9 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 
 // httpCreateRemoteHandler - create and upload a backup
 func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
+	// dry-run has no side effects, so it doesn't respect API.AllowParallel
+	_, dryRun := api.getQueryParameter(r.URL.Query(), "dry-run")
+	if !dryRun && !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "create_remote", ErrAPILocked)
 		return
@@ -1247,6 +1281,9 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 		resume = true
 		fullCommand += " --resume"
 	}
+	if dryRun {
+		fullCommand += " --dry-run"
+	}
 	if name, exist := query["name"]; exist {
 		backupName = utils.CleanBackupNameRE.ReplaceAllString(name[0], "")
 		fullCommand = fmt.Sprintf("%s %s", fullCommand, backupName)
@@ -1256,6 +1293,18 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "create_remote", err)
+		return
+	}
+
+	// dry-run runs synchronously and returns the report in the response body
+	if dryRun {
+		commandId, _ := status.Current.Start(fullCommand)
+		b := backup.NewBackuper(cfg)
+		b.DryRun = true
+		err = b.CreateToRemote(backupName, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, backupNamedCollections, namedCollectionsOnly, skipCheckPartsColumns, resume, api.clickhouseBackupVersion, commandId)
+		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
+		status.Current.Stop(commandId, err)
+		api.sendDryRunReport(w, "create_remote", b, err)
 		return
 	}
 
@@ -1484,7 +1533,9 @@ func (api *APIServer) httpCleanRemoteBrokenHandler(w http.ResponseWriter, _ *htt
 
 // httpUploadHandler - upload a backup to remote storage
 func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
+	// dry-run has no side effects, so it doesn't respect API.AllowParallel
+	_, dryRun := api.getQueryParameter(r.URL.Query(), "dry-run")
+	if !dryRun && !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "upload", ErrAPILocked)
 		return
@@ -1560,6 +1611,9 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	if resume {
 		fullCommand += " --resume"
 	}
+	if dryRun {
+		fullCommand += " --dry-run"
+	}
 
 	fullCommand = fmt.Sprint(fullCommand, " ", name)
 
@@ -1567,6 +1621,18 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "upload", err)
+		return
+	}
+
+	// dry-run runs synchronously and returns the report in the response body
+	if dryRun {
+		commandId, _ := status.Current.Start(fullCommand)
+		b := backup.NewBackuper(cfg)
+		b.DryRun = true
+		err = b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, api.cliApp.Version, commandId)
+		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
+		status.Current.Stop(commandId, err)
+		api.sendDryRunReport(w, "upload", b, err)
 		return
 	}
 
@@ -1724,7 +1790,9 @@ var tableMappingRE = regexp.MustCompile(`[\w+]:[\w+]`)
 
 // httpRestoreHandler - restore a backup from local storage
 func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
+	// dry-run has no side effects, so it doesn't respect API.AllowParallel
+	_, dryRun := api.getQueryParameter(r.URL.Query(), "dry-run")
+	if !dryRun && !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "restore", ErrAPILocked)
 		return
@@ -1922,6 +1990,10 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	if dryRun {
+		fullCommand += " --dry-run"
+	}
+
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
 	fullCommand += fmt.Sprintf(" %s", name)
 
@@ -1929,6 +2001,18 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "restore", err)
+		return
+	}
+
+	// dry-run runs synchronously and returns the report in the response body
+	if dryRun {
+		commandId, _ := status.Current.Start(fullCommand)
+		b := backup.NewBackuper(cfg)
+		b.DryRun = true
+		err = b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, api.cliApp.Version, commandId)
+		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
+		status.Current.Stop(commandId, err)
+		api.sendDryRunReport(w, "restore", b, err)
 		return
 	}
 
@@ -1962,7 +2046,9 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 
 // httpRestoreRemoteHandler - download and restore a backup from remote storage
 func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
+	// dry-run has no side effects, so it doesn't respect API.AllowParallel
+	_, dryRun := api.getQueryParameter(r.URL.Query(), "dry-run")
+	if !dryRun && !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "restore_remote", ErrAPILocked)
 		return
@@ -2166,6 +2252,10 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		}
 	}
 
+	if dryRun {
+		fullCommand += " --dry-run"
+	}
+
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
 	fullCommand += fmt.Sprintf(" %s", name)
 
@@ -2173,6 +2263,18 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "restore_remote", err)
+		return
+	}
+
+	// dry-run runs synchronously and returns the report in the response body
+	if dryRun {
+		commandId, _ := status.Current.Start(fullCommand)
+		b := backup.NewBackuper(cfg)
+		b.DryRun = true
+		err = b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, api.cliApp.Version, commandId)
+		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
+		status.Current.Stop(commandId, err)
+		api.sendDryRunReport(w, "restore_remote", b, err)
 		return
 	}
 
@@ -2206,7 +2308,9 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 
 // httpDownloadHandler - download a backup from remote to local storage
 func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
+	// dry-run has no side effects, so it doesn't respect API.AllowParallel
+	_, dryRun := api.getQueryParameter(r.URL.Query(), "dry-run")
+	if !dryRun && !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "download", ErrAPILocked)
 		return
@@ -2267,6 +2371,9 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		hardlinkExistsFiles = true
 		fullCommand += " --hardlink-exists-files"
 	}
+	if dryRun {
+		fullCommand += " --dry-run"
+	}
 
 	fullCommand += fmt.Sprintf(" %s", name)
 
@@ -2274,6 +2381,18 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		log.Error().Err(err).Send()
 		api.writeError(w, http.StatusBadRequest, "download", err)
+		return
+	}
+
+	// dry-run runs synchronously and returns the report in the response body
+	if dryRun {
+		commandId, _ := status.Current.Start(fullCommand)
+		b := backup.NewBackuper(cfg)
+		b.DryRun = true
+		err = b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, hardlinkExistsFiles, api.cliApp.Version, commandId)
+		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
+		status.Current.Stop(commandId, err)
+		api.sendDryRunReport(w, "download", b, err)
 		return
 	}
 
@@ -2308,7 +2427,9 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 
 // httpDeleteHandler - delete a backup from local or remote storage
 func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
+	// dry-run has no side effects, so it doesn't respect API.AllowParallel
+	_, dryRun := api.getQueryParameter(r.URL.Query(), "dry-run")
+	if !dryRun && !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "delete", ErrAPILocked)
 		return
@@ -2322,6 +2443,25 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 	fullCommand := fmt.Sprintf("delete %s %s", vars["where"], vars["name"])
 	if force {
 		fullCommand += " --force"
+	}
+	// dry-run returns the report in the response body, without metrics update
+	if dryRun {
+		fullCommand += " --dry-run"
+		commandId, ctx := status.Current.Start(fullCommand)
+		b := backup.NewBackuper(cfg)
+		b.DryRun = true
+		switch vars["where"] {
+		case "local":
+			err = b.RemoveBackupLocal(ctx, vars["name"], nil, force)
+		case "remote":
+			err = b.RemoveBackupRemote(ctx, vars["name"], force)
+		default:
+			err = errors.New("backup location must be 'local' or 'remote'")
+		}
+		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
+		status.Current.Stop(commandId, err)
+		api.sendDryRunReport(w, "delete", b, err)
+		return
 	}
 	commandId, ctx := status.Current.Start(fullCommand)
 	b := backup.NewBackuper(cfg)
@@ -2543,7 +2683,7 @@ func (api *APIServer) CreateIntegrationTables() error {
 	if err != nil {
 		return errors.Wrap(err, "CreateIntegrationTables GetDefaultPath")
 	}
-	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String, operation_id String) ENGINE=URL('%s://%s:%s/backup/actions%s', JSONEachRow) %s", schema, host, port, auth, settings)
+	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String, operation_id String, result String) ENGINE=URL('%s://%s:%s/backup/actions%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, false, "", 0, defaultDataPath, false, ""); err != nil {
 		return errors.Wrap(err, "CreateIntegrationTables backup_actions")
 	}
@@ -2696,7 +2836,7 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 						args = append(args, partitionsStr...)
 					}
 				default:
-					return errors.Errorf("unkown command for state file %s", stateFile)
+					return errors.Errorf("unknown command for state file %s", stateFile)
 				}
 				args = append(args, "--resumable=1", backupName)
 				fullCommand := strings.Join(args, " ")

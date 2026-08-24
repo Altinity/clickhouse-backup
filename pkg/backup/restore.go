@@ -150,6 +150,13 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		}
 	}
 
+	// report what would be restored before the first side effect, no CREATE/DROP DATABASE, no RBAC,
+	// configs and named collections restore, no clickhouse-server restart, no resumable state,
+	// https://github.com/Altinity/clickhouse-backup/issues/1012
+	if b.DryRun {
+		return b.dryRunRestore(ctx, backupName, backupMetadata, disks, tablePattern, partitions, schemaOnly, dataOnly, dropExists, rbacOnly, configsOnly, namedCollectionsOnly, restoreRBAC, restoreConfigs, restoreNamedCollections, skipEmptyTables)
+	}
+
 	if schemaOnly || doRestoreData {
 		for _, database := range backupMetadata.Databases {
 			targetDB := database.Name

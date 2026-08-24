@@ -50,6 +50,10 @@ type Backuper struct {
 	isEmbedded             bool
 	resume                 bool
 	resumableState         *resumable.State
+	// DryRun report what the command would do instead of doing it, see issues/1012
+	DryRun bool
+	// DryRunResult holds the report produced when DryRun is set, so REST API handlers can read it after the command returns
+	DryRunResult           *DryRunReport
 	shadowBackupUUIDs      []string
 	shadowBackupUUIDsMutex sync.Mutex
 	fileManifest           *storage.ManifestWriter

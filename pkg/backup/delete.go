@@ -218,6 +218,11 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 	if backup == nil {
 		return errors.Errorf("'%s' is not found on local storage", backupName)
 	}
+	if b.DryRun {
+		// dependent backups are reported instead of the `--force` error, a dry-run never breaks a chain
+		b.setDryRunResult(newDeleteDryRunReport(&backup.BackupMetadata, findDependentBackups(backupName, localBackupsChainLinks(backupList))))
+		return nil
+	}
 	if !force {
 		if dependentBackups := findDependentBackups(backupName, localBackupsChainLinks(backupList)); len(dependentBackups) > 0 {
 			return errors.Errorf(
@@ -400,6 +405,10 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string, fo
 
 	b.dst = bd
 
+	if b.DryRun {
+		return b.dryRunRemoveBackupRemote(ctx, backupName)
+	}
+
 	if err = b.processDependentRemoteBackups(ctx, backupName, force); err != nil {
 		return err
 	}
@@ -464,6 +473,41 @@ func (b *Backuper) processDependentRemoteBackups(ctx context.Context, backupName
 		}
 	}
 	return nil
+}
+
+// newDeleteDryRunReport - describe what `delete` would remove, issues/1012
+func newDeleteDryRunReport(backupMetadata *metadata.BackupMetadata, dependentBackups []string) *DryRunReport {
+	return &DryRunReport{
+		Command:              "delete",
+		BackupName:           backupMetadata.BackupName,
+		TableCount:           len(backupMetadata.Tables),
+		DataSize:             backupMetadata.DataSize,
+		CompressedSize:       backupMetadata.CompressedSize,
+		ObjectDiskSize:       backupMetadata.ObjectDiskSize,
+		MetadataSize:         backupMetadata.MetadataSize,
+		RBACSize:             backupMetadata.RBACSize,
+		ConfigSize:           backupMetadata.ConfigSize,
+		NamedCollectionsSize: backupMetadata.NamedCollectionsSize,
+		TotalSize:            backupMetadata.GetFullSize(),
+		DependentBackups:     dependentBackups,
+	}
+}
+
+// dryRunRemoveBackupRemote - report what `delete remote` would remove, requires connected b.dst,
+// the full BackupList is needed because `required_backup` links live in the metadata of the other backups
+func (b *Backuper) dryRunRemoveBackupRemote(ctx context.Context, backupName string) error {
+	backupList, err := b.dst.BackupList(ctx, true, "")
+	if err != nil {
+		return errors.Wrap(err, "bd.BackupList")
+	}
+	for i := range backupList {
+		if backupList[i].BackupName != backupName {
+			continue
+		}
+		b.setDryRunResult(newDeleteDryRunReport(&backupList[i].BackupMetadata, findDependentBackups(backupName, remoteBackupsChainLinks(backupList))))
+		return nil
+	}
+	return errors.Errorf("'%s' is not found on remote storage", backupName)
 }
 
 func (b *Backuper) cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx context.Context, backup storage.Backup) error {
