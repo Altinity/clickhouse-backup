@@ -52,13 +52,22 @@ func (b *Backuper) buildCreateDryRunReport(ctx context.Context, backupName strin
 		}
 	}
 
+	version, err := b.ch.GetVersion(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "buildCreateDryRunReport get version")
+	}
+	// system.parts.disk_name appeared in 19.15 with multi-disk support, older servers always have a single `default` disk
+	diskNameExpr, diskNameGroupBy := "disk_name", ", disk_name"
+	if version < 19015000 {
+		diskNameExpr, diskNameGroupBy = "'default' AS disk_name", ""
+	}
 	// group by partition_id only when a --partitions filter is active, to keep the result set small otherwise
-	partitionIdExpr, groupBy := "'' AS partition_id", "database, table, disk_name"
+	partitionIdExpr, groupBy := "'' AS partition_id", "database, table"+diskNameGroupBy
 	if partitionsFilterActive {
-		partitionIdExpr, groupBy = "partition_id", "database, table, disk_name, partition_id"
+		partitionIdExpr, groupBy = "partition_id", groupBy+", partition_id"
 	}
 	query := fmt.Sprintf(
-		"SELECT database, table, disk_name, %s, count() AS parts_count, sum(bytes_on_disk) AS total_bytes, "+
+		"SELECT database, table, "+diskNameExpr+", %s, count() AS parts_count, sum(bytes_on_disk) AS total_bytes, "+
 			"sumIf(bytes_on_disk, modification_time >= now() - INTERVAL 1 DAY) AS bytes_1d, "+
 			"sumIf(bytes_on_disk, modification_time >= now() - INTERVAL 7 DAY) AS bytes_7d, "+
 			"sumIf(bytes_on_disk, modification_time >= now() - INTERVAL 30 DAY) AS bytes_30d "+
