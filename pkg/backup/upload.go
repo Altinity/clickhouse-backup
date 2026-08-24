@@ -68,6 +68,9 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		return errors.Wrap(err, "validateUploadParams")
 	}
 	if b.cfg.General.RemoteStorage == "custom" {
+		if b.DryRun {
+			return errors.New("--dry-run is not supported for `remote_storage: custom`, the upload command is executed by an external script")
+		}
 		return custom.Upload(ctx, b, b.cfg, backupName, diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly)
 	}
 	if _, disks, err = b.getLocalBackup(ctx, backupName, nil); err != nil {
@@ -140,6 +143,52 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		}
 		backupMetadata.RequiredBackup = diffFromRemote
 	}
+	doUploadData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
+
+	if b.DryRun {
+		report := &DryRunReport{
+			Command:    "upload",
+			BackupName: backupName,
+			TableCount: len(tablesForUpload),
+		}
+		for _, table := range tablesForUpload {
+			if doUploadData && (!b.isEmbedded || b.cfg.ClickHouse.EmbeddedBackupDisk != "") {
+				if diffTable, diffExists := tablesForUploadFromDiff[metadata.TableTitle{
+					Database: table.Database,
+					Table:    table.Table,
+				}]; diffExists {
+					checkLocalPart := diffFrom != "" && diffFromRemote == ""
+					b.markDuplicatedParts(backupMetadata, &diffTable, table, checkLocalPart)
+				}
+				tableDataSize, tableParts, unknownParts := b.estimateUploadDataSize(table, disks)
+				report.DataSize += tableDataSize
+				report.PartsCount += tableParts
+				report.UnknownSizeParts += unknownParts
+			}
+			if doUploadData || schemaOnly {
+				report.MetadataSize += estimateUploadMetadataSize(table)
+			}
+		}
+		if rbacOnly || configsOnly == rbacOnly == namedCollectionsOnly == false {
+			report.RBACSize = backupMetadata.RBACSize
+		}
+		if configsOnly || configsOnly == rbacOnly == namedCollectionsOnly == false {
+			report.ConfigSize = backupMetadata.ConfigSize
+		}
+		if namedCollectionsOnly || configsOnly == rbacOnly == namedCollectionsOnly == false {
+			report.NamedCollectionsSize = backupMetadata.NamedCollectionsSize
+		}
+		// object disk data was copied to object_disk_path during `create`, upload never transfers it again,
+		// report it for reference only when the whole backup is uploaded, per table split is not available
+		// because TableMetadata doesn't record which parts live on object disks
+		if doUploadData && tablePattern == "" && len(partitions) == 0 {
+			report.ObjectDiskSize = backupMetadata.ObjectDiskSize
+		}
+		report.TotalSize = report.DataSize + report.MetadataSize + report.RBACSize + report.ConfigSize + report.NamedCollectionsSize
+		b.setDryRunResult(report)
+		return nil
+	}
+
 	if b.resume && !backupExistsOnRemote {
 		// upload.state2 survives a successful upload and is only removed together with the local backup,
 		// so it can describe a remote backup which was deleted meanwhile; resuming on top of it skips
@@ -182,8 +231,6 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	log.Debug().Msgf("prepare table concurrent semaphore with concurrency=%d len(tablesForUpload)=%d", b.cfg.General.UploadConcurrency, len(tablesForUpload))
 	uploadGroup, uploadCtx := errgroup.WithContext(ctx)
 	uploadGroup.SetLimit(int(b.cfg.General.UploadConcurrency))
-
-	doUploadData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
 
 	for i, table := range tablesForUpload {
 		start := time.Now()

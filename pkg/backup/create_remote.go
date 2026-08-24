@@ -24,6 +24,13 @@ func (b *Backuper) CreateToRemote(backupName string, deleteSource bool, diffFrom
 		return createErr
 	}
 	pidlock.RemovePidFile(backupName)
+	// under dry-run CreateBackup didn't create anything, so there is nothing for Upload to read
+	if b.DryRun {
+		if b.DryRunResult != nil {
+			b.DryRunResult.Command = "create_remote"
+		}
+		return nil
+	}
 	if uploadErr := b.Upload(backupName, deleteSource, diffFrom, diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, version, commandId); uploadErr != nil {
 		return uploadErr
 	}

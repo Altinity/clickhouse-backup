@@ -168,6 +168,7 @@ func main() {
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				b.DryRun = c.Bool("dry-run")
 				return b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("skip-check-parts-columns"), c.StringSlice("skip-projections"), c.Bool("resume"), version, commandIdFromCli(c))
 			},
 			Flags: append(cliapp.Flags,
@@ -242,6 +243,10 @@ func main() {
 					Hidden: false,
 					Usage:  "Will resume upload for object disk data, hard links on local disk still continue to recreate, not work when `use_embedded_backup_restore: true`",
 				},
+				cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Show tables count and data size which would be created, without creating",
+				},
 			),
 		},
 		{
@@ -251,6 +256,7 @@ func main() {
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				b.DryRun = c.Bool("dry-run")
 				return b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("skip-check-parts-columns"), c.Bool("resume"), version, commandIdFromCli(c))
 			},
 			Flags: append(cliapp.Flags,
@@ -335,6 +341,10 @@ func main() {
 					Hidden: false,
 					Usage:  "explicitly delete local backup during upload",
 				},
+				cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Show tables count and data size which would be created and uploaded, without creating and uploading",
+				},
 			),
 		},
 		{
@@ -344,6 +354,7 @@ func main() {
 			Description: "Upload a local backup to remote storage using the v1 layout (per-part archives + RequiredBackup chain for incrementals).\n\nIf you back up frequently or run mutations, consider `cas-upload` instead: it deduplicates content across backups, every backup is independent (no incremental chain), and only changed data is uploaded.",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				b.DryRun = c.Bool("dry-run")
 				return b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("named-collections-only"), c.Bool("resume"), version, commandIdFromCli(c))
 			},
 			Flags: append(cliapp.Flags,
@@ -408,6 +419,10 @@ func main() {
 					Hidden: false,
 					Usage:  "explicitly delete local backup during upload",
 				},
+				cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Show tables count and data size which would be uploaded, without uploading",
+				},
 			),
 		},
 		{
@@ -433,6 +448,7 @@ func main() {
 			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				b.DryRun = c.Bool("dry-run")
 				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("hardlink-exists-files"), version, commandIdFromCli(c))
 			},
 			Flags: append(cliapp.Flags,
@@ -482,6 +498,10 @@ func main() {
 					Hidden: false,
 					Usage:  "Create hardlinks for existing files instead of downloading",
 				},
+				cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Show tables count and data size which would be downloaded, without downloading",
+				},
 			),
 		},
 		{
@@ -529,6 +549,7 @@ func main() {
 			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] [--skip-empty-tables] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				b.DryRun = c.Bool("dry-run")
 				return b.Restore(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), version, commandIdFromCli(c))
 			},
 			Flags: append(cliapp.Flags,
@@ -638,6 +659,10 @@ func main() {
 					Hidden: false,
 					Usage:  "Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent",
 				},
+				cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Show tables count and data size which would be restored, without restoring",
+				},
 			),
 		},
 		{
@@ -646,6 +671,7 @@ func main() {
 			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				b.DryRun = c.Bool("dry-run")
 				return b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), c.Bool("hardlink-exists-files"), version, commandIdFromCli(c))
 			},
 			Flags: append(cliapp.Flags,
@@ -755,6 +781,10 @@ func main() {
 					Hidden: false,
 					Usage:  "Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent",
 				},
+				cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Show tables count and data size which would be downloaded and restored, without downloading and restoring",
+				},
 			),
 		},
 		{
@@ -771,6 +801,7 @@ func main() {
 					log.Err(fmt.Errorf("backup name must be defined")).Send()
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
+				b.DryRun = c.Bool("dry-run")
 				return b.Delete(c.Args().Get(0), c.Args().Get(1), c.Bool("force"), commandIdFromCli(c))
 			},
 			Flags: append(cliapp.Flags,
@@ -778,6 +809,10 @@ func main() {
 					Name:   "force, f",
 					Hidden: false,
 					Usage:  "Delete the backup even when other backups depend on it via required_backup, breaks the incremental backups chain, also skips general.rebase_during_delete",
+				},
+				cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Show tables count and data size which would be deleted, without deleting",
 				},
 			),
 		},

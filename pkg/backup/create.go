@@ -146,6 +146,14 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 			return err
 		}
 	}
+	if b.DryRun {
+		dryRunReport, dryRunErr := b.buildCreateDryRunReport(ctx, backupName, tables, disks, partitionsIdMap, doBackupData, rbacOnly, configsOnly, namedCollectionsOnly)
+		if dryRunErr != nil {
+			return dryRunErr
+		}
+		b.setDryRunResult(dryRunReport)
+		return nil
+	}
 	backupRBACSize, backupConfigSize, backupNamedCollectionsSize, rbacConfigsNamedCollectionsErr := b.createConfigsNamedCollectionsAndRBACIfNecessary(ctx, backupName, createRBAC, rbacOnly, createConfigs, configsOnly, createNamedCollections, namedCollectionsOnly, disks, diskMap)
 	if rbacConfigsNamedCollectionsErr != nil {
 		return errors.Wrap(rbacConfigsNamedCollectionsErr, "createConfigsNamedCollectionsAndRBACIfNecessary")

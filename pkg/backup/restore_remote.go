@@ -17,5 +17,22 @@ func (b *Backuper) RestoreFromRemote(backupName, tablePattern string, databaseMa
 		}
 	}
 	pidlock.RemovePidFile(backupName)
-	return b.Restore(backupName, tablePattern, databaseMapping, tableMapping, partitions, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, replicatedCopyToDetached, skipEmptyTables, version, commandId)
+	// the restored volume equals the volume the download would bring and nothing is materialized locally,
+	// so the download report is re-labeled instead of being estimated twice,
+	// https://github.com/Altinity/clickhouse-backup/issues/1012
+	if b.DryRun && b.DryRunResult != nil {
+		b.DryRunResult.Command = "restore_remote"
+		b.setDryRunResult(b.DryRunResult)
+		return nil
+	}
+	if err := b.Restore(backupName, tablePattern, databaseMapping, tableMapping, partitions, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, replicatedCopyToDetached, skipEmptyTables, version, commandId); err != nil {
+		return err
+	}
+	// the backup already existed locally, so the download produced no report and the local restore
+	// dry-run above gave the exact numbers
+	if b.DryRun && b.DryRunResult != nil {
+		b.DryRunResult.Command = "restore_remote"
+		b.setDryRunResult(b.DryRunResult)
+	}
+	return nil
 }
