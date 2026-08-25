@@ -43,7 +43,7 @@ func (b *BackupMetadata) IsPlainDisk(diskName string) bool {
 }
 
 func (b *BackupMetadata) GetFullSize() uint64 {
-	size := b.MetadataSize + b.ConfigSize + b.RBACSize
+	size := b.MetadataSize + b.ConfigSize + b.RBACSize + b.NamedCollectionsSize
 	if strings.Contains(b.Tags, "embedded") {
 		size += b.DataSize + b.CompressedSize
 	} else {

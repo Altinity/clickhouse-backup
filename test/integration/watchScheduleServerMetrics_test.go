@@ -46,7 +46,9 @@ func TestWatchScheduleServerMetrics(t *testing.T) {
 	defer func() {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "pkill -f '[c]lickhouse-backup.*server' || true; for i in $(seq 1 30); do pgrep -f '[c]lickhouse-backup.*server' >/dev/null || break; sleep 1; done")
 		out, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "cat /tmp/watch_schedule_server.log; rm -f /tmp/watch_schedule_server.log")
-		log.Info().Msg(out)
+		if t.Failed() {
+			log.Info().Msg(out)
+		}
 		cleanBackups()
 		r.NoError(env.dropDatabase(dbName, true))
 	}()

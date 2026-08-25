@@ -184,6 +184,12 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	}
 	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
 
+	// report what would be downloaded before the first side effect, no local directories, no table
+	// metadata files, no resumable state, https://github.com/Altinity/clickhouse-backup/issues/1012
+	if b.DryRun {
+		return b.dryRunDownload(ctx, remoteBackup, disks, tablesForDownload, tablePattern, partitions, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, hardlinkExistsFiles)
+	}
+
 	if !schemaOnly && !b.cfg.General.DownloadByPart && remoteBackup.RequiredBackup != "" {
 		// The recursive Download reuses this *Backuper and its initDisksPathsAndBackupDestination
 		// overwrites b.dst, then closes it via the child's deferred Close on return. Save and
@@ -350,6 +356,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	backupMetadata.MetadataSize = metadataSize
 	backupMetadata.ConfigSize = configSize
 	backupMetadata.RBACSize = rbacSize
+	backupMetadata.NamedCollectionsSize = namedCollectionsSize
 	backupMetadata.ClickhouseBackupVersion = backupVersion
 	backupMetafileLocalPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")
 	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
@@ -1095,12 +1102,27 @@ func (b *Backuper) findLocalPartWithSameChecksum(table metadata.TableMetadata, p
 	return "", nil, nil
 }
 
-// checkFreeSpaceForDownload - https://github.com/Altinity/clickhouse-backup/issues/1268
-// calculates required disk space from per-part `size` fields in already downloaded and filtered
-// table metadata (so --tables and --partitions are respected) and compares it with the total free
-// space. When hardlinkExistsFiles is true, parts which can be hardlinked from existing local parts
-// (matched by hash_of_all_files via system.parts or by CRC64 of checksums.txt) are not counted.
-func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup storage.Backup, tables ListOfTables, disks []clickhouse.Disk, hardlinkExistsFiles, isResumeExists bool) error {
+// downloadSizeEstimate is the outcome of walking filtered table metadata and counting only the parts
+// which really would be downloaded, see computeDownloadSizeEstimate
+type downloadSizeEstimate struct {
+	// RequiredSize - bytes which would be allocated on local disks, including ObjectDiskSize
+	RequiredSize uint64
+	// ObjectDiskSize - subset of RequiredSize which belongs to parts stored on object storage disks
+	ObjectDiskSize uint64
+	// PartsCount - parts which would be downloaded, including parts with unknown size
+	PartsCount int
+	// UnknownSizeParts - parts without `size` in metadata (backup created by older clickhouse-backup)
+	UnknownSizeParts int
+}
+
+// computeDownloadSizeEstimate walks already filtered table metadata (so --tables and --partitions are
+// respected) and sums per-part `size` fields of the parts which really would be downloaded. Parts which
+// can be hardlinked from existing local parts (matched by hash_of_all_files via system.parts or by CRC64
+// of checksums.txt) are skipped when hardlinkExistsFiles is true, parts already present in the local
+// required backup are skipped as well, and sizes of `required` parts are resolved read-only up the diff
+// chain, https://github.com/Altinity/clickhouse-backup/issues/1268
+func (b *Backuper) computeDownloadSizeEstimate(ctx context.Context, remoteBackup storage.Backup, tables ListOfTables, disks []clickhouse.Disk, hardlinkExistsFiles bool) downloadSizeEstimate {
+	estimate := downloadSizeEstimate{}
 	requiredSize := uint64(0)
 	unknownSizeParts := 0
 	diskTypeByName := make(map[string]string, len(disks))
@@ -1135,7 +1157,15 @@ func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup s
 			tableMetadataCacheKey := path.Join(requiredBackupName, title.Database, title.Table)
 			requiredTableMetadata, exists := requiredTableMetadataCache[tableMetadataCacheKey]
 			if !exists {
-				m, err := b.downloadTableMetadataIfNotExists(ctx, requiredBackupName, title)
+				var m *metadata.TableMetadata
+				var err error
+				if b.DryRun {
+					// a dry-run must not write anything to the local disk, read the required table
+					// metadata into memory instead of caching it as a local file
+					m, _, err = b.readRemoteTableMetadata(ctx, requiredBackupName, title)
+				} else {
+					m, err = b.downloadTableMetadataIfNotExists(ctx, requiredBackupName, title)
+				}
 				if err != nil {
 					log.Warn().Err(err).Msgf("can't download %s table metadata to resolve required part %s size", tableMetadataCacheKey, partName)
 					return 0, false
@@ -1173,6 +1203,16 @@ func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup s
 		dbAndTableDir := path.Join(common.TablePathEncode(t.Database), common.TablePathEncode(t.Table))
 		byHash := hardlinkableByHash[title]
 		for diskName, parts := range t.Parts {
+			// parts of an object storage disk keep the object storage size in part.Size, parts of a local
+			// disk keep the on-disk size, both are accounted in RequiredSize, the object storage share is
+			// tracked separately so `download --dry-run` can report it
+			isObjectDisk := b.isDiskTypeObject(remoteBackup.DiskTypes[diskName]) || remoteBackup.IsPlainDisk(diskName)
+			addSize := func(size uint64) {
+				requiredSize += size
+				if isObjectDisk {
+					estimate.ObjectDiskSize += size
+				}
+			}
 			for i := range parts {
 				part := parts[i]
 				if hardlinkExistsFiles {
@@ -1184,8 +1224,9 @@ func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup s
 					}
 				}
 				if !part.Required {
+					estimate.PartsCount++
 					if part.Size > 0 {
-						requiredSize += part.Size
+						addSize(part.Size)
 					} else {
 						unknownSizeParts++
 					}
@@ -1202,14 +1243,26 @@ func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup s
 						continue
 					}
 				}
+				estimate.PartsCount++
 				if size, sizeResolved := resolveRequiredPartSize(remoteBackup.RequiredBackup, title, part.Name); sizeResolved {
-					requiredSize += size
+					addSize(size)
 				} else {
 					unknownSizeParts++
 				}
 			}
 		}
 	}
+	estimate.RequiredSize = requiredSize
+	estimate.UnknownSizeParts = unknownSizeParts
+	return estimate
+}
+
+// checkFreeSpaceForDownload - https://github.com/Altinity/clickhouse-backup/issues/1268
+// compares the space required by computeDownloadSizeEstimate with the total free space on local disks
+func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup storage.Backup, tables ListOfTables, disks []clickhouse.Disk, hardlinkExistsFiles, isResumeExists bool) error {
+	estimate := b.computeDownloadSizeEstimate(ctx, remoteBackup, tables, disks, hardlinkExistsFiles)
+	requiredSize := estimate.RequiredSize
+	unknownSizeParts := estimate.UnknownSizeParts
 	if requiredSize == 0 && unknownSizeParts == 0 {
 		return nil
 	}

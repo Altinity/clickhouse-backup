@@ -55,6 +55,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --skip-check-parts-columns                                                                 Skip check system.parts_columns to allow backup inconsistent column types for data parts
    --skip-projections db_pattern.table_pattern:projections_pattern                            Skip make hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --resume use_embedded_backup_restore: true, --resumable use_embedded_backup_restore: true  Will resume upload for object disk data, hard links on local disk still continue to recreate, not work when use_embedded_backup_restore: true
+   --dry-run                                                                                  Show tables count and data size which would be created, without creating
    
 ```
 ### CLI command - create_remote
@@ -92,6 +93,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --skip-check-parts-columns                                                      Skip check system.parts_columns to allow backup inconsistent column types for data parts
    --skip-projections db_pattern.table_pattern:projections_pattern                 Skip make and upload hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --delete, --delete-source, --delete-local                                       explicitly delete local backup during upload
+   --dry-run                                                                       Show tables count and data size which would be created and uploaded, without creating and uploading
    
 ```
 ### CLI command - upload
@@ -122,6 +124,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --skip-projections db_pattern.table_pattern:projections_pattern  Skip make and upload hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --resume, --resumable                                            Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --delete, --delete-source, --delete-local                        explicitly delete local backup during upload
+   --dry-run                                                        Show tables count and data size which would be uploaded, without uploading
    
 ```
 ### CLI command - list
@@ -163,6 +166,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --named-collections-only, --named-collections  Download named collections and settings only, will skip download data, will download schema only if --schema added
    --resume, --resumable                          Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --hardlink-exists-files                        Create hardlinks for existing files instead of downloading
+   --dry-run                                      Show tables count and data size which would be downloaded, without downloading
    
 ```
 ### CLI command - rebase
@@ -230,6 +234,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --replicated-copy-to-detached                                                     Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step
    --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
    --rebind-replica-path-if-exists                                                   Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent
+   --dry-run                                                                         Show tables count and data size which would be restored, without restoring
    
 ```
 ### CLI command - restore_remote
@@ -269,6 +274,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --hardlink-exists-files                                                           Create hardlinks for existing files instead of downloading
    --skip-empty-tables                                                               Skip restoring tables that have no data (empty tables with only schema)
    --rebind-replica-path-if-exists                                                   Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent
+   --dry-run                                                                         Show tables count and data size which would be downloaded and restored, without downloading and restoring
    
 ```
 ### CLI command - delete
@@ -277,11 +283,13 @@ NAME:
    clickhouse-backup delete - Delete specific backup
 
 USAGE:
-   clickhouse-backup delete <local|remote> <backup_name>
+   clickhouse-backup delete [--force] <local|remote> <backup_name>
 
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
+   --force, -f                                Delete the backup even when other backups depend on it via required_backup, breaks the incremental backups chain, also skips general.rebase_during_delete
+   --dry-run                                  Show tables count and data size which would be deleted, without deleting
    
 ```
 ### CLI command - default-config
