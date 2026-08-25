@@ -127,12 +127,17 @@ func TestDryRun(t *testing.T) {
 		_ = env.DockerExec("clickhouse-backup", "bash", "-ce", "pkill -f '[c]lickhouse-backup.*server' || true")
 	}()
 	time.Sleep(3 * time.Second)
-	// apiDryRun POSTs a `dry_run=1` request and asserts the synchronously returned report.
-	// The container has no curl, wget is available in busybox/debian base images; stderr is merged
-	// into the output so an HTTP error is visible in the assertion message.
+	// httpReq builds an HTTP request over bash /dev/tcp (same trick as fips_test.go), ancient
+	// ClickHouse images (1.1.54394) ship neither wget nor curl; HTTP/1.0 makes the server reply
+	// with Content-Length and close the connection, so `cat` reads headers+body to EOF
+	httpReq := func(method, path, body string) string {
+		return fmt.Sprintf(`exec 3<>/dev/tcp/localhost/7171; printf '%s %s HTTP/1.0\r\nContent-Length: %d\r\n\r\n' >&3; printf '%%s' '%s' >&3; cat <&3`,
+			method, path, len(body), body)
+	}
+	// apiDryRun POSTs a `dry_run=1` request and asserts the synchronously returned report,
+	// stderr is merged into the output so an HTTP error is visible in the assertion message
 	apiDryRun := func(path, wantCommand string) string {
-		out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-			"wget -O- --post-data='' 'http://localhost:7171"+path+"' 2>&1")
+		out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", httpReq("POST", path, "")+" 2>&1")
 		r.NoError(err, "POST %s: %s", path, out)
 		r.Containsf(out, `"command":"`+wantCommand+`"`, "POST %s shall return the %s dry-run report: %s", path, wantCommand, out)
 		r.Containsf(out, `"dry_run":true`, "POST %s shall return a dry-run report: %s", path, out)
@@ -144,7 +149,7 @@ func TestDryRun(t *testing.T) {
 	// i. the same report shall be stored in the `result` field of the status row, so it is
 	// readable via /backup/status, GET /backup/actions and system.backup_actions
 	// the report is a JSON string inside JSON, so its own quotes arrive escaped
-	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "wget -qO- 'http://localhost:7171/backup/status'")
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", httpReq("GET", "/backup/status", ""))
 	r.NoError(err, "GET /backup/status: %s", out)
 	r.Containsf(out, `"result":"{`, "GET /backup/status shall report the dry-run report in `result`: %s", out)
 	r.Containsf(out, `\"command\":\"create\"`, "unexpected `result` in GET /backup/status: %s", out)
@@ -154,14 +159,14 @@ func TestDryRun(t *testing.T) {
 	// must be set before the row is marked finished
 	actionCommand := "create --dry-run --tables=" + dbName + ".* " + apiBackupName2
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-		`wget -qO- --post-data='{"command":"`+actionCommand+`"}' 'http://localhost:7171/backup/actions'`)
+		httpReq("POST", "/backup/actions", `{"command":"`+actionCommand+`"}`))
 	r.NoError(err, "POST /backup/actions: %s", out)
 	r.Containsf(out, "acknowledged", "POST /backup/actions shall acknowledge the dry-run command: %s", out)
 
 	actionRow := ""
 	for i := 0; i < 20; i++ {
 		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-			"wget -qO- 'http://localhost:7171/backup/actions?filter="+apiBackupName2+"'")
+			httpReq("GET", "/backup/actions?filter="+apiBackupName2, ""))
 		r.NoError(err, "GET /backup/actions: %s", out)
 		actionRow = out
 		if strings.Contains(out, `"status":"success"`) {
