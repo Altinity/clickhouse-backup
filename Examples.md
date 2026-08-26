@@ -70,6 +70,108 @@ On the destination server:
 clickhouse-backup restore --rm backup_name
 ```
 
+## How to restore ClickHouse Cloud backup to self-managed ClickHouse
+
+ClickHouse Cloud backups use proprietary engines (`ENGINE = Shared` for databases, `Shared*MergeTree` for tables) which
+self-managed ClickHouse can't restore with a plain `RESTORE` statement. The `restore_cloud` command reads the native
+`.backup` manifest directly from S3, rewrites `Shared` database engine to `Atomic` and `Shared*MergeTree` to the matching
+`Replicated*MergeTree`, applies the DDL and runs `RESTORE TABLE ... FROM S3(...)` with
+`allow_different_database_def=1, allow_different_table_def=1` for each table, then compares restored `system.parts`
+size/rows with the backup manifest. See https://github.com/Altinity/clickhouse-backup/issues/1508.
+
+### 1. Set up external backup (Bring Your Own Backup) in ClickHouse Cloud
+
+Copy the **Service role ID (IAM)** from ClickHouse Cloud console (**Settings** -> **Network security information**),
+then create an S3 bucket and an IAM role which the ClickHouse Cloud service role can assume:
+
+```bash
+aws s3api create-bucket --bucket YOUR_BUCKET --region YOUR_REGION --create-bucket-configuration LocationConstraint=YOUR_REGION
+
+cat > trust-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {"AWS": "arn:aws:iam::XXXXXXXXXXXX:role/CH-S3-your-cloud-service-role"},
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+aws iam create-role --role-name ClickHouseCloudBackupRole --assume-role-policy-document file://trust-policy.json
+
+cat > s3-permissions.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {"Effect": "Allow", "Action": ["s3:GetBucketLocation", "s3:ListBucket"], "Resource": ["arn:aws:s3:::YOUR_BUCKET"]},
+    {"Effect": "Allow", "Action": ["s3:Get*", "s3:List*", "s3:PutObject"], "Resource": ["arn:aws:s3:::YOUR_BUCKET/*"]},
+    {"Effect": "Allow", "Action": ["s3:DeleteObject"], "Resource": ["arn:aws:s3:::YOUR_BUCKET/*/.lock"]}
+  ]
+}
+EOF
+aws iam create-policy --policy-name ClickHouseCloudBackupS3Policy --policy-document file://s3-permissions.json
+aws iam attach-role-policy --role-name ClickHouseCloudBackupRole --policy-arn arn:aws:iam::YOUR_ACCOUNT_ID:policy/ClickHouseCloudBackupS3Policy
+```
+
+In the ClickHouse Cloud console open **Settings** -> **Set up external backup**, paste the created role ARN
+(`arn:aws:iam::YOUR_ACCOUNT_ID:role/ClickHouseCloudBackupRole`) and the bucket URL
+(`https://YOUR_BUCKET.s3.amazonaws.com/OPTIONAL_PREFIX`), then press **Save External Bucket** and take a backup.
+Look at https://clickhouse.com/docs/products/cloud/guides/backups/bring-your-own-backup/backup-restore-from-ui for details.
+
+### 2. Restore the exported backup on a self-managed server
+
+Find the backup prefix (the S3 "directory" that contains the `.backup` manifest file) and run:
+
+```bash
+cat > /etc/clickhouse-backup/config-cloud.yml <<EOF
+clickhouse:
+  host: localhost
+  port: 9000
+s3:
+  access_key: YOUR_ACCESS_KEY
+  secret_key: YOUR_SECRET_KEY
+  bucket: YOUR_BUCKET
+  region: YOUR_REGION
+EOF
+clickhouse-backup -c /etc/clickhouse-backup/config-cloud.yml restore_cloud PREFIX/OF/BACKUP
+```
+
+The credentials must be readable both by `clickhouse-backup` (to fetch the manifest and metadata) and by the target
+`clickhouse-server` (which executes `RESTORE ... FROM S3(...)` itself). Useful options (see `restore_cloud --help`):
+`--bucket`/`--region`/`--endpoint` override the config, `-t db.table_pattern` restores selected objects only,
+`--partitions` restores only selected partitions (same formats as the regular `restore` command, including
+`--partitions=db.table:part1,part2`, the size check is skipped for filtered tables),
+`--base-prefix` points to the base backup for incremental backups, `--s3-restore-url` overrides the URL passed to
+`RESTORE` (MinIO / path-style / HTTP vs HTTPS mismatches), `--replicated-zk-path` / `--replicated-replica` change the
+`Replicated*MergeTree` arguments added when Cloud DDL has none, `--skip-empty-tables`, `--continue-on-error` and
+`--dry-run` only logs the DDL and `RESTORE` statements without executing them.
+
+The same operation is available via the REST API: `curl -X POST "http://localhost:7171/backup/restore_cloud?prefix=PREFIX/OF/BACKUP"`.
+
+### GCS and Azure Blob Storage
+
+For a ClickHouse Cloud service running on GCP the exported backup lives in a GCS bucket: use the same `s3` config
+section with `endpoint: https://storage.googleapis.com` and GCS HMAC keys as `access_key` / `secret_key`.
+
+For a ClickHouse Cloud service running on Azure the exported backup lives in a Blob Storage container: fill the
+`azblob` config section (`account_name`, `account_key`, `endpoint_suffix`, `container`) instead of `s3`, the source
+switches to AzureBlobStorage when `--container` / `--azblob-restore-url` is passed or `general->remote_storage: azblob`:
+
+```bash
+clickhouse-backup -c /etc/clickhouse-backup/config-cloud.yml restore_cloud --container=YOUR_CONTAINER PREFIX/OF/BACKUP
+```
+
+`--azblob-restore-url` overrides the blob endpoint passed to `RESTORE ... FROM AzureBlobStorage(...)` when
+`clickhouse-server` reaches the storage account through a different URL than `clickhouse-backup`
+(e.g. `http://azurite:10000/devstoreaccount1`).
+
+Note: ClickHouse Cloud stores small parts in the `Packed` storage format (a single `data.packed` archive instead of the
+part directory). Reading `Packed` parts requires ClickHouse version 26.8+ on the target server, otherwise `RESTORE`
+fails with `NO_FILE_IN_DATA_PART ... Part contains files: data.packed`. Workarounds: restore on a newer version, or
+force `Full` parts on the source (merge or adjust `min_*_for_full_part_storage`) and take a new backup.
+
 ## How to monitor that backups were created and uploaded correctly
 
 Use services like https://healthchecks.io or https://deadmanssnitch.com.

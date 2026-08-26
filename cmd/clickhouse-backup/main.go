@@ -796,6 +796,115 @@ func main() {
 			),
 		},
 		{
+			Name:      "restore_cloud",
+			Usage:     "Restore ClickHouse Cloud native S3 backup (Shared engines) as Atomic databases and Replicated*MergeTree tables on the current server",
+			UsageText: "clickhouse-backup restore_cloud [--bucket=<bucket>] [--region=<region>] [--endpoint=<url>] [--container=<container>] [--base-prefix=<prefix>] [--s3-restore-url=<url>] [--azblob-restore-url=<url>] [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--replicated-zk-path=<path>] [--replicated-replica=<replica>] [--skip-empty-tables] [--continue-on-error] [--dry-run] <backup_prefix>",
+			Description: "Read the .backup manifest from S3 or AzureBlobStorage, rewrite ClickHouse Cloud DDL (database ENGINE=Shared to Atomic, Shared*MergeTree to Replicated*MergeTree) and run RESTORE TABLE ... FROM S3(...) / AzureBlobStorage(...) with allow_different_database_def/allow_different_table_def\n" +
+				"   Credentials and defaults are taken from the s3 config section (also works for GCS via s3->endpoint=https://storage.googleapis.com with HMAC keys), or from the azblob config section when --container / --azblob-restore-url is passed or general->remote_storage is azblob\n" +
+				"   https://github.com/Altinity/clickhouse-backup/issues/1508",
+			Action: func(c *cli.Context) error {
+				if c.Args().First() == "" {
+					log.Err(fmt.Errorf("backup prefix must be defined")).Send()
+					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
+				}
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				b.DryRun = c.Bool("dry-run")
+				return b.RestoreCloud(backup.RestoreCloudOptions{
+					Prefix:            c.Args().First(),
+					Bucket:            c.String("bucket"),
+					Region:            c.String("region"),
+					Endpoint:          c.String("endpoint"),
+					Container:         c.String("container"),
+					BasePrefix:        c.String("base-prefix"),
+					S3RestoreURL:      c.String("s3-restore-url"),
+					AzblobRestoreURL:  c.String("azblob-restore-url"),
+					TablePattern:      c.String("tables"),
+					Partitions:        c.StringSlice("partitions"),
+					ReplicatedZkPath:  c.String("replicated-zk-path"),
+					ReplicatedReplica: c.String("replicated-replica"),
+					SkipEmptyTables:   c.Bool("skip-empty-tables"),
+					ContinueOnError:   c.Bool("continue-on-error"),
+				}, commandIdFromCli(c))
+			},
+			Flags: append(cliapp.Flags,
+				cli.StringFlag{
+					Name:   "bucket",
+					Hidden: false,
+					Usage:  "S3 bucket with the ClickHouse Cloud backup, overrides s3->bucket from config",
+				},
+				cli.StringFlag{
+					Name:   "region",
+					Hidden: false,
+					Usage:  "AWS region of the bucket, overrides s3->region from config",
+				},
+				cli.StringFlag{
+					Name:   "endpoint",
+					Hidden: false,
+					Usage:  "Custom S3 endpoint (MinIO, etc.), overrides s3->endpoint from config",
+				},
+				cli.StringFlag{
+					Name:   "base-prefix",
+					Hidden: false,
+					Usage:  "S3 key prefix of the base backup, for incremental backups with use_base files",
+				},
+				cli.StringFlag{
+					Name:   "s3-restore-url",
+					Hidden: false,
+					Usage:  "URL passed to RESTORE ... FROM S3('...'), default https://s3.<region>.amazonaws.com/<bucket>/<prefix>",
+				},
+				cli.StringFlag{
+					Name:   "container",
+					Hidden: false,
+					Usage:  "AzureBlobStorage container with the ClickHouse Cloud backup, overrides azblob->container from config and switches the source to AzureBlobStorage",
+				},
+				cli.StringFlag{
+					Name:   "azblob-restore-url",
+					Hidden: false,
+					Usage:  "Blob endpoint passed to RESTORE ... FROM AzureBlobStorage(...), e.g. http://azurite:10000/devstoreaccount1, when it differs from azblob config section, switches the source to AzureBlobStorage",
+				},
+				cli.StringFlag{
+					Name:   "table, tables, t",
+					Hidden: false,
+					Usage:  "Restore only objects matched with table name patterns, separated by comma, allow ? and * as wildcard",
+				},
+				cli.StringSliceFlag{
+					Name:   "partitions",
+					Hidden: false,
+					Usage: "Restore backup only for selected partition names, separated by comma\n" +
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+				},
+				cli.StringFlag{
+					Name:   "replicated-zk-path",
+					Hidden: false,
+					Usage:  "First Replicated*MergeTree engine argument when Cloud DDL has none, default '/clickhouse/tables/{uuid}/{shard}'",
+				},
+				cli.StringFlag{
+					Name:   "replicated-replica",
+					Hidden: false,
+					Usage:  "Second Replicated*MergeTree engine argument when Cloud DDL has none, default '{replica}'",
+				},
+				cli.BoolFlag{
+					Name:   "skip-empty-tables",
+					Hidden: false,
+					Usage:  "Skip objects with no data/<db>/<table>/ files in the backup, also skips views and dictionaries",
+				},
+				cli.BoolFlag{
+					Name:   "continue-on-error",
+					Hidden: false,
+					Usage:  "Continue with the next object after an error, exit code is still non-zero",
+				},
+				cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Only log DDL and RESTORE statements which would be executed, without executing",
+				},
+			),
+		},
+		{
 			Name:      "delete",
 			Usage:     "Delete specific backup",
 			UsageText: "clickhouse-backup delete [--force] <local|remote> <backup_name>",

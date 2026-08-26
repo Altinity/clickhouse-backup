@@ -277,6 +277,44 @@ Look at the system.parts partition and partition_id fields for details https://c
    --dry-run                                                                         Show tables count and data size which would be downloaded and restored, without downloading and restoring
    
 ```
+### CLI command - restore_cloud
+```
+NAME:
+   clickhouse-backup restore_cloud - Restore ClickHouse Cloud native S3 backup (Shared engines) as Atomic databases and Replicated*MergeTree tables on the current server
+
+USAGE:
+   clickhouse-backup restore_cloud [--bucket=<bucket>] [--region=<region>] [--endpoint=<url>] [--container=<container>] [--base-prefix=<prefix>] [--s3-restore-url=<url>] [--azblob-restore-url=<url>] [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--replicated-zk-path=<path>] [--replicated-replica=<replica>] [--skip-empty-tables] [--continue-on-error] [--dry-run] <backup_prefix>
+
+DESCRIPTION:
+   Read the .backup manifest from S3 or AzureBlobStorage, rewrite ClickHouse Cloud DDL (database ENGINE=Shared to Atomic, Shared*MergeTree to Replicated*MergeTree) and run RESTORE TABLE ... FROM S3(...) / AzureBlobStorage(...) with allow_different_database_def/allow_different_table_def
+   Credentials and defaults are taken from the s3 config section (also works for GCS via s3->endpoint=https://storage.googleapis.com with HMAC keys), or from the azblob config section when --container / --azblob-restore-url is passed or general->remote_storage is azblob
+   https://github.com/Altinity/clickhouse-backup/issues/1508
+
+OPTIONS:
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   --bucket value                             S3 bucket with the ClickHouse Cloud backup, overrides s3->bucket from config
+   --region value                             AWS region of the bucket, overrides s3->region from config
+   --endpoint value                           Custom S3 endpoint (MinIO, etc.), overrides s3->endpoint from config
+   --base-prefix value                        S3 key prefix of the base backup, for incremental backups with use_base files
+   --s3-restore-url value                     URL passed to RESTORE ... FROM S3('...'), default https://s3.<region>.amazonaws.com/<bucket>/<prefix>
+   --container value                          AzureBlobStorage container with the ClickHouse Cloud backup, overrides azblob->container from config and switches the source to AzureBlobStorage
+   --azblob-restore-url value                 Blob endpoint passed to RESTORE ... FROM AzureBlobStorage(...), e.g. http://azurite:10000/devstoreaccount1, when it differs from azblob config section, switches the source to AzureBlobStorage
+   --table value, --tables value, -t value    Restore only objects matched with table name patterns, separated by comma, allow ? and * as wildcard
+   --partitions partition_id                  Restore backup only for selected partition names, separated by comma
+If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
+If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
+If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
+If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*
+Values depends on field types in your table, use single quotes for String and Date/DateTime related types
+Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
+   --replicated-zk-path value  First Replicated*MergeTree engine argument when Cloud DDL has none, default '/clickhouse/tables/{uuid}/{shard}'
+   --replicated-replica value  Second Replicated*MergeTree engine argument when Cloud DDL has none, default '{replica}'
+   --skip-empty-tables         Skip objects with no data/<db>/<table>/ files in the backup, also skips views and dictionaries
+   --continue-on-error         Continue with the next object after an error, exit code is still non-zero
+   --dry-run                   Only log DDL and RESTORE statements which would be executed, without executing
+   
+```
 ### CLI command - delete
 ```
 NAME:
