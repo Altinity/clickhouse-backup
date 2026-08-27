@@ -197,3 +197,40 @@ func TestCloudRestorePartitionsSQL(t *testing.T) {
 	_, matched = b.cloudRestorePartitionsSQL(ctx, "default", "mv", viewSQL, []string{"default.hits:202408"})
 	assert.False(t, matched)
 }
+
+func TestInjectCloudOnCluster(t *testing.T) {
+	onCluster := " ON CLUSTER 'prod'"
+	assert.Equal(t,
+		"CREATE TABLE IF NOT EXISTS default.hits UUID 'aaaa-bb' ON CLUSTER 'prod' (`id` UInt64) ENGINE = ReplicatedMergeTree",
+		injectCloudOnCluster("CREATE TABLE IF NOT EXISTS default.hits UUID 'aaaa-bb' (`id` UInt64) ENGINE = ReplicatedMergeTree", onCluster))
+	assert.Equal(t,
+		"CREATE DATABASE IF NOT EXISTS `my db` ON CLUSTER 'prod' ENGINE = Atomic",
+		injectCloudOnCluster("CREATE DATABASE IF NOT EXISTS `my db` ENGINE = Atomic", onCluster))
+	assert.Equal(t,
+		"CREATE MATERIALIZED VIEW default.mv UUID 'aaaa-bb' ON CLUSTER 'prod' TO default.hits AS SELECT 1",
+		injectCloudOnCluster("CREATE MATERIALIZED VIEW default.mv UUID 'aaaa-bb' TO default.hits AS SELECT 1", onCluster))
+	assert.Equal(t,
+		"CREATE DICTIONARY `db`.`dict` ON CLUSTER 'prod' (v UInt64) PRIMARY KEY v",
+		injectCloudOnCluster("CREATE DICTIONARY `db`.`dict` (v UInt64) PRIMARY KEY v", onCluster))
+	// no clause requested - unchanged
+	sql := "CREATE TABLE default.hits (id UInt64) ENGINE = MergeTree"
+	assert.Equal(t, sql, injectCloudOnCluster(sql, ""))
+}
+
+func TestCloudShardPrefix(t *testing.T) {
+	m := cloudShardPrefixRE.FindStringSubmatch("shards/2/replicas/3/metadata/default/hits.sql")
+	require.NotNil(t, m)
+	assert.Equal(t, "2", m[1])
+	assert.Equal(t, "metadata/default/hits.sql", strings.TrimPrefix("shards/2/replicas/3/metadata/default/hits.sql", m[0]))
+	assert.Nil(t, cloudShardPrefixRE.FindStringSubmatch("metadata/default/hits.sql"))
+	assert.Nil(t, cloudShardPrefixRE.FindStringSubmatch("data/default/hits/all_1_1_0/data.packed"))
+}
+
+func TestCloudLogicalNamesShardPrefix(t *testing.T) {
+	db, table := cloudLogicalNames("shards/2/replicas/3/metadata/default/hits.sql")
+	assert.Equal(t, "default", db)
+	assert.Equal(t, "hits", table)
+	db, table = cloudLogicalNames("shards/1/replicas/1/metadata/default.sql")
+	assert.Equal(t, "default", db)
+	assert.Equal(t, "", table)
+}

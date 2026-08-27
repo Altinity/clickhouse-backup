@@ -798,7 +798,7 @@ func main() {
 		{
 			Name:      "restore_cloud",
 			Usage:     "Restore ClickHouse Cloud native S3 backup (Shared engines) as Atomic databases and Replicated*MergeTree tables on the current server",
-			UsageText: "clickhouse-backup restore_cloud [--bucket=<bucket>] [--region=<region>] [--endpoint=<url>] [--container=<container>] [--base-prefix=<prefix>] [--s3-restore-url=<url>] [--azblob-restore-url=<url>] [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--replicated-zk-path=<path>] [--replicated-replica=<replica>] [--skip-empty-tables] [--continue-on-error] [--dry-run] <backup_prefix>",
+			UsageText: "clickhouse-backup restore_cloud [--bucket=<bucket>] [--region=<region>] [--endpoint=<url>] [--container=<container>] [--base-prefix=<prefix>] [--s3-restore-url=<url>] [--azblob-restore-url=<url>] [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--restore-on-cluster=<cluster>] [--replicated-zk-path=<path>] [--replicated-replica=<replica>] [--skip-empty-tables] [--continue-on-error] [--dry-run] <backup_prefix>",
 			Description: "Read the .backup manifest from S3 or AzureBlobStorage, rewrite ClickHouse Cloud DDL (database ENGINE=Shared to Atomic, Shared*MergeTree to Replicated*MergeTree) and run RESTORE TABLE ... FROM S3(...) / AzureBlobStorage(...) with allow_different_database_def/allow_different_table_def\n" +
 				"   Credentials and defaults are taken from the s3 config section (also works for GCS via s3->endpoint=https://storage.googleapis.com with HMAC keys), or from the azblob config section when --container / --azblob-restore-url is passed or general->remote_storage is azblob\n" +
 				"   https://github.com/Altinity/clickhouse-backup/issues/1508",
@@ -820,6 +820,7 @@ func main() {
 					AzblobRestoreURL:  c.String("azblob-restore-url"),
 					TablePattern:      c.String("tables"),
 					Partitions:        c.StringSlice("partitions"),
+					RestoreOnCluster:  c.String("restore-on-cluster"),
 					ReplicatedZkPath:  c.String("replicated-zk-path"),
 					ReplicatedReplica: c.String("replicated-replica"),
 					SkipEmptyTables:   c.Bool("skip-empty-tables"),
@@ -877,6 +878,11 @@ func main() {
 						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
 						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
 						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+				},
+				cli.StringFlag{
+					Name:   "restore-on-cluster",
+					Hidden: false,
+					Usage:  "Execute CREATE and RESTORE with ON CLUSTER '<cluster>', macros like {cluster} are resolved via system.macros; requires the same shard count in the backup and in the cluster, replica counts may differ (ReplicatedMergeTree replicates the restored data)",
 				},
 				cli.StringFlag{
 					Name:   "replicated-zk-path",

@@ -143,6 +143,10 @@ The credentials must be readable both by `clickhouse-backup` (to fetch the manif
 `--bucket`/`--region`/`--endpoint` override the config, `-t db.table_pattern` restores selected objects only,
 `--partitions` restores only selected partitions (same formats as the regular `restore` command, including
 `--partitions=db.table:part1,part2`, the size check is skipped for filtered tables),
+`--restore-on-cluster='{cluster}'` executes CREATE and RESTORE with `ON CLUSTER` (macros are resolved via
+`system.macros`), it also supports backups made with `BACKUP ... ON CLUSTER 'default'` (the
+`shards/<N>/replicas/<M>/` backup layout) and pre-checks that the cluster has the same number of shards as the
+backup; replica counts may differ, `ReplicatedMergeTree` replicates the restored data to the other replicas,
 `--base-prefix` points to the base backup for incremental backups, `--s3-restore-url` overrides the URL passed to
 `RESTORE` (MinIO / path-style / HTTP vs HTTPS mismatches), `--replicated-zk-path` / `--replicated-replica` change the
 `Replicated*MergeTree` arguments added when Cloud DDL has none, `--skip-empty-tables`, `--continue-on-error` and

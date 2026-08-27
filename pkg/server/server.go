@@ -1813,6 +1813,7 @@ func (api *APIServer) httpRestoreCloudHandler(w http.ResponseWriter, r *http.Req
 		{"s3-restore-url", &opts.S3RestoreURL},
 		{"azblob-restore-url", &opts.AzblobRestoreURL},
 		{"table", &opts.TablePattern},
+		{"restore-on-cluster", &opts.RestoreOnCluster},
 		{"replicated-zk-path", &opts.ReplicatedZkPath},
 		{"replicated-replica", &opts.ReplicatedReplica},
 	}

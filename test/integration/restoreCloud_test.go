@@ -147,7 +147,9 @@ func runRestoreCloud(t *testing.T, storageType string, backupDestinationSQL func
 	env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE IF EXISTS default.%s SYNC", table))
 	serverLog := "/tmp/clickhouse-backup-server-cloud-" + storageType + ".log"
 	env.DockerExecBackgroundNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+configName+" server &>>"+serverLog)
-	defer r.NoError(env.DockerExec("clickhouse", "pkill", "-n", "-f", "clickhouse-backup"))
+	defer func() {
+		r.NoError(env.DockerExec("clickhouse", "pkill", "-n", "-f", "clickhouse-backup"))
+	}()
 	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "for i in $(seq 1 30); do wget -q -O - http://localhost:7171/backup/status >/dev/null 2>&1 && exit 0; sleep 1; done; echo 'API server did not start'; cat "+serverLog+"; exit 1")
 	apiOut, err := env.DockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("wget -q -O - --post-data='' 'http://localhost:7171/backup/restore_cloud?prefix=%s'", prefix))
 	r.NoError(err, "POST /backup/restore_cloud output: %s", apiOut)
@@ -171,6 +173,20 @@ func runRestoreCloud(t *testing.T, storageType string, backupDestinationSQL func
 	r.Contains(statusOut, `--partitions=\"0,1\"`, "unexpected /backup/status: %s", statusOut)
 	r.NotContains(statusOut, `"status":"error"`, "unexpected /backup/status: %s", statusOut)
 	checkCloudRestored(env, r, table, 5000)
+
+	// a `BACKUP ... ON CLUSTER` backup (shards/<N>/replicas/<M>/ layout) restored with
+	// --restore-on-cluster, the {cluster} macro resolves to the 1 shard x 1 replica test cluster
+	prefixOnCluster := prefix + "_on_cluster"
+	destinationOnClusterSQL, _ := backupDestinationSQL(prefixOnCluster)
+	cloudQuery(r, fmt.Sprintf("BACKUP TABLE default.%s ON CLUSTER 'default' TO %s", table, destinationOnClusterSQL), secrets...)
+	defer deleteCloudBackup(r, cleaner, prefixOnCluster)
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE IF EXISTS default.%s SYNC", table))
+	env.DockerExecNoError(r, "clickhouse", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+configName, "restore_cloud", "--restore-on-cluster={cluster}", prefixOnCluster)
+	checkCloudRestored(env, r, table, 10000)
+	// the topology pre-check rejects an unknown cluster
+	out, err := env.DockerExecOut("clickhouse", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+configName, "restore_cloud", "--restore-on-cluster=no_such_cluster", prefixOnCluster)
+	r.Error(err, "restore_cloud with unknown cluster must fail: %s", out)
+	r.Contains(out, "not found in system.clusters")
 }
 
 func TestRestoreCloudS3(t *testing.T) {

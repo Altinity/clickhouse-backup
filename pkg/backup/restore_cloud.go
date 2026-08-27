@@ -55,6 +55,12 @@ var sharedDatabaseEngineRE = regexp.MustCompile(`(?i)(ENGINE\s*=\s*)Shared\b`)
 var replicatedMergeTreeArgsRE = regexp.MustCompile(`(?i)ENGINE\s*=\s*Replicated(?:VersionedCollapsing|Replacing|Aggregating|Summing|Collapsing|Graphite|Coalescing)?MergeTree\b(\s*\()?`)
 
 var cloudIfNotExistsRE = regexp.MustCompile(`(?i)^\s*CREATE\s+(DATABASE|TABLE|VIEW|MATERIALIZED\s+VIEW|DICTIONARY)\s+IF\s+NOT\s+EXISTS\b`)
+
+// `BACKUP ... ON CLUSTER` stores every file under shards/<shard_num>/replicas/<replica_num>/
+var cloudShardPrefixRE = regexp.MustCompile(`^shards/(\d+)/replicas/\d+/`)
+
+// CREATE <kind> [IF NOT EXISTS] <name> [UUID '...'] - the position after which ON CLUSTER is injected
+var cloudCreateHeaderRE = regexp.MustCompile("(?i)^\\s*CREATE\\s+(?:DATABASE|DICTIONARY|TABLE|(?:MATERIALIZED\\s+)?VIEW)\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(?:`[^`]+`|\\w+)(?:\\s*\\.\\s*(?:`[^`]+`|\\w+))?(?:\\s+UUID\\s+'[^']+')?")
 var cloudCreateKindRE = regexp.MustCompile(`(?i)^\s*CREATE\s+(DATABASE|MATERIALIZED\s+VIEW|VIEW|DICTIONARY|TABLE)\b`)
 var cloudViewOrDictRE = regexp.MustCompile(`(?i)\bCREATE\s+((MATERIALIZED\s+)?VIEW|DICTIONARY)\b`)
 
@@ -104,8 +110,11 @@ func (m *cloudBackupManifest) blobKey(f *cloudManifestFile) string {
 }
 
 // cloudLogicalNames extracts (database, table) from `metadata/<db>.sql` / `metadata/<db>/<table>.sql`,
-// names are percent-encoded in the backup layout
+// names are percent-encoded in the backup layout and may carry a shards/<N>/replicas/<M>/ prefix
 func cloudLogicalNames(name string) (string, string) {
+	if m := cloudShardPrefixRE.FindString(name); m != "" {
+		name = name[len(m):]
+	}
 	rel := strings.TrimSuffix(strings.TrimPrefix(name, "metadata/"), ".sql")
 	parts := strings.SplitN(rel, "/", 2)
 	db, table := parts[0], ""
@@ -203,6 +212,7 @@ type RestoreCloudOptions struct {
 	AzblobRestoreURL  string // blob endpoint passed to RESTORE ... FROM AzureBlobStorage(...), e.g. http://azurite:10000/devstoreaccount1, switches the source to AzureBlobStorage
 	TablePattern      string
 	Partitions        []string
+	RestoreOnCluster  string // cluster name for CREATE/RESTORE ... ON CLUSTER, macros like {cluster} are resolved
 	ReplicatedZkPath  string
 	ReplicatedReplica string
 	SkipEmptyTables   bool
@@ -373,14 +383,24 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 	}
 	log.Info().Msgf("manifest generator=%s prefix_length=%d files=%d", manifest.DataFileNameGenerator, manifest.DataFileNamePrefixLength, len(manifest.Files))
 
-	// group manifest entries: database DDL, table DDL and logical data bytes per table
+	// group manifest entries: database DDL, table DDL and logical data bytes per table,
+	// `BACKUP ... ON CLUSTER` prefixes every name with shards/<shard_num>/replicas/<replica_num>/
 	dbDDLFiles := map[string]*cloudManifestFile{}
 	tableDDLFiles := map[string][]*cloudManifestFile{}
+	seenTableDDL := map[[2]string]struct{}{}
 	dataBytes := map[[2]string]int64{}
+	dataBytesShard := map[[3]string]int64{}
+	backupShards := map[string]struct{}{}
 	for i := range manifest.Files {
 		f := &manifest.Files[i]
-		if strings.HasPrefix(f.Name, "data/") {
-			parts := strings.Split(f.Name, "/")
+		name, shard := f.Name, "1"
+		if m := cloudShardPrefixRE.FindStringSubmatch(name); m != nil {
+			shard = m[1]
+			name = name[len(m[0]):]
+			backupShards[shard] = struct{}{}
+		}
+		if strings.HasPrefix(name, "data/") {
+			parts := strings.Split(name, "/")
 			if len(parts) < 3 {
 				continue
 			}
@@ -392,17 +412,25 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 				table = decoded
 			}
 			dataBytes[[2]string{db, table}] += f.Size
+			dataBytesShard[[3]string{db, table, shard}] += f.Size
 			continue
 		}
-		if !strings.HasPrefix(f.Name, "metadata/") || !strings.HasSuffix(f.Name, ".sql") {
+		if !strings.HasPrefix(name, "metadata/") || !strings.HasSuffix(name, ".sql") {
 			continue
 		}
-		db, table := cloudLogicalNames(f.Name)
+		db, table := cloudLogicalNames(name)
 		if table == "" {
 			dbDDLFiles[db] = f
-		} else {
+		} else if _, seen := seenTableDDL[[2]string{db, table}]; !seen {
+			// each shard carries its own copy of the DDL, restore the first one on the whole cluster
+			seenTableDDL[[2]string{db, table}] = struct{}{}
 			tableDDLFiles[db] = append(tableDDLFiles[db], f)
 		}
+	}
+
+	onClusterSQL, localShard, err := b.checkCloudClusterTopology(ctx, opts.RestoreOnCluster, len(backupShards))
+	if err != nil {
+		return err
 	}
 
 	databases := make([]string, 0, len(tableDDLFiles)+len(dbDDLFiles))
@@ -477,7 +505,7 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 		if f, exists := dbDDLFiles[database]; exists && f.Size > 0 {
 			ddl, fetchErr := b.fetchCloudBlob(ctx, source, manifest, f, prefix, basePrefix)
 			if fetchErr == nil {
-				fetchErr = b.restoreCloudExec(ctx, rewriteCloudSchema(ddl, "database", "", ""), fmt.Sprintf("database %s", database), source.secrets)
+				fetchErr = b.restoreCloudExec(ctx, injectCloudOnCluster(rewriteCloudSchema(ddl, "database", "", ""), onClusterSQL), fmt.Sprintf("database %s", database), source.secrets)
 			}
 			if fetchErr != nil {
 				if handledErr := handleError(fmt.Sprintf("database %s", database), fetchErr); handledErr != nil {
@@ -495,20 +523,33 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 		})
 		for _, t := range tableDDLs {
 			label := fmt.Sprintf("%s.%s", database, t.table)
-			restoreErr := b.restoreCloudExec(ctx, t.sql, fmt.Sprintf("table %s", label), source.secrets)
+			restoreErr := b.restoreCloudExec(ctx, injectCloudOnCluster(t.sql, onClusterSQL), fmt.Sprintf("table %s", label), source.secrets)
 			if restoreErr == nil {
 				restoreSQL := fmt.Sprintf(
-					"RESTORE TABLE %s.%s%s FROM %s SETTINGS allow_different_database_def=1, allow_different_table_def=1",
-					cloudQuoteIdent(database), cloudQuoteIdent(t.table), t.partitionsSQL, source.restoreLocation,
+					"RESTORE TABLE %s.%s%s%s FROM %s SETTINGS allow_different_database_def=1, allow_different_table_def=1",
+					cloudQuoteIdent(database), cloudQuoteIdent(t.table), t.partitionsSQL, onClusterSQL, source.restoreLocation,
 				)
 				restoreErr = b.restoreCloudExec(ctx, restoreSQL, fmt.Sprintf("RESTORE TABLE %s", label), source.secrets)
 			}
 			if restoreErr == nil {
-				if t.partitionsSQL == "" {
-					restoreErr = b.checkCloudRestoredSize(ctx, database, t.table, dataBytes[[2]string{database, t.table}], t.sql)
-				} else {
+				expectedBytes, checkSize := dataBytes[[2]string{database, t.table}], true
+				if t.partitionsSQL != "" {
 					// manifest bytes cover all partitions, the restored subset is expected to be smaller
 					log.Info().Msgf("size check skipped for %s (--partitions filter)", label)
+					checkSize = false
+				} else if onClusterSQL != "" {
+					if localShard == "" {
+						log.Info().Msgf("size check skipped for %s (local host is not a member of the cluster)", label)
+						checkSize = false
+					} else {
+						// system.parts is local, compare against the local shard slice of the backup;
+						// data may be restored on another replica of the shard, sync before checking
+						expectedBytes = dataBytesShard[[3]string{database, t.table, localShard}]
+						b.cloudSyncReplica(ctx, database, t.table, t.sql)
+					}
+				}
+				if checkSize {
+					restoreErr = b.checkCloudRestoredSize(ctx, database, t.table, expectedBytes, t.sql)
 				}
 			}
 			if restoreErr != nil {
@@ -528,6 +569,67 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 		"duration":  utils.HumanizeDuration(time.Since(startRestoreCloud)),
 	}).Msg("done")
 	return nil
+}
+
+// checkCloudClusterTopology resolves macros in --restore-on-cluster and verifies the cluster has
+// the same number of shards as the backup (replica counts may differ, ReplicatedMergeTree
+// replicates the restored data); returns the ` ON CLUSTER '...'` clause and the local shard number
+// used for the per-shard size check (empty when the local host is not a cluster member)
+func (b *Backuper) checkCloudClusterTopology(ctx context.Context, restoreOnCluster string, backupShardsCount int) (string, string, error) {
+	if backupShardsCount == 0 {
+		backupShardsCount = 1
+	}
+	if restoreOnCluster == "" {
+		if backupShardsCount > 1 {
+			return "", "", errors.Errorf("backup was created with ON CLUSTER and contains %d shards, pass --restore-on-cluster", backupShardsCount)
+		}
+		return "", "", nil
+	}
+	cluster, err := b.ch.ApplyMacros(ctx, restoreOnCluster)
+	if err != nil {
+		return "", "", errors.Wrapf(err, "can't resolve macros in --restore-on-cluster=%s", restoreOnCluster)
+	}
+	topology := make([]struct {
+		Shards     uint64 `ch:"shards"`
+		LocalShard string `ch:"local_shard"`
+	}, 0)
+	query := "SELECT uniqExact(shard_num) AS shards, coalesce(min(if(is_local, toString(shard_num), NULL)), '') AS local_shard " +
+		"FROM system.clusters WHERE cluster=? SETTINGS empty_result_for_aggregation_by_empty_set=0"
+	if err = b.ch.SelectContext(ctx, &topology, query, cluster); err != nil {
+		return "", "", errors.Wrap(err, "can't get cluster topology from system.clusters")
+	}
+	if len(topology) == 0 || topology[0].Shards == 0 {
+		return "", "", errors.Errorf("cluster '%s' not found in system.clusters", cluster)
+	}
+	if int(topology[0].Shards) != backupShardsCount {
+		return "", "", errors.Errorf("backup contains %d shard(s) but cluster '%s' has %d shard(s), topology must match by shards (replica counts may differ)", backupShardsCount, cluster, topology[0].Shards)
+	}
+	log.Info().Msgf("restore on cluster '%s': %d shard(s) match the backup, local shard=%s", cluster, topology[0].Shards, topology[0].LocalShard)
+	return fmt.Sprintf(" ON CLUSTER '%s'", strings.ReplaceAll(cluster, "'", "\\'")), topology[0].LocalShard, nil
+}
+
+// injectCloudOnCluster inserts the ` ON CLUSTER '...'` clause after
+// `CREATE <kind> [IF NOT EXISTS] <name> [UUID '...']`
+func injectCloudOnCluster(sql, onClusterSQL string) string {
+	if onClusterSQL == "" {
+		return sql
+	}
+	loc := cloudCreateHeaderRE.FindStringIndex(sql)
+	if loc == nil {
+		return sql
+	}
+	return sql[:loc[1]] + onClusterSQL + sql[loc[1]:]
+}
+
+// cloudSyncReplica waits for the local replica before the per-shard size check, the RESTORE
+// ON CLUSTER data may land on another replica of the shard; failure is not fatal
+func (b *Backuper) cloudSyncReplica(ctx context.Context, database, table, createSQL string) {
+	if b.DryRun || !strings.Contains(createSQL, "Replicated") {
+		return
+	}
+	if err := b.ch.QueryContext(ctx, fmt.Sprintf("SYSTEM SYNC REPLICA %s.%s", cloudQuoteIdent(database), cloudQuoteIdent(table))); err != nil {
+		log.Warn().Msgf("SYSTEM SYNC REPLICA %s.%s: %v", database, table, err)
+	}
 }
 
 // cloudRestorePartitionsSQL builds the ` PARTITIONS ...` clause of RESTORE TABLE from --partitions,
