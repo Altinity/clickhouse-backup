@@ -801,6 +801,7 @@ func main() {
 			UsageText: "clickhouse-backup restore_cloud [--bucket=<bucket>] [--region=<region>] [--endpoint=<url>] [--container=<container>] [--base-prefix=<prefix>] [--s3-restore-url=<url>] [--azblob-restore-url=<url>] [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--restore-on-cluster=<cluster>] [--replicated-zk-path=<path>] [--replicated-replica=<replica>] [--skip-empty-tables] [--continue-on-error] [--dry-run] <backup_prefix>",
 			Description: "Read the .backup manifest from S3 or AzureBlobStorage, rewrite ClickHouse Cloud DDL (database ENGINE=Shared to Atomic, Shared*MergeTree to Replicated*MergeTree) and run RESTORE TABLE ... FROM S3(...) / AzureBlobStorage(...) with allow_different_database_def/allow_different_table_def\n" +
 				"   Credentials and defaults are taken from the s3 config section (also works for GCS via s3->endpoint=https://storage.googleapis.com with HMAC keys), or from the azblob config section when --container / --azblob-restore-url is passed or general->remote_storage is azblob\n" +
+				"   When s3->assume_role_arn is set, the manifest is read and RESTORE ... FROM S3(..., extra_credentials(role_arn='...')) is executed with the assumed AWS IAM role, the static keys only sign the STS AssumeRole call (requires ClickHouse 25.8+)\n" +
 				"   https://github.com/Altinity/clickhouse-backup/issues/1508",
 			Action: func(c *cli.Context) error {
 				if c.Args().First() == "" {

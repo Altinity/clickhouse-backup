@@ -190,24 +190,80 @@ func runRestoreCloud(t *testing.T, storageType string, backupDestinationSQL func
 }
 
 func TestRestoreCloudS3(t *testing.T) {
-	if os.Getenv("QA_AWS_CLOUD_ENDPOINT") == "" || os.Getenv("QA_AWS_CLOUD_BUCKET") == "" {
-		t.Skip("QA_AWS_CLOUD_ENDPOINT or QA_AWS_CLOUD_BUCKET is empty, TestRestoreCloudS3 will skip")
+	if os.Getenv("QA_AWS_CLOUD_ENDPOINT") == "" || os.Getenv("QA_AWS_CLOUD_BUCKET") == "" || os.Getenv("QA_AWS_CLOUD_ACCESS_KEY") == "" {
+		t.Skip("QA_AWS_CLOUD_ENDPOINT, QA_AWS_CLOUD_BUCKET or QA_AWS_CLOUD_ACCESS_KEY is empty, TestRestoreCloudS3 will skip")
 	}
 	bucket, region := os.Getenv("QA_AWS_CLOUD_BUCKET"), getEnvDefault("QA_AWS_CLOUD_REGION", "us-west-2")
-	accessKey, secretKey := os.Getenv("QA_AWS_ACCESS_KEY"), os.Getenv("QA_AWS_SECRET_KEY")
+	accessKey, secretKey := os.Getenv("QA_AWS_CLOUD_ACCESS_KEY"), os.Getenv("QA_AWS_CLOUD_SECRET_KEY")
 	runRestoreCloud(t, "s3",
 		func(prefix string) (string, []string) {
 			return fmt.Sprintf("S3('https://s3.%s.amazonaws.com/%s/%s','%s','%s')", region, bucket, prefix, accessKey, secretKey), []string{accessKey, secretKey}
 		},
 		cloudTestClickHouseYAML+`
 s3:
-  access_key: ${QA_AWS_ACCESS_KEY}
-  secret_key: ${QA_AWS_SECRET_KEY}
+  access_key: ${QA_AWS_CLOUD_ACCESS_KEY}
+  secret_key: ${QA_AWS_CLOUD_SECRET_KEY}
   bucket: ${QA_AWS_CLOUD_BUCKET}
   region: ${QA_AWS_CLOUD_REGION:-us-west-2}`,
 		&storage.S3{Config: &config.S3Config{
 			AccessKey: accessKey, SecretKey: secretKey, Bucket: bucket, Region: region,
 		}, Concurrency: 1})
+}
+
+// TestRestoreCloudS3IAMRole - the whole flow runs through the AWS IAM role
+// (aws_iam_clickhouse_cloud.sh, trust policy = Cloud service role + the QA_AWS_CLOUD_ACCESS_KEY user):
+// ClickHouse Cloud writes the backup via `BACKUP ... TO S3(url, extra_credentials(role_arn='...'))`
+// without static keys, and the local restore runs with s3->assume_role_arn so both the manifest
+// reads and `RESTORE ... FROM S3(url, key, secret, extra_credentials(role_arn='...'))` access the
+// bucket with the role's permissions, the QA keys only sign the STS AssumeRole call.
+func TestRestoreCloudS3IAMRole(t *testing.T) {
+	if os.Getenv("QA_AWS_CLOUD_ENDPOINT") == "" || os.Getenv("QA_AWS_CLOUD_BUCKET") == "" || os.Getenv("QA_AWS_CLOUD_ROLE_ARN") == "" || os.Getenv("QA_AWS_CLOUD_ACCESS_KEY") == "" {
+		t.Skip("QA_AWS_CLOUD_ENDPOINT, QA_AWS_CLOUD_BUCKET, QA_AWS_CLOUD_ROLE_ARN or QA_AWS_CLOUD_ACCESS_KEY is empty, TestRestoreCloudS3IAMRole will skip")
+	}
+	realCloudPackedVersionGate(t)
+	r := require.New(t)
+	bucket, region := os.Getenv("QA_AWS_CLOUD_BUCKET"), getEnvDefault("QA_AWS_CLOUD_REGION", "us-west-2")
+	accessKey, secretKey := os.Getenv("QA_AWS_CLOUD_ACCESS_KEY"), os.Getenv("QA_AWS_CLOUD_SECRET_KEY")
+	roleARN := os.Getenv("QA_AWS_CLOUD_ROLE_ARN")
+	id := rand.Int31()
+	table := fmt.Sprintf("test_restore_cloud_s3_iam_role_%d", id)
+	// GITHUB_RUN_ID isolates parallel CI jobs which share the bucket
+	prefix := fmt.Sprintf("restore_cloud_e2e/s3_iam_role_%s_%d", os.Getenv("GITHUB_RUN_ID"), id)
+
+	cloudQuery(r, fmt.Sprintf("CREATE TABLE default.%s (id UInt64) PARTITION BY id %% 4 ORDER BY id", table))
+	defer cloudQuery(r, fmt.Sprintf("DROP TABLE IF EXISTS default.%s", table))
+	cloudQuery(r, fmt.Sprintf("INSERT INTO default.%s SELECT number FROM numbers(10000)", table))
+	// no static keys: the Cloud service role assumes the IAM role via its trust policy
+	cloudQuery(r, fmt.Sprintf(
+		"BACKUP TABLE default.%s TO S3('https://s3.%s.amazonaws.com/%s/%s', extra_credentials(role_arn = '%s'))",
+		table, region, bucket, prefix, roleARN,
+	))
+	defer deleteCloudBackup(r, &storage.S3{Config: &config.S3Config{
+		AccessKey: accessKey, SecretKey: secretKey, Bucket: bucket, Region: region,
+	}, Concurrency: 1}, prefix)
+
+	env, _ := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE IF EXISTS default.%s SYNC", table))
+	defer env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE IF EXISTS default.%s SYNC", table))
+
+	configYAML := cloudTestClickHouseYAML + `
+s3:
+  access_key: ${QA_AWS_CLOUD_ACCESS_KEY}
+  secret_key: ${QA_AWS_CLOUD_SECRET_KEY}
+  assume_role_arn: ${QA_AWS_CLOUD_ROLE_ARN}
+  bucket: ${QA_AWS_CLOUD_BUCKET}
+  region: ${QA_AWS_CLOUD_REGION:-us-west-2}`
+	configName := "config-cloud-s3-iam-role.yml"
+	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "cat > /etc/clickhouse-backup/"+configName+" <<EOF\n"+configYAML+"\nEOF")
+
+	out, err := env.DockerExecOut("clickhouse", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+configName, "restore_cloud", prefix)
+	r.NoError(err, "restore_cloud with assume_role_arn output: %s", out)
+	// the executed RESTORE statement must carry the role
+	r.Contains(out, fmt.Sprintf("extra_credentials(role_arn = '%s')", roleARN), "RESTORE must use the IAM role: %s", out)
+	checkCloudRestored(env, r, table, 10000)
 }
 
 func TestRestoreCloudGCS(t *testing.T) {

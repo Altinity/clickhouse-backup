@@ -267,13 +267,19 @@ func (b *Backuper) connectCloudSourceS3(ctx context.Context, opts *RestoreCloudO
 			restoreURL = fmt.Sprintf("https://s3.%s.amazonaws.com/%s/%s", s3cfg.Region, s3cfg.Bucket, prefix)
 		}
 	}
+	// s3->assume_role_arn: the RESTORE reads the bucket with the assumed role's permissions,
+	// the static keys only sign the STS AssumeRole call (same semantics as the manifest reads above)
+	restoreLocation := fmt.Sprintf("S3('%s', '%s', '%s')", restoreURL, accessKey, secretKey)
+	if s3cfg.AssumeRoleARN != "" {
+		restoreLocation = fmt.Sprintf("S3('%s', '%s', '%s', extra_credentials(role_arn = '%s'))", restoreURL, accessKey, secretKey, s3cfg.AssumeRoleARN)
+	}
 	return &cloudSource{
 		reader: s3Client,
 		isNotFound: func(err error) bool {
 			var noSuchKey *s3types.NoSuchKey
 			return stderrors.As(err, &noSuchKey)
 		},
-		restoreLocation: fmt.Sprintf("S3('%s', '%s', '%s')", restoreURL, accessKey, secretKey),
+		restoreLocation: restoreLocation,
 		secrets:         []string{accessKey, secretKey},
 		label:           fmt.Sprintf("s3://%s", s3cfg.Bucket),
 		close: func(ctx context.Context) {

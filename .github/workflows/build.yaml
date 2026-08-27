@@ -382,6 +382,9 @@ jobs:
           QA_AWS_CLOUD_ENDPOINT: ${{ secrets.QA_AWS_CLOUD_ENDPOINT }}
           QA_AWS_CLOUD_BUCKET: ${{ secrets.QA_AWS_CLOUD_BUCKET }}
           QA_AWS_CLOUD_REGION: ${{ secrets.QA_AWS_CLOUD_REGION }}
+          QA_AWS_CLOUD_ROLE_ARN: ${{ secrets.QA_AWS_CLOUD_ROLE_ARN }}
+          QA_AWS_CLOUD_ACCESS_KEY: ${{ secrets.QA_AWS_CLOUD_ACCESS_KEY }}
+          QA_AWS_CLOUD_SECRET_KEY: ${{ secrets.QA_AWS_CLOUD_SECRET_KEY }}
           QA_AZBLOB_ACCOUNT_NAME: ${{ secrets.QA_AZBLOB_ACCOUNT_NAME }}
           QA_AZBLOB_ACCOUNT_KEY: ${{ secrets.QA_AZBLOB_ACCOUNT_KEY }}
           QA_AZBLOB_CONTAINER: ${{ secrets.QA_AZBLOB_CONTAINER }}
