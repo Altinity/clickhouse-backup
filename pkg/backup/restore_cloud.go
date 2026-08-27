@@ -253,7 +253,14 @@ func (b *Backuper) connectCloudSourceS3(ctx context.Context, opts *RestoreCloudO
 		accessKey, secretKey = os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")
 	}
 	if accessKey == "" || secretKey == "" {
-		return nil, errors.New("provide s3->access_key and s3->secret_key in config or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY environment variables, RESTORE ... FROM S3(...) requires explicit credentials")
+		if s3cfg.AssumeRoleARN == "" {
+			return nil, errors.New("provide s3->access_key and s3->secret_key in config, AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY environment variables, or s3->assume_role_arn for keyless IAM role access, RESTORE ... FROM S3(...) requires explicit credentials or extra_credentials(role_arn='...')")
+		}
+		// keyless IAM role: the Go S3 client resolves the STS AssumeRole base from the ambient
+		// provider chain (shared credentials file, IRSA, EC2/ECS instance profile), and the RESTORE
+		// statement carries only extra_credentials(role_arn=...) so the ClickHouse server signs the
+		// STS AssumeRole call with its own ambient identity (use_environment_credentials defaults to true)
+		accessKey, secretKey = "", ""
 	}
 	s3Client := &storage.S3{Config: &s3cfg, Concurrency: 1}
 	if err := s3Client.Connect(ctx); err != nil {
@@ -268,10 +275,16 @@ func (b *Backuper) connectCloudSourceS3(ctx context.Context, opts *RestoreCloudO
 		}
 	}
 	// s3->assume_role_arn: the RESTORE reads the bucket with the assumed role's permissions,
-	// the static keys only sign the STS AssumeRole call (same semantics as the manifest reads above)
-	restoreLocation := fmt.Sprintf("S3('%s', '%s', '%s')", restoreURL, accessKey, secretKey)
-	if s3cfg.AssumeRoleARN != "" {
+	// the static keys (when present) only sign the STS AssumeRole call, without them the
+	// ClickHouse server's ambient identity signs it (same semantics as the manifest reads above)
+	var restoreLocation string
+	switch {
+	case s3cfg.AssumeRoleARN != "" && accessKey == "":
+		restoreLocation = fmt.Sprintf("S3('%s', extra_credentials(role_arn = '%s'))", restoreURL, s3cfg.AssumeRoleARN)
+	case s3cfg.AssumeRoleARN != "":
 		restoreLocation = fmt.Sprintf("S3('%s', '%s', '%s', extra_credentials(role_arn = '%s'))", restoreURL, accessKey, secretKey, s3cfg.AssumeRoleARN)
+	default:
+		restoreLocation = fmt.Sprintf("S3('%s', '%s', '%s')", restoreURL, accessKey, secretKey)
 	}
 	return &cloudSource{
 		reader: s3Client,
