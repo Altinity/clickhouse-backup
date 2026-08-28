@@ -209,6 +209,12 @@ func (s *S3) Connect(ctx context.Context) error {
 				SecretAccessKey: s.Config.SecretKey,
 			},
 		}
+		// static keys sign the STS AssumeRole call, the bucket is accessed with the assumed role's permissions
+		if s.Config.AssumeRoleARN != "" {
+			awsConfig.Credentials = aws.NewCredentialsCache(awsConfig.Credentials)
+			stsClient = sts.NewFromConfig(awsConfig)
+			awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, s.Config.AssumeRoleARN)
+		}
 	}
 
 	if awsConfig.Credentials != nil {

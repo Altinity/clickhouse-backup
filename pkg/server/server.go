@@ -259,6 +259,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	r.HandleFunc("/backup/rebalance/{name}", api.httpRebalanceHandler).Methods("POST")
 	r.HandleFunc("/backup/restore/{name}", api.httpRestoreHandler).Methods("POST")
 	r.HandleFunc("/backup/restore_remote/{name}", api.httpRestoreRemoteHandler).Methods("POST")
+	r.HandleFunc("/backup/restore_cloud", api.httpRestoreCloudHandler).Methods("POST")
 	r.HandleFunc("/backup/delete/{where}/{name}", api.httpDeleteHandler).Methods("POST")
 	r.HandleFunc("/backup/status", api.httpStatusHandler).Methods("GET")
 
@@ -402,7 +403,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)
 				return
 			}
-		case "create", "restore", "upload", "download", "create_remote", "restore_remote", "list", "rebase", "rebalance":
+		case "create", "restore", "upload", "download", "create_remote", "restore_remote", "restore_cloud", "list", "rebase", "rebalance":
 			actionsResults, err = api.actionsAsyncCommandsHandler(command, args, row, actionsResults)
 			if err != nil {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)
@@ -1781,6 +1782,104 @@ func (api *APIServer) httpRebalanceHandler(w http.ResponseWriter, r *http.Reques
 		Status:      "acknowledged",
 		Operation:   "rebalance",
 		BackupName:  name,
+		OperationId: operationId.String(),
+	})
+}
+
+// httpRestoreCloudHandler - restore ClickHouse Cloud native S3 backup with Shared engines rewritten to Replicated*MergeTree
+func (api *APIServer) httpRestoreCloudHandler(w http.ResponseWriter, r *http.Request) {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
+		log.Warn().Err(ErrAPILocked).Send()
+		api.writeError(w, http.StatusLocked, "restore_cloud", ErrAPILocked)
+		return
+	}
+	cfg, err := api.ReloadConfig(w, "restore_cloud")
+	if err != nil {
+		return
+	}
+	query := r.URL.Query()
+	opts := backup.RestoreCloudOptions{}
+	fullCommand := "restore_cloud"
+	dryRun := false
+	stringParams := []struct {
+		name string
+		dest *string
+	}{
+		{"bucket", &opts.Bucket},
+		{"region", &opts.Region},
+		{"endpoint", &opts.Endpoint},
+		{"container", &opts.Container},
+		{"base-prefix", &opts.BasePrefix},
+		{"s3-restore-url", &opts.S3RestoreURL},
+		{"azblob-restore-url", &opts.AzblobRestoreURL},
+		{"table", &opts.TablePattern},
+		{"restore-on-cluster", &opts.RestoreOnCluster},
+		{"replicated-zk-path", &opts.ReplicatedZkPath},
+		{"replicated-replica", &opts.ReplicatedReplica},
+	}
+	for _, param := range stringParams {
+		if value, exist := query[param.name]; exist {
+			*param.dest = value[0]
+			fullCommand = fmt.Sprintf("%s --%s=\"%s\"", fullCommand, param.name, value[0])
+		}
+	}
+	if partitions, exist := query["partitions"]; exist {
+		opts.Partitions = append(opts.Partitions, partitions...)
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, "\" --partitions=\""))
+	}
+	if _, exist := api.getQueryParameter(query, "skip-empty-tables"); exist {
+		opts.SkipEmptyTables = true
+		fullCommand += " --skip-empty-tables"
+	}
+	if _, exist := api.getQueryParameter(query, "continue-on-error"); exist {
+		opts.ContinueOnError = true
+		fullCommand += " --continue-on-error"
+	}
+	if _, exist := api.getQueryParameter(query, "dry-run"); exist {
+		dryRun = true
+		fullCommand += " --dry-run"
+	}
+	if prefix, exist := query["prefix"]; exist {
+		opts.Prefix = prefix[0]
+		fullCommand = fmt.Sprint(fullCommand, " ", prefix[0])
+	} else {
+		err = errors.New("prefix query parameter is required")
+		log.Error().Err(err).Send()
+		api.writeError(w, http.StatusBadRequest, "restore_cloud", err)
+		return
+	}
+	operationId, _ := uuid.NewUUID()
+
+	callback, err := parseCallback(query, cfg.General.CallbackURL, cfg.General.CallbackTimeoutDuration)
+	if err != nil {
+		log.Error().Err(err).Send()
+		api.writeError(w, http.StatusBadRequest, "restore_cloud", err)
+		return
+	}
+
+	commandId, _ := status.Current.StartWithCallback(fullCommand, operationId.String(), callback)
+	go func() {
+		err, _ := api.metrics.ExecuteWithMetrics("restore_cloud", 0, func() error {
+			b := backup.NewBackuper(cfg)
+			b.DryRun = dryRun
+			return b.RestoreCloud(opts, commandId)
+		})
+		if err != nil {
+			log.Error().Msgf("RestoreCloud error: %v", err)
+			status.Current.Stop(commandId, err)
+			return
+		}
+		status.Current.Stop(commandId, nil)
+	}()
+	api.sendJSONEachRow(w, http.StatusOK, struct {
+		Status      string `json:"status"`
+		Operation   string `json:"operation"`
+		BackupName  string `json:"backup_name"`
+		OperationId string `json:"operation_id"`
+	}{
+		Status:      "acknowledged",
+		Operation:   "restore_cloud",
+		BackupName:  opts.Prefix,
 		OperationId: operationId.String(),
 	})
 }
