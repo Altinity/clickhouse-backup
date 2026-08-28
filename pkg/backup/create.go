@@ -261,18 +261,22 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 			return errors.Wrap(err, "filesystemhelper.Mkdir backupPath")
 		}
 	}
+	// object disk data is copied to remote storage only when table data is backed up,
+	// --schema / *-only backups shall not require remote storage, https://github.com/Altinity/clickhouse-backup/issues/1517
 	isObjectDiskContainsTables := false
-	for _, disk := range disks {
-		if b.shouldSkipByDiskNameOrType(disk) {
-			continue
-		}
-		if b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, disks) || b.isDiskPlain(disk) {
-			for _, table := range tables {
-				sort.Slice(table.DataPaths, func(i, j int) bool { return len(table.DataPaths[i]) > len(table.DataPaths[j]) })
-				for _, tableDataPath := range table.DataPaths {
-					if strings.HasPrefix(tableDataPath, disk.Path) {
-						isObjectDiskContainsTables = true
-						break
+	if doBackupData {
+		for _, disk := range disks {
+			if b.shouldSkipByDiskNameOrType(disk) {
+				continue
+			}
+			if b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, disks) || b.isDiskPlain(disk) {
+				for _, table := range tables {
+					sort.Slice(table.DataPaths, func(i, j int) bool { return len(table.DataPaths[i]) > len(table.DataPaths[j]) })
+					for _, tableDataPath := range table.DataPaths {
+						if strings.HasPrefix(tableDataPath, disk.Path) {
+							isObjectDiskContainsTables = true
+							break
+						}
 					}
 				}
 			}
