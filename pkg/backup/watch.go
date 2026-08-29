@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 )
 
 var watchBackupTemplateTimeRE = regexp.MustCompile(`{time:([^}]+)}`)
@@ -99,7 +99,7 @@ func (b *Backuper) ValidateWatchParams(watchInterval, fullInterval, watchBackupN
 //
 // - each watch-interval, run create_remote increment --diff-from=prev-name + delete local increment, even when upload failed
 //   - save previous backup type incremental, next try will also incremental, until reach full interval
-func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate string, schedules []string, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource bool, version string, commandId int, metrics *metrics.APIMetrics, cliCtx *cli.Context) error {
+func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate string, schedules []string, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource bool, version string, commandId int, metrics *metrics.APIMetrics, cliCtx *cli.Command) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return errors.WithStack(err)
