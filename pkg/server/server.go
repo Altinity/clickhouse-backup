@@ -27,7 +27,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
@@ -42,8 +42,8 @@ import (
 )
 
 type APIServer struct {
-	cliApp                  *cli.App
-	cliCtx                  *cli.Context
+	newCliApp               func() *cli.Command
+	cliCtx                  *cli.Command
 	configPath              string
 	config                  *config.Config
 	configMutex             sync.RWMutex
@@ -74,7 +74,7 @@ var (
 )
 
 // Run - expose CLI commands as REST API
-func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBackupVersion string) error {
+func Run(cliCtx *cli.Command, newCliApp func() *cli.Command, configPath string, clickhouseBackupVersion string) error {
 	var (
 		cfg *config.Config
 		err error
@@ -102,7 +102,7 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 		break
 	}
 	api := APIServer{
-		cliApp:                  cliApp,
+		newCliApp:               newCliApp,
 		cliCtx:                  cliCtx,
 		configPath:              configPath,
 		config:                  cfg,
@@ -113,7 +113,7 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 	}
 	api.metrics.RegisterMetrics()
 
-	log.Info().Msgf("Starting API server %s on %s", api.cliApp.Version, api.GetConfig().API.ListenAddr)
+	log.Info().Msgf("Starting API server %s on %s", api.clickhouseBackupVersion, api.GetConfig().API.ListenAddr)
 	sigterm := make(chan os.Signal, 1)
 	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
 	sighup := make(chan os.Signal, 1)
@@ -167,7 +167,7 @@ func (api *APIServer) GetMetrics() *metrics.APIMetrics {
 	return api.metrics
 }
 
-func (api *APIServer) RunWatch(cliCtx *cli.Context) {
+func (api *APIServer) RunWatch(cliCtx *cli.Command) {
 	log.Info().Msg("Starting API Server in watch mode")
 	b := backup.NewBackuper(api.config)
 	commandId, _ := status.Current.Start("watch")
@@ -369,7 +369,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		row.Command = config.MaskEnvOverrideCommand(row.Command)
-		log.Info().Str("version", api.cliApp.Version).Msgf("/backup/actions call: %s", row.Command)
+		log.Info().Str("version", api.clickhouseBackupVersion).Msgf("/backup/actions call: %s", row.Command)
 		command := args[0]
 		switch command {
 		// watch command can't be run via cli app.Run, need parsing args
@@ -428,7 +428,7 @@ func (api *APIServer) actionsDeleteHandler(row status.ActionRow, args []string, 
 		return actionsResults, ErrAPILocked
 	}
 	commandId, _ := status.Current.Start(row.Command)
-	err := api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
+	err := api.newCliApp().Run(context.Background(), append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
 	if err == nil {
 		// refresh metrics before marking the operation as completed so /metrics observers see consistent state
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), args[1] == "local"); metricsErr != nil {
@@ -459,7 +459,7 @@ func (api *APIServer) actionsAsyncCommandsHandler(command string, args []string,
 	}
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics(command, 0, func() error {
-			return api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
+			return api.newCliApp().Run(context.Background(), append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
 		})
 		if err == nil {
 			// refresh metrics before marking the operation as completed so /metrics observers see consistent state
@@ -744,7 +744,7 @@ func (api *APIServer) httpRootHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 
-	_, _ = fmt.Fprintf(w, "Version: %s\nDocumentation: https://github.com/Altinity/clickhouse-backup#api\n", api.cliApp.Version)
+	_, _ = fmt.Fprintf(w, "Version: %s\nDocumentation: https://github.com/Altinity/clickhouse-backup#api\n", api.clickhouseBackupVersion)
 	for _, r := range api.routes {
 		_, _ = fmt.Fprintln(w, r)
 	}
@@ -769,7 +769,7 @@ func (api *APIServer) httpVersionHandler(w http.ResponseWriter, _ *http.Request)
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Version string `json:"version"`
 	}{
-		Version: api.cliApp.Version,
+		Version: api.clickhouseBackupVersion,
 	})
 }
 
@@ -1630,7 +1630,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
 		b.DryRun = true
-		err = b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, api.cliApp.Version, commandId)
+		err = b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, api.clickhouseBackupVersion, commandId)
 		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
 		status.Current.Stop(commandId, err)
 		api.sendDryRunReport(w, "upload", b, err)
@@ -1641,7 +1641,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, api.cliApp.Version, commandId)
+			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("Upload error: %v", err)
@@ -2108,7 +2108,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
 		b.DryRun = true
-		err = b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, api.cliApp.Version, commandId)
+		err = b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, api.clickhouseBackupVersion, commandId)
 		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
 		status.Current.Stop(commandId, err)
 		api.sendDryRunReport(w, "restore", b, err)
@@ -2119,7 +2119,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, api.cliApp.Version, commandId)
+			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, api.clickhouseBackupVersion, commandId)
 		})
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
 			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
@@ -2370,7 +2370,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
 		b.DryRun = true
-		err = b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, api.cliApp.Version, commandId)
+		err = b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, api.clickhouseBackupVersion, commandId)
 		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
 		status.Current.Stop(commandId, err)
 		api.sendDryRunReport(w, "restore_remote", b, err)
@@ -2381,7 +2381,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore_remote", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, api.cliApp.Version, commandId)
+			return b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, api.clickhouseBackupVersion, commandId)
 		})
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
 			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
@@ -2488,7 +2488,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
 		b.DryRun = true
-		err = b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, hardlinkExistsFiles, api.cliApp.Version, commandId)
+		err = b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, hardlinkExistsFiles, api.clickhouseBackupVersion, commandId)
 		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
 		status.Current.Stop(commandId, err)
 		api.sendDryRunReport(w, "download", b, err)
@@ -2499,7 +2499,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("download", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, hardlinkExistsFiles, api.cliApp.Version, commandId)
+			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, hardlinkExistsFiles, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("API /backup/download error: %v", err)
@@ -2942,7 +2942,7 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 				log.Info().Str("operation", "ResumeOperationsAfterRestart").Send()
 				commandId, _ := status.Current.Start(fullCommand)
 				err, _ = api.metrics.ExecuteWithMetrics(command, 0, func() error {
-					return api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
+					return api.newCliApp().Run(context.Background(), append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
 				})
 				status.Current.Stop(commandId, err)
 				if err != nil {

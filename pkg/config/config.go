@@ -18,7 +18,7 @@ import (
 	"github.com/kelseyhightower/envconfig"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -841,7 +841,7 @@ func ValidateObjectDiskConfig(cfg *Config) error {
 }
 
 // PrintConfig - print default / current config to stdout
-func PrintConfig(ctx *cli.Context) error {
+func PrintConfig(ctx *cli.Command) error {
 	var cfg *Config
 	if ctx == nil {
 		cfg = DefaultConfig()
@@ -1016,7 +1016,7 @@ func DefaultConfig() *Config {
 	}
 }
 
-func GetConfigFromCli(ctx *cli.Context) *Config {
+func GetConfigFromCli(ctx *cli.Command) *Config {
 	var oldEnvValues map[string]oldEnvValues
 	// peek disable_environment_override from the config file before applying --env,
 	// deliberately ignoring the environment, so the option can't be bypassed by the mechanisms it disables
@@ -1034,22 +1034,23 @@ func GetConfigFromCli(ctx *cli.Context) *Config {
 	}
 	RestoreEnvVars(oldEnvValues)
 	// `restore`/`restore_remote` expose --rebind-replica-path-if-exists to override the config value per invocation.
-	// Only override when explicitly passed, so the flag's default `false` doesn't clobber a `true` from the config file.
-	// IsSet/Bool return false for commands that don't declare the flag, so this is safe to evaluate for every command.
+	// Only override when passed as true, so the flag's default `false` doesn't clobber a `true` from the config file.
+	// Bool is false for commands that don't declare the flag, so this is safe to evaluate for every command.
+	// Unlike the old IsSet check, an explicit `--rebind-replica-path-if-exists=false` no longer forces `false`
+	// over a `true` in the config file; failing towards the config file is the safe direction here.
 	// WARNING: never enable this during a concurrent HA multi-replica restore — a path occupied by a live sibling
 	// replica is observationally identical to stale leftovers, so rebinding there causes a split-brain replication group.
-	if ctx.IsSet("rebind-replica-path-if-exists") {
-		cfg.ClickHouse.RebindReplicaPathIfExists = ctx.Bool("rebind-replica-path-if-exists")
+	if ctx.Bool("rebind-replica-path-if-exists") {
+		cfg.ClickHouse.RebindReplicaPathIfExists = true
 	}
 	return cfg
 }
 
-func GetConfigPath(ctx *cli.Context) string {
+func GetConfigPath(ctx *cli.Command) string {
+	// --config is persistent on the root command, so String walks the lineage and
+	// sees it whether it was passed before or after the command name
 	if ctx.String("config") != DefaultConfigPath {
 		return ctx.String("config")
-	}
-	if ctx.GlobalString("config") != DefaultConfigPath {
-		return ctx.GlobalString("config")
 	}
 	if os.Getenv("CLICKHOUSE_BACKUP_CONFIG") != "" {
 		return os.Getenv("CLICKHOUSE_BACKUP_CONFIG")
@@ -1144,7 +1145,7 @@ func MaskEnvOverrideCommand(command string) string {
 	return masked
 }
 
-func OverrideEnvVars(ctx *cli.Context) map[string]oldEnvValues {
+func OverrideEnvVars(ctx *cli.Command) map[string]oldEnvValues {
 	env := ctx.StringSlice("env")
 	oldValues := map[string]oldEnvValues{}
 	logLevel := "info"

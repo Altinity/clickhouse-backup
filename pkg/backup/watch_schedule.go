@@ -16,7 +16,7 @@ import (
 	"github.com/pkg/errors"
 	cron "github.com/robfig/cron/v3"
 	"github.com/rs/zerolog/log"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 )
 
 // watchScheduleState - runtime state of one named cron driven backup chain, see https://github.com/Altinity/clickhouse-backup/issues/1354
@@ -148,7 +148,7 @@ func (st *watchScheduleState) dueBackupType(now time.Time) string {
 // watchWithSchedules - cron driven watch mode, each schedule keeps its own full+increment chain with
 // schedule name as backup name prefix; failed backups are retried on the next cron tick instead of aborting,
 // see https://github.com/Altinity/clickhouse-backup/issues/1354
-func (b *Backuper) watchWithSchedules(ctx context.Context, watchInterval, fullInterval, watchBackupNameTemplate string, schedules []string, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource bool, version string, commandId int, metrics *metrics.APIMetrics, cliCtx *cli.Context) error {
+func (b *Backuper) watchWithSchedules(ctx context.Context, watchInterval, fullInterval, watchBackupNameTemplate string, schedules []string, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource bool, version string, commandId int, metrics *metrics.APIMetrics, cliCtx *cli.Command) error {
 	states, err := b.newWatchScheduleStates(ctx)
 	if err != nil {
 		return errors.Wrap(err, "watchWithSchedules newWatchScheduleStates")

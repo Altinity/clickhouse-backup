@@ -77,7 +77,7 @@ func TestDryRun(t *testing.T) {
 	checkDryRunOutput(r, out, "upload", 1)
 	r.NotContainsf(listRemote(), backupName, "upload --dry-run shall not upload %s", backupName)
 
-	// d. delete local --dry-run shall keep the local backup, urfave/cli v1 needs the flag before the args
+	// d. delete local --dry-run shall keep the local backup
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", configFile, "upload", backupName)
 	r.Containsf(listRemote(), backupName, "expect %s on remote after the real upload", backupName)
 	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", configFile, "delete", "--dry-run", "local", backupName)
