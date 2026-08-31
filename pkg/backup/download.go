@@ -267,6 +267,21 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			return errors.Wrap(reBalanceErr, "reBalanceTablesMetadataIfDiskNotExists")
 		}
 		b.filterPartsAndFilesByDisk(tableMetadataAfterDownload, disks)
+		if hardlinkExistsFiles {
+			// index local backups once instead of globbing them per part, both the free space
+			// probe below and downloadTableData reuse it, the RequiredBackup downloaded by the
+			// recursive call above is already on disk and gets indexed too,
+			// https://github.com/Altinity/clickhouse-backup/issues/1457
+			indexedLocalBackups, _, localBackupsErr := b.GetLocalBackups(ctx, disks)
+			if localBackupsErr != nil {
+				log.Warn().Err(localBackupsErr).Msg("can't list local backups to index hardlink candidates, will fallback to glob")
+			} else {
+				b.localPartIndex = b.buildLocalPartIndex(indexedLocalBackups, disks)
+				defer func() {
+					b.localPartIndex = nil
+				}()
+			}
+		}
 		// https://github.com/Altinity/clickhouse-backup/issues/1268
 		// precise check after table metadata is downloaded and filtered by --tables and --partitions,
 		// counts only parts which really will be downloaded (hardlinkable parts are free)
@@ -769,6 +784,17 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 	downloadedSize := uint64(0)
 	var isRebalancedAfterHardLinks atomic.Bool
 
+	// one system.parts read per table replaces one per part, built before the part goroutines start
+	// and read-only afterwards, https://github.com/Altinity/clickhouse-backup/issues/1457
+	var livePartsByHash map[string][]livePartRow
+	if hardlinkExistsFiles {
+		var hashErr error
+		if livePartsByHash, hashErr = b.fetchLivePartsByHash(ctx, table); hashErr != nil {
+			log.Warn().Err(hashErr).Msgf("can't snapshot system.parts by hash_of_all_files for %s.%s, will read system.parts per part", table.Database, table.Table)
+			livePartsByHash = nil
+		}
+	}
+
 	if remoteBackup.DataFormat != DirectoryFormat {
 		capacity := 0
 		downloadOffset := make(map[string]int)
@@ -819,7 +845,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 							}
 						}
 						if foundPart != nil {
-							found, size, err := b.hardlinkIfLocalPartExistsAndChecksumEqual(remoteBackup.BackupName, table, foundPart, disks, capturedDisk, dbAndTableDir)
+							found, size, err := b.hardlinkIfLocalPartExistsAndChecksumEqual(remoteBackup.BackupName, table, foundPart, disks, capturedDisk, dbAndTableDir, livePartsByHash)
 							if err != nil {
 								return errors.Wrap(err, "hardlinkIfLocalPartExistsAndChecksumEqual")
 							}
@@ -923,7 +949,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 						}
 					}
 					if hardlinkExistsFiles {
-						found, size, err := b.hardlinkIfLocalPartExistsAndChecksumEqual(remoteBackup.BackupName, table, &capturedPart, disks, capturedDisk, dbAndTableDir)
+						found, size, err := b.hardlinkIfLocalPartExistsAndChecksumEqual(remoteBackup.BackupName, table, &capturedPart, disks, capturedDisk, dbAndTableDir, livePartsByHash)
 						if err != nil {
 							return errors.Wrap(err, "hardlinkIfLocalPartExistsAndChecksumEqual")
 						}
@@ -990,7 +1016,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 		}
 	}
 	if !b.isEmbedded && remoteBackup.RequiredBackup != "" {
-		diffBytes, err := b.downloadDiffParts(ctx, remoteBackup, table, dbAndTableDir, disks, hardlinkExistsFiles)
+		diffBytes, err := b.downloadDiffParts(ctx, remoteBackup, table, dbAndTableDir, disks, hardlinkExistsFiles, livePartsByHash)
 		if err != nil {
 			return 0, errors.Wrap(err, "downloadDiffParts")
 		}
@@ -1000,7 +1026,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 	return downloadedSize, nil
 }
 
-func (b *Backuper) hardlinkIfLocalPartExistsAndChecksumEqual(backupName string, table metadata.TableMetadata, part *metadata.Part, disks []clickhouse.Disk, diskName, dbAndTableDir string) (bool, int64, error) {
+func (b *Backuper) hardlinkIfLocalPartExistsAndChecksumEqual(backupName string, table metadata.TableMetadata, part *metadata.Part, disks []clickhouse.Disk, diskName, dbAndTableDir string, livePartsByHash map[string][]livePartRow) (bool, int64, error) {
 	diskType := ""
 	for _, d := range disks {
 		if d.Name == diskName {
@@ -1013,7 +1039,7 @@ func (b *Backuper) hardlinkIfLocalPartExistsAndChecksumEqual(backupName string, 
 		return false, 0, errors.Errorf("can't find %s in disks=%v", diskName, disks)
 	}
 	if _, ok := table.HashOfAllFiles[part.Name]; ok {
-		found, size, err := b.hardlinkByHashOfAllFiles(context.Background(), backupName, table, part, disks, diskName, dbAndTableDir)
+		found, size, err := b.hardlinkByHashOfAllFiles(context.Background(), backupName, table, part, disks, diskName, dbAndTableDir, livePartsByHash)
 		if err != nil {
 			log.Warn().Err(err).Msgf("hardlinkByHashOfAllFiles failed for %s.%s/%s, falling back to CRC64", table.Database, table.Table, part.Name)
 		} else if found {
@@ -1077,11 +1103,17 @@ func (b *Backuper) findLocalPartWithSameChecksum(table metadata.TableMetadata, p
 		}
 		// https://github.com/Altinity/clickhouse-backup/issues/1244
 		if len(existingPartPaths) == 0 {
-			globDir, globErr := filepath.Glob(path.Join(localDisk.Path, "backup", "*", "shadow", dbAndTableDir, localDisk.Name, part.Name))
-			if globErr != nil {
-				return "", nil, errors.Wrap(globErr, "filepath.Glob")
+			// a complete index knows every shadow part of every local backup, so a miss is a real miss
+			// and the glob can be skipped entirely, https://github.com/Altinity/clickhouse-backup/issues/1457
+			if b.localPartIndex != nil && b.localPartIndex.complete {
+				existingPartPaths = b.localPartIndex.lookup(table.Database, table.Table, localDisk.Name, part.Name)
+			} else {
+				globDir, globErr := filepath.Glob(path.Join(localDisk.Path, "backup", "*", "shadow", dbAndTableDir, localDisk.Name, part.Name))
+				if globErr != nil {
+					return "", nil, errors.Wrap(globErr, "filepath.Glob")
+				}
+				existingPartPaths = append(existingPartPaths, globDir...)
 			}
-			existingPartPaths = append(existingPartPaths, globDir...)
 		}
 
 		for i, existingPartPath := range existingPartPaths {
@@ -1345,65 +1377,99 @@ func (b *Backuper) findHardlinkablePartsByHash(ctx context.Context, tables ListO
 	return result, nil
 }
 
-// hardlinkByHashOfAllFiles looks up an existing live part in system.parts whose
-// hash_of_all_files matches the expected value from backup metadata. If several
-// candidates exist (e.g. copies of the same data under different part names),
-// the one with the smallest Levenshtein distance to part.Name wins. On success
-// it hardlinks the resolved on-disk directory into the backup shadow path.
-func (b *Backuper) hardlinkByHashOfAllFiles(ctx context.Context, backupName string, table metadata.TableMetadata, part *metadata.Part, disks []clickhouse.Disk, diskName, dbAndTableDir string) (bool, int64, error) {
+// hardlinkByHashOfAllFiles looks up an existing live part whose hash_of_all_files matches the
+// expected value from backup metadata, preferring the per-table livePartsByHash snapshot and
+// falling back to reading system.parts for this single part. If several candidates exist (e.g.
+// copies of the same data under different part names), the one with the smallest Levenshtein
+// distance to part.Name wins, see hardlinkFromLiveParts. On success it hardlinks the resolved
+// on-disk directory into the backup shadow path.
+func (b *Backuper) hardlinkByHashOfAllFiles(ctx context.Context, backupName string, table metadata.TableMetadata, part *metadata.Part, disks []clickhouse.Disk, diskName, dbAndTableDir string, livePartsByHash map[string][]livePartRow) (bool, int64, error) {
 	expected, ok := table.HashOfAllFiles[part.Name]
 	if !ok {
 		return false, 0, nil
 	}
-	var rows []struct {
-		Name     string `ch:"name"`
-		Path     string `ch:"path"`
-		Disk     string `ch:"disk_name"`
-		Database string `ch:"database"`
-		Table    string `ch:"table"`
+	expected = strings.ToLower(expected)
+	// the per-table snapshot answers without a query, https://github.com/Altinity/clickhouse-backup/issues/1457
+	// it can only go stale by a merge dropping the part after the snapshot was taken, which is
+	// detected before the hardlink and repaired by re-reading system.parts for that single part
+	if livePartsByHash != nil {
+		cachedRows := livePartsByHash[expected]
+		if len(cachedRows) == 0 {
+			return false, 0, nil
+		}
+		found, size, err := b.hardlinkFromLiveParts(cachedRows, true, backupName, table, part, disks, diskName, dbAndTableDir)
+		if err != nil {
+			return false, 0, err
+		}
+		if found {
+			return true, size, nil
+		}
+		log.Warn().Msgf("system.parts snapshot for %s.%s part %s went stale, re-reading system.parts", table.Database, table.Table, part.Name)
 	}
+	var rows []livePartRow
 	// A part with an identical hash_of_all_files can live under a different
 	// table name (e.g. the table was renamed, or the same data was inserted
 	// into another table). A matching hash_of_all_files means the part files
 	// are byte-identical, so the directory is safe to hardlink regardless of
 	// which table currently owns it. See
 	// https://github.com/Altinity/clickhouse-backup/issues/1398
-	q := "SELECT name, path, disk_name, database, `table` FROM system.parts WHERE lower(hash_of_all_files)=? AND active"
+	q := "SELECT name, path, disk_name, database, `table`, lower(hash_of_all_files) AS hash FROM system.parts WHERE lower(hash_of_all_files)=? AND active"
 	if err := b.ch.SelectContext(ctx, &rows, q, expected); err != nil {
 		return false, 0, errors.Wrap(err, "system.parts lookup by hash_of_all_files")
 	}
 	if len(rows) == 0 {
 		return false, 0, nil
 	}
-	sort.SliceStable(rows, func(i, j int) bool {
+	return b.hardlinkFromLiveParts(rows, false, backupName, table, part, disks, diskName, dbAndTableDir)
+}
+
+// hardlinkFromLiveParts picks the best candidate among live parts sharing the expected
+// hash_of_all_files and hardlinks its directory into the backup shadow path. When tolerateStale is
+// set, a candidate which disappeared from disk is reported as not found instead of failing, so the
+// caller can re-read system.parts, https://github.com/Altinity/clickhouse-backup/issues/1457
+func (b *Backuper) hardlinkFromLiveParts(rows []livePartRow, tolerateStale bool, backupName string, table metadata.TableMetadata, part *metadata.Part, disks []clickhouse.Disk, diskName, dbAndTableDir string) (bool, int64, error) {
+	// the snapshot slice is shared by the concurrent part goroutines and the order depends on
+	// part.Name, so sort a private copy and keep the snapshot read-only
+	candidates := make([]livePartRow, len(rows))
+	copy(candidates, rows)
+	sort.SliceStable(candidates, func(i, j int) bool {
 		// Prefer a candidate from the same table, then the closest part name.
-		sameI := rows[i].Database == table.Database && rows[i].Table == table.Table
-		sameJ := rows[j].Database == table.Database && rows[j].Table == table.Table
+		sameI := candidates[i].Database == table.Database && candidates[i].Table == table.Table
+		sameJ := candidates[j].Database == table.Database && candidates[j].Table == table.Table
 		if sameI != sameJ {
 			return sameI
 		}
-		di := levenshtein(rows[i].Name, part.Name)
-		dj := levenshtein(rows[j].Name, part.Name)
+		di := levenshtein(candidates[i].Name, part.Name)
+		dj := levenshtein(candidates[j].Name, part.Name)
 		if di != dj {
 			return di < dj
 		}
-		return rows[i].Name < rows[j].Name
+		return candidates[i].Name < candidates[j].Name
 	})
 
 	var localDisk *clickhouse.Disk
 	for i := range disks {
-		if disks[i].Name == rows[0].Disk {
+		if disks[i].Name == candidates[0].Disk {
 			localDisk = &disks[i]
 			break
 		}
 	}
 	if localDisk == nil {
-		return false, 0, errors.Errorf("disk %q from system.parts not found in disks=%v", rows[0].Disk, disks)
+		return false, 0, errors.Errorf("disk %q from system.parts not found in disks=%v", candidates[0].Disk, disks)
 	}
-	srcPath := strings.TrimRight(rows[0].Path, "/")
+	srcPath := strings.TrimRight(candidates[0].Path, "/")
+	if tolerateStale {
+		if _, statErr := os.Stat(srcPath); statErr != nil {
+			return false, 0, nil
+		}
+	}
 	partLocalPath := path.Join(b.getLocalBackupDataPathForTable(backupName, localDisk.Name, dbAndTableDir), part.Name)
-	log.Info().Msgf("hash_of_all_files match: hardlink %s -> %s (live part %q from %s.%s)", srcPath, partLocalPath, rows[0].Name, rows[0].Database, rows[0].Table)
+	log.Info().Msgf("hash_of_all_files match: hardlink %s -> %s (live part %q from %s.%s)", srcPath, partLocalPath, candidates[0].Name, candidates[0].Database, candidates[0].Table)
 	if err := b.makePartHardlinks(srcPath, partLocalPath); err != nil {
+		if tolerateStale {
+			log.Warn().Err(err).Msgf("hardlink from the cached live part %s failed", srcPath)
+			return false, 0, nil
+		}
 		return false, 0, errors.Wrapf(err, "failed to create hardlinks for %s", srcPath)
 	}
 	if diskName != localDisk.Name {
@@ -1461,7 +1527,7 @@ func levenshtein(a, b string) int {
 	return prev[lb]
 }
 
-func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, dbAndTableDir string, disks []clickhouse.Disk, hardlinkExistsFiles bool) (int64, error) {
+func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, dbAndTableDir string, disks []clickhouse.Disk, hardlinkExistsFiles bool, livePartsByHash map[string][]livePartRow) (int64, error) {
 	log.Debug().
 		Str("backup", remoteBackup.BackupName).
 		Str("operation", "downloadDiffParts").
@@ -1573,7 +1639,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 				idx := i
 				downloadDiffGroup.Go(func() error {
 					if hardlinkExistsFiles {
-						found, size, err := b.hardlinkIfLocalPartExistsAndChecksumEqual(remoteBackup.BackupName, table, &partForDownload, disks, capturedDisk, dbAndTableDir)
+						found, size, err := b.hardlinkIfLocalPartExistsAndChecksumEqual(remoteBackup.BackupName, table, &partForDownload, disks, capturedDisk, dbAndTableDir, livePartsByHash)
 						if err != nil {
 							return errors.Wrap(err, "hardlinkIfLocalPartExistsAndChecksumEqual")
 						}

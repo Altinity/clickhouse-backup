@@ -57,6 +57,9 @@ type Backuper struct {
 	shadowBackupUUIDs      []string
 	shadowBackupUUIDsMutex sync.Mutex
 	fileManifest           *storage.ManifestWriter
+	// localPartIndex - read-only after build, maps parts of local backups to their shadow directories
+	// so `download --hardlink-exists-files` doesn't glob all local backups per part, see issues/1457
+	localPartIndex *localPartIndex
 }
 
 func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {
