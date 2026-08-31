@@ -21,6 +21,17 @@ func (env *TestEnvironment) runPlainRewritableScenario(t *testing.T, r *require.
 	tableName := "data"
 
 	env.queryWithNoError(t, r, "DROP DATABASE IF EXISTS "+dbName+" SYNC")
+	// a failed r.NoError aborts the scenario via t.FailNow before the DROP DATABASE below and the
+	// leftover database on the plain disk poisons every later test acquiring this pooled env: their
+	// `create` picks up a table whose bucket their config can't reach,
+	// https://github.com/Altinity/clickhouse-backup/actions/runs/33397256466
+	defer func() {
+		if t.Failed() {
+			if dropErr := env.ch.Query("DROP DATABASE IF EXISTS " + dbName + " SYNC"); dropErr != nil {
+				t.Logf("deferred DROP DATABASE %s: %v", dbName, dropErr)
+			}
+		}
+	}()
 	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
 	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE %s.%s (id UInt64, payload String) ENGINE=MergeTree() PARTITION BY id %% 4 ORDER BY id SETTINGS storage_policy='%s'",
