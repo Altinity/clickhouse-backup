@@ -94,7 +94,7 @@ func TestMain(m *testing.M) {
 func prePullImages() {
 	chImage := fmt.Sprintf("docker.io/%s:%s",
 		getEnvDefault("CLICKHOUSE_IMAGE", "clickhouse/clickhouse-server"),
-		getEnvDefault("CLICKHOUSE_VERSION", "26.3"))
+		getEnvDefault("CLICKHOUSE_VERSION", "26.8"))
 	keeperImage := fmt.Sprintf("docker.io/clickhouse/clickhouse-keeper:%s",
 		getEnvDefault("CLICKHOUSE_KEEPER_VERSION", "latest-alpine"))
 	zkImage := fmt.Sprintf("%s:%s",

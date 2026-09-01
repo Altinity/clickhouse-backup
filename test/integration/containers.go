@@ -1022,7 +1022,7 @@ func (tc *TestContainers) startPgSQL(ctx context.Context) error {
 
 func (tc *TestContainers) commonClickHouseEnv() map[string]string {
 	return map[string]string{
-		"CLICKHOUSE_VERSION":                   getEnvDefault("CLICKHOUSE_VERSION", "26.3"),
+		"CLICKHOUSE_VERSION":                   getEnvDefault("CLICKHOUSE_VERSION", "26.8"),
 		"CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS": "true",
 		"CLICKHOUSE_SKIP_USER_SETUP":           "1",
 		"TZ":                                   "UTC",
@@ -1143,7 +1143,7 @@ func (tc *TestContainers) clickHouseBinds(curDir, configsDir string) []string {
 // runs (master push + PR) executing the same matrix job: they share the remote path and
 // delete/overwrite each other's fixed-name backups mid-test.
 func (tc *TestContainers) writeMacrosVersionXML() (string, error) {
-	version := strings.ReplaceAll(getEnvDefault("CLICKHOUSE_VERSION", "26.3"), ".", "_")
+	version := strings.ReplaceAll(getEnvDefault("CLICKHOUSE_VERSION", "26.8"), ".", "_")
 	if runID := os.Getenv("GITHUB_RUN_ID"); runID != "" {
 		version += "-" + runID
 	}
@@ -1158,7 +1158,7 @@ func (tc *TestContainers) writeMacrosVersionXML() (string, error) {
 func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDir string) error {
 	chImage := fmt.Sprintf("docker.io/%s:%s",
 		getEnvDefault("CLICKHOUSE_IMAGE", "clickhouse/clickhouse-server"),
-		getEnvDefault("CLICKHOUSE_VERSION", "26.3"))
+		getEnvDefault("CLICKHOUSE_VERSION", "26.8"))
 
 	env := tc.commonClickHouseEnv()
 	if tc.isAdvanced {
@@ -1211,7 +1211,7 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 func (tc *TestContainers) startClickHouseBackup(ctx context.Context, curDir, configsDir string) error {
 	chImage := fmt.Sprintf("docker.io/%s:%s",
 		getEnvDefault("CLICKHOUSE_IMAGE", "clickhouse/clickhouse-server"),
-		getEnvDefault("CLICKHOUSE_VERSION", "26.3"))
+		getEnvDefault("CLICKHOUSE_VERSION", "26.8"))
 
 	env := tc.commonClickHouseEnv()
 
