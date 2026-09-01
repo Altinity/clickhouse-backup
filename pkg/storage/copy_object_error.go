@@ -26,14 +26,18 @@ func IsPermanentCopyObjectError(err error) bool {
 	var apiErr smithy.APIError
 	if errors.As(err, &apiErr) {
 		switch apiErr.ErrorCode() {
-		case "AccessDenied", "NotImplemented", "InvalidRequest":
+		case "AccessDenied", "NotImplemented", "InvalidRequest",
+			// object disks can live on a different endpoint/provider than the backup destination
+			// (e.g. disk_gcs/disk_cos/disk_azblob vs minio), then the destination can't see the
+			// source bucket at all and retrying can never succeed
+			"NoSuchBucket", "NoSuchKey", "NotFound", "PermanentRedirect":
 			return true
 		}
 	}
 	var gcpErr *googleapi.Error
 	if errors.As(err, &gcpErr) {
 		switch gcpErr.Code {
-		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotImplemented:
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotImplemented, http.StatusNotFound:
 			return true
 		}
 	}
@@ -43,7 +47,7 @@ func IsPermanentCopyObjectError(err error) bool {
 			return true
 		}
 		switch azErr.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotImplemented:
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotImplemented, http.StatusNotFound:
 			return true
 		}
 	}
