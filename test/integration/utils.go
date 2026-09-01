@@ -861,6 +861,16 @@ func (env *TestEnvironment) createTestSchema(t *testing.T, data TestDataStruct, 
 			createSQL = strings.Replace(createSQL, "{database}", data.Database, -1)
 		}
 	}
+	// since 26.8 a {database}/{table} macro whose value contains '/', '{' or '}' is rejected in replicated ZooKeeper paths
+	// (https://github.com/ClickHouse/ClickHouse/commit/617b6626fcf), explicit literal paths are still allowed
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "26.8") >= 0 {
+		if strings.Contains(createSQL, "{database}") && strings.ContainsAny(data.Database, "/{}") {
+			createSQL = strings.Replace(createSQL, "{database}", data.Database, -1)
+		}
+		if strings.Contains(createSQL, "{table}") && strings.ContainsAny(data.Name, "/{}") {
+			createSQL = strings.Replace(createSQL, "{table}", data.Name, -1)
+		}
+	}
 	// old clickhouse version doesn't know about `{uuid}` macros
 	if strings.Contains(createSQL, "{uuid}") && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") <= 0 {
 		createSQL = strings.Replace(createSQL, "{uuid}", uuid.New().String(), -1)

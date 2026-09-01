@@ -53,7 +53,7 @@ def all_engines(self):
         "CREATE TABLE hdfs (id Int32, name String) ENGINE=HDFS('hdfs://hdfs:9000/other_storage', 'TSV')",
 
         "CREATE TABLE s3 (id Int32, name String) "
-        "ENGINE=S3('https://storage.yandexcloud.net/my-test-bucket-768/test-data.csv.gz', 'CSV', 'gzip')",
+        "ENGINE=S3('https://storage.yandexcloud.net/my-fake-bucket-768/test-data.csv.gz', 'fake-key', 'fake-secret', 'CSV', 'gzip')",
 
         "CREATE TABLE embrdb (id Int32, name String) ENGINE = EmbeddedRocksDB PRIMARY KEY id",
         "CREATE TABLE mysql (id Int32, name String) ENGINE = MySQL('localhost:3306', 'test', 'test', 'bayonet', '123')",
