@@ -30,6 +30,13 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	env.queryWithNoError(t, r, createDbSQL)
 	version, err := env.ch.GetVersion(t.Context())
 	r.NoError(err)
+	// the table keeps an unfinished mutation with inconsistent part types; if any assertion below fails,
+	// leaving it behind breaks full-server backups in other tests sharing this environment
+	defer func() {
+		r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version, "", false, ""))
+		r.NoError(env.dropDatabase(t.Name(), true))
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_restore_mutation_in_progress")
+	}()
 
 	createSQL := fmt.Sprintf("CREATE TABLE %s.test_restore_mutation_in_progress %s (id UInt64, attr String) ENGINE=ReplicatedMergeTree('%s','{replica}') PARTITION BY id ORDER BY id", t.Name(), onCluster, zkPath)
 	env.queryWithNoError(t, r, createSQL)
@@ -50,7 +57,11 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	r.NotEqual(nil, err, "SELECT attr shall fail while mutation in progress, but returned attrs=%#v", attrs)
 	errStr := strings.ToLower(err.Error())
 	r.True(strings.Contains(errStr, "code: 53") || strings.Contains(errStr, "code: 6"), "SELECT attr return UNEXPECTED ERROR=%s", errStr)
-	r.Zero(len(attrs), "SELECT attr shall not return rows while mutation in progress, but returned attrs=%#v, err=%v", attrs, err)
+	// since 26.8 read_in_order_use_virtual_row=1 by default, MergingSortedTransform emits rows from the
+	// first part before the second part is read and fails on CAST, so partial rows may arrive before the error
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "26.8") < 0 {
+		r.Zero(len(attrs), "SELECT attr shall not return rows while mutation in progress, but returned attrs=%#v, err=%v", attrs, err)
+	}
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
 		mutationSQL = "ALTER TABLE " + t.Name() + ".test_restore_mutation_in_progress RENAME COLUMN attr TO attr_1"
@@ -132,8 +143,4 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	}
 
 	env.DockerExecNoError(r, "clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.mutations FORMAT Vertical")
-
-	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version, "", false, ""))
-	r.NoError(env.dropDatabase(t.Name(), false))
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_restore_mutation_in_progress")
 }
