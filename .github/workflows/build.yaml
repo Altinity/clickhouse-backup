@@ -16,7 +16,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.26"
+          - "1.27"
     steps:
       - name: Checkout project
         uses: actions/checkout@v6
@@ -26,12 +26,6 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '^${{ matrix.golang-version }}'
-
-# we don't need musl after switch go 1.26
-#      - name: Setup musl
-#        id: setup-musl
-#        run: |
-#          sudo apt-get install -y musl-tools musl-dev
 
 #      - name: Cache golang
 #        id: cache-golang
@@ -101,7 +95,7 @@ jobs:
       fail-fast: false
       matrix:
         golang-version:
-          - "1.26"
+          - "1.27"
         clickhouse:
           - '22.3'
           - '22.8'
@@ -211,7 +205,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.26"
+          - "1.27"
         clickhouse:
           - "fips"
     steps:
@@ -307,7 +301,7 @@ jobs:
       fail-fast: false
       matrix:
         golang-version:
-          - "1.26"
+          - "1.27"
         clickhouse:
           - '1.1.54394'
           - '19.17'
