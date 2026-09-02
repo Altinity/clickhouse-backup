@@ -534,7 +534,8 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 			} else {
 				if backupResult[0].CompressedSize == 0 && backupResult[0].Id != "" {
 					systemBackupResult := make([]clickhouse.SystemBackups, 0)
-					backupSizeSQL := fmt.Sprintf("SELECT * FROM system.backups WHERE id='%s'", backupResult[0].Id)
+					// explicit column list, SELECT * breaks when new versions add columns unknown to SystemBackups (26.8 added `settings`, `engine_settings`)
+					backupSizeSQL := fmt.Sprintf("SELECT id, status, compressed_size, uncompressed_size FROM system.backups WHERE id='%s'", backupResult[0].Id)
 					if sizeErr := b.ch.SelectContext(ctx, &systemBackupResult, backupSizeSQL); sizeErr != nil {
 						return errors.Wrap(sizeErr, "system.backups query")
 					}
