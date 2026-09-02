@@ -1835,6 +1835,17 @@ func (api *APIServer) httpRestoreCloudHandler(w http.ResponseWriter, r *http.Req
 		opts.ContinueOnError = true
 		fullCommand += " --continue-on-error"
 	}
+	if _, exist := api.getQueryParameter(query, "drop"); exist {
+		opts.Drop = true
+		fullCommand += " --drop"
+	}
+	if parallel, exist := query["parallel"]; exist {
+		if opts.Parallel, err = strconv.Atoi(parallel[0]); err != nil {
+			api.writeError(w, http.StatusBadRequest, "restore_cloud", errors.Wrapf(err, "invalid parallel=%s", parallel[0]))
+			return
+		}
+		fullCommand = fmt.Sprintf("%s --parallel=%d", fullCommand, opts.Parallel)
+	}
 	if _, exist := api.getQueryParameter(query, "dry-run"); exist {
 		dryRun = true
 		fullCommand += " --dry-run"

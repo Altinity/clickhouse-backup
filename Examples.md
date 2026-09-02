@@ -76,8 +76,7 @@ ClickHouse Cloud backups use proprietary engines (`ENGINE = Shared` for database
 self-managed ClickHouse can't restore with a plain `RESTORE` statement. The `restore_cloud` command reads the native
 `.backup` manifest directly from S3, rewrites `Shared` database engine to `Atomic` and `Shared*MergeTree` to the matching
 `Replicated*MergeTree`, applies the DDL and runs `RESTORE TABLE ... FROM S3(...)` with
-`allow_different_database_def=1, allow_different_table_def=1` for each table, then compares restored `system.parts`
-size/rows with the backup manifest. See https://github.com/Altinity/clickhouse-backup/issues/1508.
+`allow_different_database_def=1, allow_different_table_def=1` for each table. See https://github.com/Altinity/clickhouse-backup/issues/1508.
 
 ### 1. Set up external backup (Bring Your Own Backup) in ClickHouse Cloud
 
@@ -142,15 +141,18 @@ The credentials must be readable both by `clickhouse-backup` (to fetch the manif
 `clickhouse-server` (which executes `RESTORE ... FROM S3(...)` itself). Useful options (see `restore_cloud --help`):
 `--bucket`/`--region`/`--endpoint` override the config, `-t db.table_pattern` restores selected objects only,
 `--partitions` restores only selected partitions (same formats as the regular `restore` command, including
-`--partitions=db.table:part1,part2`, the size check is skipped for filtered tables),
+`--partitions=db.table:part1,part2`),
 `--restore-on-cluster='{cluster}'` executes CREATE and RESTORE with `ON CLUSTER` (macros are resolved via
 `system.macros`), it also supports backups made with `BACKUP ... ON CLUSTER 'default'` (the
 `shards/<N>/replicas/<M>/` backup layout) and pre-checks that the cluster has the same number of shards as the
 backup; replica counts may differ, `ReplicatedMergeTree` replicates the restored data to the other replicas,
 `--base-prefix` points to the base backup for incremental backups, `--s3-restore-url` overrides the URL passed to
 `RESTORE` (MinIO / path-style / HTTP vs HTTPS mismatches), `--replicated-zk-path` / `--replicated-replica` change the
-`Replicated*MergeTree` arguments added when Cloud DDL has none, `--skip-empty-tables`, `--continue-on-error` and
-`--dry-run` only logs the DDL and `RESTORE` statements without executing them.
+`Replicated*MergeTree` arguments added when Cloud DDL has none, `--skip-empty-tables`, `--continue-on-error`,
+`--drop` executes `DROP TABLE IF EXISTS ... SYNC` before each `CREATE` (to re-run a failed or interrupted restore,
+`RESTORE` refuses non-empty tables with code 608), `--parallel` sets how many tables of one database restore
+concurrently (default is the number of CPU cores) and `--dry-run` only logs the DDL and `RESTORE` statements without
+executing them.
 
 The same operation is available via the REST API: `curl -X POST "http://localhost:7171/backup/restore_cloud?prefix=PREFIX/OF/BACKUP"`.
 

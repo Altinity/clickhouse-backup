@@ -143,6 +143,13 @@ func runRestoreCloud(t *testing.T, storageType string, backupDestinationSQL func
 	env.DockerExecNoError(r, "clickhouse", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+configName, "restore_cloud", prefix)
 	checkCloudRestored(env, r, table, 10000)
 
+	// re-run into the non-empty table fails with code 608, --drop recreates it
+	nonEmptyOut, nonEmptyErr := env.DockerExecOut("clickhouse", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+configName, "restore_cloud", prefix)
+	r.Error(nonEmptyErr, "restore_cloud into non-empty table shall fail: %s", nonEmptyOut)
+	r.Contains(nonEmptyOut, "already contains some data")
+	env.DockerExecNoError(r, "clickhouse", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+configName, "restore_cloud", "--drop", "--parallel=2", prefix)
+	checkCloudRestored(env, r, table, 10000)
+
 	// the same restore via POST /backup/restore_cloud
 	env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE IF EXISTS default.%s SYNC", table))
 	serverLog := "/tmp/clickhouse-backup-server-cloud-" + storageType + ".log"

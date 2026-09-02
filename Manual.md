@@ -303,7 +303,7 @@ NAME:
    clickhouse-backup restore_cloud - Restore ClickHouse Cloud native S3 backup (Shared engines) as Atomic databases and Replicated*MergeTree tables on the current server
 
 USAGE:
-   clickhouse-backup restore_cloud [--bucket=<bucket>] [--region=<region>] [--endpoint=<url>] [--container=<container>] [--base-prefix=<prefix>] [--s3-restore-url=<url>] [--azblob-restore-url=<url>] [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--restore-on-cluster=<cluster>] [--replicated-zk-path=<path>] [--replicated-replica=<replica>] [--skip-empty-tables] [--continue-on-error] [--dry-run] <backup_prefix>
+   clickhouse-backup restore_cloud [--bucket=<bucket>] [--region=<region>] [--endpoint=<url>] [--container=<container>] [--base-prefix=<prefix>] [--s3-restore-url=<url>] [--azblob-restore-url=<url>] [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--restore-on-cluster=<cluster>] [--replicated-zk-path=<path>] [--replicated-replica=<replica>] [--skip-empty-tables] [--continue-on-error] [--drop] [--parallel=<n>] [--dry-run] <backup_prefix>
 
 DESCRIPTION:
    Read the .backup manifest from S3 or AzureBlobStorage, rewrite ClickHouse Cloud DDL (database ENGINE=Shared to Atomic, Shared*MergeTree to Replicated*MergeTree) and run RESTORE TABLE ... FROM S3(...) / AzureBlobStorage(...) with allow_different_database_def/allow_different_table_def
@@ -333,6 +333,8 @@ OPTIONS:
    --replicated-replica string  Second Replicated*MergeTree engine argument when Cloud DDL has none, default '{replica}'
    --skip-empty-tables          Skip objects with no data/<db>/<table>/ files in the backup, also skips views and dictionaries
    --continue-on-error          Continue with the next object after an error, exit code is still non-zero
+   --drop                       Execute DROP TABLE / DICTIONARY IF EXISTS ... SYNC before CREATE, to re-run a failed or interrupted restore into non-empty tables
+   --parallel int               How many tables of one database restore concurrently (dictionaries and tables first, then views), default is the number of CPU cores (default: 0)
    --dry-run                    Only log DDL and RESTORE statements which would be executed, without executing
    --help, -h                   show help
 

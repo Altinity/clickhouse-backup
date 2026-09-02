@@ -830,7 +830,7 @@ func newRootCommand() *cli.Command {
 		{
 			Name:      "restore_cloud",
 			Usage:     "Restore ClickHouse Cloud native S3 backup (Shared engines) as Atomic databases and Replicated*MergeTree tables on the current server",
-			UsageText: "clickhouse-backup restore_cloud [--bucket=<bucket>] [--region=<region>] [--endpoint=<url>] [--container=<container>] [--base-prefix=<prefix>] [--s3-restore-url=<url>] [--azblob-restore-url=<url>] [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--restore-on-cluster=<cluster>] [--replicated-zk-path=<path>] [--replicated-replica=<replica>] [--skip-empty-tables] [--continue-on-error] [--dry-run] <backup_prefix>",
+			UsageText: "clickhouse-backup restore_cloud [--bucket=<bucket>] [--region=<region>] [--endpoint=<url>] [--container=<container>] [--base-prefix=<prefix>] [--s3-restore-url=<url>] [--azblob-restore-url=<url>] [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--restore-on-cluster=<cluster>] [--replicated-zk-path=<path>] [--replicated-replica=<replica>] [--skip-empty-tables] [--continue-on-error] [--drop] [--parallel=<n>] [--dry-run] <backup_prefix>",
 			Description: "Read the .backup manifest from S3 or AzureBlobStorage, rewrite ClickHouse Cloud DDL (database ENGINE=Shared to Atomic, Shared*MergeTree to Replicated*MergeTree) and run RESTORE TABLE ... FROM S3(...) / AzureBlobStorage(...) with allow_different_database_def/allow_different_table_def\n" +
 				"   Credentials and defaults are taken from the s3 config section (also works for GCS via s3->endpoint=https://storage.googleapis.com with HMAC keys), or from the azblob config section when --container / --azblob-restore-url is passed or general->remote_storage is azblob\n" +
 				"   When s3->assume_role_arn is set, the manifest is read and RESTORE ... FROM S3(..., extra_credentials(role_arn='...')) is executed with the assumed AWS IAM role, the static keys only sign the STS AssumeRole call (requires ClickHouse 25.8+);\n" +
@@ -859,6 +859,8 @@ func newRootCommand() *cli.Command {
 					ReplicatedReplica: c.String("replicated-replica"),
 					SkipEmptyTables:   c.Bool("skip-empty-tables"),
 					ContinueOnError:   c.Bool("continue-on-error"),
+					Drop:              c.Bool("drop"),
+					Parallel:          c.Int("parallel"),
 				}, commandIdFromCli(c))
 			},
 			Flags: []cli.Flag{
@@ -938,6 +940,16 @@ func newRootCommand() *cli.Command {
 					Name:   "continue-on-error",
 					Hidden: false,
 					Usage:  "Continue with the next object after an error, exit code is still non-zero",
+				},
+				&cli.BoolFlag{
+					Name:   "drop",
+					Hidden: false,
+					Usage:  "Execute DROP TABLE / DICTIONARY IF EXISTS ... SYNC before CREATE, to re-run a failed or interrupted restore into non-empty tables",
+				},
+				&cli.IntFlag{
+					Name:   "parallel",
+					Hidden: false,
+					Usage:  "How many tables of one database restore concurrently (dictionaries and tables first, then views), default is the number of CPU cores",
 				},
 				&cli.BoolFlag{
 					Name:  "dry-run",

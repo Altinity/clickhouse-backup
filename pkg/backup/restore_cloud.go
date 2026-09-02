@@ -11,8 +11,10 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
@@ -25,6 +27,7 @@ import (
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/sync/errgroup"
 )
 
 // RestoreCloud restores a ClickHouse Cloud native backup (created by `BACKUP ... TO S3 / AzureBlobStorage`
@@ -152,6 +155,14 @@ func rewriteCloudSchema(sql, kind, replicatedZkPath, replicatedReplica string) s
 	return out
 }
 
+// cloudDropKind - DROP statement object kind for the CREATE statement, DROP TABLE also covers views
+func cloudDropKind(createSQL string) string {
+	if m := cloudCreateKindRE.FindStringSubmatch(createSQL); m != nil && strings.EqualFold(m[1], "DICTIONARY") {
+		return "DICTIONARY"
+	}
+	return "TABLE"
+}
+
 // cloudApplyOrder - DDL apply order inside one database: dictionaries and tables before views
 func cloudApplyOrder(sql string) int {
 	m := cloudCreateKindRE.FindStringSubmatch(sql)
@@ -217,6 +228,8 @@ type RestoreCloudOptions struct {
 	ReplicatedReplica string
 	SkipEmptyTables   bool
 	ContinueOnError   bool
+	Drop              bool // DROP TABLE / DICTIONARY IF EXISTS ... SYNC before CREATE, to re-run a failed or interrupted restore
+	Parallel          int  // tables restored concurrently inside one database, default runtime.NumCPU()
 }
 
 // cloudSource abstracts the backup storage (S3 / GCS-over-S3 / AzureBlobStorage) for RestoreCloud
@@ -363,6 +376,16 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 	if opts.ReplicatedReplica == "" {
 		opts.ReplicatedReplica = "'{replica}'"
 	}
+	if opts.Parallel < 1 {
+		opts.Parallel = runtime.NumCPU()
+	}
+	// the connection pool shall fit --parallel concurrent statements, Connect reads MaxConnections;
+	// restore the configured value afterwards, the config is shared with other commands in server mode
+	if b.cfg.ClickHouse.MaxConnections < opts.Parallel {
+		configuredMaxConnections := b.cfg.ClickHouse.MaxConnections
+		b.cfg.ClickHouse.MaxConnections = opts.Parallel
+		defer func() { b.cfg.ClickHouse.MaxConnections = configuredMaxConnections }()
+	}
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return errors.Wrap(err, "status.Current.GetContextWithCancel")
@@ -408,7 +431,6 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 	tableDDLFiles := map[string][]*cloudManifestFile{}
 	seenTableDDL := map[[2]string]struct{}{}
 	dataBytes := map[[2]string]int64{}
-	dataBytesShard := map[[3]string]int64{}
 	backupShards := map[string]struct{}{}
 	for i := range manifest.Files {
 		f := &manifest.Files[i]
@@ -431,7 +453,6 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 				table = decoded
 			}
 			dataBytes[[2]string{db, table}] += f.Size
-			dataBytesShard[[3]string{db, table, shard}] += f.Size
 			continue
 		}
 		if !strings.HasPrefix(name, "metadata/") || !strings.HasSuffix(name, ".sql") {
@@ -447,7 +468,7 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 		}
 	}
 
-	onClusterSQL, localShard, err := b.checkCloudClusterTopology(ctx, opts.RestoreOnCluster, len(backupShards))
+	onClusterSQL, err := b.checkCloudClusterTopology(ctx, opts.RestoreOnCluster, len(backupShards))
 	if err != nil {
 		return err
 	}
@@ -464,7 +485,10 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 	sort.Strings(databases)
 
 	errorsCount := 0
+	var errorsMu sync.Mutex
 	handleError := func(what string, handledErr error) error {
+		errorsMu.Lock()
+		defer errorsMu.Unlock()
 		errorsCount++
 		redacted := errors.Errorf("%s: %s", what, restoreCloudRedact(handledErr.Error(), source.secrets...))
 		if opts.ContinueOnError {
@@ -540,42 +564,43 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 			}
 			return tableDDLs[i].table < tableDDLs[j].table
 		})
-		for _, t := range tableDDLs {
-			label := fmt.Sprintf("%s.%s", database, t.table)
-			restoreErr := b.restoreCloudExec(ctx, injectCloudOnCluster(t.sql, onClusterSQL), fmt.Sprintf("table %s", label), source.secrets)
-			if restoreErr == nil {
-				restoreSQL := fmt.Sprintf(
-					"RESTORE TABLE %s.%s%s%s FROM %s SETTINGS allow_different_database_def=1, allow_different_table_def=1",
-					cloudQuoteIdent(database), cloudQuoteIdent(t.table), t.partitionsSQL, onClusterSQL, source.restoreLocation,
-				)
-				restoreErr = b.restoreCloudExec(ctx, restoreSQL, fmt.Sprintf("RESTORE TABLE %s", label), source.secrets)
+		// objects of the same apply order don't depend on each other and are restored in parallel,
+		// the next order (views after tables) starts when the previous one is complete
+		for start := 0; start < len(tableDDLs); {
+			end := start + 1
+			for end < len(tableDDLs) && cloudApplyOrder(tableDDLs[end].sql) == cloudApplyOrder(tableDDLs[start].sql) {
+				end++
 			}
-			if restoreErr == nil {
-				expectedBytes, checkSize := dataBytes[[2]string{database, t.table}], true
-				if t.partitionsSQL != "" {
-					// manifest bytes cover all partitions, the restored subset is expected to be smaller
-					log.Info().Msgf("size check skipped for %s (--partitions filter)", label)
-					checkSize = false
-				} else if onClusterSQL != "" {
-					if localShard == "" {
-						log.Info().Msgf("size check skipped for %s (local host is not a member of the cluster)", label)
-						checkSize = false
-					} else {
-						// system.parts is local, compare against the local shard slice of the backup;
-						// data may be restored on another replica of the shard, sync before checking
-						expectedBytes = dataBytesShard[[3]string{database, t.table, localShard}]
-						b.cloudSyncReplica(ctx, database, t.table, t.sql)
+			tablesGroup, tablesCtx := errgroup.WithContext(ctx)
+			tablesGroup.SetLimit(opts.Parallel)
+			for _, t := range tableDDLs[start:end] {
+				tablesGroup.Go(func() error {
+					label := fmt.Sprintf("%s.%s", database, t.table)
+					var restoreErr error
+					if opts.Drop {
+						dropSQL := fmt.Sprintf("DROP %s IF EXISTS %s.%s%s SYNC", cloudDropKind(t.sql), cloudQuoteIdent(database), cloudQuoteIdent(t.table), onClusterSQL)
+						restoreErr = b.restoreCloudExec(tablesCtx, dropSQL, fmt.Sprintf("drop %s", label), source.secrets)
 					}
-				}
-				if checkSize {
-					restoreErr = b.checkCloudRestoredSize(ctx, database, t.table, expectedBytes, t.sql)
-				}
+					if restoreErr == nil {
+						restoreErr = b.restoreCloudExec(tablesCtx, injectCloudOnCluster(t.sql, onClusterSQL), fmt.Sprintf("table %s", label), source.secrets)
+					}
+					if restoreErr == nil {
+						restoreSQL := fmt.Sprintf(
+							"RESTORE TABLE %s.%s%s%s FROM %s SETTINGS allow_different_database_def=1, allow_different_table_def=1",
+							cloudQuoteIdent(database), cloudQuoteIdent(t.table), t.partitionsSQL, onClusterSQL, source.restoreLocation,
+						)
+						restoreErr = b.restoreCloudExec(tablesCtx, restoreSQL, fmt.Sprintf("RESTORE TABLE %s", label), source.secrets)
+					}
+					if restoreErr != nil {
+						return handleError(label, restoreErr)
+					}
+					return nil
+				})
 			}
-			if restoreErr != nil {
-				if handledErr := handleError(label, restoreErr); handledErr != nil {
-					return handledErr
-				}
+			if err = tablesGroup.Wait(); err != nil {
+				return err
 			}
+			start = end
 		}
 	}
 	if errorsCount > 0 {
@@ -592,39 +617,37 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 
 // checkCloudClusterTopology resolves macros in --restore-on-cluster and verifies the cluster has
 // the same number of shards as the backup (replica counts may differ, ReplicatedMergeTree
-// replicates the restored data); returns the ` ON CLUSTER '...'` clause and the local shard number
-// used for the per-shard size check (empty when the local host is not a cluster member)
-func (b *Backuper) checkCloudClusterTopology(ctx context.Context, restoreOnCluster string, backupShardsCount int) (string, string, error) {
+// replicates the restored data); returns the ` ON CLUSTER '...'` clause
+func (b *Backuper) checkCloudClusterTopology(ctx context.Context, restoreOnCluster string, backupShardsCount int) (string, error) {
 	if backupShardsCount == 0 {
 		backupShardsCount = 1
 	}
 	if restoreOnCluster == "" {
 		if backupShardsCount > 1 {
-			return "", "", errors.Errorf("backup was created with ON CLUSTER and contains %d shards, pass --restore-on-cluster", backupShardsCount)
+			return "", errors.Errorf("backup was created with ON CLUSTER and contains %d shards, pass --restore-on-cluster", backupShardsCount)
 		}
-		return "", "", nil
+		return "", nil
 	}
 	cluster, err := b.ch.ApplyMacros(ctx, restoreOnCluster)
 	if err != nil {
-		return "", "", errors.Wrapf(err, "can't resolve macros in --restore-on-cluster=%s", restoreOnCluster)
+		return "", errors.Wrapf(err, "can't resolve macros in --restore-on-cluster=%s", restoreOnCluster)
 	}
 	topology := make([]struct {
-		Shards     uint64 `ch:"shards"`
-		LocalShard string `ch:"local_shard"`
+		Shards uint64 `ch:"shards"`
 	}, 0)
-	query := "SELECT uniqExact(shard_num) AS shards, coalesce(min(if(is_local, toString(shard_num), NULL)), '') AS local_shard " +
+	query := "SELECT uniqExact(shard_num) AS shards " +
 		"FROM system.clusters WHERE cluster=? SETTINGS empty_result_for_aggregation_by_empty_set=0"
 	if err = b.ch.SelectContext(ctx, &topology, query, cluster); err != nil {
-		return "", "", errors.Wrap(err, "can't get cluster topology from system.clusters")
+		return "", errors.Wrap(err, "can't get cluster topology from system.clusters")
 	}
 	if len(topology) == 0 || topology[0].Shards == 0 {
-		return "", "", errors.Errorf("cluster '%s' not found in system.clusters", cluster)
+		return "", errors.Errorf("cluster '%s' not found in system.clusters", cluster)
 	}
 	if int(topology[0].Shards) != backupShardsCount {
-		return "", "", errors.Errorf("backup contains %d shard(s) but cluster '%s' has %d shard(s), topology must match by shards (replica counts may differ)", backupShardsCount, cluster, topology[0].Shards)
+		return "", errors.Errorf("backup contains %d shard(s) but cluster '%s' has %d shard(s), topology must match by shards (replica counts may differ)", backupShardsCount, cluster, topology[0].Shards)
 	}
-	log.Info().Msgf("restore on cluster '%s': %d shard(s) match the backup, local shard=%s", cluster, topology[0].Shards, topology[0].LocalShard)
-	return fmt.Sprintf(" ON CLUSTER '%s'", strings.ReplaceAll(cluster, "'", "\\'")), topology[0].LocalShard, nil
+	log.Info().Msgf("restore on cluster '%s': %d shard(s) match the backup", cluster, topology[0].Shards)
+	return fmt.Sprintf(" ON CLUSTER '%s'", strings.ReplaceAll(cluster, "'", "\\'")), nil
 }
 
 // injectCloudOnCluster inserts the ` ON CLUSTER '...'` clause after
@@ -638,17 +661,6 @@ func injectCloudOnCluster(sql, onClusterSQL string) string {
 		return sql
 	}
 	return sql[:loc[1]] + onClusterSQL + sql[loc[1]:]
-}
-
-// cloudSyncReplica waits for the local replica before the per-shard size check, the RESTORE
-// ON CLUSTER data may land on another replica of the shard; failure is not fatal
-func (b *Backuper) cloudSyncReplica(ctx context.Context, database, table, createSQL string) {
-	if b.DryRun || !strings.Contains(createSQL, "Replicated") {
-		return
-	}
-	if err := b.ch.QueryContext(ctx, fmt.Sprintf("SYSTEM SYNC REPLICA %s.%s", cloudQuoteIdent(database), cloudQuoteIdent(table))); err != nil {
-		log.Warn().Msgf("SYSTEM SYNC REPLICA %s.%s: %v", database, table, err)
-	}
 }
 
 // cloudRestorePartitionsSQL builds the ` PARTITIONS ...` clause of RESTORE TABLE from --partitions,
@@ -718,56 +730,6 @@ func (b *Backuper) restoreCloudExec(ctx context.Context, sql, what string, secre
 	log.Info().Msgf("=== %s ===\n%s", what, logSQL)
 	if err := b.ch.QueryContext(ctx, sql); err != nil {
 		return errors.Errorf("%s", restoreCloudRedact(err.Error(), secrets...))
-	}
-	return nil
-}
-
-// checkCloudRestoredSize compares restored system.parts size/rows against the byte sum of
-// data/<db>/<table>/ files in the backup manifest
-func (b *Backuper) checkCloudRestoredSize(ctx context.Context, database, table string, backupBytes int64, createSQL string) error {
-	if b.DryRun {
-		log.Info().Msgf("size check skipped: backup data/%s/%s = %d bytes", database, table, backupBytes)
-		return nil
-	}
-	if cloudViewOrDictRE.MatchString(createSQL) {
-		log.Info().Msgf("size check skipped for %s.%s (view/dictionary)", database, table)
-		return nil
-	}
-	restored := make([]struct {
-		Bytes uint64 `ch:"bytes"`
-		Rows  uint64 `ch:"rows"`
-		Parts uint64 `ch:"parts"`
-	}, 0)
-	query := "SELECT coalesce(sum(bytes_on_disk), 0) AS bytes, coalesce(sum(rows), 0) AS rows, count() AS parts " +
-		"FROM system.parts WHERE database=? AND table=? AND active " +
-		"SETTINGS empty_result_for_aggregation_by_empty_set=0"
-	if err := b.ch.SelectContext(ctx, &restored, query, database, table); err != nil {
-		return errors.Wrap(err, "can't get restored table stats from system.parts")
-	}
-	var restoredBytes, restoredRows, restoredParts uint64
-	if len(restored) > 0 {
-		restoredBytes, restoredRows, restoredParts = restored[0].Bytes, restored[0].Rows, restored[0].Parts
-	}
-	log.Info().Msgf("size check %s.%s: backup_bytes=%d restored_bytes=%d rows=%d parts=%d", database, table, backupBytes, restoredBytes, restoredRows, restoredParts)
-	if backupBytes > 0 && restoredBytes == 0 {
-		return errors.Errorf("%s.%s: backup has %d bytes of data files but restored table is empty (0 bytes, %d rows, %d parts)", database, table, backupBytes, restoredRows, restoredParts)
-	}
-	if backupBytes > 0 && restoredRows == 0 {
-		return errors.Errorf("%s.%s: backup has %d bytes of data files but restored table has 0 rows (%d bytes_on_disk, %d parts)", database, table, backupBytes, restoredBytes, restoredParts)
-	}
-	// bytes_on_disk is usually close to the sum of part files in the backup, not identical
-	if backupBytes > 0 && restoredBytes > 0 {
-		delta := backupBytes - int64(restoredBytes)
-		if delta < 0 {
-			delta = -delta
-		}
-		limit := backupBytes * 5 / 100
-		if limit < 4096 {
-			limit = 4096
-		}
-		if delta > limit {
-			return errors.Errorf("%s.%s: size mismatch backup_bytes=%d restored_bytes=%d delta=%d (limit %d)", database, table, backupBytes, restoredBytes, delta, limit)
-		}
 	}
 	return nil
 }

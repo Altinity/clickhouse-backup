@@ -138,6 +138,13 @@ func TestRewriteCloudSchemaDatabases(t *testing.T) {
 	assert.Contains(t, out, "ENGINE = Atomic")
 }
 
+func TestCloudDropKind(t *testing.T) {
+	assert.Equal(t, "DICTIONARY", cloudDropKind("CREATE DICTIONARY IF NOT EXISTS db.d (id UInt64) PRIMARY KEY id SOURCE(NULL()) LAYOUT(FLAT()) LIFETIME(0)"))
+	assert.Equal(t, "TABLE", cloudDropKind("CREATE TABLE IF NOT EXISTS db.t (id UInt64) ENGINE = ReplicatedMergeTree ORDER BY id"))
+	assert.Equal(t, "TABLE", cloudDropKind("CREATE MATERIALIZED VIEW IF NOT EXISTS db.mv TO db.t AS SELECT * FROM db.src"))
+	assert.Equal(t, "TABLE", cloudDropKind("CREATE VIEW IF NOT EXISTS db.v AS SELECT 1"))
+}
+
 func TestCloudApplyOrder(t *testing.T) {
 	assert.Equal(t, 0, cloudApplyOrder("CREATE DATABASE d"))
 	assert.Equal(t, 1, cloudApplyOrder("CREATE DICTIONARY d.dict (v UInt64)"))
