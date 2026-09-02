@@ -160,7 +160,7 @@ jobs:
           QA_AWS_REGION: ${{ secrets.QA_AWS_REGION }}
           QA_AWS_BUCKET: ${{ secrets.QA_AWS_BUCKET }}
           QA_GCS_CRED_JSON: ${{ secrets.QA_GCS_CRED_JSON }}
-          RUN_PARALLEL: 3
+          RUN_PARALLEL: 4
           DEBUG: 1
           NO_COLORS: 1
           GOROOT: ${{ env.GOROOT_1_26_X64 }}
@@ -359,7 +359,7 @@ jobs:
         env:
           GOROOT: ${{ env.GOROOT_1_26_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
-          RUN_PARALLEL: 4
+          RUN_PARALLEL: 5
           # LOG_LEVEL: "debug"
           # TEST_LOG_LEVEL: "debug"
           # options for advanced debug CI/CD
