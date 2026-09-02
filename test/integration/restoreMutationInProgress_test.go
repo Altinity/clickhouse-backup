@@ -47,10 +47,10 @@ func TestRestoreMutationInProgress(t *testing.T) {
 		Attr uint64 `ch:"attr"`
 	}, 0)
 	err = env.ch.Select(&attrs, "SELECT attr FROM "+t.Name()+".test_restore_mutation_in_progress ORDER BY id")
-	r.NotEqual(nil, err)
+	r.NotEqual(nil, err, "SELECT attr shall fail while mutation in progress, but returned attrs=%#v", attrs)
 	errStr := strings.ToLower(err.Error())
-	r.True(strings.Contains(errStr, "code: 53") || strings.Contains(errStr, "code: 6"))
-	r.Zero(len(attrs))
+	r.True(strings.Contains(errStr, "code: 53") || strings.Contains(errStr, "code: 6"), "SELECT attr return UNEXPECTED ERROR=%s", errStr)
+	r.Zero(len(attrs), "SELECT attr shall not return rows while mutation in progress, but returned attrs=%#v, err=%v", attrs, err)
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
 		mutationSQL = "ALTER TABLE " + t.Name() + ".test_restore_mutation_in_progress RENAME COLUMN attr TO attr_1"
