@@ -2,7 +2,7 @@
 ARG CLICKHOUSE_VERSION=latest
 ARG CLICKHOUSE_IMAGE=clickhouse/clickhouse-server
 
-FROM --platform=${TARGETPLATFORM} docker.io/golang:1.26-alpine AS builder-base
+FROM --platform=${TARGETPLATFORM} docker.io/golang:1.27-alpine AS builder-base
 USER root
 RUN apk add --no-cache musl-dev gcc
 # RUN rm -fv /etc/apt/sources.list.d/clickhouse.list && \

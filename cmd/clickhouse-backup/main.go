@@ -255,7 +255,7 @@ func newRootCommand() *cli.Command {
 			Action: func(ctx context.Context, c *cli.Command) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				b.DryRun = c.Bool("dry-run")
-				return withDryRunResult(c, b, b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("skip-check-parts-columns"), c.Bool("resume"), version, commandIdFromCli(c)))
+				return withDryRunResult(c, b, b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("skip-check-parts-columns"), c.Bool("resume"), c.Bool("streaming"), version, commandIdFromCli(c)))
 			},
 			Flags: []cli.Flag{
 				&cli.StringFlag{
@@ -345,6 +345,11 @@ func newRootCommand() *cli.Command {
 					Aliases: []string{"delete-source", "delete-local"},
 					Hidden:  false,
 					Usage:   "explicitly delete local backup during upload",
+				},
+				&cli.BoolFlag{
+					Name:   "streaming",
+					Hidden: false,
+					Usage:  "Upload each table right after its freeze and delete its local copy, keeps only a small local footprint, https://github.com/Altinity/clickhouse-backup/issues/780",
 				},
 				&cli.BoolFlag{
 					Name:  "dry-run",
@@ -701,7 +706,7 @@ func newRootCommand() *cli.Command {
 			Action: func(ctx context.Context, c *cli.Command) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				b.DryRun = c.Bool("dry-run")
-				return withDryRunResult(c, b, b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), c.Bool("hardlink-exists-files"), version, commandIdFromCli(c)))
+				return withDryRunResult(c, b, b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), c.Bool("hardlink-exists-files"), c.Bool("streaming"), version, commandIdFromCli(c)))
 			},
 			Flags: []cli.Flag{
 				&cli.StringFlag{
@@ -815,6 +820,11 @@ func newRootCommand() *cli.Command {
 					Name:   "skip-empty-tables",
 					Hidden: false,
 					Usage:  "Skip restoring tables that have no data (empty tables with only schema)",
+				},
+				&cli.BoolFlag{
+					Name:   "streaming",
+					Hidden: false,
+					Usage:  "Restore each table right after its download and delete its local copy, keeps only a small local footprint, https://github.com/Altinity/clickhouse-backup/issues/780",
 				},
 				&cli.BoolFlag{
 					Name:   "rebind-replica-path-if-exists",
@@ -1064,7 +1074,7 @@ func newRootCommand() *cli.Command {
 			Description: "Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups. Use `--schedule` instead of intervals to run backups on cron expressions",
 			Action: func(ctx context.Context, c *cli.Command) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.StringSlice("schedule"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), c.Bool("named-collections"), c.Bool("skip-check-parts-columns"), c.Bool("delete-source"), version, commandIdFromCli(c), nil, c)
+				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.StringSlice("schedule"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), c.Bool("named-collections"), c.Bool("skip-check-parts-columns"), c.Bool("delete-source"), c.Bool("streaming"), version, commandIdFromCli(c), nil, c)
 			},
 			Flags: []cli.Flag{
 				&cli.StringFlag{
@@ -1148,6 +1158,11 @@ func newRootCommand() *cli.Command {
 					Hidden:  false,
 					Usage:   "explicitly delete local backup during upload",
 				},
+				&cli.BoolFlag{
+					Name:   "streaming",
+					Hidden: false,
+					Usage:  "Use streaming mode for create_remote inside watch, see create_remote --streaming",
+				},
 			},
 		},
 		{
@@ -1213,6 +1228,11 @@ func newRootCommand() *cli.Command {
 					Aliases: []string{"watch-delete-local"},
 					Hidden:  false,
 					Usage:   "explicitly delete local backup during upload in watch",
+				},
+				&cli.BoolFlag{
+					Name:   "watch-streaming",
+					Hidden: false,
+					Usage:  "Use streaming mode for create_remote inside watch, see create_remote --streaming",
 				},
 			},
 		},

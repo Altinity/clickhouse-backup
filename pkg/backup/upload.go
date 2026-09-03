@@ -131,7 +131,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		return nil
 	}
 
-	if err = b.uploadInitResumableAndManifest(backupName, diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly, prologue.backupExistsOnRemote); err != nil {
+	if err = b.uploadInitResumableAndManifest(backupName, "upload", diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly, prologue.backupExistsOnRemote); err != nil {
 		return err
 	}
 	if b.resume {
@@ -266,15 +266,16 @@ func (b *Backuper) uploadPrologue(ctx context.Context, backupName, diffFrom, dif
 }
 
 // uploadInitResumableAndManifest removes a stale resumable state, opens a new one when --resume is active
-// and initializes the file manifest writer, the caller is responsible for closing both
-func (b *Backuper) uploadInitResumableAndManifest(backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly, backupExistsOnRemote bool) error {
+// and initializes the file manifest writer, the caller is responsible for closing both,
+// command is the resumable state name: "upload" for Upload, "create_upload_streaming" for create_remote --streaming
+func (b *Backuper) uploadInitResumableAndManifest(backupName, command, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly, backupExistsOnRemote bool) error {
 	if b.resume && !backupExistsOnRemote {
-		// upload.state2 survives a successful upload and is only removed together with the local backup,
+		// <command>.state2 survives a successful upload and is only removed together with the local backup,
 		// so it can describe a remote backup which was deleted meanwhile; resuming on top of it skips
 		// every data file and uploads a backup which contains metadata.json only,
 		// fix https://github.com/Altinity/clickhouse-backup/issues/1492
 		// an interrupted upload always leaves the backup folder on remote, so a real resume is not affected
-		staleStateFile := path.Join(b.GetStateDir(), "backup", backupName, "upload.state2")
+		staleStateFile := path.Join(b.GetStateDir(), "backup", backupName, command+".state2")
 		if _, statErr := os.Stat(staleStateFile); statErr == nil {
 			log.Warn().Msgf("'%s' doesn't exist on remote storage, %s is stale and will be removed, upload will start from scratch", backupName, staleStateFile)
 			if removeErr := os.Remove(staleStateFile); removeErr != nil {
@@ -283,7 +284,7 @@ func (b *Backuper) uploadInitResumableAndManifest(backupName, diffFrom, diffFrom
 		}
 	}
 	if b.resume {
-		b.resumableState = resumable.NewState(b.GetStateDir(), backupName, "upload", map[string]interface{}{
+		b.resumableState = resumable.NewState(b.GetStateDir(), backupName, command, map[string]interface{}{
 			"diffFrom":       diffFrom,
 			"diffFromRemote": diffFromRemote,
 			"tablePattern":   tablePattern,

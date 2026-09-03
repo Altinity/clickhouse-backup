@@ -79,7 +79,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	}
 	defer b.ch.Close()
 
-	prologue, err := b.restorePrologue(ctx, backupName, tablePattern, partitions, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, skipEmptyTables, doRestoreData)
+	prologue, err := b.restorePrologue(ctx, backupName, tablePattern, partitions, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, skipEmptyTables, doRestoreData, false)
 	if err != nil {
 		return err
 	}
@@ -149,8 +149,9 @@ type restorePrologueResult struct {
 
 // restorePrologue performs everything Restore does before RestoreData: version and disks checks, backup metadata
 // read, rbac/configs/named collections restore, remote destination and resumable state init, table list resolution,
-// RestoreSchema, dropExistPartitions and waitForObjectStorageCleanup
-func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern string, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, skipEmptyTables, doRestoreData bool) (result *restorePrologueResult, err error) {
+// RestoreSchema, dropExistPartitions and waitForObjectStorageCleanup,
+// reuseResumableState=true (restore_remote --streaming) keeps the already open b.resumableState instead of opening `restore.state2`
+func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern string, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, skipEmptyTables, doRestoreData, reuseResumableState bool) (result *restorePrologueResult, err error) {
 	result = &restorePrologueResult{}
 	closeDst, closeResumableState := false, false
 	// on error close what was opened here, on success the caller owns b.dst and b.resumableState
@@ -316,7 +317,7 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 			return nil, errors.Wrapf(err, "BackupDestination for embedded or object disk: can't connect to %s", b.dst.Kind())
 		}
 		closeDst = true
-		if b.resume {
+		if b.resume && !reuseResumableState {
 			needClean := "false"
 			if dropExists || !dataOnly {
 				needClean = fmt.Sprintf("true.%d", rand.Uint64())
@@ -2281,12 +2282,9 @@ func (b *Backuper) restoreDataRegularPrepare(ctx context.Context, tablePattern s
 	return tablesToRewriteKeys, dstTablesMap, nil
 }
 
-// restoreOneTable restores data of a single table (parts/files already filtered by disk) via ATTACH or parts copy,
-// applies its in-progress mutations and logs progress
-func (b *Backuper) restoreOneTable(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, dstTablesMap map[metadata.TableTitle]clickhouse.Table, tablesToRewriteKeys map[metadata.TableTitle]bool, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, skipProjections []string, replicatedCopyToDetached bool, progress string) error {
-	tableRestoreStartTime := time.Now()
-	// Create reverse mapping to get original names from mapped names
-	// tablesForRestore already contains mapped names, but we need original names to find backup files
+// resolveOrigTableNames reverses restore database/table mapping, tablesForRestore already contains mapped names
+// from getTablesForRestoreLocal but the backup files are stored under the original names
+func (b *Backuper) resolveOrigTableNames(table metadata.TableMetadata) (origDatabase, origTable string) {
 	reverseDatabaseMapping := make(map[string]string)
 	for origDB, targetDB := range b.cfg.General.RestoreDatabaseMapping {
 		reverseDatabaseMapping[targetDB] = origDB
@@ -2295,19 +2293,15 @@ func (b *Backuper) restoreOneTable(ctx context.Context, backupName string, backu
 	for origName, targetName := range b.cfg.General.RestoreTableMapping {
 		reverseTableMapping[targetName] = origName
 	}
-	// tablesForRestore already contains mapped names from getTablesForRestoreLocal
-	// We need to reverse the mapping to get original names for finding backup files
-	dstDatabase := table.Database
-	dstTableName := table.Table
 
 	// Reverse database mapping to get original database name
-	origDatabase := table.Database
+	origDatabase = table.Database
 	if origDB, wasReverseMapped := reverseDatabaseMapping[table.Database]; wasReverseMapped {
 		origDatabase = origDB
 	}
 
 	// Reverse table mapping to get original table name
-	origTable := table.Table
+	origTable = table.Table
 	// Try full qualified name first
 	fullMappedName := table.Database + "." + table.Table
 	if origName, wasReverseMapped := reverseTableMapping[fullMappedName]; wasReverseMapped {
@@ -2329,6 +2323,16 @@ func (b *Backuper) restoreOneTable(ctx context.Context, backupName string, backu
 			origTable = origName
 		}
 	}
+	return origDatabase, origTable
+}
+
+// restoreOneTable restores data of a single table (parts/files already filtered by disk) via ATTACH or parts copy,
+// applies its in-progress mutations and logs progress
+func (b *Backuper) restoreOneTable(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, dstTablesMap map[metadata.TableTitle]clickhouse.Table, tablesToRewriteKeys map[metadata.TableTitle]bool, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, skipProjections []string, replicatedCopyToDetached bool, progress string) error {
+	tableRestoreStartTime := time.Now()
+	dstDatabase := table.Database
+	dstTableName := table.Table
+	origDatabase, origTable := b.resolveOrigTableNames(table)
 	logger := log.With().Str("table", fmt.Sprintf("%s.%s", dstDatabase, dstTableName)).Logger()
 	dstTable, ok := dstTablesMap[metadata.TableTitle{
 		Database: dstDatabase,
