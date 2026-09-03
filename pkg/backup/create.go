@@ -374,78 +374,24 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 		}
 		idx := tableIdx
 		createBackupWorkingGroup.Go(func() error {
-			logger := log.With().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Logger()
-			var realSize, objectDiskSize map[string]int64
-			var disksToPartsMap map[string][]metadata.Part
-			var checksums map[string]uint64
-			var hashOfAllFiles map[string]string
-			var addTableToBackupErr error
-			var tableBrokenParts map[string][]metadata.Part
-			if doBackupData && table.BackupType == clickhouse.ShardBackupFull {
-				logger.Debug().Msg("begin data backup")
-				shadowBackupUUID := strings.ReplaceAll(uuid.New().String(), "-", "")
-				b.addShadowBackupUUID(shadowBackupUUID)
-				disksToPartsMap, realSize, objectDiskSize, checksums, hashOfAllFiles, tableBrokenParts, addTableToBackupErr = b.AddTableToLocalBackup(createCtx, backupName, tablesDiffFromRemote, shadowBackupUUID, disks, &table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}], skipProjections, version)
-				if addTableToBackupErr != nil {
-					logger.Error().Msgf("b.AddTableToLocalBackup error: %v", addTableToBackupErr)
-					return errors.Wrap(addTableToBackupErr, "b.AddTableToLocalBackup")
-				}
-				// account broken and total data parts for the max_broken_part_ratio decision below
-				tableBrokenCount := 0
-				for _, diskParts := range tableBrokenParts {
-					tableBrokenCount += len(diskParts)
-				}
-				tableTotalParts := tableBrokenCount
-				for _, parts := range disksToPartsMap {
-					tableTotalParts += len(parts)
-				}
-				atomic.AddInt64(&brokenParts, int64(tableBrokenCount))
-				atomic.AddInt64(&totalParts, int64(tableTotalParts))
-				// more precise data size calculation
-				for _, size := range realSize {
-					atomic.AddUint64(&backupDataSize, uint64(size))
-				}
-				for _, size := range objectDiskSize {
-					atomic.AddUint64(&backupObjectDiskSize, uint64(size))
-				}
+			tableMeta, tableBackupSize, createOneTableErr := b.createOneTable(createCtx, backupName, backupPath, &table, tablesDiffFromRemote, partitionsIdMap, allInProgressMutations, skipProjections, disks, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, version)
+			if createOneTableErr != nil {
+				return createOneTableErr
 			}
-			// https://github.com/Altinity/clickhouse-backup/issues/529
-			logger.Debug().Msg("get in progress mutations list")
-			inProgressMutations := make([]metadata.MutationMetadata, 0)
-			if b.cfg.ClickHouse.BackupMutations && !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
-				// looked up from the single GetInProgressMutationsBatch query above — avoids the
-				// O(N^2) per-table system.mutations scan.
-				inProgressMutations = allInProgressMutations[metadata.TableTitle{Database: table.Database, Table: table.Name}]
-			}
-			logger.Debug().Msg("create metadata")
-			if schemaOnly || doBackupData {
-				metadataSize, createTableMetadataErr := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
-					Table:          table.Name,
-					Database:       table.Database,
-					UUID:           table.UUID,
-					Query:          table.CreateTableQuery,
-					TotalBytes:     table.TotalBytes,
-					Size:           realSize,
-					Parts:          disksToPartsMap,
-					BrokenParts:    tableBrokenParts,
-					Checksums:      checksums,
-					HashOfAllFiles: hashOfAllFiles,
-					Mutations:      inProgressMutations,
-					MetadataOnly:   schemaOnly || table.BackupType == clickhouse.ShardBackupSchema,
-				}, disks)
-				if createTableMetadataErr != nil {
-					logger.Error().Msgf("b.createTableMetadata error: %v", createTableMetadataErr)
-					return errors.Wrap(createTableMetadataErr, "b.createTableMetadata")
-				}
-				atomic.AddUint64(&backupMetadataSize, metadataSize)
+			atomic.AddInt64(&brokenParts, tableBackupSize.brokenParts)
+			atomic.AddInt64(&totalParts, tableBackupSize.totalParts)
+			atomic.AddUint64(&backupDataSize, tableBackupSize.dataSize)
+			atomic.AddUint64(&backupObjectDiskSize, tableBackupSize.objectDiskSize)
+			atomic.AddUint64(&backupMetadataSize, tableBackupSize.metadataSize)
+			if tableMeta != nil {
 				metaMutex.Lock()
 				tableMetas = append(tableMetas, metadata.TableTitle{
-					Database: table.Database,
-					Table:    table.Name,
+					Database: tableMeta.Database,
+					Table:    tableMeta.Table,
 				})
 				metaMutex.Unlock()
 			}
-			logger.Info().Str("progress", fmt.Sprintf("%d/%d", idx+1, len(tables))).Msg("done")
+			log.Info().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Str("progress", fmt.Sprintf("%d/%d", idx+1, len(tables))).Msg("done")
 			return nil
 		})
 	}
@@ -472,6 +418,89 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	}
 	log.Info().Str("version", backupVersion).Str("operation", "createBackupLocal").Str("duration", utils.HumanizeDuration(time.Since(startBackup))).Msg("done")
 	return nil
+}
+
+// createOneTableSize accumulates per-table counters that createBackupLocal sums into backup-level totals
+type createOneTableSize struct {
+	dataSize       uint64
+	objectDiskSize uint64
+	metadataSize   uint64
+	brokenParts    int64
+	totalParts     int64
+}
+
+// createOneTable backs up data (when requested) and writes table metadata for a single table,
+// returns the written metadata (nil when no metadata was written) and per-table size counters
+func (b *Backuper) createOneTable(ctx context.Context, backupName, backupPath string, table *clickhouse.Table, tablesDiffFromRemote map[metadata.TableTitle]metadata.TableMetadata, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, allInProgressMutations map[metadata.TableTitle][]metadata.MutationMetadata, skipProjections []string, disks []clickhouse.Disk, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly bool, version int) (*metadata.TableMetadata, createOneTableSize, error) {
+	logger := log.With().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Logger()
+	size := createOneTableSize{}
+	var realSize, objectDiskSize map[string]int64
+	var disksToPartsMap map[string][]metadata.Part
+	var checksums map[string]uint64
+	var hashOfAllFiles map[string]string
+	var addTableToBackupErr error
+	var tableBrokenParts map[string][]metadata.Part
+	if doBackupData && table.BackupType == clickhouse.ShardBackupFull {
+		logger.Debug().Msg("begin data backup")
+		shadowBackupUUID := strings.ReplaceAll(uuid.New().String(), "-", "")
+		b.addShadowBackupUUID(shadowBackupUUID)
+		disksToPartsMap, realSize, objectDiskSize, checksums, hashOfAllFiles, tableBrokenParts, addTableToBackupErr = b.AddTableToLocalBackup(ctx, backupName, tablesDiffFromRemote, shadowBackupUUID, disks, table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}], skipProjections, version)
+		if addTableToBackupErr != nil {
+			logger.Error().Msgf("b.AddTableToLocalBackup error: %v", addTableToBackupErr)
+			return nil, size, errors.Wrap(addTableToBackupErr, "b.AddTableToLocalBackup")
+		}
+		// account broken and total data parts for the max_broken_part_ratio decision in createBackupLocal
+		tableBrokenCount := 0
+		for _, diskParts := range tableBrokenParts {
+			tableBrokenCount += len(diskParts)
+		}
+		tableTotalParts := tableBrokenCount
+		for _, parts := range disksToPartsMap {
+			tableTotalParts += len(parts)
+		}
+		size.brokenParts = int64(tableBrokenCount)
+		size.totalParts = int64(tableTotalParts)
+		// more precise data size calculation
+		for _, s := range realSize {
+			size.dataSize += uint64(s)
+		}
+		for _, s := range objectDiskSize {
+			size.objectDiskSize += uint64(s)
+		}
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/529
+	logger.Debug().Msg("get in progress mutations list")
+	inProgressMutations := make([]metadata.MutationMetadata, 0)
+	if b.cfg.ClickHouse.BackupMutations && !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+		// looked up from the single GetInProgressMutationsBatch query in createBackupLocal — avoids the
+		// O(N^2) per-table system.mutations scan.
+		inProgressMutations = allInProgressMutations[metadata.TableTitle{Database: table.Database, Table: table.Name}]
+	}
+	logger.Debug().Msg("create metadata")
+	if !schemaOnly && !doBackupData {
+		return nil, size, nil
+	}
+	tableMeta := metadata.TableMetadata{
+		Table:          table.Name,
+		Database:       table.Database,
+		UUID:           table.UUID,
+		Query:          table.CreateTableQuery,
+		TotalBytes:     table.TotalBytes,
+		Size:           realSize,
+		Parts:          disksToPartsMap,
+		BrokenParts:    tableBrokenParts,
+		Checksums:      checksums,
+		HashOfAllFiles: hashOfAllFiles,
+		Mutations:      inProgressMutations,
+		MetadataOnly:   schemaOnly || table.BackupType == clickhouse.ShardBackupSchema,
+	}
+	metadataSize, createTableMetadataErr := b.createTableMetadata(path.Join(backupPath, "metadata"), tableMeta, disks)
+	if createTableMetadataErr != nil {
+		logger.Error().Msgf("b.createTableMetadata error: %v", createTableMetadataErr)
+		return nil, size, errors.Wrap(createTableMetadataErr, "b.createTableMetadata")
+	}
+	size.metadataSize = metadataSize
+	return &tableMeta, size, nil
 }
 
 func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBackup string, doBackupData, schemaOnly bool, backupVersion, tablePattern string, partitionsNameList map[metadata.TableTitle][]string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, tables []clickhouse.Table, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, backupRBACSize, backupConfigSize, backupNamedCollectionsSize uint64, startBackup time.Time, version int) error {

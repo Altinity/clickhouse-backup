@@ -50,7 +50,6 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	startUpload := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 
-	var disks []clickhouse.Disk
 	if err = b.ch.Connect(); err != nil {
 		return errors.Wrap(err, "can't connect to clickhouse")
 	}
@@ -72,77 +71,22 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		}
 		return custom.Upload(ctx, b, b.cfg, backupName, diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly)
 	}
-	if _, disks, err = b.getLocalBackup(ctx, backupName, nil); err != nil {
-		return errors.Wrap(err, "can't find local backup")
-	}
-	if !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
-		if err = b.checkDisksConsistency(disks); err != nil {
-			return err
-		}
-	}
-	if initErr := b.initDisksPathsAndBackupDestination(ctx, disks, backupName); initErr != nil {
-		return errors.Wrap(initErr, "initDisksPathsAndBackupDestination")
+	prologue, err := b.uploadPrologue(ctx, backupName, diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly)
+	if err != nil {
+		return err
 	}
 	defer func() {
 		if err := b.dst.Close(ctx); err != nil {
 			log.Warn().Msgf("can't close BackupDestination error: %v", err)
 		}
 	}()
-
-	remoteBackups, err := b.dst.BackupList(ctx, false, "")
-	if err != nil {
-		return errors.Wrap(err, "b.dst.BackupList return error")
-	}
-	backupExistsOnRemote := false
-	for i := range remoteBackups {
-		if backupName == remoteBackups[i].BackupName {
-			backupExistsOnRemote = true
-			if !b.resume {
-				return errors.Errorf("'%s' already exists on remote storage", backupName)
-			}
-
-			log.Warn().Msgf("'%s' already exists on remote, will try to resume upload", backupName)
-		}
-	}
-	backupMetadata, err := b.ReadBackupMetadataLocal(ctx, backupName)
-	if err != nil {
-		return errors.Wrap(err, "b.ReadBackupMetadataLocal return error")
-	}
-	var tablesForUpload ListOfTables
-	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
-	if b.isEmbedded {
-		if err = b.resolveEmbeddedClusterShardReplica(ctx); err != nil {
-			return errors.Wrap(err, "resolveEmbeddedClusterShardReplica")
-		}
-	}
-	// will ignore partitions cause can't manipulate .backup
-	if b.isEmbedded {
-		partitions = make([]string, 0)
-	}
-
-	if len(backupMetadata.Tables) != 0 {
-		tablesForUpload, err = b.prepareTableListToUpload(ctx, backupName, tablePattern, partitions)
-		if err != nil {
-			return errors.Wrap(err, "b.prepareTableListToUpload return error")
-		}
-	}
-	tablesForUploadFromDiff := map[metadata.TableTitle]metadata.TableMetadata{}
-
-	if diffFrom != "" && !b.isEmbedded {
-		tablesForUploadFromDiff, err = b.getTablesDiffFromLocal(ctx, diffFrom, tablePattern)
-		if err != nil {
-			return errors.Wrap(err, "b.getTablesDiffFromLocal return error")
-		}
-		backupMetadata.RequiredBackup = diffFrom
-	}
-	if diffFromRemote != "" && !b.isEmbedded {
-		tablesForUploadFromDiff, err = b.getTablesDiffFromRemote(ctx, diffFromRemote, tablePattern)
-		if err != nil {
-			return errors.Wrap(err, "b.getTablesDiffFromRemote return error")
-		}
-		backupMetadata.RequiredBackup = diffFromRemote
-	}
+	disks := prologue.disks
+	backupMetadata := prologue.backupMetadata
+	tablesForUpload := prologue.tablesForUpload
+	tablesForUploadFromDiff := prologue.tablesForUploadFromDiff
+	partitions = prologue.partitions
 	doUploadData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
+	checkLocalPart := diffFrom != "" && diffFromRemote == ""
 
 	if b.DryRun {
 		report := &DryRunReport{
@@ -156,7 +100,6 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 					Database: table.Database,
 					Table:    table.Table,
 				}]; diffExists {
-					checkLocalPart := diffFrom != "" && diffFromRemote == ""
 					b.markDuplicatedParts(backupMetadata, &diffTable, table, checkLocalPart)
 				}
 				tableDataSize, tableParts, unknownParts := b.estimateUploadDataSize(table, disks)
@@ -188,6 +131,143 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		return nil
 	}
 
+	if err = b.uploadInitResumableAndManifest(backupName, diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly, prologue.backupExistsOnRemote); err != nil {
+		return err
+	}
+	if b.resume {
+		defer b.resumableState.Close()
+	}
+	defer func() {
+		b.fileManifest.Close()
+		b.fileManifest = nil
+	}()
+
+	compressedDataSize := int64(0)
+	metadataSize := int64(0)
+
+	log.Debug().Msgf("prepare table concurrent semaphore with concurrency=%d len(tablesForUpload)=%d", b.cfg.General.UploadConcurrency, len(tablesForUpload))
+	uploadGroup, uploadCtx := errgroup.WithContext(ctx)
+	uploadGroup.SetLimit(int(b.cfg.General.UploadConcurrency))
+
+	for i := range tablesForUpload {
+		idx := i
+		uploadGroup.Go(func() error {
+			uploadedBytes, tableMetadataSize, uploadTableErr := b.uploadOneTable(uploadCtx, backupName, deleteSource, tablesForUpload[idx], skipProjections, disks, backupMetadata, tablesForUploadFromDiff, checkLocalPart, doUploadData, schemaOnly, backupVersion, fmt.Sprintf("%d/%d", idx+1, len(tablesForUpload)))
+			if uploadTableErr != nil {
+				return uploadTableErr
+			}
+			atomic.AddInt64(&compressedDataSize, uploadedBytes)
+			atomic.AddInt64(&metadataSize, tableMetadataSize)
+			return nil
+		})
+	}
+	if err := uploadGroup.Wait(); err != nil {
+		return errors.Wrap(err, "one of upload table go-routine return error")
+	}
+
+	return b.uploadEpilogue(ctx, backupName, deleteSource, tablesForUpload, backupMetadata, disks, compressedDataSize, metadataSize, doUploadData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, backupVersion, startUpload)
+}
+
+// uploadPrologueResult holds everything the upload table loop and uploadEpilogue need
+type uploadPrologueResult struct {
+	disks                   []clickhouse.Disk
+	backupMetadata          *metadata.BackupMetadata
+	tablesForUpload         ListOfTables
+	tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata
+	// partitions are reset for embedded backups
+	partitions           []string
+	backupExistsOnRemote bool
+}
+
+// uploadPrologue prepares local backup, remote destination and table list for upload,
+// on success b.dst is connected and the caller is responsible for closing it
+func (b *Backuper) uploadPrologue(ctx context.Context, backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly bool) (result *uploadPrologueResult, err error) {
+	var disks []clickhouse.Disk
+	if _, disks, err = b.getLocalBackup(ctx, backupName, nil); err != nil {
+		return nil, errors.Wrap(err, "can't find local backup")
+	}
+	if !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+		if err = b.checkDisksConsistency(disks); err != nil {
+			return nil, err
+		}
+	}
+	if initErr := b.initDisksPathsAndBackupDestination(ctx, disks, backupName); initErr != nil {
+		return nil, errors.Wrap(initErr, "initDisksPathsAndBackupDestination")
+	}
+	defer func() {
+		if err != nil {
+			if closeErr := b.dst.Close(ctx); closeErr != nil {
+				log.Warn().Msgf("can't close BackupDestination error: %v", closeErr)
+			}
+		}
+	}()
+
+	remoteBackups, err := b.dst.BackupList(ctx, false, "")
+	if err != nil {
+		return nil, errors.Wrap(err, "b.dst.BackupList return error")
+	}
+	backupExistsOnRemote := false
+	for i := range remoteBackups {
+		if backupName == remoteBackups[i].BackupName {
+			backupExistsOnRemote = true
+			if !b.resume {
+				return nil, errors.Errorf("'%s' already exists on remote storage", backupName)
+			}
+
+			log.Warn().Msgf("'%s' already exists on remote, will try to resume upload", backupName)
+		}
+	}
+	backupMetadata, err := b.ReadBackupMetadataLocal(ctx, backupName)
+	if err != nil {
+		return nil, errors.Wrap(err, "b.ReadBackupMetadataLocal return error")
+	}
+	var tablesForUpload ListOfTables
+	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
+	if b.isEmbedded {
+		if err = b.resolveEmbeddedClusterShardReplica(ctx); err != nil {
+			return nil, errors.Wrap(err, "resolveEmbeddedClusterShardReplica")
+		}
+	}
+	// will ignore partitions cause can't manipulate .backup
+	if b.isEmbedded {
+		partitions = make([]string, 0)
+	}
+
+	if len(backupMetadata.Tables) != 0 {
+		tablesForUpload, err = b.prepareTableListToUpload(ctx, backupName, tablePattern, partitions)
+		if err != nil {
+			return nil, errors.Wrap(err, "b.prepareTableListToUpload return error")
+		}
+	}
+	tablesForUploadFromDiff := map[metadata.TableTitle]metadata.TableMetadata{}
+
+	if diffFrom != "" && !b.isEmbedded {
+		tablesForUploadFromDiff, err = b.getTablesDiffFromLocal(ctx, diffFrom, tablePattern)
+		if err != nil {
+			return nil, errors.Wrap(err, "b.getTablesDiffFromLocal return error")
+		}
+		backupMetadata.RequiredBackup = diffFrom
+	}
+	if diffFromRemote != "" && !b.isEmbedded {
+		tablesForUploadFromDiff, err = b.getTablesDiffFromRemote(ctx, diffFromRemote, tablePattern)
+		if err != nil {
+			return nil, errors.Wrap(err, "b.getTablesDiffFromRemote return error")
+		}
+		backupMetadata.RequiredBackup = diffFromRemote
+	}
+	return &uploadPrologueResult{
+		disks:                   disks,
+		backupMetadata:          backupMetadata,
+		tablesForUpload:         tablesForUpload,
+		tablesForUploadFromDiff: tablesForUploadFromDiff,
+		partitions:              partitions,
+		backupExistsOnRemote:    backupExistsOnRemote,
+	}, nil
+}
+
+// uploadInitResumableAndManifest removes a stale resumable state, opens a new one when --resume is active
+// and initializes the file manifest writer, the caller is responsible for closing both
+func (b *Backuper) uploadInitResumableAndManifest(backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly, backupExistsOnRemote bool) error {
 	if b.resume && !backupExistsOnRemote {
 		// upload.state2 survives a successful upload and is only removed together with the local backup,
 		// so it can describe a remote backup which was deleted meanwhile; resuming on top of it skips
@@ -210,7 +290,6 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 			"partitions":     partitions,
 			"schemaOnly":     schemaOnly,
 		})
-		defer b.resumableState.Close()
 	}
 
 	// Initialize file manifest to record all uploaded files for Walk-free restore
@@ -219,73 +298,61 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	} else {
 		b.fileManifest = manifestWriter
 	}
-	defer func() {
-		b.fileManifest.Close()
-		b.fileManifest = nil
-	}()
+	return nil
+}
 
-	compressedDataSize := int64(0)
-	metadataSize := int64(0)
-
-	log.Debug().Msgf("prepare table concurrent semaphore with concurrency=%d len(tablesForUpload)=%d", b.cfg.General.UploadConcurrency, len(tablesForUpload))
-	uploadGroup, uploadCtx := errgroup.WithContext(ctx)
-	uploadGroup.SetLimit(int(b.cfg.General.UploadConcurrency))
-
-	for i, table := range tablesForUpload {
-		start := time.Now()
-		if doUploadData {
-			if diffTable, diffExists := tablesForUploadFromDiff[metadata.TableTitle{
-				Database: table.Database,
-				Table:    table.Table,
-			}]; diffExists {
-				checkLocalPart := diffFrom != "" && diffFromRemote == ""
-				b.markDuplicatedParts(backupMetadata, &diffTable, table, checkLocalPart)
-			}
+// uploadOneTable marks duplicated parts against the diff backup, uploads table data (when requested) and
+// table metadata, writes back uploaded Files/Parts into table, returns uploaded data and metadata bytes
+func (b *Backuper) uploadOneTable(ctx context.Context, backupName string, deleteSource bool, table *metadata.TableMetadata, skipProjections []string, disks []clickhouse.Disk, backupMetadata *metadata.BackupMetadata, tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, checkLocalPart, doUploadData, schemaOnly bool, backupVersion, progress string) (int64, int64, error) {
+	start := time.Now()
+	if doUploadData {
+		if diffTable, diffExists := tablesForUploadFromDiff[metadata.TableTitle{
+			Database: table.Database,
+			Table:    table.Table,
+		}]; diffExists {
+			b.markDuplicatedParts(backupMetadata, &diffTable, table, checkLocalPart)
 		}
-		idx := i
-		uploadGroup.Go(func() error {
-			log.Info().Fields(map[string]interface{}{
-				"table":    fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table),
-				"progress": fmt.Sprintf("%d/%d", idx+1, len(tablesForUpload)),
-				"version":  backupVersion,
-			}).Msg("upload table start")
-			var uploadedBytes int64
-			var uploadTableErr error
-			//skip upload data for embedded backup with empty embedded_backup_disk
-			if doUploadData && (!b.isEmbedded || b.cfg.ClickHouse.EmbeddedBackupDisk != "") {
-				var files map[string][]string
-				var parts map[string][]metadata.Part
-				files, parts, uploadedBytes, uploadTableErr = b.uploadTableData(uploadCtx, backupName, deleteSource, tablesForUpload[idx], skipProjections, disks)
-				if uploadTableErr != nil {
-					return errors.Wrap(uploadTableErr, "uploadTableData")
-				}
-				atomic.AddInt64(&compressedDataSize, uploadedBytes)
-				tablesForUpload[idx].Files = files
-				tablesForUpload[idx].Parts = parts
-			}
-			tableMetadataSize := int64(0)
-			if doUploadData || schemaOnly {
-				tableMetadataSize, uploadTableErr = b.uploadTableMetadata(uploadCtx, backupName, backupMetadata.RequiredBackup, tablesForUpload[idx])
-				if uploadTableErr != nil {
-					return errors.Wrap(uploadTableErr, "uploadTableMetadata")
-				}
-				atomic.AddInt64(&metadataSize, tableMetadataSize)
-			}
-			log.Info().Fields(map[string]interface{}{
-				"table":         fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table),
-				"progress":      fmt.Sprintf("%d/%d", idx+1, len(tablesForUpload)),
-				"duration":      utils.HumanizeDuration(time.Since(start)),
-				"data_size":     utils.FormatBytes(uint64(uploadedBytes)),
-				"metadata_size": utils.FormatBytes(uint64(tableMetadataSize)),
-				"version":       backupVersion,
-			}).Msg("upload table finish")
-			return nil
-		})
 	}
-	if err := uploadGroup.Wait(); err != nil {
-		return errors.Wrap(err, "one of upload table go-routine return error")
+	log.Info().Fields(map[string]interface{}{
+		"table":    fmt.Sprintf("%s.%s", table.Database, table.Table),
+		"progress": progress,
+		"version":  backupVersion,
+	}).Msg("upload table start")
+	var uploadedBytes int64
+	var uploadTableErr error
+	//skip upload data for embedded backup with empty embedded_backup_disk
+	if doUploadData && (!b.isEmbedded || b.cfg.ClickHouse.EmbeddedBackupDisk != "") {
+		var files map[string][]string
+		var parts map[string][]metadata.Part
+		files, parts, uploadedBytes, uploadTableErr = b.uploadTableData(ctx, backupName, deleteSource, table, skipProjections, disks)
+		if uploadTableErr != nil {
+			return 0, 0, errors.Wrap(uploadTableErr, "uploadTableData")
+		}
+		table.Files = files
+		table.Parts = parts
 	}
+	tableMetadataSize := int64(0)
+	if doUploadData || schemaOnly {
+		tableMetadataSize, uploadTableErr = b.uploadTableMetadata(ctx, backupName, backupMetadata.RequiredBackup, table)
+		if uploadTableErr != nil {
+			return 0, 0, errors.Wrap(uploadTableErr, "uploadTableMetadata")
+		}
+	}
+	log.Info().Fields(map[string]interface{}{
+		"table":         fmt.Sprintf("%s.%s", table.Database, table.Table),
+		"progress":      progress,
+		"duration":      utils.HumanizeDuration(time.Since(start)),
+		"data_size":     utils.FormatBytes(uint64(uploadedBytes)),
+		"metadata_size": utils.FormatBytes(uint64(tableMetadataSize)),
+		"version":       backupVersion,
+	}).Msg("upload table finish")
+	return uploadedBytes, tableMetadataSize, nil
+}
 
+// uploadEpilogue uploads rbac/configs/named collections, embedded .backup, remote metadata.json and manifest,
+// then applies remote/local retention and optionally removes the local source backup
+func (b *Backuper) uploadEpilogue(ctx context.Context, backupName string, deleteSource bool, tablesForUpload ListOfTables, backupMetadata *metadata.BackupMetadata, disks []clickhouse.Disk, compressedDataSize, metadataSize int64, doUploadData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly bool, backupVersion string, startUpload time.Time) error {
+	var err error
 	// upload rbac for backup, if not configsOnly
 	if rbacOnly || configsOnly == rbacOnly == namedCollectionsOnly == false {
 		if backupMetadata.RBACSize, err = b.uploadRBACData(ctx, backupName); err != nil {
