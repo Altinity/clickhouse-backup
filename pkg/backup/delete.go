@@ -270,6 +270,22 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 	return nil
 }
 
+// removeTableLocal removes the local shadow data of a single table from every regular disk of a local backup,
+// <disk.Path>/backup/<backupName>/shadow/<dbAndTableDir>, same layout as getLocalBackupDataPathForTable,
+// remote storage and object disk copies are not touched
+func (b *Backuper) removeTableLocal(backupName string, dbAndTableDir string, disks []clickhouse.Disk) error {
+	for _, disk := range disks {
+		if disk.IsBackup {
+			continue
+		}
+		tableShadowPath := path.Join(disk.Path, "backup", backupName, "shadow", dbAndTableDir)
+		if err := os.RemoveAll(tableShadowPath); err != nil && !os.IsNotExist(err) {
+			return errors.Wrapf(err, "os.RemoveAll %s", tableShadowPath)
+		}
+	}
+	return nil
+}
+
 func (b *Backuper) cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx context.Context, backupName string, disks []clickhouse.Disk, backup LocalBackup, hasObjectDisks bool) error {
 	skip, err := b.skipIfTheSameRemoteBackupPresent(ctx, backup.BackupName, backup.Tags)
 	log.Debug().Str("backupName", backup.BackupName).Str("tags", backup.Tags).Msgf("b.skipIfTheSameRemoteBackupPresent return skip=%v", skip)

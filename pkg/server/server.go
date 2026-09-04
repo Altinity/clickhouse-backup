@@ -171,7 +171,7 @@ func (api *APIServer) RunWatch(cliCtx *cli.Command) {
 	log.Info().Msg("Starting API Server in watch mode")
 	b := backup.NewBackuper(api.config)
 	commandId, _ := status.Current.Start("watch")
-	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), cliCtx.StringSlice("schedule"), "*.*", nil, nil, false, cliCtx.Bool("rbac"), cliCtx.Bool("configs"), cliCtx.Bool("named-collections"), false, cliCtx.Bool("watch-delete-source"), api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
+	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), cliCtx.StringSlice("schedule"), "*.*", nil, nil, false, cliCtx.Bool("rbac"), cliCtx.Bool("configs"), cliCtx.Bool("named-collections"), false, cliCtx.Bool("watch-delete-source"), cliCtx.Bool("watch-streaming"), api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
 	api.handleWatchResponse(commandId, err)
 }
 
@@ -609,6 +609,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	backupNamedCollections := false
 	skipCheckPartsColumns := false
 	deleteSource := false
+	streaming := false
 	watchInterval := ""
 	fullInterval := ""
 	watchBackupNameTemplate := ""
@@ -684,6 +685,10 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 			deleteSource = true
 			fullCommand = fmt.Sprintf("%s --delete-source", fullCommand)
 		}
+		if matchParam, _ = simpleParseArg(i, args, "--streaming"); matchParam {
+			streaming = true
+			fullCommand = fmt.Sprintf("%s --streaming", fullCommand)
+		}
 		if matchParam, skipProjectionsFromArgs := simpleParseArg(i, args, "--skip-projections"); matchParam {
 			skipProjections = append(skipProjections, skipProjectionsFromArgs)
 			fullCommand = fmt.Sprintf("%s --skip-projections=%s", fullCommand, skipProjectionsFromArgs)
@@ -693,7 +698,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, schedules, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, schedules, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, streaming, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		api.handleWatchResponse(commandId, err)
 	}()
 
@@ -1216,6 +1221,7 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 	skipProjections := make([]string, 0)
 	deleteSource := false
 	resume := false
+	streaming := false
 	fullCommand := "create_remote"
 	query := r.URL.Query()
 	operationId, _ := uuid.NewUUID()
@@ -1282,6 +1288,10 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 		resume = true
 		fullCommand += " --resume"
 	}
+	if _, exist := query["streaming"]; exist {
+		streaming = true
+		fullCommand += " --streaming"
+	}
 	if dryRun {
 		fullCommand += " --dry-run"
 	}
@@ -1302,7 +1312,7 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
 		b.DryRun = true
-		err = b.CreateToRemote(backupName, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, backupNamedCollections, namedCollectionsOnly, skipCheckPartsColumns, resume, api.clickhouseBackupVersion, commandId)
+		err = b.CreateToRemote(backupName, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, backupNamedCollections, namedCollectionsOnly, skipCheckPartsColumns, resume, streaming, api.clickhouseBackupVersion, commandId)
 		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
 		status.Current.Stop(commandId, err)
 		api.sendDryRunReport(w, "create_remote", b, err)
@@ -1313,7 +1323,7 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create_remote", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.CreateToRemote(backupName, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, backupNamedCollections, namedCollectionsOnly, skipCheckPartsColumns, resume, api.clickhouseBackupVersion, commandId)
+			return b.CreateToRemote(backupName, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, backupNamedCollections, namedCollectionsOnly, skipCheckPartsColumns, resume, streaming, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("API /backup/create_remote error: %v", err)
@@ -1359,6 +1369,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	backupNamedCollections := false
 	skipCheckPartsColumns := false
 	deleteSource := false
+	streaming := false
 	watchInterval := ""
 	fullInterval := ""
 	watchBackupNameTemplate := ""
@@ -1421,6 +1432,10 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 		deleteSource = true
 		fullCommand = fmt.Sprintf("%s --delete-source", fullCommand)
 	}
+	if _, exist := api.getQueryParameter(query, "streaming"); exist {
+		streaming = true
+		fullCommand = fmt.Sprintf("%s --streaming", fullCommand)
+	}
 	if skipProjectionsFromQuery, exist := api.getQueryParameter(query, "skip_projections"); exist {
 		skipProjections = append(skipProjections, skipProjectionsFromQuery)
 		fullCommand = fmt.Sprintf("%s --skip-projections=%s", fullCommand, skipProjectionsFromQuery)
@@ -1435,7 +1450,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, schedules, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, schedules, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, streaming, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		api.handleWatchResponse(commandId, err)
 	}()
 	api.sendJSONEachRow(w, http.StatusCreated, struct {
@@ -2333,6 +2348,13 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		fullCommand += " --hardlink-exists-files"
 	}
 
+	// https://github.com/Altinity/clickhouse-backup/issues/780
+	streaming := false
+	if _, exist := api.getQueryParameter(query, "streaming"); exist {
+		streaming = true
+		fullCommand += " --streaming"
+	}
+
 	// Handle skip-empty-tables parameter
 	// https://github.com/Altinity/clickhouse-backup/issues/1265
 	skipEmptyTables := false
@@ -2381,7 +2403,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
 		b.DryRun = true
-		err = b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, api.clickhouseBackupVersion, commandId)
+		err = b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, streaming, api.clickhouseBackupVersion, commandId)
 		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
 		status.Current.Stop(commandId, err)
 		api.sendDryRunReport(w, "restore_remote", b, err)
@@ -2392,7 +2414,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore_remote", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, api.clickhouseBackupVersion, commandId)
+			return b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, streaming, api.clickhouseBackupVersion, commandId)
 		})
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
 			log.Error().Stack().Err(metricsErr).Msgf("UpdateBackupMetrics return error")
@@ -2876,7 +2898,45 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 					return errors.New("another commands in progress")
 				}
 				args := []string{command}
+				// streaming state files are produced by create_remote --streaming / restore_remote --streaming,
+				// https://github.com/Altinity/clickhouse-backup/issues/780
+				metricsCommand := command
 				switch command {
+				case "create_upload_streaming":
+					metricsCommand = "create_remote"
+					args = []string{"create_remote", "--streaming"}
+					if diffFrom := resumableStringParam(params, "diffFrom"); diffFrom != "" {
+						args = append(args, fmt.Sprintf("--diff-from=%s", diffFrom))
+					}
+					if diffFromRemote := resumableStringParam(params, "diffFromRemote"); diffFromRemote != "" {
+						args = append(args, fmt.Sprintf("--diff-from-remote=%s", diffFromRemote))
+					}
+					if tablePattern := resumableStringParam(params, "tablePattern"); tablePattern != "" {
+						args = append(args, fmt.Sprintf("--tables=%s", tablePattern))
+					}
+					if resumableBoolParam(params, "schemaOnly") {
+						args = append(args, "--schema=1")
+					}
+					if partitions := resumableStringSliceParam(params, "partitions"); len(partitions) > 0 {
+						for _, v := range partitions {
+							args = append(args, fmt.Sprintf("--partitions=%s", v))
+						}
+					}
+				case "download_restore_streaming":
+					// the state stores only the download side params, see downloadTablesMetadata
+					metricsCommand = "restore_remote"
+					args = []string{"restore_remote", "--streaming"}
+					if tablePattern := resumableStringParam(params, "tablePattern"); tablePattern != "" {
+						args = append(args, fmt.Sprintf("--tables=%s", tablePattern))
+					}
+					if resumableBoolParam(params, "schemaOnly") {
+						args = append(args, "--schema=1")
+					}
+					if partitions := resumableStringSliceParam(params, "partitions"); len(partitions) > 0 {
+						for _, v := range partitions {
+							args = append(args, fmt.Sprintf("--partitions=%s", v))
+						}
+					}
 				case "create":
 					if diffFromRemote := resumableStringParam(params, "diffFromRemote"); diffFromRemote != "" {
 						args = append(args, fmt.Sprintf("--diff-from-remote=%s", diffFromRemote))
@@ -2952,7 +3012,7 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 				fullCommand := strings.Join(args, " ")
 				log.Info().Str("operation", "ResumeOperationsAfterRestart").Send()
 				commandId, _ := status.Current.Start(fullCommand)
-				err, _ = api.metrics.ExecuteWithMetrics(command, 0, func() error {
+				err, _ = api.metrics.ExecuteWithMetrics(metricsCommand, 0, func() error {
 					return api.newCliApp().Run(context.Background(), append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
 				})
 				status.Current.Stop(commandId, err)

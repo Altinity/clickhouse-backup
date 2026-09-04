@@ -205,7 +205,7 @@ general:
   sharded_operation_mode: none       # SHARDED_OPERATION_MODE, how different replicas will shard backing up data for tables. Options are: none (no sharding), table (table granularity), database (database granularity), first-replica (on the lexicographically sorted first active replica). If left empty, then the "none" option will be set as default.
   
   cpu_nice_priority: 15    # CPU niceness priority, to allow throttling CPU intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/nice.1.html
-  io_nice_priority: "idle" # IO niceness priority, to allow throttling DISK intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/ionice.1.html
+  io_nice_priority: "idle" # IO niceness priority, to allow throttling DISK intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/ionice.1.html, on macOS mapped to setiopolicy_np(3): none=IOPOL_DEFAULT, realtime=IOPOL_IMPORTANT, best-effort=IOPOL_STANDARD, idle=IOPOL_THROTTLE
   
   rbac_backup_always: true # always backup RBAC objects
   rbac_conflict_resolution: "recreate"  # RBAC_CONFLICT_RESOLUTION, action when RBAC object with the same name already exists during restore, allowed values "recreate", "ignore", "fail"
@@ -472,7 +472,7 @@ api:
   allow_parallel: false        # API_ALLOW_PARALLEL, enable parallel operations, this allows for significant memory allocation and spawns go-routines, don't enable it if you are not sure
   create_integration_tables: false # API_CREATE_INTEGRATION_TABLES, create `system.backup_list` and `system.backup_actions`
   complete_resumable_after_restart: true # API_COMPLETE_RESUMABLE_AFTER_RESTART, after API server startup, if `/var/lib/clickhouse/backup/*/{command}.state2` present and command is allowed by complete_resumable_after_restart_commands, then operation will continue in the background
-  complete_resumable_after_restart_commands: [upload, download] # API_COMPLETE_RESUMABLE_AFTER_RESTART_COMMANDS, commands allowed for automatic resume after API server restart
+  complete_resumable_after_restart_commands: [upload, download] # API_COMPLETE_RESUMABLE_AFTER_RESTART_COMMANDS, commands allowed for automatic resume after API server restart, add `create_upload_streaming` and `download_restore_streaming` to also resume interrupted `create_remote --streaming` / `restore_remote --streaming`
   watch_is_main_process: false # WATCH_IS_MAIN_PROCESS, treats 'watch' command as a main api process, if it is stopped unexpectedly, api server is also stopped. Does not stop api server if 'watch' command canceled by the user. 
   backup_actions_skip_commands: [] # API_BACKUP_ACTIONS_SKIP_COMMANDS, list of commands that must NOT be recorded into the in-memory async status exposed via `system.backup_actions` and `/backup/actions`. Useful to keep high-frequency monitoring calls (typically `list`) from growing the actions state and consuming RAM during long-running backups. Example: `[list]`
   cancel_operation_timeout: "1800s" # API_CANCEL_OPERATION_TIMEOUT, how long `/backup/kill` (and server stop/restart) waits for the underlying command goroutine to actually return after the context is canceled. If the goroutine is stuck on an IO without timeout, kill returns once this timeout elapses. See https://github.com/Altinity/clickhouse-backup/issues/1365
@@ -492,6 +492,17 @@ A high value for `S3_CONCURRENCY` will allocate more memory for buffers inside t
 For `compression_format`, a good default is `tar`, which uses less CPU. In most cases the data in clickhouse is already compressed, so you may not get a lot of space savings when compressing already-compressed data.
 
 On high-bandwidth (10Gbit+) networks the default buffer sizes and HTTP transport settings limit throughput. See [Tuning for high-bandwidth (10Gbit) networks](Examples.md#tuning-for-high-bandwidth-10gbit-networks) for a config example.
+
+## Streaming mode
+
+`create_remote --streaming`, `restore_remote --streaming`, `watch --streaming` and `server --watch-streaming` process the backup table by table instead of materializing the whole local backup first.
+`create_remote --streaming` runs freeze -> upload -> remove local copy for each table (freeze parallelism is `clickhouse.max_connections`, upload parallelism is `general.upload_concurrency`), `restore_remote --streaming` runs download -> attach -> remove local copy (download parallelism is `general.download_concurrency`, restore parallelism is `clickhouse.max_connections`).
+Only the tables currently in flight occupy space under `/var/lib/clickhouse/backup`, roughly one table per concurrent go-routine, so a backup which is bigger than the free local disk space can still be uploaded or restored.
+The local backup is not kept afterwards: `list local` doesn't show it, `create_remote --streaming` behaves as if `create` + `upload --delete-source` were executed and `restore_remote --streaming` as if `download` + `restore` + `delete local` were executed.
+The regular free space check during restore is unchanged, because attached parts land on the same disks as the downloaded data.
+Streaming uses dedicated resumable state files `create_upload_streaming.state2` and `download_restore_streaming.state2` (`--resume` continues an interrupted run, `restore_remote` also remembers already attached tables), which can be resumed after an API server restart by adding these names to `api.complete_resumable_after_restart_commands`.
+Streaming is not available with `use_embedded_backup_restore: true` (`BACKUP` SQL produces the whole backup at once) or with `remote_storage: custom`, and `--dry-run` reports the same estimate as without `--streaming`.
+See [#780](https://github.com/Altinity/clickhouse-backup/issues/780) for details.
 
 ## remote_storage: custom
 
@@ -585,6 +596,7 @@ Create new backup and upload to remote storage: `curl -s localhost:7171/backup/c
 - Optional boolean query argument `skip-check-parts-columns` or `skip_check_parts_columns` works the same as the `--skip-check-parts-columns` CLI argument (allow backup inconsistent column types for data parts).
 - Optional string query argument `skip-projections` or `skip_projections` works the same as the `--skip-projections` CLI argument.
 - Optional boolean query argument `delete-source` or `delete_source` works the same as `--delete-source` CLI argument.
+- Optional boolean query argument `streaming` works the same as the `--streaming` CLI argument (upload each table right after its freeze and delete its local copy, see [Streaming mode](#streaming-mode)).
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume upload for object disk data).
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success|cancel","error":"not empty when error happens", "operation_id" : "<random_uuid>", "command":"<full command line>", "duration":"<elapsed>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
 
@@ -606,6 +618,7 @@ You can't run watch twice with the same parameters even when `allow_parallel: tr
 - Optional boolean query argument `configs` works the same as the `--configs` CLI argument (backup configs).
 - Optional boolean query argument `skip-check-parts-columns` or `skip_check_parts_columns` works the same as the `--skip-check-parts-columns` CLI argument (allow backup inconsistent column types for data parts).
 - Optional boolean query argument `delete-source` or `delete_source` works the same as the `--delete-source` CLI argument (delete source files during upload backup).
+- Optional boolean query argument `streaming` works the same as the `--streaming` CLI argument (use `create_remote --streaming` for every backup of the sequence, see [Streaming mode](#streaming-mode)).
 - Additional example: `curl -s 'localhost:7171/backup/watch?table=default.billing&watch_interval=1h&full_interval=24h' -X POST`
 
 Note: this operation is asynchronous and can only be stopped with `kill -s SIGHUP $(pgrep -f clickhouse-backup)` or call `/restart`, `/backup/kill`. The API will return immediately once the operation has started.
@@ -733,6 +746,7 @@ Download and restore data from remote backup: `curl -s localhost:7171/backup/res
 - Optional boolean query argument `replicated_copy_to_detached` or `replicated-copy-to-detached` works the same as the `--replicated-copy-to-detached` CLI argument.
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
 - Optional boolean query argument `hardlink_exists_files` or `hardlink-exists-files` works the same as the `--hardlink-exists-files` CLI argument (Create hardlinks for existing files instead of downloading).
+- Optional boolean query argument `streaming` works the same as the `--streaming` CLI argument (restore each table right after its download and delete its local copy, see [Streaming mode](#streaming-mode)).
 - Optional boolean query argument `skip_empty_tables` or `skip-empty-tables` works the same as the `--skip-empty-tables` CLI argument (skip restoring tables that have no data).
 - Optional boolean query argument `rebind_replica_path_if_exists` or `rebind-replica-path-if-exists` works the same as the `--rebind-replica-path-if-exists` CLI argument (overrides `clickhouse.rebind_replica_path_if_exists` for this request, rebind a restored ReplicatedMergeTree to `default_replica_path` when the original ZK path still has leftover state but our replica entry is absent). WARNING: never set during a concurrent HA multi-replica restore.
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success|cancel","error":"not empty when error happens", "operation_id" : "<random_uuid>", "command":"<full command line>", "duration":"<elapsed>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
@@ -899,6 +913,7 @@ OPTIONS:
    --skip-check-parts-columns                                                                                                           Skip check system.parts_columns to allow backup inconsistent column types for data parts
    --skip-projections db_pattern.table_pattern:projections_pattern [ --skip-projections db_pattern.table_pattern:projections_pattern ]  Skip make and upload hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --delete, --delete-source, --delete-local                                                                                            explicitly delete local backup during upload
+   --streaming                                                                                                                          Upload each table right after its freeze and delete its local copy, keeps only a small local footprint, https://github.com/Altinity/clickhouse-backup/issues/780
    --dry-run                                                                                                                            Show tables count and data size which would be created and uploaded, without creating and uploading
    --help, -h                                                                                                                           show help
 
@@ -1093,6 +1108,7 @@ OPTIONS:
    --restore-schema-as-attach                                                                                                           Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --hardlink-exists-files                                                                                                              Create hardlinks for existing files instead of downloading
    --skip-empty-tables                                                                                                                  Skip restoring tables that have no data (empty tables with only schema)
+   --streaming                                                                                                                          Restore each table right after its download and delete its local copy, keeps only a small local footprint, https://github.com/Altinity/clickhouse-backup/issues/780
    --rebind-replica-path-if-exists                                                                                                      Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent
    --dry-run                                                                                                                            Show tables count and data size which would be downloaded and restored, without downloading and restoring
    --help, -h                                                                                                                           show help
@@ -1295,6 +1311,7 @@ OPTIONS:
    --skip-check-parts-columns                                                                                                           Skip check system.parts_columns to allow backup inconsistent column types for data parts
    --skip-projections db_pattern.table_pattern:projections_pattern [ --skip-projections db_pattern.table_pattern:projections_pattern ]  Skip make and upload hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --delete, --delete-source, --delete-local                                                                                            explicitly delete local backup during upload
+   --streaming                                                                                                                          Use streaming mode for create_remote inside watch, see create_remote --streaming
    --help, -h                                                                                                                           show help
 
 GLOBAL OPTIONS:
@@ -1334,6 +1351,7 @@ OPTIONS:
    --configs, --backup-configs, --do-backup-configs                                Backup `clickhouse-server' configuration files during --watch
    --named-collections, --backup-named-collections, --do-backup-named-collections  Backup named collections and settings during --watch
    --watch-delete-source, --watch-delete-local                                     explicitly delete local backup during upload in watch
+   --watch-streaming                                                               Use streaming mode for create_remote inside watch, see create_remote --streaming
    --help, -h                                                                      show help
 
 GLOBAL OPTIONS:

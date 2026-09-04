@@ -99,7 +99,7 @@ func (b *Backuper) ValidateWatchParams(watchInterval, fullInterval, watchBackupN
 //
 // - each watch-interval, run create_remote increment --diff-from=prev-name + delete local increment, even when upload failed
 //   - save previous backup type incremental, next try will also incremental, until reach full interval
-func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate string, schedules []string, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource bool, version string, commandId int, metrics *metrics.APIMetrics, cliCtx *cli.Command) error {
+func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate string, schedules []string, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, streaming bool, version string, commandId int, metrics *metrics.APIMetrics, cliCtx *cli.Command) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return errors.WithStack(err)
@@ -127,7 +127,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 		return errors.Wrap(err, "Watch ValidateWatchParams")
 	}
 	if len(b.cfg.General.WatchSchedules) > 0 {
-		return b.watchWithSchedules(ctx, watchInterval, fullInterval, watchBackupNameTemplate, schedules, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, version, commandId, metrics, cliCtx)
+		return b.watchWithSchedules(ctx, watchInterval, fullInterval, watchBackupNameTemplate, schedules, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, streaming, version, commandId, metrics, cliCtx)
 	}
 	backupType := "full"
 	prevBackupName := ""
@@ -175,16 +175,17 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 			iterationCommandId, _ := status.Current.StartWithCallback("create_remote "+backupName, uuid.NewString(), b.watchIterationCallback())
 			if metrics != nil {
 				createRemoteErr, createRemoteErrCount = metrics.ExecuteWithMetrics("create_remote", createRemoteErrCount, func() error {
-					return b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, version, commandId)
+					return b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, streaming, version, commandId)
 				})
-				// If backups_to_keep_local=-1 then the local backup is deleted in the upload step when RemoveOldBackupsLocal is called
-				if !deleteSource && b.cfg.General.BackupsToKeepLocal >= 0 {
+				// If backups_to_keep_local=-1 then the local backup is deleted in the upload step when RemoveOldBackupsLocal is called,
+				// streaming create_remote always removes the local backup itself
+				if !deleteSource && !streaming && b.cfg.General.BackupsToKeepLocal >= 0 {
 					deleteLocalErr, deleteLocalErrCount = metrics.ExecuteWithMetrics("delete", deleteLocalErrCount, func() error {
 						return b.RemoveBackupLocal(ctx, backupName, nil, true)
 					})
 				}
 			} else {
-				createRemoteErr = b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, version, commandId)
+				createRemoteErr = b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, streaming, version, commandId)
 				if createRemoteErr != nil {
 					cmd := "create_remote"
 					if diffFromRemote != "" {
@@ -211,13 +212,16 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 					if deleteSource {
 						cmd += " --delete-source"
 					}
+					if streaming {
+						cmd += " --streaming"
+					}
 					cmd += " " + backupName
 					log.Error().Msgf("%s return error: %v", cmd, createRemoteErr)
 					createRemoteErrCount += 1
 				} else {
 					createRemoteErrCount = 0
 				}
-				if !deleteSource && b.cfg.General.BackupsToKeepLocal >= 0 {
+				if !deleteSource && !streaming && b.cfg.General.BackupsToKeepLocal >= 0 {
 					deleteLocalErr = b.RemoveBackupLocal(ctx, backupName, nil, true)
 					if deleteLocalErr != nil {
 						log.Error().Fields(map[string]interface{}{

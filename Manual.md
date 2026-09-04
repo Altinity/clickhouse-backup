@@ -95,6 +95,7 @@ OPTIONS:
    --skip-check-parts-columns                                                                                                           Skip check system.parts_columns to allow backup inconsistent column types for data parts
    --skip-projections db_pattern.table_pattern:projections_pattern [ --skip-projections db_pattern.table_pattern:projections_pattern ]  Skip make and upload hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --delete, --delete-source, --delete-local                                                                                            explicitly delete local backup during upload
+   --streaming                                                                                                                          Upload each table right after its freeze and delete its local copy, keeps only a small local footprint, https://github.com/Altinity/clickhouse-backup/issues/780
    --dry-run                                                                                                                            Show tables count and data size which would be created and uploaded, without creating and uploading
    --help, -h                                                                                                                           show help
 
@@ -289,6 +290,7 @@ OPTIONS:
    --restore-schema-as-attach                                                                                                           Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --hardlink-exists-files                                                                                                              Create hardlinks for existing files instead of downloading
    --skip-empty-tables                                                                                                                  Skip restoring tables that have no data (empty tables with only schema)
+   --streaming                                                                                                                          Restore each table right after its download and delete its local copy, keeps only a small local footprint, https://github.com/Altinity/clickhouse-backup/issues/780
    --rebind-replica-path-if-exists                                                                                                      Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent
    --dry-run                                                                                                                            Show tables count and data size which would be downloaded and restored, without downloading and restoring
    --help, -h                                                                                                                           show help
@@ -491,6 +493,7 @@ OPTIONS:
    --skip-check-parts-columns                                                                                                           Skip check system.parts_columns to allow backup inconsistent column types for data parts
    --skip-projections db_pattern.table_pattern:projections_pattern [ --skip-projections db_pattern.table_pattern:projections_pattern ]  Skip make and upload hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --delete, --delete-source, --delete-local                                                                                            explicitly delete local backup during upload
+   --streaming                                                                                                                          Use streaming mode for create_remote inside watch, see create_remote --streaming
    --help, -h                                                                                                                           show help
 
 GLOBAL OPTIONS:
@@ -530,6 +533,7 @@ OPTIONS:
    --configs, --backup-configs, --do-backup-configs                                Backup `clickhouse-server' configuration files during --watch
    --named-collections, --backup-named-collections, --do-backup-named-collections  Backup named collections and settings during --watch
    --watch-delete-source, --watch-delete-local                                     explicitly delete local backup during upload in watch
+   --watch-streaming                                                               Use streaming mode for create_remote inside watch, see create_remote --streaming
    --help, -h                                                                      show help
 
 GLOBAL OPTIONS:
