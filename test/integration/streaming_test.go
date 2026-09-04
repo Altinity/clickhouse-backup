@@ -35,6 +35,12 @@ func TestStreamingCreateRestoreRemote(t *testing.T) {
 		"rmt":  "(id UInt64, v UInt64) ENGINE=ReplacingMergeTree() PARTITION BY id % 3 ORDER BY id",
 		"repl": "(id UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') PARTITION BY id % 3 ORDER BY id",
 	}
+	// old 1.x clickhouse versions don't have {database}/{table} macros, same check as createTestSchema
+	var isMacrosExists uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&isMacrosExists, "SELECT count() FROM system.functions WHERE name='getMacro'"))
+	if isMacrosExists == 0 {
+		tables["repl"] = strings.NewReplacer("{database}", dbName, "{table}", "repl").Replace(tables["repl"])
+	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
 		tables["s3"] = "(id UInt64) ENGINE=MergeTree() PARTITION BY id % 3 ORDER BY id SETTINGS storage_policy='s3_only'"
 	}
@@ -42,15 +48,15 @@ func TestStreamingCreateRestoreRemote(t *testing.T) {
 	for table, schema := range tables {
 		env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE `%s`.`%s` %s", dbName, table, schema))
 	}
-	// ids are unique across inserts, so ReplacingMergeTree keeps every row whatever the merge state
 	expected := make(map[string]uint64, len(tables))
 	insertRows := func(offset, rows int) {
 		for table := range tables {
-			columns := "number"
+			// unique ids across inserts, so no block deduplication and ReplacingMergeTree keeps every row
+			columns := fmt.Sprintf("number + %d", offset)
 			if table == "rmt" {
-				columns = "number, number"
+				columns = fmt.Sprintf("number + %d, number + %d", offset, offset)
 			}
-			env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.`%s` SELECT %s FROM numbers(%d, %d) SETTINGS insert_deduplicate=0", dbName, table, columns, offset, rows))
+			env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.`%s` SELECT %s FROM numbers(%d)", dbName, table, columns, rows))
 			expected[table] += uint64(rows)
 		}
 	}
