@@ -1,11 +1,10 @@
 package config
 
 import (
-	"os"
 	"syscall"
 	"unsafe"
 
-	"github.com/go-faster/errors"
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 )
 
@@ -27,19 +26,15 @@ type iopolParam struct {
 }
 
 func (cfg *Config) SetPriority() error {
-	var err error
-	var executable string
 	if cfg.General.IONicePriority != "" {
-		var nicePriority ioNiceClass
-		executable, err = os.Executable()
+		nicePriority, err := parseIONicePriority(cfg.General.IONicePriority)
 		if err != nil {
-			log.Warn().Msgf("can't get current executable path: %v", err)
-		}
-		if nicePriority, err = parseIONicePriority(cfg.General.IONicePriority); err != nil {
 			return err
 		}
 		param := iopolParam{scope: iopolScopeProcess, ioType: iopolTypeDisk, policy: iopolDefault}
 		switch nicePriority {
+		case ioNiceNone:
+			param.policy = iopolDefault
 		case ioNiceRealtime:
 			param.policy = iopolImportant
 		case ioNiceBestEffort:
@@ -53,8 +48,8 @@ func (cfg *Config) SetPriority() error {
 			log.Warn().Msgf("can't set i/o priority %s, error: %v", cfg.General.IONicePriority, errno)
 		}
 	}
-	if err = syscall.Setpriority(syscall.PRIO_PROCESS, 0, cfg.General.CPUNicePriority); err != nil {
-		log.Warn().Msgf("can't set CPU priority %d, error: %v, use `sudo setcap cap_sys_nice+ep %s` to fix it", cfg.General.CPUNicePriority, err, executable)
+	if err := syscall.Setpriority(syscall.PRIO_PROCESS, 0, cfg.General.CPUNicePriority); err != nil {
+		log.Warn().Msgf("can't set CPU priority %d, error: %v, raising priority requires root on macOS, run with sudo or set the `Nice` key in the launchd plist", cfg.General.CPUNicePriority, err)
 	}
 	return nil
 }
