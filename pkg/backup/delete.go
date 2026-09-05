@@ -811,12 +811,15 @@ func (b *Backuper) CleanBrokenRetention(commandId int, includeGlobs, excludeGlob
 		return errors.Wrap(err, "bd.BackupList")
 	}
 	keepNames := make(map[string]struct{}, len(backupList))
-	liveCount := 0
+	liveCount, brokenCount := 0, 0
 	for _, backup := range backupList {
 		keepNames[backup.BackupName] = struct{}{}
 		if backup.Broken == "" {
 			liveCount++
+			continue
 		}
+		brokenCount++
+		log.Info().Str("backup", backup.BackupName).Str("reason", backup.Broken).Msg("clean_broken_retention: broken backup is listed in remote metadata, kept (not an orphan); remove it explicitly with `delete remote`")
 	}
 	isKept := func(name string) bool {
 		// Live backups are always preserved.
@@ -849,7 +852,7 @@ func (b *Backuper) CleanBrokenRetention(commandId int, includeGlobs, excludeGlob
 	if commit {
 		mode = "commit"
 	}
-	log.Info().Msgf("clean_broken_retention: mode=%s, %d live backups (of %d in remote list), %d include-globs, %d exclude-globs", mode, liveCount, len(backupList), len(includeGlobs), len(excludeGlobs))
+	log.Info().Msgf("clean_broken_retention: mode=%s, remote list has %d backups (%d live + %d broken, all kept), %d include-globs, %d exclude-globs", mode, len(backupList), liveCount, brokenCount, len(includeGlobs), len(excludeGlobs))
 
 	objectDiskPath, err := b.getObjectDiskPath()
 	if err != nil {
