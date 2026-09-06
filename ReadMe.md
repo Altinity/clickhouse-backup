@@ -170,7 +170,7 @@ general:
   retries_on_failure: 3          # RETRIES_ON_FAILURE, how many times to retry after a failure during upload or download
   retries_pause: 5s              # RETRIES_PAUSE, duration time to pause after each download or upload failure
   retries_jitter: 30             # RETRIES_JITTER, percent of RETRIES_PAUSE for jitter to avoid same time retries from parallel operations
-  delete_batch_size: 1000        # DELETE_BATCH_SIZE, default batch size for bulk DeleteObjects() requests in remote storages that support batch delete (e.g. S3); upper bound for one API call 
+  delete_batch_size: 1000        # DELETE_BATCH_SIZE, default batch size for bulk DeleteObjects() requests in remote storages that support batch delete (e.g. S3); upper bound for one API call, must be between 1 and 1000 for s3
 
   # callback_url - CALLBACK_URL, optional HTTP endpoint notified with POST application/json when a backup command completes
   # (API, one-shot CLI commands, and each watch-loop iteration). API `?callback=` overrides this when non-empty.
@@ -347,6 +347,8 @@ s3:
   request_content_md5: false       # S3_REQUEST_CONTENT_MD5, set to true for S3-compatible storage that requires Content-MD5 header for DeleteObjects API (e.g., some MinIO configurations), see https://github.com/aws/aws-sdk-go-v2/discussions/2960
   retry_mode: standard             # S3_RETRY_MODE, AWS SDK retry mode, allowed values: standard, adaptive
   delete_concurrency: 10           # S3_DELETE_CONCURRENCY, how many parallel DeleteObjects requests during clean/delete operations
+  delete_batch_min_size: 0         # S3_DELETE_BATCH_MIN_SIZE, when a whole DeleteObjects batch fails, split it in halves and retry until the batch is not bigger than this value, 0 disables splitting; some S3-compatible gateways (e.g. DigitalOcean Spaces) reset the response when the batch contains large objects, see https://github.com/Altinity/clickhouse-backup/issues/1532
+  delete_batch_fallback_to_single: true # S3_DELETE_BATCH_FALLBACK_TO_SINGLE, when a whole DeleteObjects batch fails (after splitting down to delete_batch_min_size), delete its objects one by one with DeleteObject (delete_concurrency in parallel) instead of retrying the same failing batch
 
   # HTTP transport and buffer tuning for high-bandwidth (10Gbit+) networks, see https://github.com/Altinity/clickhouse-backup/issues/1376 and Examples.md#tuning-for-high-bandwidth-10gbit-networks
   http_max_idle_conns: 0              # S3_HTTP_MAX_IDLE_CONNS, http.Transport.MaxIdleConns, 0 keeps the AWS SDK default (100)

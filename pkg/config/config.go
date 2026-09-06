@@ -266,7 +266,11 @@ type S3Config struct {
 	RetryMode               string            `yaml:"retry_mode" envconfig:"S3_RETRY_MODE"`
 	ChunkSize               int64             `yaml:"chunk_size" envconfig:"S3_CHUNK_SIZE"`
 	DeleteConcurrency       int               `yaml:"delete_concurrency" envconfig:"S3_DELETE_CONCURRENCY"`
-	Debug                   bool              `yaml:"debug" envconfig:"S3_DEBUG"`
+	// DeleteBatchMinSize - when a whole DeleteObjects batch fails, split it in halves and retry until the batch is not bigger than this value; 0 disables splitting, see https://github.com/Altinity/clickhouse-backup/issues/1532
+	DeleteBatchMinSize int `yaml:"delete_batch_min_size" envconfig:"S3_DELETE_BATCH_MIN_SIZE"`
+	// DeleteBatchFallbackToSingle - when a whole DeleteObjects batch fails (after splitting down to delete_batch_min_size), delete its objects one by one with DeleteObject instead of returning the error, see https://github.com/Altinity/clickhouse-backup/issues/1532
+	DeleteBatchFallbackToSingle bool `yaml:"delete_batch_fallback_to_single" envconfig:"S3_DELETE_BATCH_FALLBACK_TO_SINGLE"`
+	Debug                       bool `yaml:"debug" envconfig:"S3_DEBUG"`
 	// HTTP transport and buffer tuning for high-bandwidth networks, see https://github.com/Altinity/clickhouse-backup/issues/1376
 	// HTTPMaxIdleConns - http.Transport.MaxIdleConns, 0 keeps the AWS SDK default (100)
 	HTTPMaxIdleConns int `yaml:"http_max_idle_conns" envconfig:"S3_HTTP_MAX_IDLE_CONNS"`
@@ -685,6 +689,17 @@ func ValidateConfig(cfg *Config) error {
 	if cfg.GetCompressionFormat() == "lz4" {
 		return errors.New("clickhouse already compressed data by lz4")
 	}
+	if cfg.General.DeleteBatchSize < 1 {
+		return errors.Errorf("delete_batch_size=%d is invalid, it must be greater than 0", cfg.General.DeleteBatchSize)
+	}
+	if cfg.General.RemoteStorage == "s3" {
+		if cfg.General.DeleteBatchSize > 1000 {
+			return errors.Errorf("delete_batch_size=%d is invalid for s3, DeleteObjects accepts at most 1000 keys per request", cfg.General.DeleteBatchSize)
+		}
+		if cfg.S3.DeleteBatchMinSize < 0 || cfg.S3.DeleteBatchMinSize > cfg.General.DeleteBatchSize {
+			return errors.Errorf("s3->delete_batch_min_size=%d is invalid, it must be between 0 and delete_batch_size=%d", cfg.S3.DeleteBatchMinSize, cfg.General.DeleteBatchSize)
+		}
+	}
 	if _, ok := ArchiveExtensions[cfg.GetCompressionFormat()]; !ok && cfg.GetCompressionFormat() != "none" {
 		return errors.Errorf("'%s' is unsupported compression format", cfg.GetCompressionFormat())
 	}
@@ -946,23 +961,24 @@ func DefaultConfig() *Config {
 			DeleteConcurrency: 50,
 		},
 		S3: S3Config{
-			Region:                  "us-east-1",
-			DisableSSL:              false,
-			ACL:                     "private",
-			AssumeRoleARN:           "",
-			CompressionLevel:        1,
-			CompressionFormat:       "tar",
-			DisableCertVerification: false,
-			UseCustomStorageClass:   false,
-			StorageClass:            string(s3types.StorageClassStandard),
-			Concurrency:             int(downloadConcurrency + 1),
-			MaxPartsCount:           4000,
-			RetryMode:               string(aws.RetryModeStandard),
-			ChunkSize:               5 * 1024 * 1024,
-			DeleteConcurrency:       10,
-			HTTP2SendPingTimeout:    "30s",
-			HTTP2PingTimeout:        "15s",
-			HTTP2WriteByteTimeout:   "60s",
+			Region:                      "us-east-1",
+			DisableSSL:                  false,
+			ACL:                         "private",
+			AssumeRoleARN:               "",
+			CompressionLevel:            1,
+			CompressionFormat:           "tar",
+			DisableCertVerification:     false,
+			UseCustomStorageClass:       false,
+			StorageClass:                string(s3types.StorageClassStandard),
+			Concurrency:                 int(downloadConcurrency + 1),
+			MaxPartsCount:               4000,
+			RetryMode:                   string(aws.RetryModeStandard),
+			ChunkSize:                   5 * 1024 * 1024,
+			DeleteConcurrency:           10,
+			DeleteBatchFallbackToSingle: true,
+			HTTP2SendPingTimeout:        "30s",
+			HTTP2PingTimeout:            "15s",
+			HTTP2WriteByteTimeout:       "60s",
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,

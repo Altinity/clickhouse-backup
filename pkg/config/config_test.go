@@ -542,6 +542,30 @@ func TestValidateConfigErrors(t *testing.T) {
 		{"bad api cancel_operation_timeout", func(cfg *Config) {
 			cfg.API.CancelOperationTimeout = "1parsec"
 		}, "invalid api.cancel_operation_timeout"},
+		{"delete_batch_size zero", func(cfg *Config) {
+			cfg.General.DeleteBatchSize = 0
+		}, "delete_batch_size=0 is invalid"},
+		{"delete_batch_size above s3 limit", func(cfg *Config) {
+			cfg.General.RemoteStorage = "s3"
+			cfg.General.DeleteBatchSize = 1001
+		}, "delete_batch_size=1001 is invalid for s3"},
+		{"delete_batch_size above 1000 allowed for gcs", func(cfg *Config) {
+			cfg.General.RemoteStorage = "gcs"
+			cfg.General.DeleteBatchSize = 5000
+		}, ""},
+		{"s3 delete_batch_min_size above delete_batch_size", func(cfg *Config) {
+			cfg.General.RemoteStorage = "s3"
+			cfg.General.DeleteBatchSize = 100
+			cfg.S3.DeleteBatchMinSize = 101
+		}, "s3->delete_batch_min_size=101 is invalid"},
+		{"s3 delete_batch_min_size negative", func(cfg *Config) {
+			cfg.General.RemoteStorage = "s3"
+			cfg.S3.DeleteBatchMinSize = -1
+		}, "s3->delete_batch_min_size=-1 is invalid"},
+		{"s3 delete_batch_min_size valid", func(cfg *Config) {
+			cfg.General.RemoteStorage = "s3"
+			cfg.S3.DeleteBatchMinSize = 100
+		}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
