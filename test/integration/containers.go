@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	osExec "os/exec"
 	"path/filepath"
@@ -14,14 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	dockerImage "github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	dockerClient "github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
+	dockerClient "github.com/moby/moby/client"
 	"github.com/rs/zerolog/log"
 )
 
@@ -40,38 +37,38 @@ func cleanupStaleTestContainers(ctx context.Context) {
 	}()
 
 	// Remove containers with name prefix "tc_"
-	containers, err := cli.ContainerList(ctx, container.ListOptions{
+	containers, err := cli.ContainerList(ctx, dockerClient.ContainerListOptions{
 		All:     true,
-		Filters: filters.NewArgs(filters.Arg("name", "tc_")),
+		Filters: make(dockerClient.Filters).Add("name", "tc_"),
 	})
 	if err == nil {
 		timeout := 1
-		for _, cn := range containers {
+		for _, cn := range containers.Items {
 			log.Info().Msgf("cleanup: removing stale container %s (%s)", cn.Names, cn.ID[:12])
-			_ = cli.ContainerStop(ctx, cn.ID, container.StopOptions{Timeout: &timeout})
-			_ = cli.ContainerRemove(ctx, cn.ID, container.RemoveOptions{Force: true, RemoveVolumes: true})
+			_, _ = cli.ContainerStop(ctx, cn.ID, dockerClient.ContainerStopOptions{Timeout: &timeout})
+			_, _ = cli.ContainerRemove(ctx, cn.ID, dockerClient.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 		}
 	}
 
 	// Remove networks with name prefix "tc_"
-	networks, err := cli.NetworkList(ctx, network.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("name", "tc_")),
+	networks, err := cli.NetworkList(ctx, dockerClient.NetworkListOptions{
+		Filters: make(dockerClient.Filters).Add("name", "tc_"),
 	})
 	if err == nil {
-		for _, n := range networks {
+		for _, n := range networks.Items {
 			log.Info().Msgf("cleanup: removing stale network %s", n.Name)
-			_ = cli.NetworkRemove(ctx, n.ID)
+			_, _ = cli.NetworkRemove(ctx, n.ID, dockerClient.NetworkRemoveOptions{})
 		}
 	}
 
 	// Remove volumes with name prefix "tc_"
-	volList, err := cli.VolumeList(ctx, volume.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("name", "tc_")),
+	volList, err := cli.VolumeList(ctx, dockerClient.VolumeListOptions{
+		Filters: make(dockerClient.Filters).Add("name", "tc_"),
 	})
 	if err == nil {
-		for _, v := range volList.Volumes {
+		for _, v := range volList.Items {
 			log.Info().Msgf("cleanup: removing stale volume %s", v.Name)
-			_ = cli.VolumeRemove(ctx, v.Name, true)
+			_, _ = cli.VolumeRemove(ctx, v.Name, dockerClient.VolumeRemoveOptions{Force: true})
 		}
 	}
 }
@@ -130,7 +127,7 @@ func (tc *TestContainers) StartAll(ctx context.Context) error {
 	var err error
 
 	tc.networkName = fmt.Sprintf("tc_integration_%d", tc.envID)
-	resp, err := tc.client.NetworkCreate(ctx, tc.networkName, network.CreateOptions{Driver: "bridge"})
+	resp, err := tc.client.NetworkCreate(ctx, tc.networkName, dockerClient.NetworkCreateOptions{Driver: "bridge"})
 	if err != nil {
 		return fmt.Errorf("create network: %w", err)
 	}
@@ -151,7 +148,7 @@ func (tc *TestContainers) StartAll(ctx context.Context) error {
 		prefix + "hdd3",
 	}
 	for _, vol := range tc.sharedVolumes {
-		if _, err = tc.client.VolumeCreate(ctx, volume.CreateOptions{Name: vol}); err != nil {
+		if _, err = tc.client.VolumeCreate(ctx, dockerClient.VolumeCreateOptions{Name: vol}); err != nil {
 			return fmt.Errorf("create volume %s: %w", vol, err)
 		}
 	}
@@ -259,10 +256,10 @@ func (tc *TestContainers) StopAll(ctx context.Context) {
 		stopWg.Add(1)
 		go func(name string, id string) {
 			defer stopWg.Done()
-			if err := tc.client.ContainerStop(ctx, id, container.StopOptions{Timeout: &timeout}); err != nil {
+			if _, err := tc.client.ContainerStop(ctx, id, dockerClient.ContainerStopOptions{Timeout: &timeout}); err != nil {
 				log.Debug().Err(err).Msgf("stop %s", name)
 			}
-			if err := tc.client.ContainerRemove(ctx, id, container.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
+			if _, err := tc.client.ContainerRemove(ctx, id, dockerClient.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
 				log.Debug().Err(err).Msgf("remove %s", name)
 			}
 		}(name, info.ID)
@@ -271,12 +268,12 @@ func (tc *TestContainers) StopAll(ctx context.Context) {
 	tc.containers = make(map[string]*ContainerInfo)
 
 	for _, vol := range tc.sharedVolumes {
-		if err := tc.client.VolumeRemove(ctx, vol, true); err != nil {
+		if _, err := tc.client.VolumeRemove(ctx, vol, dockerClient.VolumeRemoveOptions{Force: true}); err != nil {
 			log.Debug().Err(err).Msgf("remove volume %s", vol)
 		}
 	}
 	if tc.networkID != "" {
-		if err := tc.client.NetworkRemove(ctx, tc.networkID); err != nil {
+		if _, err := tc.client.NetworkRemove(ctx, tc.networkID, dockerClient.NetworkRemoveOptions{}); err != nil {
 			log.Debug().Err(err).Msgf("remove network %s", tc.networkName)
 		}
 		tc.networkID = ""
@@ -297,17 +294,20 @@ func (tc *TestContainers) GetMappedPort(ctx context.Context, name string, contai
 	if info == nil {
 		return "", 0, fmt.Errorf("no container %s", name)
 	}
-	inspect, err := tc.client.ContainerInspect(ctx, info.ID)
+	inspect, err := tc.client.ContainerInspect(ctx, info.ID, dockerClient.ContainerInspectOptions{})
 	if err != nil {
 		return "", 0, err
 	}
-	portKey := nat.Port(containerPort + "/tcp")
-	bindings := inspect.NetworkSettings.Ports[portKey]
+	portKey, err := network.ParsePort(containerPort + "/tcp")
+	if err != nil {
+		return "", 0, err
+	}
+	bindings := inspect.Container.NetworkSettings.Ports[portKey]
 	if len(bindings) == 0 {
 		return "", 0, fmt.Errorf("no binding for %s on %s", containerPort, name)
 	}
-	host := bindings[0].HostIP
-	if host == "" || host == "0.0.0.0" {
+	host := bindings[0].HostIP.String()
+	if !bindings[0].HostIP.IsValid() || bindings[0].HostIP.IsUnspecified() {
 		host = "127.0.0.1"
 	}
 	var port uint16
@@ -342,7 +342,7 @@ func (tc *TestContainers) RestartContainer(t *testing.T, name string) error {
 	timeout := 30
 	var err error
 	for attempt := 1; attempt <= restartMaxAttempts; attempt++ {
-		if restartErr := tc.client.ContainerRestart(ctx, info.ID, container.StopOptions{Timeout: &timeout}); restartErr != nil {
+		if _, restartErr := tc.client.ContainerRestart(ctx, info.ID, dockerClient.ContainerRestartOptions{Timeout: &timeout}); restartErr != nil {
 			return restartErr
 		}
 		if err = tc.pollHealthy(ctx, name, restartHealthTimeout); err == nil {
@@ -373,9 +373,9 @@ func (tc *TestContainers) pollHealthy(ctx context.Context, name string, timeout 
 	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		inspect, err := tc.client.ContainerInspect(ctx, info.ID)
-		if err == nil && inspect.State != nil && inspect.State.Health != nil {
-			if inspect.State.Health.Status == "healthy" {
+		inspect, err := tc.client.ContainerInspect(ctx, info.ID, dockerClient.ContainerInspectOptions{})
+		if err == nil && inspect.Container.State != nil && inspect.Container.State.Health != nil {
+			if inspect.Container.State.Health.Status == "healthy" {
 				return nil
 			}
 		}
@@ -425,9 +425,9 @@ func containerStateSummary(inspect container.InspectResponse) string {
 	if inspect.State == nil {
 		return "unknown"
 	}
-	state := inspect.State.Status
+	state := string(inspect.State.Status)
 	if inspect.State.Health != nil {
-		state += ", health=" + inspect.State.Health.Status
+		state += ", health=" + string(inspect.State.Health.Status)
 	}
 	if inspect.State.ExitCode != 0 {
 		state += fmt.Sprintf(", exitCode=%d", inspect.State.ExitCode)
@@ -456,7 +456,7 @@ func (tc *TestContainers) clickhouseFailedOnAzure(ctx context.Context) bool {
 	if info == nil {
 		return false
 	}
-	reader, err := tc.client.ContainerLogs(ctx, info.ID, container.LogsOptions{
+	reader, err := tc.client.ContainerLogs(ctx, info.ID, dockerClient.ContainerLogsOptions{
 		ShowStdout: true, ShowStderr: true, Tail: "500",
 	})
 	if err != nil {
@@ -480,11 +480,11 @@ func (tc *TestContainers) containerStartedAt(ctx context.Context, name string) t
 	if info == nil {
 		return time.Time{}
 	}
-	inspect, err := tc.client.ContainerInspect(ctx, info.ID)
-	if err != nil || inspect.State == nil || inspect.State.StartedAt == "" {
+	inspect, err := tc.client.ContainerInspect(ctx, info.ID, dockerClient.ContainerInspectOptions{})
+	if err != nil || inspect.Container.State == nil || inspect.Container.State.StartedAt == "" {
 		return time.Time{}
 	}
-	started, err := time.Parse(time.RFC3339Nano, inspect.State.StartedAt)
+	started, err := time.Parse(time.RFC3339Nano, inspect.Container.State.StartedAt)
 	if err != nil {
 		return time.Time{}
 	}
@@ -516,7 +516,7 @@ func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name strin
 	if info == nil {
 		return
 	}
-	inspect, err := tc.client.ContainerInspect(ctx, info.ID)
+	inspect, err := tc.client.ContainerInspect(ctx, info.ID, dockerClient.ContainerInspectOptions{})
 	if err != nil {
 		log.Error().Err(err).Msgf("can't inspect container %s (%s)", name, info.ID[:12])
 		return
@@ -525,9 +525,9 @@ func (tc *TestContainers) DumpContainerLogsSince(ctx context.Context, name strin
 		since = time.Now()
 	}
 	since = since.Add(-30 * time.Second)
-	log.Error().Msgf("=== %scontainer %s (%s) state: %s ===", testLogPrefix(testName), name, info.ID[:12], containerStateSummary(inspect))
+	log.Error().Msgf("=== %scontainer %s (%s) state: %s ===", testLogPrefix(testName), name, info.ID[:12], containerStateSummary(inspect.Container))
 
-	logOpts := container.LogsOptions{
+	logOpts := dockerClient.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Timestamps: true,
@@ -583,14 +583,14 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string, te
 	if info == nil {
 		return
 	}
-	inspect, err := tc.client.ContainerInspect(ctx, info.ID)
+	inspect, err := tc.client.ContainerInspect(ctx, info.ID, dockerClient.ContainerInspectOptions{})
 	if err != nil {
 		log.Error().Err(err).Msgf("can't inspect container %s (%s)", name, info.ID[:12])
 		return
 	}
-	log.Error().Msgf("=== %scontainer %s (%s) state: %s ===", testLogPrefix(testName), name, info.ID[:12], containerStateSummary(inspect))
+	log.Error().Msgf("=== %scontainer %s (%s) state: %s ===", testLogPrefix(testName), name, info.ID[:12], containerStateSummary(inspect.Container))
 
-	logOpts := container.LogsOptions{ShowStdout: true, ShowStderr: true}
+	logOpts := dockerClient.ContainerLogsOptions{ShowStdout: true, ShowStderr: true}
 	reader, logErr := tc.client.ContainerLogs(ctx, info.ID, logOpts)
 	if logErr != nil {
 		log.Error().Err(logErr).Msgf("can't get logs for %s", name)
@@ -653,11 +653,16 @@ func (tc *TestContainers) startContainer(ctx context.Context, name string, cfg *
 
 	tc.pullImageIfNeeded(ctx, cfg.Image)
 
-	resp, err := tc.client.ContainerCreate(ctx, cfg, hostCfg, networkCfg, nil, fmt.Sprintf("tc_%d_%s", tc.envID, name))
+	resp, err := tc.client.ContainerCreate(ctx, dockerClient.ContainerCreateOptions{
+		Config:           cfg,
+		HostConfig:       hostCfg,
+		NetworkingConfig: networkCfg,
+		Name:             fmt.Sprintf("tc_%d_%s", tc.envID, name),
+	})
 	if err != nil {
 		return fmt.Errorf("create %s: %w", name, err)
 	}
-	if err = tc.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if _, err = tc.client.ContainerStart(ctx, resp.ID, dockerClient.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("start %s: %w", name, err)
 	}
 	tc.mu.Lock()
@@ -673,7 +678,7 @@ func (tc *TestContainers) pullImageIfNeeded(ctx context.Context, imageName strin
 		log.Debug().Msgf("image %s already exists locally, skipping pull", imageName)
 		return
 	}
-	reader, err := tc.client.ImagePull(ctx, imageName, dockerImage.PullOptions{})
+	reader, err := tc.client.ImagePull(ctx, imageName, dockerClient.ImagePullOptions{})
 	if err != nil {
 		log.Debug().Err(err).Msgf("pull %s (may already exist)", imageName)
 		return
@@ -974,7 +979,7 @@ func (tc *TestContainers) startMySQL(ctx context.Context) error {
 			Env: envMap(map[string]string{
 				"MYSQL_ROOT_PASSWORD": "root",
 			}),
-			ExposedPorts: nat.PortSet{"3306/tcp": {}},
+			ExposedPorts: network.PortSet{network.MustParsePort("3306/tcp"): {}},
 			Healthcheck: &container.HealthConfig{
 				Test:     []string{"CMD-SHELL", "mysqladmin -p=root ping -h localhost"},
 				Timeout:  10 * time.Second,
@@ -1002,7 +1007,7 @@ func (tc *TestContainers) startPgSQL(ctx context.Context) error {
 				"POSTGRES_PASSWORD":         "root",
 				"POSTGRES_HOST_AUTH_METHOD": "md5",
 			}),
-			ExposedPorts: nat.PortSet{"5432/tcp": {}},
+			ExposedPorts: network.PortSet{network.MustParsePort("5432/tcp"): {}},
 			Healthcheck: &container.HealthConfig{
 				Test:     []string{"CMD-SHELL", "pg_isready"},
 				Timeout:  10 * time.Second,
@@ -1182,7 +1187,7 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 		Image:        chImage,
 		User:         "root",
 		Env:          envMap(env),
-		ExposedPorts: nat.PortSet{"8123/tcp": {}, "9000/tcp": {}},
+		ExposedPorts: network.PortSet{network.MustParsePort("8123/tcp"): {}, network.MustParsePort("9000/tcp"): {}},
 		Healthcheck: &container.HealthConfig{
 			Test:        []string{"CMD-SHELL", "clickhouse client -q 'SELECT 1'"},
 			Interval:    10 * time.Second,
@@ -1196,9 +1201,9 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 
 	hostCfg := &container.HostConfig{
 		Binds: binds,
-		PortBindings: nat.PortMap{
-			"9000/tcp": {nat.PortBinding{HostIP: "0.0.0.0"}},
-			"8123/tcp": {nat.PortBinding{HostIP: "0.0.0.0"}},
+		PortBindings: network.PortMap{
+			network.MustParsePort("9000/tcp"): {network.PortBinding{HostIP: netip.IPv4Unspecified()}},
+			network.MustParsePort("8123/tcp"): {network.PortBinding{HostIP: netip.IPv4Unspecified()}},
 		},
 		CapAdd:        []string{"SYS_PTRACE", "SYS_NICE"},
 		SecurityOpt:   []string{"label:disable"},
@@ -1230,9 +1235,9 @@ func (tc *TestContainers) startClickHouseBackup(ctx context.Context, curDir, con
 		User:       "root",
 		Entrypoint: []string{"/bin/bash", "-xce", "sleep infinity"},
 		Env:        envMap(env),
-		ExposedPorts: nat.PortSet{
-			"7171/tcp":  {},
-			"40001/tcp": {},
+		ExposedPorts: network.PortSet{
+			network.MustParsePort("7171/tcp"):  {},
+			network.MustParsePort("40001/tcp"): {},
 		},
 		Healthcheck: &container.HealthConfig{
 			Test:        []string{"CMD-SHELL", `bash -c "exit 0"`},
@@ -1245,8 +1250,8 @@ func (tc *TestContainers) startClickHouseBackup(ctx context.Context, curDir, con
 
 	hostCfg := &container.HostConfig{
 		Binds: binds,
-		PortBindings: nat.PortMap{
-			"7171/tcp": {nat.PortBinding{HostIP: "0.0.0.0"}},
+		PortBindings: network.PortMap{
+			network.MustParsePort("7171/tcp"): {network.PortBinding{HostIP: netip.IPv4Unspecified()}},
 		},
 		CapAdd:      []string{"SYS_PTRACE", "SYS_NICE"},
 		SecurityOpt: []string{"label:disable"},
