@@ -27,7 +27,7 @@ require (
 	github.com/jlaffaye/ftp v0.2.4
 	github.com/jolestar/go-commons-pool/v2 v2.1.2
 	github.com/kelseyhightower/envconfig v1.4.0
-	github.com/klauspost/compress v1.19.2
+	github.com/klauspost/compress v1.20.0
 	github.com/klauspost/pgzip v1.2.6
 	github.com/mattn/go-shellwords v1.0.14
 	github.com/mholt/archives v0.1.5
