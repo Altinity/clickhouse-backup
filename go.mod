@@ -47,7 +47,7 @@ require (
 	github.com/urfave/cli/v3 v3.11.0
 	github.com/yargevad/filepathx v1.0.0
 	go.etcd.io/bbolt v1.5.0
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.56.0
 	golang.org/x/mod v0.40.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/text v0.41.0
