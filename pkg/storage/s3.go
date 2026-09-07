@@ -723,7 +723,7 @@ func (s *S3) deleteKeys(ctx context.Context, keys []string) error {
 		}
 		batch := objectsToDelete[i:end]
 
-		failures, err := s.executeBatchDelete(ctx, batch)
+		failures, err := s.deleteBatchWithFallback(ctx, batch)
 		if err != nil {
 			// Entire batch failed
 			return errors.Wrapf(err, "S3 batch delete failed for batch starting at index %d", i)
@@ -740,6 +740,69 @@ func (s *S3) deleteKeys(ctx context.Context, keys []string) error {
 
 	log.Debug().Msgf("S3 batch delete: successfully deleted %d objects", len(objectsToDelete))
 	return nil
+}
+
+// deleteBatchWithFallback runs executeBatchDelete and, when the whole DeleteObjects request fails
+// (not per-key errors), applies the recovery configured via s3->delete_batch_min_size (split the batch in
+// halves down to that size) and s3->delete_batch_fallback_to_single (delete the objects one by one).
+// Some S3-compatible gateways (e.g. DigitalOcean Spaces / Ceph RGW) reset the response stream when the
+// batch contains large objects, so the same batch fails forever, see https://github.com/Altinity/clickhouse-backup/issues/1532
+func (s *S3) deleteBatchWithFallback(ctx context.Context, batch []s3types.ObjectIdentifier) ([]KeyError, error) {
+	failures, err := s.executeBatchDelete(ctx, batch)
+	if err == nil {
+		return failures, nil
+	}
+	if minSize := s.Config.DeleteBatchMinSize; minSize > 0 && len(batch) > minSize {
+		half := len(batch) / 2
+		log.Warn().Msgf("S3 DeleteObjects failed for batch of %d objects: %v, retrying as two batches of %d and %d", len(batch), err, half, len(batch)-half)
+		left, leftErr := s.deleteBatchWithFallback(ctx, batch[:half])
+		if leftErr != nil {
+			return nil, leftErr
+		}
+		right, rightErr := s.deleteBatchWithFallback(ctx, batch[half:])
+		if rightErr != nil {
+			return nil, rightErr
+		}
+		return append(left, right...), nil
+	}
+	if !s.Config.DeleteBatchFallbackToSingle {
+		return nil, err
+	}
+	log.Warn().Msgf("S3 DeleteObjects failed for batch of %d objects: %v, falling back to single DeleteObject calls", len(batch), err)
+	return s.deleteObjectsOneByOne(ctx, batch)
+}
+
+// deleteObjectsOneByOne deletes already resolved object identifiers (key + optional version) with
+// single DeleteObject calls, DeleteConcurrency in parallel; per-object errors are collected, not fatal.
+func (s *S3) deleteObjectsOneByOne(ctx context.Context, objects []s3types.ObjectIdentifier) ([]KeyError, error) {
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(s.Config.DeleteConcurrency)
+	var mu sync.Mutex
+	var failures []KeyError
+	for _, obj := range objects {
+		obj := obj
+		g.Go(func() error {
+			params := &s3.DeleteObjectInput{
+				Bucket:    aws.String(s.Config.Bucket),
+				Key:       obj.Key,
+				VersionId: obj.VersionId,
+			}
+			if s.Config.RequestPayer != "" {
+				params.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
+			}
+			if _, err := s.client.DeleteObject(ctx, params); err != nil {
+				log.Warn().Msgf("S3 single delete: failed to delete %s version %v: %v", aws.ToString(obj.Key), aws.ToString(obj.VersionId), err)
+				mu.Lock()
+				failures = append(failures, KeyError{Key: aws.ToString(obj.Key), Err: err})
+				mu.Unlock()
+			}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, errors.Wrap(err, "S3 single delete fallback")
+	}
+	return failures, nil
 }
 
 // withContentMD5 removes all flexible checksum procedures from an operation,
