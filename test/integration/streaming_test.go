@@ -77,7 +77,7 @@ func TestStreamingCreateRestoreRemote(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("clickhouse-backup %s create_remote --streaming --diff-from-remote=%s --tables='%s.*' %s", configArg, fullBackup, dbName, incrementBackup))
 	env.assertStreamingBackupNotLocal(r, configArg, incrementBackup)
 	env.assertRemoteBackupTables(r, configFile, configArg, incrementBackup, fullBackup, dbName, tables)
-	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("clickhouse-backup %s list remote", configArg))
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("clickhouse-backup %s list remote 2>/dev/null", configArg))
 	r.NoError(err, "%s\nunexpected list remote error: %v", out, err)
 	r.Regexp("(?m)^"+fullBackup+`\s`, out)
 	r.Regexp("(?m)^"+incrementBackup+`\s`, out)
@@ -104,7 +104,7 @@ func TestStreamingCreateRestoreRemote(t *testing.T) {
 	// f. non-streaming regression guard: without the flag the local backup is kept and `delete local` still works
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("clickhouse-backup %s create_remote --tables='%s.*' %s", configArg, dbName, plainBackup))
 	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/"+plainBackup+"/metadata.json")
-	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("clickhouse-backup %s list local", configArg))
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("clickhouse-backup %s list local 2>/dev/null", configArg))
 	r.NoError(err, "%s\nunexpected list local error: %v", out, err)
 	r.Regexp("(?m)^"+plainBackup+`\s`, out)
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("clickhouse-backup %s delete local %s", configArg, plainBackup))
@@ -118,14 +118,14 @@ func TestStreamingCreateRestoreRemote(t *testing.T) {
 // assertStreamingBackupNotLocal checks that no local copy of backupName is left behind
 func (env *TestEnvironment) assertStreamingBackupNotLocal(r *require.Assertions, configArg, backupName string) {
 	r.Error(env.DockerExec("clickhouse-backup", "ls", "/var/lib/clickhouse/backup/"+backupName), "local backup dir %s shall not exist", backupName)
-	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("clickhouse-backup %s list local", configArg))
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("clickhouse-backup %s list local 2>/dev/null", configArg))
 	r.NoError(err, "%s\nunexpected list local error: %v", out, err)
 	r.NotContains(out, backupName)
 }
 
 // assertRemoteBackupTables checks the remote metadata.json lists exactly the streamed tables and the expected required_backup
 func (env *TestEnvironment) assertRemoteBackupTables(r *require.Assertions, configFile, configArg, backupName, requiredBackup, dbName string, tables map[string]string) {
-	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("clickhouse-backup %s list remote", configArg))
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("clickhouse-backup %s list remote 2>/dev/null", configArg))
 	r.NoError(err, "%s\nunexpected list remote error: %v", out, err)
 	r.Regexp("(?m)^"+backupName+`\s`, out)
 
