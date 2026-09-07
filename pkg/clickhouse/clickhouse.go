@@ -282,20 +282,38 @@ func (ch *ClickHouse) getMetadataPath(ctx context.Context) (string, error) {
 	var result []struct {
 		MetadataPath string `ch:"metadata_path"`
 	}
-	query := "SELECT metadata_path FROM system.tables WHERE database = 'system' AND metadata_path!='' LIMIT 1"
-	// https://github.com/ClickHouse/ClickHouse/issues/76546
-	if ch.version >= 25000000 {
-		query = "SELECT data_path AS metadata_path FROM system.databases WHERE name = 'system' LIMIT 1"
+	tablesQuery := "SELECT metadata_path FROM system.tables WHERE database = 'system' AND metadata_path!='' LIMIT 1"
+	databasesQuery := "SELECT data_path AS metadata_path FROM system.databases WHERE name = 'system' LIMIT 1"
+	// ch.version could be still unknown here (`tables` command, API) or unavailable (no grant on system.build_options),
+	// don't read ch.version directly https://github.com/Altinity/clickhouse-backup/issues/1537
+	version, err := ch.GetVersion(ctx)
+	if err != nil {
+		return "", errors.Wrap(err, "getMetadataPath: get version")
 	}
-	if err := ch.SelectContext(ctx, &result, query); err != nil {
+	query := tablesQuery
+	// https://github.com/ClickHouse/ClickHouse/issues/76546
+	if version >= 25000000 {
+		query = databasesQuery
+	}
+	if err = ch.SelectContext(ctx, &result, query); err != nil {
 		return "", errors.Wrap(err, "getMetadataPath: select metadata_path")
 	}
 	if len(result) == 0 {
 		return "", errors.New("can't get metadata_path from system.tables or system.databases")
 	}
+	// 25.1+ returns relative metadata_path in system.tables, when version is unknown detect it by missing leading slash, https://github.com/Altinity/clickhouse-backup/issues/1537
+	if query == tablesQuery && !strings.HasPrefix(result[0].MetadataPath, "/") {
+		result = result[:0]
+		if err = ch.SelectContext(ctx, &result, databasesQuery); err != nil {
+			return "", errors.Wrap(err, "getMetadataPath: select data_path")
+		}
+		if len(result) == 0 {
+			return "", errors.New("can't get data_path from system.databases")
+		}
+	}
 	metadataPath := strings.Split(result[0].MetadataPath, "/")
 	// https://github.com/ClickHouse/ClickHouse/issues/76546
-	if ch.version >= 25000000 && strings.HasSuffix(result[0].MetadataPath, "/store/") {
+	if strings.HasSuffix(result[0].MetadataPath, "/store/") {
 		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-2]...)
 		result[0].MetadataPath = path.Join(result[0].MetadataPath, "metadata")
 	} else if strings.Contains(result[0].MetadataPath, "/store/") {
@@ -430,7 +448,7 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	var err error
 	settings := map[string]bool{
 		"show_table_uuid_in_table_create_query_if_not_nil": false,
-		"display_secrets_in_show_and_select":               false,
+		"format_display_secrets_in_show_and_select":        false,
 	}
 	if settings, err = ch.CheckSettingsExists(ctx, settings); err != nil {
 		return nil, errors.Wrap(err, "GetTables: check settings")
