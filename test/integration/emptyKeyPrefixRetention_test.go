@@ -44,11 +44,14 @@ func TestEmptyKeyPrefixRetention(t *testing.T) {
 	chVer := strings.ReplaceAll(os.Getenv("CLICKHOUSE_VERSION"), ".", "_")
 	tableName := "default.empty_key_prefix_retention_" + chVer
 	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s(id UInt64) ENGINE=MergeTree() ORDER BY id", tableName))
-	t.Cleanup(func() {
-		if _, err := env.DockerExecOut("clickhouse", "clickhouse", "client", "-q", "DROP TABLE IF EXISTS "+tableName+" SYNC"); err != nil {
-			log.Warn().Err(err).Str("table", tableName).Msg("t.Cleanup: failed to drop table")
+	defer func() {
+		// runs before env.Cleanup returns the shared environment to the pool, a leaked table breaks TestListFormat
+		dropQ := "DROP TABLE IF EXISTS " + tableName
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") > 0 {
+			dropQ += " NO DELAY"
 		}
-	})
+		env.DockerExecNoError(r, "clickhouse", "clickhouse", "client", "-q", dropQ)
+	}()
 	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO %s SELECT number FROM numbers(50)", tableName))
 
 	backupNames := []string{"empty_key_prefix_1_" + chVer, "empty_key_prefix_2_" + chVer}
