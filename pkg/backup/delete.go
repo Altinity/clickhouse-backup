@@ -391,6 +391,9 @@ func (b *Backuper) skipIfTheSameRemoteBackupPresent(ctx context.Context, backupN
 // see https://github.com/Altinity/clickhouse-backup/issues/1493
 func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string, force bool) error {
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
+	if backupName == "" {
+		return errors.New("backup name is empty, refuse to delete the whole remote path")
+	}
 	start := time.Now()
 	if b.cfg.General.RemoteStorage == "none" {
 		err := errors.New("aborted: RemoteStorage set to \"none\"")

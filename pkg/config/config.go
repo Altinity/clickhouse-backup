@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -440,23 +441,13 @@ type APIConfig struct {
 // IsBackupActionsSkipCommand returns true if the given command must NOT be recorded
 // into the in-memory async status (system.backup_actions).
 func (cfg *APIConfig) IsBackupActionsSkipCommand(command string) bool {
-	for _, c := range cfg.BackupActionsSkipCommands {
-		if c == command {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(cfg.BackupActionsSkipCommands, command)
 }
 
 // IsCompleteResumableAfterRestartCommand returns true if the given command may
 // be resumed automatically after API server restart.
 func (cfg *APIConfig) IsCompleteResumableAfterRestartCommand(command string) bool {
-	for _, c := range cfg.CompleteResumableAfterRestartCommands {
-		if c == command {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(cfg.CompleteResumableAfterRestartCommands, command)
 }
 
 // ArchiveExtensions - list of available compression formats and associated file extensions

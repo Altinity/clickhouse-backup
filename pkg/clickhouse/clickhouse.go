@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -212,9 +214,7 @@ func (ch *ClickHouse) GetDisks(ctx context.Context, enrich bool) ([]Disk, error)
 		return disks, nil
 	}
 	dm := map[string]string{}
-	for k, v := range ch.Config.DiskMapping {
-		dm[k] = v
-	}
+	maps.Copy(dm, ch.Config.DiskMapping)
 	for i := range disks {
 		if p, ok := dm[disks[i].Name]; ok {
 			disks[i].Path = p
@@ -506,11 +506,8 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 		if ch.Config.UseEmbeddedBackupRestore && (strings.HasPrefix(t.Name, ".inner_id.") /*|| strings.HasPrefix(t.Name, ".inner.")*/) {
 			t.Skip = true
 		}
-		for _, engine := range ch.Config.SkipTableEngines {
-			if t.Engine == engine {
-				t.Skip = true
-				break
-			}
+		if slices.Contains(ch.Config.SkipTableEngines, t.Engine) {
+			t.Skip = true
 		}
 		if t.Skip {
 			tables[i] = t
@@ -715,8 +712,8 @@ func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tabl
 	processDbPatterns := func(databases []string, patterns []string) []string {
 		for _, pattern := range patterns {
 			pattern = strings.Trim(pattern, " \r\t\n")
-			if strings.HasSuffix(pattern, ".*") {
-				databases = common.AddStringToSliceIfNotExists(databases, strings.Trim(strings.TrimSuffix(pattern, ".*"), "\"` "))
+			if before, ok := strings.CutSuffix(pattern, ".*"); ok {
+				databases = common.AddStringToSliceIfNotExists(databases, strings.Trim(before, "\"` "))
 			} else {
 				databases = common.AddStringToSliceIfNotExists(databases, strings.Trim(tableNameSuffixRE.ReplaceAllString(pattern, ""), "\"` "))
 			}
@@ -1672,10 +1669,7 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 	}
 	tableDataTypes := make(map[string][]ColumnDataTypes)
 	for start := 0; start < len(conditions); start += partsColumnsBatchSize {
-		end := start + partsColumnsBatchSize
-		if end > len(conditions) {
-			end = len(conditions)
-		}
+		end := min(start+partsColumnsBatchSize, len(conditions))
 		batchConditions := conditions[start:end]
 
 		partColumnsDataTypes := make([]ColumnDataTypesWithTable, 0)
@@ -1722,8 +1716,8 @@ var versioningAggregateRE = regexp.MustCompile(`^[0-9]+,\s*`)
 func (ch *ClickHouse) CheckTypesConsistency(table *Table, partColumnsDataTypes []ColumnDataTypes) error {
 	cleanType := func(dataType string) string {
 		for _, compatiblePrefix := range []string{"LowCardinality(", "Nullable("} {
-			if strings.HasPrefix(dataType, compatiblePrefix) {
-				dataType = strings.TrimPrefix(dataType, compatiblePrefix)
+			if after, ok := strings.CutPrefix(dataType, compatiblePrefix); ok {
+				dataType = after
 				dataType = strings.TrimSuffix(dataType, ")")
 			}
 		}
