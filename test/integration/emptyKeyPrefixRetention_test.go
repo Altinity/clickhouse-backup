@@ -36,9 +36,9 @@ func TestEmptyKeyPrefixRetention(t *testing.T) {
 	}
 	defer func() {
 		out, err := env.DockerExecOut("minio", "sh", "-c", curlSigV4("DELETE"))
-		if err != nil {
-			log.Warn().Err(err).Msgf("delete marker %s: %s", markerURL, out)
-		}
+		r.NoError(err, "curl DELETE marker: %s", out)
+		r.Equal("204", strings.TrimSpace(out), "DeleteObject %s", markerURL)
+		env.checkObjectStorageIsEmpty(t, r, "S3", configFile)
 	}()
 
 	chVer := strings.ReplaceAll(os.Getenv("CLICKHOUSE_VERSION"), ".", "_")
