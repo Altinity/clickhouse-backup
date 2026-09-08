@@ -840,17 +840,14 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 			log.Error().Msgf("unsupported RBAC object kind: %s", kind)
 			return false, "", nil
 		}
-		// system.masking_policies exists only in 26.8+, on older versions check only local and keeper user directories
-		if systemTable != "masking_policies" || version >= 26008000 {
-			isRBACExistsSQL := fmt.Sprintf("SELECT toString(id) AS id, name FROM `system`.`%s` WHERE name=? LIMIT 1", systemTable)
-			existsRBACRow := make([]clickhouse.RBACObject, 0)
-			if err := b.ch.SelectContext(ctx, &existsRBACRow, isRBACExistsSQL, name); err != nil {
-				log.Warn().Msgf("RBAC object resolve failed, check SQL GRANTS or <access_management> settings for user which you use to connect to clickhouse-server, kind: %s, name: %s, error: %v", kind, name, err)
-				return false, "", nil
-			}
-			if len(existsRBACRow) != 0 {
-				return true, "sql", []string{existsRBACRow[0].Id}
-			}
+		isRBACExistsSQL := fmt.Sprintf("SELECT toString(id) AS id, name FROM `system`.`%s` WHERE name=? LIMIT 1", systemTable)
+		existsRBACRow := make([]clickhouse.RBACObject, 0)
+		if err := b.ch.SelectContext(ctx, &existsRBACRow, isRBACExistsSQL, name); err != nil {
+			log.Warn().Msgf("RBAC object resolve failed, check SQL GRANTS or <access_management> settings for user which you use to connect to clickhouse-server, kind: %s, name: %s, error: %v", kind, name, err)
+			return false, "", nil
+		}
+		if len(existsRBACRow) != 0 {
+			return true, "sql", []string{existsRBACRow[0].Id}
 		}
 	}
 
