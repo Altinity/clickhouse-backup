@@ -64,6 +64,10 @@ type BackupDestination struct {
 }
 
 func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Backup, cfg *config.Config, retrierClassifier retrier.Classifier) error {
+	// empty name collapses `path.Join(backup.BackupName, f.Name())` to the remote path root, fix https://github.com/Altinity/clickhouse-backup/issues/1524
+	if strings.Trim(backup.BackupName, "/") == "" {
+		return errors.New("RemoveBackupRemote: refuse to delete backup with empty name, it would wipe the whole remote path")
+	}
 	retry := retrier.New(retrier.ExponentialBackoff(cfg.General.RetriesOnFailure, common.AddRandomJitter(cfg.General.RetriesDuration, cfg.General.RetriesJitter)), retrierClassifier)
 
 	// SFTP/FTP: Use DeleteFile which handles directory deletion
@@ -373,6 +377,12 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 	cacheMiss := false
 	err = bd.Walk(ctx, "/", false, func(ctx context.Context, o RemoteFile) error {
 		backupName := strings.Trim(o.Name(), "/")
+		// zero-byte "folder placeholder" object with key == `<path>/` (created by cloud consoles, `aws s3api put-object --key prefix/`, etc.)
+		// otherwise becomes a broken backup with empty name and deleting it wipes the whole prefix, fix https://github.com/Altinity/clickhouse-backup/issues/1524
+		if backupName == "" {
+			log.Warn().Msgf("BackupList: skip nameless entry %q, looks like folder placeholder object at the root of remote path", o.Name())
+			return nil
+		}
 		if !parseMetadata || (parseMetadataOnly != "" && parseMetadataOnly != backupName) {
 			if cachedMetadata, isCached := listCache[backupName]; isCached {
 				result = append(result, cachedMetadata)
