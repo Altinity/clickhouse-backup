@@ -12,12 +12,26 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 )
 
 var watchBackupTemplateTimeRE = regexp.MustCompile(`{time:([^}]+)}`)
+
+// watchIterationCallback builds the completion callback attached to every watch
+// iteration, so each cycle notifies general.callback_url separately with its own
+// operation_id. Returns nil when no callback URL is configured.
+func (b *Backuper) watchIterationCallback() *status.CallbackConfig {
+	if b.cfg == nil || b.cfg.General.CallbackURL == "" {
+		return nil
+	}
+	return &status.CallbackConfig{
+		URLs:    []string{b.cfg.General.CallbackURL},
+		Timeout: b.cfg.General.CallbackTimeoutDuration,
+	}
+}
 
 func (b *Backuper) NewBackupWatchName(ctx context.Context, backupType string) (string, error) {
 	return b.newBackupWatchNameFromTemplate(ctx, b.cfg.General.WatchBackupNameTemplate, backupType)
@@ -85,13 +99,16 @@ func (b *Backuper) ValidateWatchParams(watchInterval, fullInterval, watchBackupN
 //
 // - each watch-interval, run create_remote increment --diff-from=prev-name + delete local increment, even when upload failed
 //   - save previous backup type incremental, next try will also incremental, until reach full interval
-func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate string, schedules []string, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource bool, version string, commandId int, metrics *metrics.APIMetrics, cliCtx *cli.Context) error {
+func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate string, schedules []string, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, streaming bool, version string, commandId int, metrics *metrics.APIMetrics, cliCtx *cli.Command) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return errors.WithStack(err)
 	}
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
+	// every iteration registers a status row, so the history bound matters here even
+	// for a standalone CLI `watch` which never goes through the API config reload
+	status.SetMaxFinishedRows(b.cfg.General.StatusHistorySize)
 	// standalone CLI graceful shutdown, server mode cancels the command context via status.Current.CancelAll on SIGTERM
 	if commandId == status.NotFromAPI {
 		var stopSignals context.CancelFunc
@@ -110,7 +127,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 		return errors.Wrap(err, "Watch ValidateWatchParams")
 	}
 	if len(b.cfg.General.WatchSchedules) > 0 {
-		return b.watchWithSchedules(ctx, watchInterval, fullInterval, watchBackupNameTemplate, schedules, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, version, commandId, metrics, cliCtx)
+		return b.watchWithSchedules(ctx, watchInterval, fullInterval, watchBackupNameTemplate, schedules, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, streaming, version, commandId, metrics, cliCtx)
 	}
 	backupType := "full"
 	prevBackupName := ""
@@ -155,18 +172,20 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 			if backupType == "increment" {
 				diffFromRemote = prevBackupName
 			}
+			iterationCommandId, _ := status.Current.StartWithCallback("create_remote "+backupName, uuid.NewString(), b.watchIterationCallback())
 			if metrics != nil {
 				createRemoteErr, createRemoteErrCount = metrics.ExecuteWithMetrics("create_remote", createRemoteErrCount, func() error {
-					return b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, version, commandId)
+					return b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, streaming, version, commandId)
 				})
-				// If backups_to_keep_local=-1 then the local backup is deleted in the upload step when RemoveOldBackupsLocal is called
-				if !deleteSource && b.cfg.General.BackupsToKeepLocal >= 0 {
+				// If backups_to_keep_local=-1 then the local backup is deleted in the upload step when RemoveOldBackupsLocal is called,
+				// streaming create_remote always removes the local backup itself
+				if !deleteSource && !streaming && b.cfg.General.BackupsToKeepLocal >= 0 {
 					deleteLocalErr, deleteLocalErrCount = metrics.ExecuteWithMetrics("delete", deleteLocalErrCount, func() error {
-						return b.RemoveBackupLocal(ctx, backupName, nil)
+						return b.RemoveBackupLocal(ctx, backupName, nil, true)
 					})
 				}
 			} else {
-				createRemoteErr = b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, version, commandId)
+				createRemoteErr = b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, streaming, version, commandId)
 				if createRemoteErr != nil {
 					cmd := "create_remote"
 					if diffFromRemote != "" {
@@ -193,14 +212,17 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 					if deleteSource {
 						cmd += " --delete-source"
 					}
+					if streaming {
+						cmd += " --streaming"
+					}
 					cmd += " " + backupName
 					log.Error().Msgf("%s return error: %v", cmd, createRemoteErr)
 					createRemoteErrCount += 1
 				} else {
 					createRemoteErrCount = 0
 				}
-				if !deleteSource && b.cfg.General.BackupsToKeepLocal >= 0 {
-					deleteLocalErr = b.RemoveBackupLocal(ctx, backupName, nil)
+				if !deleteSource && !streaming && b.cfg.General.BackupsToKeepLocal >= 0 {
+					deleteLocalErr = b.RemoveBackupLocal(ctx, backupName, nil, true)
 					if deleteLocalErr != nil {
 						log.Error().Fields(map[string]interface{}{
 							"backup":    backupName,
@@ -212,6 +234,11 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 					}
 				}
 
+			}
+			if createRemoteErr != nil {
+				status.Current.Stop(iterationCommandId, createRemoteErr)
+			} else {
+				status.Current.Stop(iterationCommandId, deleteLocalErr)
 			}
 
 			if (createRemoteErrCount > b.cfg.General.BackupsToKeepRemote && b.cfg.General.BackupsToKeepRemote >= 0) || (deleteLocalErrCount > b.cfg.General.BackupsToKeepLocal && b.cfg.General.BackupsToKeepLocal >= 0) {

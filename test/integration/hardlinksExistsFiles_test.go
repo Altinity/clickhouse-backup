@@ -118,9 +118,9 @@ func TestHardlinksExistsFiles(t *testing.T) {
 			}
 		}
 
-		// Delete local backups
-		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", baseBackupName)
+		// Delete local backups, the increment first: it requires baseBackupName via `required_backup`, see #1493
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", incrementBackupName)
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", baseBackupName)
 
 		// Download increment with --hardlink-exists-files and disk rebalance
 		downloadOut, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", "--hardlink-exists-files", incrementBackupName)
@@ -159,7 +159,8 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		// TRUNCATE+re-INSERT advances block numbers, so identical data lands
 		// under a new part name while hash_of_all_files stays the same.
 		if useHashOfAllFiles {
-			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", baseBackupName)
+			// the downloaded increment stays local and requires baseBackupName, only the base is re-downloaded below, see #1493
+			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "--force", "local", baseBackupName)
 
 			env.queryWithNoError(t, r, "TRUNCATE TABLE "+dbNameFull+"."+tableName)
 			env.queryWithNoError(t, r, "INSERT INTO "+dbNameFull+"."+tableName+" SELECT number FROM numbers(100)")
@@ -182,7 +183,8 @@ func TestHardlinksExistsFiles(t *testing.T) {
 			// Empty the source table so it owns no candidate part, then put the
 			// byte-identical data into a clone table; download must hardlink the
 			// part across table names by hash_of_all_files.
-			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", baseBackupName)
+			// --force: the local increment still requires baseBackupName, see #1493
+			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "--force", "local", baseBackupName)
 
 			cloneTableName := tableName + "_clone"
 			env.queryWithNoError(t, r, "TRUNCATE TABLE "+dbNameFull+"."+tableName)

@@ -20,6 +20,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsV2Config "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
@@ -119,6 +120,53 @@ func (s *S3) ResolveEndpoint(ctx context.Context, params s3.EndpointParameters) 
 	return resolvedEndpoint, nil
 }
 
+// buildHTTPTransport - http.Transport for the S3 client, built on top of the AWS SDK defaults
+// (MaxIdleConnsPerHost=10, MaxConnsPerHost=2048, dial timeouts), not http.DefaultTransport which
+// would silently drop MaxIdleConnsPerHost to 2, see https://github.com/Altinity/clickhouse-backup/issues/1376
+func buildHTTPTransport(cfg *config.S3Config) *http.Transport {
+	transport := awshttp.NewBuildableClient().GetTransport()
+	if cfg.DisableCertVerification {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	if cfg.HTTPMaxIdleConns > 0 {
+		transport.MaxIdleConns = cfg.HTTPMaxIdleConns
+	}
+	if cfg.HTTPMaxIdleConnsPerHost > 0 {
+		transport.MaxIdleConnsPerHost = cfg.HTTPMaxIdleConnsPerHost
+	}
+	if cfg.HTTPMaxConnsPerHost > 0 {
+		transport.MaxConnsPerHost = cfg.HTTPMaxConnsPerHost
+	}
+	if cfg.HTTPWriteBufferSize > 0 {
+		transport.WriteBufferSize = cfg.HTTPWriteBufferSize
+	}
+	if cfg.HTTPReadBufferSize > 0 {
+		transport.ReadBufferSize = cfg.HTTPReadBufferSize
+	}
+	// durations already validated in config.ValidateConfig
+	if d, parseErr := time.ParseDuration(cfg.HTTPIdleConnTimeout); parseErr == nil {
+		transport.IdleConnTimeout = d
+	}
+	// On endpoints which negotiate HTTP/2 (AWS S3 doesn't, most S3-compatible providers do) a stalled
+	// connection wedges every request multiplexed over it forever, there is no per-request timeout,
+	// e.g. hundreds of UploadPartCopy goroutines stuck in http2 writeRequest during object-disk
+	// server-side copy. PING the peer when the connection goes idle and cap how long a single write may
+	// stall, closing the connection makes in-flight requests fail so they are retried on a fresh one.
+	// See https://github.com/Altinity/clickhouse-backup/issues/1490
+	h2Config := http.HTTP2Config{}
+	if d, parseErr := time.ParseDuration(cfg.HTTP2SendPingTimeout); parseErr == nil {
+		h2Config.SendPingTimeout = d
+	}
+	if d, parseErr := time.ParseDuration(cfg.HTTP2PingTimeout); parseErr == nil {
+		h2Config.PingTimeout = d
+	}
+	if d, parseErr := time.ParseDuration(cfg.HTTP2WriteByteTimeout); parseErr == nil {
+		h2Config.WriteByteTimeout = d
+	}
+	transport.HTTP2 = &h2Config
+	return transport
+}
+
 // Connect - connect to s3
 func (s *S3) Connect(ctx context.Context) error {
 	var err error
@@ -161,6 +209,12 @@ func (s *S3) Connect(ctx context.Context) error {
 				SecretAccessKey: s.Config.SecretKey,
 			},
 		}
+		// static keys sign the STS AssumeRole call, the bucket is accessed with the assumed role's permissions
+		if s.Config.AssumeRoleARN != "" {
+			awsConfig.Credentials = aws.NewCredentialsCache(awsConfig.Credentials)
+			stsClient = sts.NewFromConfig(awsConfig)
+			awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, s.Config.AssumeRoleARN)
+		}
 	}
 
 	if awsConfig.Credentials != nil {
@@ -175,43 +229,8 @@ func (s *S3) Connect(ctx context.Context) error {
 		}
 	}
 
-	httpTransport := http.DefaultTransport
-	// Build a custom HTTP transport only when cert verification is disabled or any HTTP tuning
-	// knob is set, otherwise keep the AWS SDK default transport untouched.
-	// See https://github.com/Altinity/clickhouse-backup/issues/1376
-	needCustomTransport := s.Config.DisableCertVerification ||
-		s.Config.HTTPMaxIdleConns > 0 || s.Config.HTTPMaxIdleConnsPerHost > 0 ||
-		s.Config.HTTPMaxConnsPerHost > 0 || s.Config.HTTPWriteBufferSize > 0 ||
-		s.Config.HTTPReadBufferSize > 0 || s.Config.HTTPIdleConnTimeout != ""
-	if needCustomTransport {
-		customTransport := http.DefaultTransport.(*http.Transport).Clone()
-		if s.Config.DisableCertVerification {
-			customTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-		}
-		if s.Config.HTTPMaxIdleConns > 0 {
-			customTransport.MaxIdleConns = s.Config.HTTPMaxIdleConns
-		}
-		if s.Config.HTTPMaxIdleConnsPerHost > 0 {
-			customTransport.MaxIdleConnsPerHost = s.Config.HTTPMaxIdleConnsPerHost
-		}
-		if s.Config.HTTPMaxConnsPerHost > 0 {
-			customTransport.MaxConnsPerHost = s.Config.HTTPMaxConnsPerHost
-		}
-		if s.Config.HTTPWriteBufferSize > 0 {
-			customTransport.WriteBufferSize = s.Config.HTTPWriteBufferSize
-		}
-		if s.Config.HTTPReadBufferSize > 0 {
-			customTransport.ReadBufferSize = s.Config.HTTPReadBufferSize
-		}
-		if s.Config.HTTPIdleConnTimeout != "" {
-			// already validated in config.ValidateConfig
-			if d, parseErr := time.ParseDuration(s.Config.HTTPIdleConnTimeout); parseErr == nil {
-				customTransport.IdleConnTimeout = d
-			}
-		}
-		httpTransport = customTransport
-		awsConfig.HTTPClient = &http.Client{Transport: httpTransport}
-	}
+	httpTransport := http.RoundTripper(buildHTTPTransport(s.Config))
+	awsConfig.HTTPClient = &http.Client{Transport: httpTransport}
 
 	// The aws-sdk default (WhenSupported) adds an aws-chunked flexible-checksum trailer to streaming (unseekable) uploads.
 	// Non-AWS S3-compatible providers reject it ("aws-chunked encoding is not supported...", GCS SignatureDoesNotMatch via
@@ -704,7 +723,7 @@ func (s *S3) deleteKeys(ctx context.Context, keys []string) error {
 		}
 		batch := objectsToDelete[i:end]
 
-		failures, err := s.executeBatchDelete(ctx, batch)
+		failures, err := s.deleteBatchWithFallback(ctx, batch)
 		if err != nil {
 			// Entire batch failed
 			return errors.Wrapf(err, "S3 batch delete failed for batch starting at index %d", i)
@@ -721,6 +740,69 @@ func (s *S3) deleteKeys(ctx context.Context, keys []string) error {
 
 	log.Debug().Msgf("S3 batch delete: successfully deleted %d objects", len(objectsToDelete))
 	return nil
+}
+
+// deleteBatchWithFallback runs executeBatchDelete and, when the whole DeleteObjects request fails
+// (not per-key errors), applies the recovery configured via s3->delete_batch_min_size (split the batch in
+// halves down to that size) and s3->delete_batch_fallback_to_single (delete the objects one by one).
+// Some S3-compatible gateways (e.g. DigitalOcean Spaces / Ceph RGW) reset the response stream when the
+// batch contains large objects, so the same batch fails forever, see https://github.com/Altinity/clickhouse-backup/issues/1532
+func (s *S3) deleteBatchWithFallback(ctx context.Context, batch []s3types.ObjectIdentifier) ([]KeyError, error) {
+	failures, err := s.executeBatchDelete(ctx, batch)
+	if err == nil {
+		return failures, nil
+	}
+	if minSize := s.Config.DeleteBatchMinSize; minSize > 0 && len(batch) > minSize {
+		half := len(batch) / 2
+		log.Warn().Msgf("S3 DeleteObjects failed for batch of %d objects: %v, retrying as two batches of %d and %d", len(batch), err, half, len(batch)-half)
+		left, leftErr := s.deleteBatchWithFallback(ctx, batch[:half])
+		if leftErr != nil {
+			return nil, leftErr
+		}
+		right, rightErr := s.deleteBatchWithFallback(ctx, batch[half:])
+		if rightErr != nil {
+			return nil, rightErr
+		}
+		return append(left, right...), nil
+	}
+	if !s.Config.DeleteBatchFallbackToSingle {
+		return nil, err
+	}
+	log.Warn().Msgf("S3 DeleteObjects failed for batch of %d objects: %v, falling back to single DeleteObject calls", len(batch), err)
+	return s.deleteObjectsOneByOne(ctx, batch)
+}
+
+// deleteObjectsOneByOne deletes already resolved object identifiers (key + optional version) with
+// single DeleteObject calls, DeleteConcurrency in parallel; per-object errors are collected, not fatal.
+func (s *S3) deleteObjectsOneByOne(ctx context.Context, objects []s3types.ObjectIdentifier) ([]KeyError, error) {
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(s.Config.DeleteConcurrency)
+	var mu sync.Mutex
+	var failures []KeyError
+	for _, obj := range objects {
+		obj := obj
+		g.Go(func() error {
+			params := &s3.DeleteObjectInput{
+				Bucket:    aws.String(s.Config.Bucket),
+				Key:       obj.Key,
+				VersionId: obj.VersionId,
+			}
+			if s.Config.RequestPayer != "" {
+				params.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
+			}
+			if _, err := s.client.DeleteObject(ctx, params); err != nil {
+				log.Warn().Msgf("S3 single delete: failed to delete %s version %v: %v", aws.ToString(obj.Key), aws.ToString(obj.VersionId), err)
+				mu.Lock()
+				failures = append(failures, KeyError{Key: aws.ToString(obj.Key), Err: err})
+				mu.Unlock()
+			}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, errors.Wrap(err, "S3 single delete fallback")
+	}
+	return failures, nil
 }
 
 // withContentMD5 removes all flexible checksum procedures from an operation,

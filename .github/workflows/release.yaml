@@ -12,7 +12,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.26"
+          - "1.27"
 
     steps:
       - name: Checkout project
@@ -29,8 +29,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends ruby ruby-dev gcc rpm 
           sudo apt-get install --no-install-recommends -y make
           sudo gem install --no-document fpm
-# we don't need musl after switch to 1.26
-#         sudo apt-get install -y --no-install-recommends g++ musl-dev musl-tools
 
 #      - name: Cache golang
 #        id: cache-golang

@@ -9,12 +9,14 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	cron "github.com/robfig/cron/v3"
 	"github.com/rs/zerolog/log"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 )
 
 // watchScheduleState - runtime state of one named cron driven backup chain, see https://github.com/Altinity/clickhouse-backup/issues/1354
@@ -146,7 +148,7 @@ func (st *watchScheduleState) dueBackupType(now time.Time) string {
 // watchWithSchedules - cron driven watch mode, each schedule keeps its own full+increment chain with
 // schedule name as backup name prefix; failed backups are retried on the next cron tick instead of aborting,
 // see https://github.com/Altinity/clickhouse-backup/issues/1354
-func (b *Backuper) watchWithSchedules(ctx context.Context, watchInterval, fullInterval, watchBackupNameTemplate string, schedules []string, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource bool, version string, commandId int, metrics *metrics.APIMetrics, cliCtx *cli.Context) error {
+func (b *Backuper) watchWithSchedules(ctx context.Context, watchInterval, fullInterval, watchBackupNameTemplate string, schedules []string, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, streaming bool, version string, commandId int, metrics *metrics.APIMetrics, cliCtx *cli.Command) error {
 	states, err := b.newWatchScheduleStates(ctx)
 	if err != nil {
 		return errors.Wrap(err, "watchWithSchedules newWatchScheduleStates")
@@ -210,7 +212,7 @@ func (b *Backuper) watchWithSchedules(ctx context.Context, watchInterval, fullIn
 					return errors.Wrap(err, "watchWithSchedules ch.Connect")
 				}
 			}
-			b.executeScheduledBackup(ctx, st, backupType, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, version, commandId, metrics, &createRemoteErrCount, &deleteLocalErrCount)
+			b.executeScheduledBackup(ctx, st, backupType, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, streaming, version, commandId, metrics, &createRemoteErrCount, &deleteLocalErrCount)
 		}
 		// https://github.com/Altinity/clickhouse-backup/issues/1152
 		// https://github.com/Altinity/clickhouse-backup/issues/1166
@@ -234,7 +236,7 @@ func (b *Backuper) watchWithSchedules(ctx context.Context, watchInterval, fullIn
 }
 
 // executeScheduledBackup - create_remote (+ optional rebase for full_type=rebase) + delete local + optional delete previous cycle
-func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchScheduleState, backupType, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource bool, version string, commandId int, metrics *metrics.APIMetrics, createRemoteErrCount, deleteLocalErrCount *int) {
+func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchScheduleState, backupType, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, streaming bool, version string, commandId int, metrics *metrics.APIMetrics, createRemoteErrCount, deleteLocalErrCount *int) {
 	backupName, err := b.newBackupWatchNameFromTemplate(ctx, st.template, backupType)
 	if err != nil {
 		log.Error().Str("schedule", st.schedule.Name).Msgf("newBackupWatchNameFromTemplate return error: %v", err)
@@ -250,10 +252,12 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 	if rebaseRequired {
 		diffFromRemote = st.prevBackupName
 	}
+	iterationCommandId, _ := status.Current.StartWithCallback("create_remote "+backupName, uuid.NewString(), b.watchIterationCallback())
 	createRemote := func() error {
-		return b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, version, commandId)
+		return b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, backupNamedCollections, false, skipCheckPartsColumns, false, streaming, version, commandId)
 	}
 	var createRemoteErr error
+	var deleteLocalErr error
 	if metrics != nil {
 		createRemoteErr, *createRemoteErrCount = metrics.ExecuteWithMetrics("create_remote", *createRemoteErrCount, createRemote)
 		if createRemoteErr == nil && rebaseRequired {
@@ -270,12 +274,12 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 	if createRemoteErr != nil {
 		log.Error().Str("schedule", st.schedule.Name).Msgf("scheduled %s backup `%s` return error: %v, will retry on next cron tick", backupType, backupName, createRemoteErr)
 	}
-	// If backups_to_keep_local=-1 then the local backup is deleted in the upload step when RemoveOldBackupsLocal is called
-	if !deleteSource && b.cfg.General.BackupsToKeepLocal >= 0 {
+	// If backups_to_keep_local=-1 then the local backup is deleted in the upload step when RemoveOldBackupsLocal is called,
+	// streaming create_remote always removes the local backup itself
+	if !deleteSource && !streaming && b.cfg.General.BackupsToKeepLocal >= 0 {
 		removeLocal := func() error {
-			return b.RemoveBackupLocal(ctx, backupName, nil)
+			return b.RemoveBackupLocal(ctx, backupName, nil, true)
 		}
-		var deleteLocalErr error
 		if metrics != nil {
 			deleteLocalErr, *deleteLocalErrCount = metrics.ExecuteWithMetrics("delete", *deleteLocalErrCount, removeLocal)
 		} else {
@@ -284,6 +288,11 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 		if deleteLocalErr != nil {
 			log.Error().Str("schedule", st.schedule.Name).Msgf("delete local `%s` return error: %v", backupName, deleteLocalErr)
 		}
+	}
+	if createRemoteErr != nil {
+		status.Current.Stop(iterationCommandId, createRemoteErr)
+	} else {
+		status.Current.Stop(iterationCommandId, deleteLocalErr)
 	}
 	if createRemoteErr != nil {
 		return
@@ -320,7 +329,7 @@ func (b *Backuper) deletePreviousWatchCycle(ctx context.Context, st *watchSchedu
 			continue
 		}
 		log.Info().Str("schedule", st.schedule.Name).Msgf("delete previous cycle backup `%s`", remoteBackup.BackupName)
-		if err = b.RemoveBackupRemote(ctx, remoteBackup.BackupName); err != nil {
+		if err = b.RemoveBackupRemote(ctx, remoteBackup.BackupName, true); err != nil {
 			return errors.Wrapf(err, "can't delete `%s`", remoteBackup.BackupName)
 		}
 	}

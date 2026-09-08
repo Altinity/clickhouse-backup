@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -195,8 +196,10 @@ func (ch *ClickHouse) GetDisks(ctx context.Context, enrich bool) ([]Disk, error)
 		if disks[i].Name == ch.Config.EmbeddedBackupDisk {
 			disks[i].IsBackup = true
 		}
+		disks[i].RawPath = disks[i].Path
 		// s3_plain disk could contain relative remote disks path, need transform it to `/var/lib/clickhouse/disks/disk_name`
-		if disks[i].Path != "" && !strings.HasPrefix(disks[i].Path, "/") {
+		// a plain disk in the bucket root reports an empty path, keeping it empty would make it a prefix of every table data path
+		if (disks[i].Path != "" && !strings.HasPrefix(disks[i].Path, "/")) || (disks[i].Path == "" && disks[i].IsPlain()) {
 			for _, d := range disks {
 				if d.Name == "default" {
 					disks[i].Path = path.Join(d.Path, "disks", disks[i].Name) + "/"
@@ -279,20 +282,38 @@ func (ch *ClickHouse) getMetadataPath(ctx context.Context) (string, error) {
 	var result []struct {
 		MetadataPath string `ch:"metadata_path"`
 	}
-	query := "SELECT metadata_path FROM system.tables WHERE database = 'system' AND metadata_path!='' LIMIT 1"
-	// https://github.com/ClickHouse/ClickHouse/issues/76546
-	if ch.version >= 25000000 {
-		query = "SELECT data_path AS metadata_path FROM system.databases WHERE name = 'system' LIMIT 1"
+	tablesQuery := "SELECT metadata_path FROM system.tables WHERE database = 'system' AND metadata_path!='' LIMIT 1"
+	databasesQuery := "SELECT data_path AS metadata_path FROM system.databases WHERE name = 'system' LIMIT 1"
+	// ch.version could be still unknown here (`tables` command, API) or unavailable (no grant on system.build_options),
+	// don't read ch.version directly https://github.com/Altinity/clickhouse-backup/issues/1537
+	version, err := ch.GetVersion(ctx)
+	if err != nil {
+		return "", errors.Wrap(err, "getMetadataPath: get version")
 	}
-	if err := ch.SelectContext(ctx, &result, query); err != nil {
+	query := tablesQuery
+	// https://github.com/ClickHouse/ClickHouse/issues/76546
+	if version >= 25000000 {
+		query = databasesQuery
+	}
+	if err = ch.SelectContext(ctx, &result, query); err != nil {
 		return "", errors.Wrap(err, "getMetadataPath: select metadata_path")
 	}
 	if len(result) == 0 {
 		return "", errors.New("can't get metadata_path from system.tables or system.databases")
 	}
+	// 25.1+ returns relative metadata_path in system.tables, when version is unknown detect it by missing leading slash, https://github.com/Altinity/clickhouse-backup/issues/1537
+	if query == tablesQuery && !strings.HasPrefix(result[0].MetadataPath, "/") {
+		result = result[:0]
+		if err = ch.SelectContext(ctx, &result, databasesQuery); err != nil {
+			return "", errors.Wrap(err, "getMetadataPath: select data_path")
+		}
+		if len(result) == 0 {
+			return "", errors.New("can't get data_path from system.databases")
+		}
+	}
 	metadataPath := strings.Split(result[0].MetadataPath, "/")
 	// https://github.com/ClickHouse/ClickHouse/issues/76546
-	if ch.version >= 25000000 && strings.HasSuffix(result[0].MetadataPath, "/store/") {
+	if strings.HasSuffix(result[0].MetadataPath, "/store/") {
 		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-2]...)
 		result[0].MetadataPath = path.Join(result[0].MetadataPath, "metadata")
 	} else if strings.Contains(result[0].MetadataPath, "/store/") {
@@ -304,6 +325,26 @@ func (ch *ClickHouse) getMetadataPath(ctx context.Context) (string, error) {
 	return path.Join("/", result[0].MetadataPath), nil
 }
 
+// normalizeDiskMetadataType - `system.disks.metadata_type` contains enum names (`Local`, `Plain`, `PlainRewritable`),
+// normalize lowered values to config-style spelling; when the column absent (old versions), infer from literal disk type
+// the same way as ClickHouse RegisterDiskObjectStorage.cpp does
+func normalizeDiskMetadataType(metadataType, diskType string) string {
+	switch metadataType {
+	case "plainrewritable":
+		return "plain_rewritable"
+	case "staticweb":
+		return "web"
+	case "":
+		if strings.Contains(diskType, "plain") && strings.Contains(diskType, "rewritable") {
+			return "plain_rewritable"
+		}
+		if strings.Contains(diskType, "plain") {
+			return "plain"
+		}
+	}
+	return metadataType
+}
+
 func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, error) {
 	select {
 	case <-ctx.Done():
@@ -312,6 +353,7 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		type DiskFields struct {
 			DiskTypePresent          uint64 `ch:"is_disk_type_present"`
 			ObjectStorageTypePresent uint64 `ch:"is_object_storage_type_present"`
+			MetadataTypePresent      uint64 `ch:"is_metadata_type_present"`
 			FreeSpacePresent         uint64 `ch:"is_free_space_present"`
 			StoragePolicyPresent     uint64 `ch:"is_storage_policy_present"`
 			CachePathPresent         uint64 `ch:"is_cache_path_present"`
@@ -320,6 +362,7 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		if err := ch.SelectContext(ctx, &diskFields,
 			"SELECT countIf(name='type') AS is_disk_type_present, "+
 				"countIf(name='object_storage_type') AS is_object_storage_type_present, "+
+				"countIf(name='metadata_type') AS is_metadata_type_present, "+
 				"countIf(name='free_space') AS is_free_space_present, "+
 				"countIf(name='disks') AS is_storage_policy_present, "+
 				"countIf(name='cache_path') AS is_cache_path_present "+
@@ -347,6 +390,15 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		if len(diskFields) > 0 && diskFields[0].ObjectStorageTypePresent > 0 {
 			diskTypeSQL = "any(lower(if(d.type='ObjectStorage',d.object_storage_type,d.type)))"
 		}
+		// system.disks.metadata_type contains enum names such as `Local`, `Plain`, `PlainRewritable`
+		diskMetadataTypeSQL := "''"
+		if len(diskFields) > 0 && diskFields[0].MetadataTypePresent > 0 {
+			diskMetadataTypeSQL = "any(lower(d.metadata_type))"
+		}
+		// a plain/plain_rewritable disk reports a bucket key prefix instead of a local path and the prefix is
+		// empty for a disk in the bucket root, `d.path` is not an identity for such disks, group them by name
+		// to avoid collapsing several different plain disks into one row
+		groupBySQL := "d.path, if(d.path='', d.name, '')"
 
 		diskFreeSpaceSQL := "toUInt64(0)"
 		if len(diskFields) > 0 && diskFields[0].FreeSpacePresent > 0 {
@@ -362,12 +414,15 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		}
 		var result []Disk
 		query := fmt.Sprintf(
-			"SELECT d.path AS path, %s AS name, %s AS type, %s AS free_space, %s AS storage_policies "+
-				"FROM system.disks AS d %s GROUP BY d.path",
-			diskNameSQL, diskTypeSQL, diskFreeSpaceSQL, storagePoliciesSQL, joinStoragePoliciesSQL,
+			"SELECT d.path AS path, %s AS name, %s AS type, %s AS metadata_type, %s AS free_space, %s AS storage_policies "+
+				"FROM system.disks AS d %s GROUP BY %s",
+			diskNameSQL, diskTypeSQL, diskMetadataTypeSQL, diskFreeSpaceSQL, storagePoliciesSQL, joinStoragePoliciesSQL, groupBySQL,
 		)
 		if err := ch.SelectContext(ctx, &result, query); err != nil {
 			return nil, errors.Wrap(err, "getDisksFromSystemDisks: select disks")
+		}
+		for i := range result {
+			result[i].MetadataType = normalizeDiskMetadataType(result[i].MetadataType, result[i].Type)
 		}
 		return result, nil
 	}
@@ -393,7 +448,7 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	var err error
 	settings := map[string]bool{
 		"show_table_uuid_in_table_create_query_if_not_nil": false,
-		"display_secrets_in_show_and_select":               false,
+		"format_display_secrets_in_show_and_select":        false,
 	}
 	if settings, err = ch.CheckSettingsExists(ctx, settings); err != nil {
 		return nil, errors.Wrap(err, "GetTables: check settings")
@@ -477,7 +532,62 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 			return nil, errors.Wrap(err, "GetTables: enrich inner dependencies")
 		}
 	}
+	if err = ch.normalizeRelativeDataPaths(ctx, tables); err != nil {
+		return nil, errors.Wrap(err, "GetTables: normalize relative data paths")
+	}
 	return tables, nil
+}
+
+// normalizeRelativeDataPaths - plain/plain_rewritable disks report a relative `system.disks.path`
+// (the bucket key prefix) and `system.tables.data_paths` inherit it. Rewrite such data paths to the
+// same pseudo-absolute form GetDisks produces (`<default>/disks/<disk_name>/...`), so downstream code
+// can both match a data path to its disk by prefix and derive the disk-root-relative logical path
+// as TrimPrefix(dataPath, disk.Path)
+func (ch *ClickHouse) normalizeRelativeDataPaths(ctx context.Context, tables []Table) error {
+	hasRelative := false
+	for i := range tables {
+		for _, dataPath := range tables[i].DataPaths {
+			if dataPath != "" && !strings.HasPrefix(dataPath, "/") {
+				hasRelative = true
+				break
+			}
+		}
+		if hasRelative {
+			break
+		}
+	}
+	if !hasRelative {
+		return nil
+	}
+	var rawDisks []struct {
+		Name string `ch:"name"`
+		Path string `ch:"path"`
+	}
+	if err := ch.SelectContext(ctx, &rawDisks, "SELECT name, path FROM system.disks"); err != nil {
+		return errors.Wrap(err, "normalizeRelativeDataPaths: select system.disks")
+	}
+	defaultPath := "/var/lib/clickhouse"
+	for _, d := range rawDisks {
+		if d.Name == "default" {
+			defaultPath = d.Path
+		}
+	}
+	// longest raw path first, so a data path resolves to the most specific disk prefix
+	sort.Slice(rawDisks, func(i, j int) bool { return len(rawDisks[i].Path) > len(rawDisks[j].Path) })
+	for i := range tables {
+		for j, dataPath := range tables[i].DataPaths {
+			if dataPath == "" || strings.HasPrefix(dataPath, "/") {
+				continue
+			}
+			for _, d := range rawDisks {
+				if d.Path != "" && !strings.HasPrefix(d.Path, "/") && strings.HasPrefix(dataPath, d.Path) {
+					tables[i].DataPaths[j] = path.Join(defaultPath, "disks", d.Name, strings.TrimPrefix(dataPath, d.Path)) + "/"
+					break
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // https://github.com/Altinity/clickhouse-backup/issues/613

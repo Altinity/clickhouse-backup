@@ -155,7 +155,8 @@ func runRebaseScenario(t *testing.T, r *require.Assertions, env *TestEnvironment
 	// t.FailNow()/runtime.Goexit and skips the rest of this function, so without this the
 	// shared pooled env would leak test_rebase_* state into whichever test reuses it next
 	cleanupScenario := func() {
-		for _, b := range []string{fullBackup, inc1Backup, inc2Backup} {
+		// children first: `delete remote|local <parent>` refuses to break a `required_backup` chain, see #1493
+		for _, b := range []string{inc2Backup, inc1Backup, fullBackup} {
 			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c "+configFile+" delete remote "+b+" 2>/dev/null || true")
 			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c "+configFile+" delete local "+b+" 2>/dev/null || true")
 		}

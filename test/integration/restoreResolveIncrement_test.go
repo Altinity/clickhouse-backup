@@ -75,7 +75,7 @@ func runRestoreResolveIncrementScenario(t *testing.T, r *require.Assertions, env
 		fullCleanup(t, r, env, backups, []string{"remote", "local"}, []string{dbName}, false, false, false, tc.configFile)
 	}()
 
-	for _, backupName := range backups {
+	for _, backupName := range childrenFirst(backups) {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+tc.configFile+" delete remote "+backupName+" 2>/dev/null || true")
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+tc.configFile+" delete local "+backupName+" 2>/dev/null || true")
 	}

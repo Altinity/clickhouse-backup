@@ -11,17 +11,100 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/require"
 )
 
-// TestKill reproduces https://github.com/Altinity/clickhouse-backup/issues/1365.
-// An `upload` action is started via the REST API and killed while in-progress; the
-// .pid file must be removed by the kill handler so that subsequent operations
-// (delete in particular) do not falsely report "another command is already running".
+// assertActionCanceled fails unless the killed command's row in /backup/actions
+// ended as "cancel".
+//
+// NOTE: this proves the kill handler reached the row, NOT that the command obeyed
+// the cancellation. status.Cancel sets CancelStatus itself and status.Stop leaves
+// an already terminal row alone, so the row reads "cancel" even when the worker
+// ignored its context and ran to completion (verified by re-running these tests
+// against the pre-fix c.Int("command-id") lookup: they still passed). The checks
+// that actually have teeth are assertBackupNotComplete, assertBackupAbsent and the
+// row-count check in TestKillRestore — a command which was not canceled finishes
+// its work and leaves a complete artifact behind.
+func assertActionCanceled(r *require.Assertions, env *TestEnvironment, cmdPrefix, nameNeedle string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for {
+		out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
+			execCurlWithFailBody("'http://127.0.0.1:7171/backup/actions'"))
+		r.NoError(err)
+		row := ""
+		for _, line := range strings.Split(out, "\n") {
+			if strings.Contains(line, `"command":"`+cmdPrefix) && strings.Contains(line, nameNeedle) {
+				row = line
+			}
+		}
+		switch {
+		case strings.Contains(row, `"status":"`+status.CancelStatus+`"`):
+			return
+		case strings.Contains(row, `"status":"`+status.SuccessStatus+`"`):
+			r.FailNow(fmt.Sprintf(
+				"%s ... %s ended as %q instead of %q: the command ran to completion, so /backup/kill did not cancel it\nrow: %s",
+				cmdPrefix, nameNeedle, status.SuccessStatus, status.CancelStatus, row))
+		case time.Now().After(deadline):
+			r.FailNow(fmt.Sprintf(
+				"timeout waiting for %s ... %s to reach status %q\nlast row: %s\nall rows:\n%s",
+				cmdPrefix, nameNeedle, status.CancelStatus, row, out))
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+}
+
+// assertBackupNotComplete proves the killed command never finished writing its
+// backup: no row in system.backup_list for it is a complete one.
+//
+// `desc` carries the data format for a usable backup and the GetLocalBackups
+// "broken ..." reason for an unusable one, so "no non-broken row" covers both
+// legitimate post-kill states — the directory was never created, or it exists
+// without the metadata.json that create/download/upload write last. A command
+// which ignored cancellation runs to completion and leaves a complete backup.
+//
+// Unlike a `delete` based check this does not depend on how far the command got
+// before the kill landed: deleting works for a broken backup too, so its result
+// cannot tell a canceled command from a finished one.
+func assertBackupNotComplete(r *require.Assertions, env *TestEnvironment, location, backupName string) {
+	var complete uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&complete,
+		"SELECT count() FROM system.backup_list WHERE location=? AND name=? AND desc NOT LIKE '%broken%' SETTINGS empty_result_for_aggregation_by_empty_set=0",
+		location, backupName))
+	r.Equal(uint64(0), complete,
+		"%s backup %q is complete after kill, so the killed command ran to completion instead of being canceled",
+		location, backupName)
+}
+
+// assertBackupAbsent is the stricter variant used for `create` only: a canceled
+// create removes the partial backup it was building, so nothing must be left at
+// all. Do not use it for download/upload, which have no such cleanup — there the
+// leftovers are legitimate and only assertBackupNotComplete applies.
+//
+// It doubles as the stale pid lock regression check (issue #1365): a leftover pid
+// file makes delete answer "another clickhouse-backup ..." instead.
+func assertBackupAbsent(r *require.Assertions, env *TestEnvironment, where, backupName string) {
+	out, _ := postActionAllowError(env, fmt.Sprintf("delete %s %s", where, backupName))
+	r.NotContains(out, "another clickhouse-backup", "delete must not see a stale pid lock: %s", out)
+	r.Contains(out, fmt.Sprintf("is not found on %s storage", where),
+		"the killed command ran to completion and left a usable %s backup %q, so /backup/kill did not cancel it: %s",
+		where, backupName, out)
+}
+
+// TestKillUpload reproduces https://github.com/Altinity/clickhouse-backup/issues/1365.
+// An `upload` is started via the REST API and killed while in-progress; the .pid
+// file must be removed by the kill handler so that subsequent operations (delete in
+// particular) do not falsely report "another command is already running".
 // Also verifies that /backup/kill blocks until the upload goroutine actually
 // finished (sync wait), observable via the upload_finish metric.
-func TestKill(t *testing.T) {
+//
+// It is not just "the upload variant" of the other TestKill* tests: it is the only
+// one exercising the `GET /backup/kill` endpoint and the only one killing a command
+// started through a dedicated REST endpoint (POST /backup/upload/{name}, which keeps
+// the commandId in process). The others start and kill through POST /backup/actions,
+// which re-enters the CLI app with --command-id. Keep both paths covered.
+func TestKillUpload(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	r.NoError(env.DockerCP("configs/config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
@@ -50,7 +133,7 @@ func TestKill(t *testing.T) {
 	}()
 	defer func() {
 		if out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "delete", "remote", backupName); err != nil && !strings.Contains(out, fmt.Sprintf("'%s' is not found on remote storage", backupName)) {
-			t.Errorf("TestKill teardown error=%+v: delete remote %s: %s", err, backupName, out)
+			t.Errorf("TestKillUpload teardown error=%+v: delete remote %s: %s", err, backupName, out)
 		}
 		// The killed mid-flight upload leaves an incomplete remote backup that
 		// `delete remote` reports as "not found" and never removes. Purge the
@@ -59,7 +142,7 @@ func TestKill(t *testing.T) {
 		// asserts the remote backup path is empty).
 		_ = env.DockerExec("minio", "rm", "-rf", env.minioBackupFSPath(r, "config-s3.yml", backupName))
 		if err := env.dropDatabase(dbName, true); err != nil {
-			t.Errorf("TestKill teardown: drop database %s, error=%+v", dbName, err)
+			t.Errorf("TestKillUpload teardown: drop database %s, error=%+v", dbName, err)
 		}
 	}()
 	time.Sleep(3 * time.Second)
@@ -119,6 +202,9 @@ func TestKill(t *testing.T) {
 			"sync wait did not block until the upload goroutine returned",
 		finishBefore, finishAfter)
 
+	// The upload must have ended canceled, not completed — see assertActionCanceled.
+	assertActionCanceled(r, env, "upload", backupName, 10*time.Second)
+
 	// 5. Pid file must be gone immediately after kill — this is the regression check.
 	checkOut, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
 		"if [ -f "+pidPath+" ]; then echo EXISTS; cat "+pidPath+"; else echo GONE; fi")
@@ -132,6 +218,12 @@ func TestKill(t *testing.T) {
 	r.NotContains(deleteOut, "another clickhouse-backup",
 		"delete must not see a stale pid lock: %s", deleteOut)
 	r.NotContains(deleteOut, "\"status\":\"error\"", "delete must succeed: %s", deleteOut)
+
+	// 7. The killed upload must not have finished: Upload writes the remote
+	// metadata.json after every data file, so an interrupted one leaves either no
+	// remote backup at all or one the listing reports as broken. An upload which
+	// ignored cancellation runs to completion and leaves a usable remote backup.
+	assertBackupNotComplete(r, env, "remote", backupName)
 
 	// Remote backup, database, and env-pool return are handled by the defers
 	// registered above so they run on both success and mid-test failure.
@@ -185,8 +277,17 @@ func TestKillDownload(t *testing.T) {
 	// 2. start download and kill it mid-flight (start happens inside observeInProgressAndKill).
 	observeInProgressAndKill(r, env, "download "+backupName, backupName, "download", 15*time.Second)
 
-	// 3. a follow-up delete must not trip on a stale pid lock.
-	delOut = postAction(r, env, "delete local "+backupName)
+	// 3. The killed download must not have finished: Download writes the local
+	// metadata.json as its very last step, so an interrupted one leaves either no
+	// backup directory at all or a directory GetLocalBackups reports as broken.
+	// A download which ignored cancellation runs to completion and shows up as a
+	// regular, complete local backup instead.
+	assertBackupNotComplete(r, env, "local", backupName)
+
+	// 4. a follow-up delete must not trip on a stale pid lock. It has to tolerate
+	// both post-kill states: the backup directory is removed when it exists, and
+	// reported as missing when the kill landed before it was created.
+	delOut, _ = postActionAllowError(env, "delete local "+backupName)
 	r.NotContains(delOut, "another clickhouse-backup", "delete must not see a stale pid lock: %s", delOut)
 }
 
@@ -222,9 +323,9 @@ func TestKillCreate(t *testing.T) {
 	// finish before the kill is issued.
 	observeInProgressAndKill(r, env, fmt.Sprintf("create --tables=%s.* %s", dbName, backupName), backupName, "create", 15*time.Second)
 
-	// a follow-up delete must not trip on a stale pid lock.
-	delOut := postAction(r, env, "delete local "+backupName)
-	r.NotContains(delOut, "another clickhouse-backup", "delete must not see a stale pid lock: %s", delOut)
+	// The canceled create must have removed the partial backup it was building,
+	// and the follow-up delete must not trip on a stale pid lock.
+	assertBackupAbsent(r, env, "local", backupName)
 }
 
 // TestKillRestore kills an in-progress restore and verifies the restore
@@ -256,6 +357,9 @@ func TestKillRestore(t *testing.T) {
 	time.Sleep(3 * time.Second)
 
 	// create a local backup, drop the table so restore has to recreate+attach.
+	var fullRows uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&fullRows, fmt.Sprintf("SELECT count() FROM %s.t1 SETTINGS empty_result_for_aggregation_by_empty_set=0", dbName)))
+	r.Greater(fullRows, uint64(0), "the table to restore must not be empty")
 	runActionWait(r, env, fmt.Sprintf("create --tables=%s.* %s", dbName, backupName), "create", backupName, 60*time.Second)
 	// SYNC keyword not supported before 21.x
 	dropSQL := fmt.Sprintf("DROP TABLE %s.t1", dbName)
@@ -267,6 +371,16 @@ func TestKillRestore(t *testing.T) {
 	// start happens inside observeInProgressAndKill so a fast restore cannot
 	// finish before the kill is issued.
 	observeInProgressAndKill(r, env, "restore "+backupName, backupName, "restore", 15*time.Second)
+
+	// The canceled restore must not have put the whole table back. Either the
+	// table was never re-attached (query fails) or it holds fewer rows than the
+	// backup contains. A restore which ignored cancellation finishes and the row
+	// count matches the original exactly.
+	var restoredRows uint64
+	if err := env.ch.SelectSingleRowNoCtx(&restoredRows, fmt.Sprintf("SELECT count() FROM %s.t1 SETTINGS empty_result_for_aggregation_by_empty_set=0", dbName)); err == nil {
+		r.Less(restoredRows, fullRows,
+			"the killed restore completed (%d of %d rows restored), so /backup/kill did not cancel it", restoredRows, fullRows)
+	}
 }
 
 // readUploadFinishMetric scrapes /metrics and parses the value of
@@ -325,6 +439,14 @@ func postAction(r *require.Assertions, env *TestEnvironment, command string) str
 		execCurlWithFailBody("-XPOST 'http://127.0.0.1:7171/backup/actions' -d '"+body+"'"))
 	r.NoError(err, "%s\nPOST /backup/actions %q error: %v", out, command, err)
 	return out
+}
+
+// postActionAllowError is postAction for calls whose HTTP status is part of what
+// the test inspects, so a 4xx/5xx body is returned instead of failing the test.
+func postActionAllowError(env *TestEnvironment, command string) (string, error) {
+	body := fmt.Sprintf(`{"command":%q}`, command)
+	return env.DockerExecOut("clickhouse-backup", "bash", "-ce",
+		execCurlWithFailBody("-XPOST 'http://127.0.0.1:7171/backup/actions' -d '"+body+"'"))
 }
 
 // runActionWait starts an async action and blocks until it reports success.
@@ -451,6 +573,9 @@ func observeInProgressAndKill(r *require.Assertions, env *TestEnvironment, comma
 			"the %s goroutine did not return", metricCommand, finishBefore, finishAfter, metricCommand)
 
 	r.Contains(out, "PID=GONE", "pid file %s must be removed by kill:\n%s", pidPath, out)
+
+	cmdPrefix, _, _ := strings.Cut(command, " ")
+	assertActionCanceled(r, env, cmdPrefix, backupName, 10*time.Second)
 }
 
 // scriptField returns the value after the first line of observe+kill script

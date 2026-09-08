@@ -81,10 +81,11 @@ def incremental_remote_storage(self):
 
     finally:
         with Finally("I remove created backups"):
-            backup.cmd(f"clickhouse-backup delete local {table_name}_1", exitcode=None)
-            backup.cmd(f"clickhouse-backup delete remote {table_name}_1", exitcode=None)
+            # _2 requires _1 via `required_backup`, delete the increment first, see #1493
             backup.cmd(f"clickhouse-backup delete local {table_name}_2", exitcode=None)
             backup.cmd(f"clickhouse-backup delete remote {table_name}_2", exitcode=None)
+            backup.cmd(f"clickhouse-backup delete local {table_name}_1", exitcode=None)
+            backup.cmd(f"clickhouse-backup delete remote {table_name}_1", exitcode=None)
 
         with And("I set remote_storage to none"):
             config_modifier(fields={"general": {"remote_storage": "none"}})

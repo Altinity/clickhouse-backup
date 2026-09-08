@@ -1,15 +1,37 @@
 package backup
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
+
+// CollectRemoteBackups silently swallowed GetRemoteBackups errors, so `list remote` printed
+// an empty list and exited 0 even when remote storage credentials were broken
+func TestListRemotePropagatesError(t *testing.T) {
+	cfg := config.DefaultConfig()
+	// port 1 is closed, ch.Connect inside GetRemoteBackups shall fail fast
+	cfg.ClickHouse.Host = "127.0.0.1"
+	cfg.ClickHouse.Port = 1
+	cfg.General.RemoteStorage = "azblob"
+	b := NewBackuper(cfg)
+	// Connect retries forever by design (issue #857), fail on the first Ping error instead of hanging the test
+	b.ch.BreakConnectOnError = true
+
+	_, err := b.CollectRemoteBackups(context.Background(), "all")
+	require.Error(t, err)
+
+	require.Error(t, b.List("remote", "all", "text"))
+	require.Error(t, b.List("", "all", "text"))
+}
 
 // captureStdout redirects os.Stdout for the duration of fn and returns everything written to it.
 // printLiveTableRows/printBackupSections write directly to os.Stdout (json/yaml/csv/tsv branches)

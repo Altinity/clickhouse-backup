@@ -2,16 +2,17 @@ package config
 
 import (
 	"bytes"
-	"flag"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 )
 
 func TestMaskSensitiveEnvValue(t *testing.T) {
@@ -189,17 +190,8 @@ func TestDisableEnvironmentOverride(t *testing.T) {
 			t.Fatalf("can't write config file: %v", err)
 		}
 	}
-	newCliContext := func(envValues ...string) *cli.Context {
-		env := cli.StringSlice{}
-		flagSet := flag.NewFlagSet("test", flag.ContinueOnError)
-		flagSet.Var(&env, "env", "")
-		flagSet.String("config", configPath, "")
-		for _, value := range envValues {
-			if err := flagSet.Set("env", value); err != nil {
-				t.Fatalf("failed to set env flag %q: %v", value, err)
-			}
-		}
-		return cli.NewContext(cli.NewApp(), flagSet, nil)
+	newCliContext := func(envValues ...string) *cli.Command {
+		return parseTestFlags(t, append([]string{"--config", configPath}, envArgs(envValues)...)...)
 	}
 
 	// envconfig overrides config file values by default
@@ -256,18 +248,42 @@ func TestDisableEnvironmentOverride(t *testing.T) {
 	}
 }
 
-func newEnvContext(t *testing.T, values ...string) *cli.Context {
+func newEnvContext(t *testing.T, values ...string) *cli.Command {
+	t.Helper()
+	return parseTestFlags(t, envArgs(values)...)
+}
+
+func envArgs(values []string) []string {
+	args := make([]string, 0, len(values)*2)
+	for _, value := range values {
+		args = append(args, "--env", value)
+	}
+	return args
+}
+
+// parseTestFlags runs a root command declaring the same global flags as main.go
+// and returns it after parsing, so the config helpers see real urfave/cli v3 state.
+func parseTestFlags(t *testing.T, args ...string) *cli.Command {
 	t.Helper()
 
-	env := cli.StringSlice{}
-	flagSet := flag.NewFlagSet("test", flag.ContinueOnError)
-	flagSet.Var(&env, "env", "")
-	for _, value := range values {
-		if err := flagSet.Set("env", value); err != nil {
-			t.Fatalf("failed to set env flag %q: %v", value, err)
-		}
+	var parsed *cli.Command
+	cmd := &cli.Command{
+		Name: "clickhouse-backup",
+		// same as main.go, so an --env value keeps its commas
+		DisableSliceFlagSeparator: true,
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "config", Aliases: []string{"c"}, Value: DefaultConfigPath},
+			&cli.StringSliceFlag{Name: "environment-override", Aliases: []string{"env"}},
+		},
+		Action: func(_ context.Context, c *cli.Command) error {
+			parsed = c
+			return nil
+		},
 	}
-	return cli.NewContext(cli.NewApp(), flagSet, nil)
+	if err := cmd.Run(context.Background(), append([]string{"clickhouse-backup"}, args...)); err != nil {
+		t.Fatalf("failed to parse test flags %v: %v", args, err)
+	}
+	return parsed
 }
 
 func TestValidateConfigCompressionTuning(t *testing.T) {
@@ -526,6 +542,30 @@ func TestValidateConfigErrors(t *testing.T) {
 		{"bad api cancel_operation_timeout", func(cfg *Config) {
 			cfg.API.CancelOperationTimeout = "1parsec"
 		}, "invalid api.cancel_operation_timeout"},
+		{"delete_batch_size zero", func(cfg *Config) {
+			cfg.General.DeleteBatchSize = 0
+		}, "delete_batch_size=0 is invalid"},
+		{"delete_batch_size above s3 limit", func(cfg *Config) {
+			cfg.General.RemoteStorage = "s3"
+			cfg.General.DeleteBatchSize = 1001
+		}, "delete_batch_size=1001 is invalid for s3"},
+		{"delete_batch_size above 1000 allowed for gcs", func(cfg *Config) {
+			cfg.General.RemoteStorage = "gcs"
+			cfg.General.DeleteBatchSize = 5000
+		}, ""},
+		{"s3 delete_batch_min_size above delete_batch_size", func(cfg *Config) {
+			cfg.General.RemoteStorage = "s3"
+			cfg.General.DeleteBatchSize = 100
+			cfg.S3.DeleteBatchMinSize = 101
+		}, "s3->delete_batch_min_size=101 is invalid"},
+		{"s3 delete_batch_min_size negative", func(cfg *Config) {
+			cfg.General.RemoteStorage = "s3"
+			cfg.S3.DeleteBatchMinSize = -1
+		}, "s3->delete_batch_min_size=-1 is invalid"},
+		{"s3 delete_batch_min_size valid", func(cfg *Config) {
+			cfg.General.RemoteStorage = "s3"
+			cfg.S3.DeleteBatchMinSize = 100
+		}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -685,5 +725,157 @@ func TestDefaultCompleteResumableAfterRestartCommands(t *testing.T) {
 		if cfg.API.IsCompleteResumableAfterRestartCommand(command) {
 			t.Fatalf("expected %q to require explicit opt-in for automatic resume after restart", command)
 		}
+	}
+}
+
+func TestConfig_ParseCallbackURL_FromYAML(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	content := "general:\n  callback_url: \"http://example.com/webhook\"\n"
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.General.CallbackURL != "http://example.com/webhook" {
+		t.Fatalf("expected CallbackURL %q, got %q", "http://example.com/webhook", cfg.General.CallbackURL)
+	}
+}
+
+func TestConfig_ParseCallbackURL_FromENV(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	content := "general:\n  callback_url: \"http://from-yaml.example/webhook\"\n"
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	t.Setenv("CALLBACK_URL", "http://from-env.example/webhook")
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.General.CallbackURL != "http://from-env.example/webhook" {
+		t.Fatalf("expected CALLBACK_URL env override %q, got %q", "http://from-env.example/webhook", cfg.General.CallbackURL)
+	}
+}
+
+func TestConfig_ParseCallbackTimeout_Default(t *testing.T) {
+	cfg := DefaultConfig()
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("ValidateConfig: %v", err)
+	}
+	if cfg.General.CallbackTimeout != "5s" {
+		t.Fatalf("expected default CallbackTimeout %q, got %q", "5s", cfg.General.CallbackTimeout)
+	}
+	if cfg.General.CallbackTimeoutDuration != 5*time.Second {
+		t.Fatalf("expected default CallbackTimeoutDuration %v, got %v", 5*time.Second, cfg.General.CallbackTimeoutDuration)
+	}
+}
+
+func TestConfig_ParseCallbackTimeout_FromYAML(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	content := "general:\n  callback_timeout: \"10s\"\n"
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.General.CallbackTimeout != "10s" {
+		t.Fatalf("expected CallbackTimeout %q, got %q", "10s", cfg.General.CallbackTimeout)
+	}
+	if cfg.General.CallbackTimeoutDuration != 10*time.Second {
+		t.Fatalf("expected CallbackTimeoutDuration %v, got %v", 10*time.Second, cfg.General.CallbackTimeoutDuration)
+	}
+}
+
+func TestConfig_ParseCallbackTimeout_RejectsNonPositive(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	content := "general:\n  callback_timeout: \"0s\"\n"
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	_, err := LoadConfig(configPath)
+	if err == nil {
+		t.Fatal("expected LoadConfig to reject callback_timeout: 0s")
+	}
+	if !strings.Contains(err.Error(), "callback timeout") {
+		t.Fatalf("expected callback timeout validation error, got: %v", err)
+	}
+}
+
+func TestConfig_StatusHistorySize_Default(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(configPath, []byte("general:\n  remote_storage: none\n"), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.General.StatusHistorySize != 1000 {
+		t.Fatalf("expected default StatusHistorySize 1000, got %d", cfg.General.StatusHistorySize)
+	}
+}
+
+func TestConfig_StatusHistorySize_FromYAML(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(configPath, []byte("general:\n  status_history_size: 25\n"), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.General.StatusHistorySize != 25 {
+		t.Fatalf("expected StatusHistorySize 25, got %d", cfg.General.StatusHistorySize)
+	}
+}
+
+func TestConfig_StatusHistorySize_RejectsNonPositive(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(configPath, []byte("general:\n  status_history_size: 0\n"), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	_, err := LoadConfig(configPath)
+	if err == nil {
+		t.Fatal("expected LoadConfig to reject status_history_size: 0")
+	}
+	if !strings.Contains(err.Error(), "status_history_size") {
+		t.Fatalf("expected status_history_size validation error, got: %v", err)
+	}
+}
+
+func TestValidateConfigHTTPTimeouts(t *testing.T) {
+	cases := []struct {
+		name    string
+		apply   func(cfg *Config)
+		wantErr bool
+	}{
+		{"defaults", func(cfg *Config) {}, false},
+		{"http2 timeouts disabled", func(cfg *Config) {
+			cfg.S3.HTTP2SendPingTimeout = ""
+			cfg.S3.HTTP2PingTimeout = ""
+			cfg.S3.HTTP2WriteByteTimeout = ""
+		}, false},
+		{"invalid http_idle_conn_timeout", func(cfg *Config) { cfg.S3.HTTPIdleConnTimeout = "30" }, true},
+		{"invalid http2_send_ping_timeout", func(cfg *Config) { cfg.S3.HTTP2SendPingTimeout = "wrong" }, true},
+		{"invalid http2_ping_timeout", func(cfg *Config) { cfg.S3.HTTP2PingTimeout = "wrong" }, true},
+		{"invalid http2_write_byte_timeout", func(cfg *Config) { cfg.S3.HTTP2WriteByteTimeout = "wrong" }, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.General.RemoteStorage = "s3"
+			tc.apply(cfg)
+			err := ValidateConfig(cfg)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }

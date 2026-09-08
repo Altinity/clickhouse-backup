@@ -27,7 +27,8 @@ func TestWatchSchedule(t *testing.T) {
 		for _, location := range []string{"local", "remote"} {
 			out, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml list "+location+" 2>/dev/null | cut -d ' ' -f 1 | grep '^"+prefix+"-' || true")
 			for _, backupName := range strings.Fields(out) {
-				env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete "+location+" "+backupName+" 2>/dev/null || true")
+				// --force, the chain is deleted oldest-first, so a full still required by its increments would be refused by the required_backup guard
+				env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete --force "+location+" "+backupName+" 2>/dev/null || true")
 			}
 		}
 		// backups killed mid-flight may not show up in `list local`, remove leftovers from all backup disks

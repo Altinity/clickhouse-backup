@@ -1341,7 +1341,7 @@ class Cluster(object):
             with And("I list environment variables to show their values"):
                 self.command(None, "env | grep CLICKHOUSE")
 
-        clickhouse_version = os.environ.get("CLICKHOUSE_VERSION", "26.3")
+        clickhouse_version = os.environ.get("CLICKHOUSE_VERSION", "26.8")
         clickhouse_image = os.environ.get("CLICKHOUSE_IMAGE", "clickhouse/clickhouse-server")
         zookeeper_version = os.environ.get("ZOOKEEPER_VERSION", "3.9.5")
         zookeeper_image = os.environ.get("ZOOKEEPER_IMAGE", "docker.io/zookeeper")

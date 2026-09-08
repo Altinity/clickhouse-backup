@@ -105,46 +105,19 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	}
 	b.adjustResumeFlag(resume)
 
-	allDatabases, err := b.ch.GetDatabases(ctx, b.cfg, tablePattern)
+	p, err := b.createPrologue(ctx, tablePattern, partitions, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly)
 	if err != nil {
-		return errors.Wrap(err, "can't get database engines from clickhouse")
+		return err
 	}
-	tables, err := b.GetTables(ctx, tablePattern)
-	if err != nil {
-		return errors.Wrap(err, "can't get tables from clickhouse")
-	}
-
-	if b.CalculateNonSkipTables(tables) == 0 && !b.cfg.General.AllowEmptyBackups {
-		return errors.New("no tables for backup")
-	}
-
-	allFunctions, err := b.ch.GetUserDefinedFunctions(ctx)
-	if err != nil {
-		return errors.Wrap(err, "GetUserDefinedFunctions return error")
-	}
-
-	disks, err := b.ch.GetDisks(ctx, false)
-	if err != nil {
-		return errors.Wrap(err, "b.ch.GetDisks")
-	}
-
-	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
-	if err != nil {
-		return errors.Wrap(err, "b.ch.GetDefaultPath")
-	}
-
-	diskMap := make(map[string]string, len(disks))
-	diskTypes := make(map[string]string, len(disks))
-	for _, disk := range disks {
-		diskMap[disk.Name] = disk.Path
-		diskTypes[disk.Name] = disk.Type
-	}
-	partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, tables, nil, partitions)
-	doBackupData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
-	if doBackupData {
-		if err = b.checkDisksConsistency(disks); err != nil {
-			return err
+	allDatabases, allFunctions, tables, disks := p.allDatabases, p.allFunctions, p.tables, p.disks
+	diskMap, diskTypes, partitionsIdMap, partitionsNameList, doBackupData := p.diskMap, p.diskTypes, p.partitionsIdMap, p.partitionsNameList, p.doBackupData
+	if b.DryRun {
+		dryRunReport, dryRunErr := b.buildCreateDryRunReport(ctx, backupName, tables, disks, partitionsIdMap, doBackupData, rbacOnly, configsOnly, namedCollectionsOnly)
+		if dryRunErr != nil {
+			return dryRunErr
 		}
+		b.setDryRunResult(dryRunReport)
+		return nil
 	}
 	backupRBACSize, backupConfigSize, backupNamedCollectionsSize, rbacConfigsNamedCollectionsErr := b.createConfigsNamedCollectionsAndRBACIfNecessary(ctx, backupName, createRBAC, rbacOnly, createConfigs, configsOnly, createNamedCollections, namedCollectionsOnly, disks, diskMap)
 	if rbacConfigsNamedCollectionsErr != nil {
@@ -161,7 +134,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	if err != nil {
 		log.Error().Msgf("backup failed error: %v", err)
 		// delete local backup when creation failure
-		if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
+		if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks, true); removeBackupErr != nil {
 			log.Error().Msgf("creating failed -> b.RemoveBackupLocal error: %v", removeBackupErr)
 		}
 		// fix corner cases after https://github.com/Altinity/clickhouse-backup/issues/379
@@ -192,6 +165,76 @@ func (b *Backuper) CalculateNonSkipTables(tables []clickhouse.Table) int {
 		i++
 	}
 	return i
+}
+
+// createPrologueResult holds everything CreateBackup collects from ClickHouse before the backup is created
+type createPrologueResult struct {
+	allDatabases       []clickhouse.Database
+	allFunctions       []clickhouse.Function
+	tables             []clickhouse.Table
+	disks              []clickhouse.Disk
+	diskMap            map[string]string
+	diskTypes          map[string]string
+	partitionsIdMap    map[metadata.TableTitle]common.EmptyMap
+	partitionsNameList map[metadata.TableTitle][]string
+	doBackupData       bool
+}
+
+// createPrologue collects databases, tables, functions, disks and partitions for the backup,
+// sets b.DefaultDataPath and checks disks consistency when table data is going to be backed up
+func (b *Backuper) createPrologue(ctx context.Context, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly bool) (*createPrologueResult, error) {
+	allDatabases, err := b.ch.GetDatabases(ctx, b.cfg, tablePattern)
+	if err != nil {
+		return nil, errors.Wrap(err, "can't get database engines from clickhouse")
+	}
+	tables, err := b.GetTables(ctx, tablePattern)
+	if err != nil {
+		return nil, errors.Wrap(err, "can't get tables from clickhouse")
+	}
+
+	if b.CalculateNonSkipTables(tables) == 0 && !b.cfg.General.AllowEmptyBackups {
+		return nil, errors.New("no tables for backup")
+	}
+
+	allFunctions, err := b.ch.GetUserDefinedFunctions(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "GetUserDefinedFunctions return error")
+	}
+
+	disks, err := b.ch.GetDisks(ctx, false)
+	if err != nil {
+		return nil, errors.Wrap(err, "b.ch.GetDisks")
+	}
+
+	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
+	if err != nil {
+		return nil, errors.Wrap(err, "b.ch.GetDefaultPath")
+	}
+
+	diskMap := make(map[string]string, len(disks))
+	diskTypes := make(map[string]string, len(disks))
+	for _, disk := range disks {
+		diskMap[disk.Name] = disk.Path
+		diskTypes[disk.Name] = disk.Type
+	}
+	partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, tables, nil, partitions)
+	doBackupData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
+	if doBackupData {
+		if err = b.checkDisksConsistency(disks); err != nil {
+			return nil, err
+		}
+	}
+	return &createPrologueResult{
+		allDatabases:       allDatabases,
+		allFunctions:       allFunctions,
+		tables:             tables,
+		disks:              disks,
+		diskMap:            diskMap,
+		diskTypes:          diskTypes,
+		partitionsIdMap:    partitionsIdMap,
+		partitionsNameList: partitionsNameList,
+		doBackupData:       doBackupData,
+	}, nil
 }
 
 func (b *Backuper) createConfigsNamedCollectionsAndRBACIfNecessary(ctx context.Context, backupName string, createRBAC bool, rbacOnly bool, createConfigs bool, configsOnly bool, createNamedCollections bool, namedCollectionsOnly bool, disks []clickhouse.Disk, diskMap map[string]string) (uint64, uint64, uint64, error) {
@@ -234,53 +277,13 @@ func (b *Backuper) createConfigsNamedCollectionsAndRBACIfNecessary(ctx context.C
 }
 
 func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRemote string, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly bool, backupVersion string, partitions []string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, tables []clickhouse.Table, tablePattern string, skipProjections []string, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, backupRBACSize, backupConfigSize, backupNamedCollectionsSize uint64, startBackup time.Time, version int) error {
-	// Create backup dir on all clickhouse disks
-	for _, disk := range disks {
-		if err := filesystemhelper.Mkdir(path.Join(disk.Path, "backup"), b.ch, disks); err != nil {
-			return errors.Wrap(err, "filesystemhelper.Mkdir")
-		}
+	backupPath, err := b.createBackupDirs(backupName, disks)
+	if err != nil {
+		return err
 	}
-	backupPath := path.Join(b.DefaultDataPath, "backup", backupName)
-	if _, err := os.Stat(path.Join(backupPath, "metadata.json")); err == nil || !os.IsNotExist(err) {
-		if !b.resume {
-			return errors.Errorf("'%s' medatata.json already exists", backupName)
-		}
-		log.Warn().Msgf("'%s' medatata.json already exists, will overwrite and resume object disk data upload", backupName)
-	}
-	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
-		if err = filesystemhelper.Mkdir(backupPath, b.ch, disks); err != nil {
-			log.Error().Msgf("can't create directory %s: %v", backupPath, err)
-			return errors.Wrap(err, "filesystemhelper.Mkdir backupPath")
-		}
-	}
-	isObjectDiskContainsTables := false
-	for _, disk := range disks {
-		if b.shouldSkipByDiskNameOrType(disk) {
-			continue
-		}
-		if b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, disks) {
-			for _, table := range tables {
-				sort.Slice(table.DataPaths, func(i, j int) bool { return len(table.DataPaths[i]) > len(table.DataPaths[j]) })
-				for _, tableDataPath := range table.DataPaths {
-					if strings.HasPrefix(tableDataPath, disk.Path) {
-						isObjectDiskContainsTables = true
-						break
-					}
-				}
-			}
-		}
-	}
-
-	var err error
-	// https://github.com/Altinity/clickhouse-backup/issues/910
-	if isObjectDiskContainsTables {
-		if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
-			return errors.Wrap(err, "config.ValidateObjectDiskConfig")
-		}
-		// Warn if encryption key is set for GCS - object disk files won't be encrypted
-		if b.cfg.General.RemoteStorage == "gcs" && b.cfg.GCS.EncryptionKey != "" {
-			log.Warn().Msg("GCS_ENCRYPTION_KEY is configured, but files in object_disk path will NOT be encrypted. ClickHouse needs direct unencrypted access to these files for BACKUP/RESTORE operations.")
-		}
+	isObjectDiskContainsTables := b.isObjectDiskContainsTables(tables, disks, doBackupData)
+	if err = b.validateObjectDiskConfigIfNecessary(isObjectDiskContainsTables); err != nil {
+		return err
 	}
 
 	if isObjectDiskContainsTables || (diffFromRemote != "" && b.cfg.General.RemoteStorage != "custom") {
@@ -319,29 +322,9 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 		}
 	}
 
-	if b.cfg.ClickHouse.CheckPartsColumns && doBackupData {
-		tablesToCheck := make([]clickhouse.Table, 0, len(tables))
-		for _, table := range tables {
-			if !table.Skip && table.BackupType == clickhouse.ShardBackupFull {
-				tablesToCheck = append(tablesToCheck, table)
-			}
-		}
-		if err := b.ch.CheckSystemPartsColumnsForTables(ctx, tablesToCheck); err != nil {
-			return errors.Wrap(err, "CheckSystemPartsColumnsForTables failed")
-		}
-		log.Debug().Msgf("CheckSystemPartsColumnsForTables passed for %d tables", len(tablesToCheck))
-	}
-
-	// Fetch in-progress mutations ONCE for the whole backup. system.mutations scans all tables on
-	// every query, so the previous per-table GetInProgressMutations call was O(N^2) and dominated
-	// create time on installations with many tables. We now do a single scan and look up per table.
-	var allInProgressMutations map[metadata.TableTitle][]metadata.MutationMetadata
-	if b.cfg.ClickHouse.BackupMutations && !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
-		var allInProgressMutationsErr error
-		allInProgressMutations, allInProgressMutationsErr = b.ch.GetInProgressMutationsBatch(ctx)
-		if allInProgressMutationsErr != nil {
-			return errors.Wrap(allInProgressMutationsErr, "b.ch.GetInProgressMutationsBatch")
-		}
+	allInProgressMutations, err := b.checkPartsColumnsAndGetInProgressMutations(ctx, tables, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly)
+	if err != nil {
+		return err
 	}
 
 	var backupDataSize, backupObjectDiskSize, backupMetadataSize uint64
@@ -362,78 +345,24 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 		}
 		idx := tableIdx
 		createBackupWorkingGroup.Go(func() error {
-			logger := log.With().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Logger()
-			var realSize, objectDiskSize map[string]int64
-			var disksToPartsMap map[string][]metadata.Part
-			var checksums map[string]uint64
-			var hashOfAllFiles map[string]string
-			var addTableToBackupErr error
-			var tableBrokenParts map[string][]metadata.Part
-			if doBackupData && table.BackupType == clickhouse.ShardBackupFull {
-				logger.Debug().Msg("begin data backup")
-				shadowBackupUUID := strings.ReplaceAll(uuid.New().String(), "-", "")
-				b.addShadowBackupUUID(shadowBackupUUID)
-				disksToPartsMap, realSize, objectDiskSize, checksums, hashOfAllFiles, tableBrokenParts, addTableToBackupErr = b.AddTableToLocalBackup(createCtx, backupName, tablesDiffFromRemote, shadowBackupUUID, disks, &table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}], skipProjections, version)
-				if addTableToBackupErr != nil {
-					logger.Error().Msgf("b.AddTableToLocalBackup error: %v", addTableToBackupErr)
-					return errors.Wrap(addTableToBackupErr, "b.AddTableToLocalBackup")
-				}
-				// account broken and total data parts for the max_broken_part_ratio decision below
-				tableBrokenCount := 0
-				for _, diskParts := range tableBrokenParts {
-					tableBrokenCount += len(diskParts)
-				}
-				tableTotalParts := tableBrokenCount
-				for _, parts := range disksToPartsMap {
-					tableTotalParts += len(parts)
-				}
-				atomic.AddInt64(&brokenParts, int64(tableBrokenCount))
-				atomic.AddInt64(&totalParts, int64(tableTotalParts))
-				// more precise data size calculation
-				for _, size := range realSize {
-					atomic.AddUint64(&backupDataSize, uint64(size))
-				}
-				for _, size := range objectDiskSize {
-					atomic.AddUint64(&backupObjectDiskSize, uint64(size))
-				}
+			tableMeta, tableBackupSize, createOneTableErr := b.createOneTable(createCtx, backupName, backupPath, &table, tablesDiffFromRemote, partitionsIdMap, allInProgressMutations, skipProjections, disks, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, version)
+			if createOneTableErr != nil {
+				return createOneTableErr
 			}
-			// https://github.com/Altinity/clickhouse-backup/issues/529
-			logger.Debug().Msg("get in progress mutations list")
-			inProgressMutations := make([]metadata.MutationMetadata, 0)
-			if b.cfg.ClickHouse.BackupMutations && !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
-				// looked up from the single GetInProgressMutationsBatch query above — avoids the
-				// O(N^2) per-table system.mutations scan.
-				inProgressMutations = allInProgressMutations[metadata.TableTitle{Database: table.Database, Table: table.Name}]
-			}
-			logger.Debug().Msg("create metadata")
-			if schemaOnly || doBackupData {
-				metadataSize, createTableMetadataErr := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
-					Table:          table.Name,
-					Database:       table.Database,
-					UUID:           table.UUID,
-					Query:          table.CreateTableQuery,
-					TotalBytes:     table.TotalBytes,
-					Size:           realSize,
-					Parts:          disksToPartsMap,
-					BrokenParts:    tableBrokenParts,
-					Checksums:      checksums,
-					HashOfAllFiles: hashOfAllFiles,
-					Mutations:      inProgressMutations,
-					MetadataOnly:   schemaOnly || table.BackupType == clickhouse.ShardBackupSchema,
-				}, disks)
-				if createTableMetadataErr != nil {
-					logger.Error().Msgf("b.createTableMetadata error: %v", createTableMetadataErr)
-					return errors.Wrap(createTableMetadataErr, "b.createTableMetadata")
-				}
-				atomic.AddUint64(&backupMetadataSize, metadataSize)
+			atomic.AddInt64(&brokenParts, tableBackupSize.brokenParts)
+			atomic.AddInt64(&totalParts, tableBackupSize.totalParts)
+			atomic.AddUint64(&backupDataSize, tableBackupSize.dataSize)
+			atomic.AddUint64(&backupObjectDiskSize, tableBackupSize.objectDiskSize)
+			atomic.AddUint64(&backupMetadataSize, tableBackupSize.metadataSize)
+			if tableMeta != nil {
 				metaMutex.Lock()
 				tableMetas = append(tableMetas, metadata.TableTitle{
-					Database: table.Database,
-					Table:    table.Name,
+					Database: tableMeta.Database,
+					Table:    tableMeta.Table,
 				})
 				metaMutex.Unlock()
 			}
-			logger.Info().Str("progress", fmt.Sprintf("%d/%d", idx+1, len(tables))).Msg("done")
+			log.Info().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Str("progress", fmt.Sprintf("%d/%d", idx+1, len(tables))).Msg("done")
 			return nil
 		})
 	}
@@ -441,17 +370,8 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 		return errors.Wrap(wgWaitErr, "one of createBackupLocal go-routine return error")
 	}
 
-	// max_broken_part_ratio enforcement: when broken parts were tolerated above, fail the whole backup
-	// if their share of all data parts exceeds the configured ratio; otherwise complete as a partial
-	// backup with a warning, see https://github.com/Altinity/clickhouse-backup/issues/1418
-	if broken := atomic.LoadInt64(&brokenParts); broken > 0 {
-		total := atomic.LoadInt64(&totalParts)
-		if !b.cfg.General.AllowPartialBackup(int(broken), int(total)) {
-			return errors.Errorf("backup aborted: %d of %d data parts are broken, ratio %.4f exceeds max_broken_part_ratio %.4f", broken, total, float64(broken)/float64(total), b.cfg.General.MaxBrokenPartRatio)
-		}
-		// surfaces silent data loss to monitoring in server mode, exposed as clickhouse_backup_failed_parts_count
-		metrics.FailedPartsCount.Add(float64(broken))
-		log.Warn().Int64("broken_parts", broken).Int64("total_parts", total).Float64("max_broken_part_ratio", b.cfg.General.MaxBrokenPartRatio).Msg("partial backup: some data parts were broken but stayed within max_broken_part_ratio")
+	if err := b.checkMaxBrokenPartRatio(atomic.LoadInt64(&brokenParts), atomic.LoadInt64(&totalParts)); err != nil {
+		return err
 	}
 
 	backupMetaFile := path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")
@@ -460,6 +380,199 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	}
 	log.Info().Str("version", backupVersion).Str("operation", "createBackupLocal").Str("duration", utils.HumanizeDuration(time.Since(startBackup))).Msg("done")
 	return nil
+}
+
+// createBackupDirs creates `backup` dir on every disk and the backup dir on the default disk,
+// fails when the backup metadata.json already exists unless --resume is active
+func (b *Backuper) createBackupDirs(backupName string, disks []clickhouse.Disk) (string, error) {
+	// Create backup dir on all clickhouse disks
+	for _, disk := range disks {
+		if err := filesystemhelper.Mkdir(path.Join(disk.Path, "backup"), b.ch, disks); err != nil {
+			return "", errors.Wrap(err, "filesystemhelper.Mkdir")
+		}
+	}
+	backupPath := path.Join(b.DefaultDataPath, "backup", backupName)
+	if _, err := os.Stat(path.Join(backupPath, "metadata.json")); err == nil || !os.IsNotExist(err) {
+		if !b.resume {
+			return "", errors.Errorf("'%s' medatata.json already exists", backupName)
+		}
+		log.Warn().Msgf("'%s' medatata.json already exists, will overwrite and resume object disk data upload", backupName)
+	}
+	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+		if err = filesystemhelper.Mkdir(backupPath, b.ch, disks); err != nil {
+			log.Error().Msgf("can't create directory %s: %v", backupPath, err)
+			return "", errors.Wrap(err, "filesystemhelper.Mkdir backupPath")
+		}
+	}
+	return backupPath, nil
+}
+
+// isObjectDiskContainsTables reports whether any table to back up has data on an object, encrypted object or plain disk,
+// object disk data is copied to remote storage only when table data is backed up,
+// --schema / *-only backups shall not require remote storage, https://github.com/Altinity/clickhouse-backup/issues/1517
+func (b *Backuper) isObjectDiskContainsTables(tables []clickhouse.Table, disks []clickhouse.Disk, doBackupData bool) bool {
+	if !doBackupData {
+		return false
+	}
+	for _, disk := range disks {
+		if b.shouldSkipByDiskNameOrType(disk) {
+			continue
+		}
+		if b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, disks) || b.isDiskPlain(disk) {
+			for _, table := range tables {
+				sort.Slice(table.DataPaths, func(i, j int) bool { return len(table.DataPaths[i]) > len(table.DataPaths[j]) })
+				for _, tableDataPath := range table.DataPaths {
+					if strings.HasPrefix(tableDataPath, disk.Path) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// validateObjectDiskConfigIfNecessary https://github.com/Altinity/clickhouse-backup/issues/910
+func (b *Backuper) validateObjectDiskConfigIfNecessary(isObjectDiskContainsTables bool) error {
+	if !isObjectDiskContainsTables {
+		return nil
+	}
+	if err := config.ValidateObjectDiskConfig(b.cfg); err != nil {
+		return errors.Wrap(err, "config.ValidateObjectDiskConfig")
+	}
+	// Warn if encryption key is set for GCS - object disk files won't be encrypted
+	if b.cfg.General.RemoteStorage == "gcs" && b.cfg.GCS.EncryptionKey != "" {
+		log.Warn().Msg("GCS_ENCRYPTION_KEY is configured, but files in object_disk path will NOT be encrypted. ClickHouse needs direct unencrypted access to these files for BACKUP/RESTORE operations.")
+	}
+	return nil
+}
+
+// checkPartsColumnsAndGetInProgressMutations validates system.parts_columns for full backup tables when configured and
+// fetches in-progress mutations ONCE for the whole backup. system.mutations scans all tables on
+// every query, so the previous per-table GetInProgressMutations call was O(N^2) and dominated
+// create time on installations with many tables. We now do a single scan and look up per table.
+func (b *Backuper) checkPartsColumnsAndGetInProgressMutations(ctx context.Context, tables []clickhouse.Table, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly bool) (map[metadata.TableTitle][]metadata.MutationMetadata, error) {
+	if b.cfg.ClickHouse.CheckPartsColumns && doBackupData {
+		tablesToCheck := make([]clickhouse.Table, 0, len(tables))
+		for _, table := range tables {
+			if !table.Skip && table.BackupType == clickhouse.ShardBackupFull {
+				tablesToCheck = append(tablesToCheck, table)
+			}
+		}
+		if err := b.ch.CheckSystemPartsColumnsForTables(ctx, tablesToCheck); err != nil {
+			return nil, errors.Wrap(err, "CheckSystemPartsColumnsForTables failed")
+		}
+		log.Debug().Msgf("CheckSystemPartsColumnsForTables passed for %d tables", len(tablesToCheck))
+	}
+
+	var allInProgressMutations map[metadata.TableTitle][]metadata.MutationMetadata
+	if b.cfg.ClickHouse.BackupMutations && !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+		var allInProgressMutationsErr error
+		allInProgressMutations, allInProgressMutationsErr = b.ch.GetInProgressMutationsBatch(ctx)
+		if allInProgressMutationsErr != nil {
+			return nil, errors.Wrap(allInProgressMutationsErr, "b.ch.GetInProgressMutationsBatch")
+		}
+	}
+	return allInProgressMutations, nil
+}
+
+// checkMaxBrokenPartRatio enforces max_broken_part_ratio: when broken parts were tolerated, fail the whole backup
+// if their share of all data parts exceeds the configured ratio; otherwise complete as a partial
+// backup with a warning, see https://github.com/Altinity/clickhouse-backup/issues/1418
+func (b *Backuper) checkMaxBrokenPartRatio(broken, total int64) error {
+	if broken <= 0 {
+		return nil
+	}
+	if !b.cfg.General.AllowPartialBackup(int(broken), int(total)) {
+		return errors.Errorf("backup aborted: %d of %d data parts are broken, ratio %.4f exceeds max_broken_part_ratio %.4f", broken, total, float64(broken)/float64(total), b.cfg.General.MaxBrokenPartRatio)
+	}
+	// surfaces silent data loss to monitoring in server mode, exposed as clickhouse_backup_failed_parts_count
+	metrics.FailedPartsCount.Add(float64(broken))
+	log.Warn().Int64("broken_parts", broken).Int64("total_parts", total).Float64("max_broken_part_ratio", b.cfg.General.MaxBrokenPartRatio).Msg("partial backup: some data parts were broken but stayed within max_broken_part_ratio")
+	return nil
+}
+
+// createOneTableSize accumulates per-table counters that createBackupLocal sums into backup-level totals
+type createOneTableSize struct {
+	dataSize       uint64
+	objectDiskSize uint64
+	metadataSize   uint64
+	brokenParts    int64
+	totalParts     int64
+}
+
+// createOneTable backs up data (when requested) and writes table metadata for a single table,
+// returns the written metadata (nil when no metadata was written) and per-table size counters
+func (b *Backuper) createOneTable(ctx context.Context, backupName, backupPath string, table *clickhouse.Table, tablesDiffFromRemote map[metadata.TableTitle]metadata.TableMetadata, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, allInProgressMutations map[metadata.TableTitle][]metadata.MutationMetadata, skipProjections []string, disks []clickhouse.Disk, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly bool, version int) (*metadata.TableMetadata, createOneTableSize, error) {
+	logger := log.With().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Logger()
+	size := createOneTableSize{}
+	var realSize, objectDiskSize map[string]int64
+	var disksToPartsMap map[string][]metadata.Part
+	var checksums map[string]uint64
+	var hashOfAllFiles map[string]string
+	var addTableToBackupErr error
+	var tableBrokenParts map[string][]metadata.Part
+	if doBackupData && table.BackupType == clickhouse.ShardBackupFull {
+		logger.Debug().Msg("begin data backup")
+		shadowBackupUUID := strings.ReplaceAll(uuid.New().String(), "-", "")
+		b.addShadowBackupUUID(shadowBackupUUID)
+		disksToPartsMap, realSize, objectDiskSize, checksums, hashOfAllFiles, tableBrokenParts, addTableToBackupErr = b.AddTableToLocalBackup(ctx, backupName, tablesDiffFromRemote, shadowBackupUUID, disks, table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}], skipProjections, version)
+		if addTableToBackupErr != nil {
+			logger.Error().Msgf("b.AddTableToLocalBackup error: %v", addTableToBackupErr)
+			return nil, size, errors.Wrap(addTableToBackupErr, "b.AddTableToLocalBackup")
+		}
+		// account broken and total data parts for the max_broken_part_ratio decision in createBackupLocal
+		tableBrokenCount := 0
+		for _, diskParts := range tableBrokenParts {
+			tableBrokenCount += len(diskParts)
+		}
+		tableTotalParts := tableBrokenCount
+		for _, parts := range disksToPartsMap {
+			tableTotalParts += len(parts)
+		}
+		size.brokenParts = int64(tableBrokenCount)
+		size.totalParts = int64(tableTotalParts)
+		// more precise data size calculation
+		for _, s := range realSize {
+			size.dataSize += uint64(s)
+		}
+		for _, s := range objectDiskSize {
+			size.objectDiskSize += uint64(s)
+		}
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/529
+	logger.Debug().Msg("get in progress mutations list")
+	inProgressMutations := make([]metadata.MutationMetadata, 0)
+	if b.cfg.ClickHouse.BackupMutations && !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+		// looked up from the single GetInProgressMutationsBatch query in createBackupLocal — avoids the
+		// O(N^2) per-table system.mutations scan.
+		inProgressMutations = allInProgressMutations[metadata.TableTitle{Database: table.Database, Table: table.Name}]
+	}
+	logger.Debug().Msg("create metadata")
+	if !schemaOnly && !doBackupData {
+		return nil, size, nil
+	}
+	tableMeta := metadata.TableMetadata{
+		Table:          table.Name,
+		Database:       table.Database,
+		UUID:           table.UUID,
+		Query:          table.CreateTableQuery,
+		TotalBytes:     table.TotalBytes,
+		Size:           realSize,
+		Parts:          disksToPartsMap,
+		BrokenParts:    tableBrokenParts,
+		Checksums:      checksums,
+		HashOfAllFiles: hashOfAllFiles,
+		Mutations:      inProgressMutations,
+		MetadataOnly:   schemaOnly || table.BackupType == clickhouse.ShardBackupSchema,
+	}
+	metadataSize, createTableMetadataErr := b.createTableMetadata(path.Join(backupPath, "metadata"), tableMeta, disks)
+	if createTableMetadataErr != nil {
+		logger.Error().Msgf("b.createTableMetadata error: %v", createTableMetadataErr)
+		return nil, size, errors.Wrap(createTableMetadataErr, "b.createTableMetadata")
+	}
+	size.metadataSize = metadataSize
+	return &tableMeta, size, nil
 }
 
 func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBackup string, doBackupData, schemaOnly bool, backupVersion, tablePattern string, partitionsNameList map[metadata.TableTitle][]string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, tables []clickhouse.Table, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, backupRBACSize, backupConfigSize, backupNamedCollectionsSize uint64, startBackup time.Time, version int) error {
@@ -522,11 +635,12 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 			} else {
 				if backupResult[0].CompressedSize == 0 && backupResult[0].Id != "" {
 					systemBackupResult := make([]clickhouse.SystemBackups, 0)
-					backupSizeSQL := fmt.Sprintf("SELECT * FROM system.backups WHERE id='%s'", backupResult[0].Id)
+					// explicit column list, SELECT * breaks when new versions add columns unknown to SystemBackups (26.8 added `settings`, `engine_settings`)
+					backupSizeSQL := fmt.Sprintf("SELECT id, status, compressed_size, uncompressed_size FROM system.backups WHERE id='%s'", backupResult[0].Id)
 					if sizeErr := b.ch.SelectContext(ctx, &systemBackupResult, backupSizeSQL); sizeErr != nil {
 						return errors.Wrap(sizeErr, "system.backups query")
 					}
-					if len(systemBackupResult) == 0 && len(systemBackupResult) > 1 {
+					if len(systemBackupResult) != 1 {
 						return errors.Errorf("wrong system.backup results: %v", systemBackupResult)
 					}
 					backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: systemBackupResult[0].CompressedSize})
@@ -983,7 +1097,23 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		}
 		return nil, nil, nil, nil, nil, nil, nil
 	}
-	if err := b.ch.FreezeTable(ctx, table, shadowBackupUUID); err != nil {
+	// ALTER TABLE FREEZE/UNFREEZE are not supported for plain_rewritable disks
+	// (see checkAlterPartitionIsPossible in ClickHouse MergeTreeData.cpp), backup such tables
+	// from the live data with merges stopped instead
+	tableOnPlainDisks, plainDisksErr := b.isTableDataOnPlainDisks(ctx, table, diskList)
+	if plainDisksErr != nil {
+		return nil, nil, nil, nil, nil, nil, plainDisksErr
+	}
+	if tableOnPlainDisks {
+		if err := b.ch.QueryContext(ctx, fmt.Sprintf("SYSTEM STOP MERGES `%s`.`%s`", table.Database, table.Name)); err != nil {
+			return nil, nil, nil, nil, nil, nil, errors.Wrap(err, "SYSTEM STOP MERGES")
+		}
+		defer func() {
+			if err := b.ch.Query(fmt.Sprintf("SYSTEM START MERGES `%s`.`%s`", table.Database, table.Name)); err != nil {
+				log.Warn().Msgf("can't SYSTEM START MERGES `%s`.`%s`: %v", table.Database, table.Name, err)
+			}
+		}()
+	} else if err := b.ch.FreezeTable(ctx, table, shadowBackupUUID); err != nil {
 		return nil, nil, nil, nil, nil, nil, errors.Wrap(err, "b.ch.FreezeTable")
 	}
 	// brokenParts collects, per disk, the data parts that could not be moved/uploaded into the backup
@@ -1007,6 +1137,35 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		case <-ctx.Done():
 			return nil, nil, nil, nil, nil, nil, ctx.Err()
 		default:
+			// plain/plain_rewritable disks have no local shadow, the live parts are enumerated in the bucket
+			if b.isDiskPlain(disk) {
+				if !tableOnPlainDisks {
+					continue
+				}
+				plainParts, plainSize, plainErr := b.uploadPlainDiskParts(ctx, backupName, table, disk, partitionsIdsMap)
+				if plainErr != nil {
+					return nil, nil, nil, nil, nil, nil, errors.Wrap(plainErr, "b.uploadPlainDiskParts")
+				}
+				if len(plainParts) == 0 {
+					continue
+				}
+				disksToPartsMap[disk.Name] = plainParts
+				objectDiskSize[disk.Name] = plainSize
+				if version >= 19011000 {
+					partNames := make([]string, 0, len(plainParts))
+					for _, p := range plainParts {
+						partNames = append(partNames, p.Name)
+					}
+					diskHashes, hashErr := b.fetchHashOfAllFiles(ctx, table.Database, table.Name, disk.Name, partNames)
+					if hashErr != nil {
+						return nil, nil, nil, nil, nil, nil, errors.Wrap(hashErr, "fetchHashOfAllFiles")
+					}
+					for pName, h := range diskHashes {
+						hashOfAllFiles[pName] = h
+					}
+				}
+				continue
+			}
 			shadowPath := path.Join(disk.Path, "shadow", shadowBackupUUID)
 			if _, err := os.Stat(shadowPath); err != nil && os.IsNotExist(err) {
 				continue
@@ -1170,7 +1329,8 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		}
 	}
 	// Unfreeze to unlock data on S3 disks, https://github.com/Altinity/clickhouse-backup/issues/423
-	if version > 21004000 {
+	// UNFREEZE is not supported for plain_rewritable disks and nothing was frozen there
+	if version > 21004000 && !tableOnPlainDisks {
 		if err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` UNFREEZE WITH NAME '%s'", table.Database, table.Name, shadowBackupUUID)); err != nil {
 			if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81") || strings.Contains(err.Error(), "code: 218")) && b.cfg.ClickHouse.IgnoreNotExistsErrorDuringFreeze {
 				logger.Warn().Msgf("can't unfreeze table: %v", err)
@@ -1456,16 +1616,177 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 	return size, brokenParts, nil
 }
 
+// isTableDataOnPlainDisks returns true when the table data lives on plain/plain_rewritable disks.
+// Tables on plain disks are backed up without FREEZE, so mixing plain and non-plain disks in one storage
+// policy is not supported (non-plain parts would be lost), such tables are rejected here.
+func (b *Backuper) isTableDataOnPlainDisks(ctx context.Context, table *clickhouse.Table, diskList []clickhouse.Disk) (bool, error) {
+	onPlainDisk := false
+	for _, disk := range diskList {
+		if b.isDiskPlain(disk) && plainDiskTableRelPath(table.DataPaths, disk) != "" {
+			onPlainDisk = true
+			break
+		}
+	}
+	if !onPlainDisk {
+		return false, nil
+	}
+	// data paths list every disk of the table storage policy, system.parts.disk_name tells where the parts really are
+	var partDisks []struct {
+		DiskName string `ch:"disk_name"`
+	}
+	if err := b.ch.SelectContext(ctx, &partDisks, "SELECT DISTINCT disk_name FROM system.parts WHERE database=? AND `table`=? AND active", table.Database, table.Name); err != nil {
+		return false, errors.Wrap(err, "isTableDataOnPlainDisks: select disk_name from system.parts")
+	}
+	for _, partDisk := range partDisks {
+		disk := b.findDiskByName(diskList, partDisk.DiskName)
+		if disk == nil || !b.isDiskPlain(*disk) {
+			return false, errors.Errorf("`%s`.`%s` have parts on both plain and non-plain (%s) disks, such storage policies are not supported for backup", table.Database, table.Name, partDisk.DiskName)
+		}
+	}
+	return true, nil
+}
+
+// uploadPlainDiskParts enumerates the live data parts of a plain/plain_rewritable disk on the bucket
+// level (FREEZE is not supported for such disks and they have no local metadata files at all) and
+// server-side copies every data object of the active parts into the backup destination under its
+// logical path: <object_disk_path>/<backupName>/<diskName>/shadow/<db>/<table>/<partName>/<file...>.
+// The caller stops merges for the table before calling this function.
+func (b *Backuper) uploadPlainDiskParts(ctx context.Context, backupName string, table *clickhouse.Table, disk clickhouse.Disk, partitionsIdsMap common.EmptyMap) ([]metadata.Part, int64, error) {
+	// table data path relative to the disk root, checked BEFORE any bucket access:
+	// most tables have no data on this disk at all
+	tableRelPath := plainDiskTableRelPath(table.DataPaths, disk)
+	if tableRelPath == "" {
+		return nil, 0, nil
+	}
+	// snapshot of the active parts on this disk, merges are already stopped by the caller
+	var activeParts []struct {
+		Name string `ch:"name"`
+	}
+	if err := b.ch.SelectContext(ctx, &activeParts, "SELECT name FROM system.parts WHERE database=? AND `table`=? AND disk_name=? AND active", table.Database, table.Name, disk.Name); err != nil {
+		return nil, 0, errors.Wrap(err, "uploadPlainDiskParts: select active parts")
+	}
+	if len(activeParts) == 0 {
+		return nil, 0, nil
+	}
+	activePartsMap := make(map[string]struct{}, len(activeParts))
+	for _, p := range activeParts {
+		activePartsMap[p.Name] = struct{}{}
+	}
+	if err := object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, disk.Name); err != nil {
+		return nil, 0, errors.Wrap(err, "object_disk.InitCredentialsAndConnections")
+	}
+	srcDiskConnection, exists := object_disk.DisksConnections.Load(disk.Name)
+	if !exists {
+		return nil, 0, errors.Errorf("uploadPlainDiskParts: %s not present in object_disk.DisksConnections", disk.Name)
+	}
+	layout, layoutErr := object_disk.NewPlainDiskLayout(ctx, disk.Name)
+	if layoutErr != nil {
+		return nil, 0, errors.Wrap(layoutErr, "object_disk.NewPlainDiskLayout")
+	}
+	tree, treeErr := layout.ListTree(ctx, tableRelPath)
+	if treeErr != nil {
+		return nil, 0, errors.Wrap(treeErr, "layout.ListTree")
+	}
+	if len(tree) == 0 {
+		return nil, 0, nil
+	}
+	objectDiskPath, err := b.getObjectDiskPath()
+	if err != nil {
+		return nil, 0, errors.Wrap(err, "b.getObjectDiskPath")
+	}
+	srcBucket := srcDiskConnection.GetRemoteBucket()
+	dbAndTableDir := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Name))
+	uploadPlainDiskPartsWorkingGroup, uploadCtx := errgroup.WithContext(ctx)
+	uploadPlainDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.ObjectDiskServerSideCopyConcurrency))
+	var partsMu sync.Mutex
+	partSizes := map[string]uint64{}
+	var isCopyFailed atomic.Bool
+	for relPath, plainFile := range tree {
+		partName := strings.SplitN(relPath, "/", 2)[0]
+		// only active data parts, this also filters detached/, tmp_* and table-level files like format_version.txt
+		if _, active := activePartsMap[partName]; !active {
+			continue
+		}
+		if len(partitionsIdsMap) != 0 && !filesystemhelper.IsPartInPartition(partName, partitionsIdsMap) {
+			continue
+		}
+		srcKey := path.Join(srcDiskConnection.GetRemotePath(), plainFile.RemoteKey)
+		dstKey := path.Join(objectDiskPath, backupName, disk.Name, "shadow", dbAndTableDir, relPath)
+		capturedSize := plainFile.Size
+		partsMu.Lock()
+		partSizes[partName] += uint64(capturedSize)
+		partsMu.Unlock()
+		uploadPlainDiskPartsWorkingGroup.Go(func() error {
+			if b.resume {
+				isAlreadyProcessed, _, resumeErr := b.resumableState.IsAlreadyProcessed(path.Join(srcBucket, srcKey))
+				if resumeErr != nil {
+					return errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
+				}
+				if isAlreadyProcessed {
+					return nil
+				}
+			}
+			var copyObjectErr error
+			if !isCopyFailed.Load() {
+				copyRetry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), copyObjectRetryClassifier{b: b})
+				copyObjectErr = copyRetry.RunCtx(uploadCtx, func(ctx context.Context) error {
+					_, copyErr := b.dst.CopyObject(ctx, capturedSize, srcBucket, srcKey, dstKey)
+					return copyErr
+				})
+				if copyObjectErr != nil && !b.cfg.General.AllowObjectDiskStreaming {
+					return errors.Wrapf(copyObjectErr, "b.dst.CopyObject for srcKey=%s error", srcKey)
+				}
+				if copyObjectErr != nil && storage.IsPermanentCopyObjectError(copyObjectErr) {
+					isCopyFailed.Store(true)
+				}
+			}
+			if b.cfg.General.AllowObjectDiskStreaming && (isCopyFailed.Load() || copyObjectErr != nil) {
+				retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
+				copyObjectErr = retry.RunCtx(uploadCtx, func(ctx context.Context) error {
+					return object_disk.CopyObjectStreaming(ctx, srcDiskConnection.GetRemoteStorage(), b.dst, srcKey, dstKey, b.dst.UploadLimiter(b.cfg.General.UploadMaxBytesPerSecond))
+				})
+				if copyObjectErr != nil {
+					return errors.Wrapf(copyObjectErr, "object_disk.CopyObjectStreaming for srcKey=%s error", srcKey)
+				}
+			}
+			if b.resume {
+				if appendErr := b.resumableState.AppendToState(path.Join(srcBucket, srcKey), capturedSize); appendErr != nil {
+					return errors.Wrap(appendErr, "resumableState.AppendToState")
+				}
+			}
+			return nil
+		})
+	}
+	if wgWaitErr := uploadPlainDiskPartsWorkingGroup.Wait(); wgWaitErr != nil {
+		return nil, 0, errors.Wrap(wgWaitErr, "one of uploadPlainDiskParts go-routine return error")
+	}
+	parts := make([]metadata.Part, 0, len(partSizes))
+	size := int64(0)
+	for partName, partSize := range partSizes {
+		parts = append(parts, metadata.Part{Name: partName, Size: partSize})
+		size += int64(partSize)
+	}
+	sort.Slice(parts, func(i, j int) bool { return parts[i].Name < parts[j].Name })
+	return parts, size, nil
+}
+
 func (b *Backuper) createBackupMetadata(ctx context.Context, backupMetaFile, backupName, requiredBackup, version, tags string, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, backupDataSize, backupObjectDiskSize, backupMetadataSize, backupRBACSize, backupConfigSize, backupNamedCollectionsSize uint64, tableMetas []metadata.TableTitle, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
+		diskMetadataTypes := map[string]string{}
+		for _, d := range disks {
+			if d.IsPlain() {
+				diskMetadataTypes[d.Name] = d.MetadataType
+			}
+		}
 		backupMetadata := metadata.BackupMetadata{
 			BackupName:              backupName,
 			RequiredBackup:          requiredBackup,
 			Disks:                   diskMap,
 			DiskTypes:               diskTypes,
+			DiskMetadataTypes:       diskMetadataTypes,
 			ClickhouseBackupVersion: version,
 			CreationDate:            time.Now(),
 			Tags:                    tags,

@@ -125,7 +125,7 @@ func TestResumeExistingBackupMissingStateFileReturnsError(t *testing.T) {
 
 	backuper := &Backuper{DefaultDataPath: defaultDataPath}
 
-	err := backuper.resumeExistingBackup(backupName)
+	err := backuper.resumeExistingBackup(backupName, "download")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "download.state2")
 	assert.Contains(t, err.Error(), "delete local "+backupName)
@@ -133,7 +133,7 @@ func TestResumeExistingBackupMissingStateFileReturnsError(t *testing.T) {
 	assert.ErrorIs(t, err, ErrBackupIsAlreadyExists)
 
 	assert.NoError(t, os.WriteFile(path.Join(backupDir, "download.state2"), []byte("state"), 0o640))
-	assert.NoError(t, backuper.resumeExistingBackup(backupName))
+	assert.NoError(t, backuper.resumeExistingBackup(backupName, "download"))
 }
 
 func TestReBalanceTablesMetadataIfDiskNotExists_Files_NoErrors(t *testing.T) {
