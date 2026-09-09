@@ -262,21 +262,35 @@ func verifyKeeperCertificateChain(certificates []*x509.Certificate, roots *x509.
 	return nil
 }
 
+// selectKeeperNodeElements returns the <zookeeper> children which describe an endpoint.
+// ClickHouse treats every child whose name starts with "node" as one
+// (src/Common/ZooKeeper/ZooKeeperArgs.cpp: `key.starts_with("node")`), so <nodes>,
+// <node1>/<node2> and plain <node> are all valid for the server and must be for us too.
+func selectKeeperNodeElements(zookeeperNode *xmlquery.Node) []*xmlquery.Node {
+	var nodeList []*xmlquery.Node
+	for child := zookeeperNode.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == xmlquery.ElementNode && strings.HasPrefix(child.Data, "node") {
+			nodeList = append(nodeList, child)
+		}
+	}
+	return nodeList
+}
+
 func parseKeeperNodes(zookeeperNode *xmlquery.Node, configFile string) ([]keeperNode, error) {
-	nodeList := zookeeperNode.SelectElements("node")
+	nodeList := selectKeeperNodeElements(zookeeperNode)
 	if len(nodeList) == 0 {
-		return nil, errors.WithStack(fmt.Errorf("/zookeeper/node not exists in %s", configFile))
+		return nil, errors.WithStack(fmt.Errorf("/zookeeper/node* not exists in %s", configFile))
 	}
 
 	nodes := make([]keeperNode, 0, len(nodeList))
 	for i, node := range nodeList {
 		hostNode := node.SelectElement("host")
 		if hostNode == nil {
-			return nil, errors.WithStack(fmt.Errorf("/zookeeper/node[%d]/host not exists in %s", i, configFile))
+			return nil, errors.WithStack(fmt.Errorf("/zookeeper/%s[%d]/host not exists in %s", node.Data, i, configFile))
 		}
 		host := strings.TrimSpace(hostNode.InnerText())
 		if host == "" {
-			return nil, errors.WithStack(fmt.Errorf("/zookeeper/node[%d]/host is empty in %s", i, configFile))
+			return nil, errors.WithStack(fmt.Errorf("/zookeeper/%s[%d]/host is empty in %s", node.Data, i, configFile))
 		}
 
 		port := "2181"
@@ -284,7 +298,7 @@ func parseKeeperNodes(zookeeperNode *xmlquery.Node, configFile string) ([]keeper
 			port = strings.TrimSpace(portNode.InnerText())
 		}
 		if port == "" {
-			return nil, errors.WithStack(fmt.Errorf("/zookeeper/node[%d]/port is empty in %s", i, configFile))
+			return nil, errors.WithStack(fmt.Errorf("/zookeeper/%s[%d]/port is empty in %s", node.Data, i, configFile))
 		}
 
 		secure := false
@@ -293,7 +307,7 @@ func parseKeeperNodes(zookeeperNode *xmlquery.Node, configFile string) ([]keeper
 			if secureText != "" {
 				secureValue, err := strconv.ParseBool(secureText)
 				if err != nil {
-					return nil, errors.Wrapf(err, "invalid /zookeeper/node[%d]/secure=%s in %s", i, secureText, configFile)
+					return nil, errors.Wrapf(err, "invalid /zookeeper/%s[%d]/secure=%s in %s", node.Data, i, secureText, configFile)
 				}
 				secure = secureValue
 			}

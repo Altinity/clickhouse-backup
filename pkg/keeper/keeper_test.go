@@ -218,6 +218,61 @@ func TestParseKeeperNodes(t *testing.T) {
 	}
 }
 
+// ClickHouse accepts any <zookeeper> child whose name starts with "node" as an endpoint
+// (ZooKeeperArgs.cpp: `key.starts_with("node")`). The ClickHouse Kubernetes operator
+// renders its `zookeeper: nodes: [...]` YAML as repeated <nodes> elements.
+func TestParseKeeperNodesAcceptsNodePrefixedElements(t *testing.T) {
+	doc := parseXML(t, `<clickhouse><zookeeper>`+
+		`<session_timeout_ms>30000</session_timeout_ms>`+
+		`<nodes><host>keeper-0</host><port>2181</port></nodes>`+
+		`<nodes><host>keeper-1</host><port>2181</port></nodes>`+
+		`<node1><host>keeper-2</host><port>9181</port></node1>`+
+		`<node><host>keeper-3</host></node>`+
+		`<root>/clickhouse</root>`+
+		`<identity>user:password</identity>`+
+		`</zookeeper></clickhouse>`)
+
+	nodes, err := parseKeeperNodes(xmlquery.FindOne(doc, "//zookeeper"), "config.xml")
+	if err != nil {
+		t.Fatalf("parseKeeperNodes() error = %v", err)
+	}
+	want := []string{"keeper-0:2181", "keeper-1:2181", "keeper-2:9181", "keeper-3:2181"}
+	if len(nodes) != len(want) {
+		t.Fatalf("len(nodes) = %d, want %d: %+v", len(nodes), len(want), nodes)
+	}
+	for i, address := range want {
+		if nodes[i].address != address || nodes[i].secure {
+			t.Fatalf("nodes[%d] = %+v, want plain %s", i, nodes[i], address)
+		}
+	}
+}
+
+func TestParseKeeperNodesWithoutEndpoints(t *testing.T) {
+	doc := parseXML(t, `<clickhouse><zookeeper>`+
+		`<session_timeout_ms>30000</session_timeout_ms>`+
+		`<root>/clickhouse</root>`+
+		`</zookeeper></clickhouse>`)
+
+	_, err := parseKeeperNodes(xmlquery.FindOne(doc, "//zookeeper"), "config.xml")
+	if err == nil {
+		t.Fatal("parseKeeperNodes() error = nil, want /zookeeper/node* not exists")
+	}
+	if !strings.Contains(err.Error(), "/zookeeper/node* not exists in config.xml") {
+		t.Fatalf("parseKeeperNodes() error = %v, want /zookeeper/node* not exists", err)
+	}
+}
+
+func TestParseKeeperNodesReportsElementNameOnBadHost(t *testing.T) {
+	doc := parseXML(t, `<clickhouse><zookeeper>`+
+		`<nodes><port>2181</port></nodes>`+
+		`</zookeeper></clickhouse>`)
+
+	_, err := parseKeeperNodes(xmlquery.FindOne(doc, "//zookeeper"), "config.xml")
+	if err == nil || !strings.Contains(err.Error(), "/zookeeper/nodes[0]/host not exists in config.xml") {
+		t.Fatalf("parseKeeperNodes() error = %v, want /zookeeper/nodes[0]/host not exists", err)
+	}
+}
+
 func TestStaticHostProviderPreservesOriginalHost(t *testing.T) {
 	hostProvider := &staticHostProvider{}
 	if err := hostProvider.Init([]string{"zookeeper:2281"}); err != nil {
