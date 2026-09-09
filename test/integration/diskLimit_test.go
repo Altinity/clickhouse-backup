@@ -57,5 +57,5 @@ func TestDownloadDiskLimit(t *testing.T) {
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", cfg, "delete", "local", backupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", cfg, "delete", "remote", backupName)
-	env.queryWithNoError(t, r, "DROP DATABASE "+dbName+" SYNC")
+	r.NoError(env.dropDatabase(dbName, false))
 }
