@@ -22,6 +22,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/go-zookeeper/zk"
 )
 
@@ -358,6 +359,24 @@ func newKeeperDialer(tlsConfig *tls.Config, nodesByAddress map[string]keeperNode
 	}
 }
 
+// keeperIdentity returns the `user:password` for Keeper digest auth and where it came from.
+// ClickHouse reads it from <zookeeper><identity> (ZooKeeperArgs.cpp: key == "identity" sets
+// auth_scheme = "digest"); <zookeeper><digest> is the element this tool looked for before and
+// stays supported. Neither reaches preprocessed_configs when the server config hides the value
+// (`hide_in_preprocessed`, `from_env`), so clickhouse.keeper_identity can supply it and wins.
+// No trimming, to send exactly what the server sends.
+func keeperIdentity(cfg *config.ClickHouseConfig, zookeeperNode *xmlquery.Node) (string, string) {
+	if cfg != nil && cfg.KeeperIdentity != "" {
+		return cfg.KeeperIdentity, "clickhouse.keeper_identity"
+	}
+	for _, name := range []string{"identity", "digest"} {
+		if node := zookeeperNode.SelectElement(name); node != nil && node.InnerText() != "" {
+			return node.InnerText(), "/zookeeper/" + name
+		}
+	}
+	return "", ""
+}
+
 // Connect - connect to any zookeeper server from /var/lib/clickhouse/preprocessed_configs/config.xml
 func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 	configFile, doc, err := ch.ParseXML(ctx, "config.xml")
@@ -421,8 +440,9 @@ func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 			return errors.Wrap(err, "zk.Connect")
 		}
 	}
-	if digestNode := zookeeperNode.SelectElement("digest"); digestNode != nil {
-		if err = conn.AddAuth("digest", []byte(digestNode.InnerText())); err != nil {
+	if identity, source := keeperIdentity(ch.Config, zookeeperNode); identity != "" {
+		log.Info().Msgf("keeper digest auth from %s", source)
+		if err = conn.AddAuth("digest", []byte(identity)); err != nil {
 			return errors.Wrap(err, "keeper digest authorization error")
 		}
 	}

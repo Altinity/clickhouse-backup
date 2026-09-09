@@ -264,6 +264,10 @@ clickhouse:
   # all disks in the matching storage policy using the "least_used" strategy.
   force_rebalance: false       # CLICKHOUSE_FORCE_REBALANCE
   config_dir:      "/etc/clickhouse-server"              # CLICKHOUSE_CONFIG_DIR
+  # CLICKHOUSE_KEEPER_IDENTITY, `user:password` for ClickHouse Keeper / ZooKeeper digest auth, used when backing up or restoring
+  # `user_directories.replicated` RBAC objects and keeper-stored named collections. By default it is read from `<zookeeper><identity>`
+  # in `preprocessed_configs/config.xml`; set it here when the server config hides the value (`hide_in_preprocessed="1"`, `from_env`)
+  keeper_identity: ""
   # CLICKHOUSE_RESTART_COMMAND, use this command when restoring with --rbac, --rbac-only or --configs, --configs-only options
   # will split command by ; and execute one by one, all errors will logged and ignore
   # available prefixes

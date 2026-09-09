@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/antchfx/xmlquery"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 )
 
 func TestParseClientTLSConfigVerificationModes(t *testing.T) {
@@ -259,6 +261,36 @@ func TestParseKeeperNodesWithoutEndpoints(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "/zookeeper/node* not exists in config.xml") {
 		t.Fatalf("parseKeeperNodes() error = %v, want /zookeeper/node* not exists", err)
+	}
+}
+
+func TestKeeperIdentityPrecedence(t *testing.T) {
+	doc := parseXML(t, `<clickhouse><zookeeper>`+
+		`<nodes><host>keeper-0</host></nodes>`+
+		`<identity>user:from-identity</identity>`+
+		`<digest>user:from-digest</digest>`+
+		`</zookeeper></clickhouse>`)
+	zookeeperNode := xmlquery.FindOne(doc, "//zookeeper")
+
+	if identity, source := keeperIdentity(&config.ClickHouseConfig{KeeperIdentity: "user:from-config"}, zookeeperNode); identity != "user:from-config" || source != "clickhouse.keeper_identity" {
+		t.Fatalf("keeperIdentity() = %q from %q, want the config value", identity, source)
+	}
+	if identity, source := keeperIdentity(&config.ClickHouseConfig{}, zookeeperNode); identity != "user:from-identity" || source != "/zookeeper/identity" {
+		t.Fatalf("keeperIdentity() = %q from %q, want /zookeeper/identity", identity, source)
+	}
+	if identity, source := keeperIdentity(nil, zookeeperNode); identity != "user:from-identity" || source != "/zookeeper/identity" {
+		t.Fatalf("keeperIdentity(nil) = %q from %q, want /zookeeper/identity", identity, source)
+	}
+
+	legacy := parseXML(t, `<clickhouse><zookeeper><digest>user:from-digest</digest></zookeeper></clickhouse>`)
+	if identity, source := keeperIdentity(nil, xmlquery.FindOne(legacy, "//zookeeper")); identity != "user:from-digest" || source != "/zookeeper/digest" {
+		t.Fatalf("keeperIdentity(legacy) = %q from %q, want /zookeeper/digest", identity, source)
+	}
+
+	// an empty element is no auth, matching the server's `!identity.empty()` check
+	empty := parseXML(t, `<clickhouse><zookeeper><identity></identity></zookeeper></clickhouse>`)
+	if identity, source := keeperIdentity(nil, xmlquery.FindOne(empty, "//zookeeper")); identity != "" || source != "" {
+		t.Fatalf("keeperIdentity(empty) = %q from %q, want none", identity, source)
 	}
 }
 
