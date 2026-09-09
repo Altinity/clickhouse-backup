@@ -104,6 +104,9 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if b.cfg.General.DownloadConcurrency == 0 {
 		return errors.New("`download_concurrency` shall be more than zero")
 	}
+	if b.DiskLimit == 0 {
+		b.DiskLimit = b.cfg.General.DownloadDiskLimit
+	}
 	if b.DiskLimit < 0 || b.DiskLimit > 100 {
 		return errors.Errorf("--disk-limit shall be between 1 and 100 percent, got %d", b.DiskLimit)
 	}
@@ -375,6 +378,12 @@ func (b *Backuper) downloadTablesMetadata(ctx context.Context, backupName, comma
 		// counts only parts which really will be downloaded (hardlinkable parts are free)
 		if !b.isEmbedded {
 			if freeSpaceErr := b.checkFreeSpaceForDownload(ctx, remoteBackup, tableMetadataAfterDownload, disks, hardlinkExistsFiles, isResumeExists); freeSpaceErr != nil {
+				if !isResumeExists {
+					// only table metadata and the resumable state were written so far, remove them, otherwise the
+					// next run of the same command resumes and the refusal degrades to a warning,
+					// https://github.com/Altinity/clickhouse-backup/issues/1458
+					b.removeRefusedDownload(backupName, disks)
+				}
 				return nil, errors.Wrap(freeSpaceErr, "checkFreeSpaceForDownload")
 			}
 		}
@@ -1411,6 +1420,27 @@ func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup s
 		log.Warn().Msgf("%d parts in %s don't contain `size` field in metadata (backup created by older clickhouse-backup version), free space check is not precise: requires at least %s, total free space is %s", unknownSizeParts, remoteBackup.BackupName, utils.FormatBytes(requiredSize), utils.FormatBytes(freeSize))
 	}
 	return b.checkDiskLimitForDownload(remoteBackup, estimate, disks, isResumeExists)
+}
+
+// removeRefusedDownload drops what a download refused by checkFreeSpaceForDownload has already written to the
+// local disks (table metadata and the resumable state), so the next run doesn't resume and re-runs the check
+func (b *Backuper) removeRefusedDownload(backupName string, disks []clickhouse.Disk) {
+	if b.resume && b.resumableState != nil {
+		b.resumableState.Close()
+	}
+	for _, disk := range disks {
+		backupPath := path.Join(disk.Path, "backup", backupName)
+		if disk.IsBackup {
+			backupPath = path.Join(disk.Path, backupName)
+		}
+		if _, statErr := os.Stat(backupPath); statErr != nil {
+			continue
+		}
+		log.Info().Msgf("remove '%s' left by refused download", backupPath)
+		if removeErr := os.RemoveAll(backupPath); removeErr != nil {
+			log.Warn().Err(removeErr).Msgf("can't remove '%s'", backupPath)
+		}
+	}
 }
 
 // checkDiskLimitForDownload - https://github.com/Altinity/clickhouse-backup/issues/1458

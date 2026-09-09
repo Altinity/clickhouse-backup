@@ -29,9 +29,23 @@ func TestDownloadDiskLimit(t *testing.T) {
 	log.Debug().Msg(out)
 	r.Error(err)
 	r.Contains(out, "exceeds --disk-limit=1%")
-	out, err = env.DockerExecOut("clickhouse-backup", "ls", "/var/lib/clickhouse/backup/"+backupName+"/shadow")
-	r.Error(err, "no data shall be downloaded, got: %s", out)
+	// the refused download shall leave nothing behind, otherwise the next run resumes and skips the check
+	out, err = env.DockerExecOut("clickhouse-backup", "ls", "/var/lib/clickhouse/backup/"+backupName)
+	r.Error(err, "local backup shall be removed after refusal, got: %s", out)
 
+	// the same limit from config, CLI flag absent
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "DOWNLOAD_DISK_LIMIT=1 clickhouse-backup -c "+cfg+" download "+backupName)
+	log.Debug().Msg(out)
+	r.Error(err)
+	r.Contains(out, "exceeds --disk-limit=1%")
+	// CLI flag overrides config
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "DOWNLOAD_DISK_LIMIT=1 clickhouse-backup -c "+cfg+" download --disk-limit=100 "+backupName)
+	r.NoError(err, out)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", cfg, "delete", "local", backupName)
+	// config validation rejects out of range value
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "DOWNLOAD_DISK_LIMIT=101 clickhouse-backup -c "+cfg+" download "+backupName)
+	r.Error(err)
+	r.Contains(out, "download_disk_limit=101 is invalid")
 	// out of range value is rejected
 	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", cfg, "download", "--disk-limit=101", backupName)
 	r.Error(err)

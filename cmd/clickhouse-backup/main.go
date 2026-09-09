@@ -525,7 +525,7 @@ func newRootCommand() *cli.Command {
 				&cli.IntFlag{
 					Name:   "disk-limit",
 					Hidden: false,
-					Usage:  "Refuse download when usage of any local disk would exceed this percent (1-100) after download, 0 disables the check, https://github.com/Altinity/clickhouse-backup/issues/1458",
+					Usage:  "Refuse download when usage of any local disk would exceed this percent (1-100) after download, overrides general->download_disk_limit, 0 means use config value, https://github.com/Altinity/clickhouse-backup/issues/1458",
 				},
 				&cli.BoolFlag{
 					Name:  "dry-run",
@@ -826,7 +826,7 @@ func newRootCommand() *cli.Command {
 				&cli.IntFlag{
 					Name:   "disk-limit",
 					Hidden: false,
-					Usage:  "Refuse download when usage of any local disk would exceed this percent (1-100) after download, 0 disables the check, https://github.com/Altinity/clickhouse-backup/issues/1458",
+					Usage:  "Refuse download when usage of any local disk would exceed this percent (1-100) after download, overrides general->download_disk_limit, 0 means use config value, https://github.com/Altinity/clickhouse-backup/issues/1458",
 				},
 				&cli.BoolFlag{
 					Name:   "skip-empty-tables",
