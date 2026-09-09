@@ -528,6 +528,11 @@ func newRootCommand() *cli.Command {
 					Usage:  "Refuse download when usage of any local disk would exceed this percent (1-100) after download, overrides general->download_disk_limit, 0 means use config value, https://github.com/Altinity/clickhouse-backup/issues/1458",
 				},
 				&cli.BoolFlag{
+					Name:   "allow-missing-files",
+					Hidden: false,
+					Usage:  "Skip data part files which are missing on remote storage (404/NoSuchKey) with an error log and drop them from local table metadata instead of failing, salvage mode for partially corrupted backups, overrides general->allow_missing_files_on_download, https://github.com/Altinity/clickhouse-backup/issues/1456",
+				},
+				&cli.BoolFlag{
 					Name:  "dry-run",
 					Usage: "Show tables count and data size which would be downloaded, without downloading",
 				},
@@ -827,6 +832,11 @@ func newRootCommand() *cli.Command {
 					Name:   "disk-limit",
 					Hidden: false,
 					Usage:  "Refuse download when usage of any local disk would exceed this percent (1-100) after download, overrides general->download_disk_limit, 0 means use config value, https://github.com/Altinity/clickhouse-backup/issues/1458",
+				},
+				&cli.BoolFlag{
+					Name:   "allow-missing-files",
+					Hidden: false,
+					Usage:  "Skip data part files which are missing on remote storage (404/NoSuchKey) with an error log and drop them from local table metadata instead of failing, salvage mode for partially corrupted backups, overrides general->allow_missing_files_on_download, https://github.com/Altinity/clickhouse-backup/issues/1456",
 				},
 				&cli.BoolFlag{
 					Name:   "skip-empty-tables",

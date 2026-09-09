@@ -55,31 +55,6 @@ func (b *Backuper) resumeExistingBackup(backupName, command string) error {
 	return nil
 }
 
-func isRemoteMetadataNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	message := strings.ToLower(err.Error())
-	// Every remote storage backend phrases "object is missing" differently, so we
-	// match the known permanent-not-found markers across S3/GCS/Azure/FTP/SFTP/FS.
-	for _, marker := range []string{
-		"doesn't exist",             // GCS
-		"does not exist",            // SFTP ("file does not exist"), Azure ("the specified blob does not exist")
-		"no such file or directory", // FTP (550), local filesystem
-		"key not found",
-		"nosuchkey",      // S3
-		"blobnotfound",   // Azure Blob (x-ms-error-code)
-		"statuscode 404", // S3 SDK v2
-		"statuscode: 404",
-		"status: 404", // Azure ("RESPONSE Status: 404")
-	} {
-		if strings.Contains(message, marker) {
-			return true
-		}
-	}
-	return false
-}
-
 func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume bool, hardlinkExistsFiles bool, backupVersion string, commandId int) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "download"); pidCheckErr != nil {
 		return errors.Wrap(pidCheckErr, "CheckAndCreatePidFile")
@@ -440,6 +415,9 @@ func (b *Backuper) downloadEpilogue(ctx context.Context, backupName string, remo
 		"object_disk_size": utils.FormatBytes(backupMetadata.ObjectDiskSize),
 		"version":          backupVersion,
 	}).Msg("done")
+	if skipped := b.skippedMissingParts.Load(); skipped > 0 {
+		log.Error().Msgf("%d data parts were missing on remote storage and skipped because allow_missing_files_on_download=true, local backup %s is partial", skipped, backupName)
+	}
 
 	return nil
 }
@@ -664,7 +642,7 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 		err := retry.RunCtx(ctx, func(ctx context.Context) error {
 			tmReader, err := b.dst.GetFileReader(ctx, remoteMetadataFile)
 			if err != nil {
-				if isRemoteMetadataNotFound(err) {
+				if storage.IsNotFoundErr(err) {
 					metadataNotFound = true
 					return nil
 				}
@@ -862,12 +840,91 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 	return uint64(remoteFileInfo.Size()), nil
 }
 
+// missingParts collects data parts whose files are missing on remote storage and were skipped
+// because of allow_missing_files_on_download, so they can be dropped from the local table metadata
+// after all download goroutines finish, see https://github.com/Altinity/clickhouse-backup/issues/1456
+type missingParts struct {
+	mu    sync.Mutex
+	parts map[string]map[string]bool // disk -> part names
+	files map[string]map[string]bool // disk -> archive file names
+}
+
+func (m *missingParts) addPart(disk, partName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.parts == nil {
+		m.parts = map[string]map[string]bool{}
+	}
+	if m.parts[disk] == nil {
+		m.parts[disk] = map[string]bool{}
+	}
+	m.parts[disk][partName] = true
+}
+
+// addFile records an archive from table.Files, which is keyed by the original disk even when the part is rebalanced
+func (m *missingParts) addFile(disk, archiveFile string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.files == nil {
+		m.files = map[string]map[string]bool{}
+	}
+	if m.files[disk] == nil {
+		m.files[disk] = map[string]bool{}
+	}
+	m.files[disk][archiveFile] = true
+}
+
+// apply removes the collected parts and archive files from table, returns true when table changed
+func (m *missingParts) apply(table *metadata.TableMetadata) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	changed := false
+	for disk, names := range m.parts {
+		kept := make([]metadata.Part, 0, len(table.Parts[disk]))
+		for _, part := range table.Parts[disk] {
+			if !names[part.Name] {
+				kept = append(kept, part)
+			}
+		}
+		if len(kept) != len(table.Parts[disk]) {
+			table.Parts[disk] = kept
+			changed = true
+		}
+	}
+	for disk, names := range m.files {
+		kept := make([]string, 0, len(table.Files[disk]))
+		for _, f := range table.Files[disk] {
+			if !names[f] {
+				kept = append(kept, f)
+			}
+		}
+		if len(kept) != len(table.Files[disk]) {
+			table.Files[disk] = kept
+			changed = true
+		}
+	}
+	return changed
+}
+
+// skipMissingPart logs and records a part whose data is missing on remote storage when allow_missing_files_on_download is set,
+// returns false when the error must be propagated instead
+func (b *Backuper) skipMissingPart(err error, missing *missingParts, table metadata.TableMetadata, disk, partName, remoteFile string) bool {
+	if !b.cfg.General.AllowMissingFilesOnDownload || !storage.IsNotFoundErr(err) {
+		return false
+	}
+	log.Error().Err(err).Msgf("%s.%s part %s on disk %s is missing on remote storage (%s), skip it because allow_missing_files_on_download=true, backup will be partial", table.Database, table.Table, partName, disk, remoteFile)
+	missing.addPart(disk, partName)
+	b.skippedMissingParts.Add(1)
+	return true
+}
+
 func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, disks []clickhouse.Disk, hardlinkExistsFiles bool, manifest *storage.ManifestReader) (uint64, error) {
 	dbAndTableDir := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 	dataGroup, dataCtx := errgroup.WithContext(ctx)
 	dataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
 	downloadedSize := uint64(0)
 	var isRebalancedAfterHardLinks atomic.Bool
+	missing := &missingParts{}
 
 	// one system.parts read per table replaces one per part, built before the part goroutines start
 	// and read-only afterwards, https://github.com/Altinity/clickhouse-backup/issues/1457
@@ -965,6 +1022,18 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 						return nil
 					})
 					if err != nil {
+						if b.cfg.General.AllowMissingFilesOnDownload && storage.IsNotFoundErr(err) {
+							// with upload_by_part=true each archive holds exactly one part named <disk>_<part>.<ext>,
+							// otherwise the archive is a size-based bundle of many parts and can't be skipped one by one
+							partName := strings.TrimPrefix(strings.TrimSuffix(archiveFile, "."+config.ArchiveExtensions[remoteBackup.DataFormat]), disk+"_")
+							for _, part := range capturedParts {
+								if part.Name == partName && b.skipMissingPart(err, missing, table, capturedDisk, partName, tableRemoteFile) {
+									missing.addFile(disk, archiveFile)
+									return nil
+								}
+							}
+							return errors.Wrapf(err, "%s is missing on remote storage and contains several parts (upload_by_part=false), can't skip it even with allow_missing_files_on_download=true", tableRemoteFile)
+						}
 						return errors.Wrap(err, "DownloadCompressedStream")
 					}
 					atomic.AddUint64(&downloadedSize, uint64(downloadedBytes))
@@ -1063,6 +1132,9 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 						if len(manifestFiles) > 0 {
 							pathSize, downloadErr := b.dst.DownloadPathWithManifest(dataCtx, partRemotePath, partLocalPath, manifestFiles, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.DownloadMaxBytesPerSecond)
 							if downloadErr != nil {
+								if b.skipMissingPart(downloadErr, missing, table, capturedDisk, capturedPart.Name, partRemotePath) {
+									return os.RemoveAll(partLocalPath)
+								}
 								return errors.WithMessage(downloadErr, "DownloadPathWithManifest")
 							}
 							atomic.AddUint64(&downloadedSize, uint64(pathSize))
@@ -1078,6 +1150,9 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 					// Fall back to Walk (ListObjectsV2) when no manifest is available
 					pathSize, downloadErr := b.dst.DownloadPath(dataCtx, partRemotePath, partLocalPath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.DownloadMaxBytesPerSecond)
 					if downloadErr != nil {
+						if b.skipMissingPart(downloadErr, missing, table, capturedDisk, capturedPart.Name, partRemotePath) {
+							return os.RemoveAll(partLocalPath)
+						}
 						return errors.Wrap(downloadErr, "DownloadPath")
 					}
 					atomic.AddUint64(&downloadedSize, uint64(pathSize))
@@ -1095,7 +1170,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 	if err := dataGroup.Wait(); err != nil {
 		return 0, errors.Wrap(err, "one of downloadTableData go-routine return error")
 	}
-	if isRebalancedAfterHardLinks.Load() {
+	if missing.apply(&table) || isRebalancedAfterHardLinks.Load() {
 		if _, saveErr := table.Save(table.LocalFile, false); saveErr != nil {
 			return 0, errors.Wrap(saveErr, "save rebalanced table after hardlinks")
 		}
@@ -1697,6 +1772,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 	downloadedDiffParts := uint32(0)
 	downloadDiffGroup, downloadDiffCtx := errgroup.WithContext(ctx)
 	downloadDiffGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
+	missing := &missingParts{}
 	diffRemoteFilesCache := map[string]*sync.Mutex{}
 	diffRemoteFilesLock := &sync.Mutex{}
 	isRebalancedAfterHardLinks := false
@@ -1823,6 +1899,9 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 					for tableRemoteFile, tableLocalDir := range tableRemoteFiles {
 						fileDiffBytes, downloadErr := b.downloadDiffRemoteFile(downloadDiffCtx, diffRemoteFilesLock, diffRemoteFilesCache, tableRemoteFile, tableLocalDir)
 						if downloadErr != nil {
+							if b.skipMissingPart(downloadErr, missing, table, capturedDisk, partForDownload.Name, tableRemoteFile) {
+								return nil
+							}
 							return errors.Wrap(downloadErr, "downloadDiffRemoteFile")
 						}
 						downloadedPartPath := path.Join(tableLocalDir, partForDownload.Name)
@@ -1872,7 +1951,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 	if err := downloadDiffGroup.Wait(); err != nil {
 		return 0, errors.Wrap(err, "one of downloadDiffParts go-routine return error")
 	}
-	if isRebalancedAfterHardLinks {
+	if missing.apply(&table) || isRebalancedAfterHardLinks {
 		if _, saveErr := table.Save(table.LocalFile, false); saveErr != nil {
 			return 0, errors.Wrap(saveErr, "save rebalanced table after hardlinks in downloadDiffParts")
 		}

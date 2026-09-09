@@ -2347,6 +2347,11 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		hardlinkExistsFiles = true
 		fullCommand += " --hardlink-exists-files"
 	}
+	// https://github.com/Altinity/clickhouse-backup/issues/1456
+	if _, exist := api.getQueryParameter(query, "allow_missing_files"); exist {
+		cfg.General.AllowMissingFilesOnDownload = true
+		fullCommand += " --allow-missing-files"
+	}
 	// https://github.com/Altinity/clickhouse-backup/issues/1458
 	diskLimit := 0
 	if v, exist := api.getQueryParameter(query, "disk_limit"); exist {
@@ -2517,6 +2522,11 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	if _, exist := api.getQueryParameter(query, "hardlink_exists_files"); exist {
 		hardlinkExistsFiles = true
 		fullCommand += " --hardlink-exists-files"
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/1456
+	if _, exist := api.getQueryParameter(query, "allow_missing_files"); exist {
+		cfg.General.AllowMissingFilesOnDownload = true
+		fullCommand += " --allow-missing-files"
 	}
 	// https://github.com/Altinity/clickhouse-backup/issues/1458
 	diskLimit := 0
