@@ -466,6 +466,7 @@ func newRootCommand() *cli.Command {
 			Action: func(ctx context.Context, c *cli.Command) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				b.DryRun = c.Bool("dry-run")
+				b.DiskLimit = c.Int("disk-limit")
 				return withDryRunResult(c, b, b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("hardlink-exists-files"), version, commandIdFromCli(c)))
 			},
 			Flags: []cli.Flag{
@@ -520,6 +521,11 @@ func newRootCommand() *cli.Command {
 					Name:   "hardlink-exists-files",
 					Hidden: false,
 					Usage:  "Create hardlinks for existing files instead of downloading",
+				},
+				&cli.IntFlag{
+					Name:   "disk-limit",
+					Hidden: false,
+					Usage:  "Refuse download when usage of any local disk would exceed this percent (1-100) after download, 0 disables the check, https://github.com/Altinity/clickhouse-backup/issues/1458",
 				},
 				&cli.BoolFlag{
 					Name:  "dry-run",
@@ -706,6 +712,7 @@ func newRootCommand() *cli.Command {
 			Action: func(ctx context.Context, c *cli.Command) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				b.DryRun = c.Bool("dry-run")
+				b.DiskLimit = c.Int("disk-limit")
 				return withDryRunResult(c, b, b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), c.Bool("hardlink-exists-files"), c.Bool("streaming"), version, commandIdFromCli(c)))
 			},
 			Flags: []cli.Flag{
@@ -815,6 +822,11 @@ func newRootCommand() *cli.Command {
 					Name:   "hardlink-exists-files",
 					Hidden: false,
 					Usage:  "Create hardlinks for existing files instead of downloading",
+				},
+				&cli.IntFlag{
+					Name:   "disk-limit",
+					Hidden: false,
+					Usage:  "Refuse download when usage of any local disk would exceed this percent (1-100) after download, 0 disables the check, https://github.com/Altinity/clickhouse-backup/issues/1458",
 				},
 				&cli.BoolFlag{
 					Name:   "skip-empty-tables",

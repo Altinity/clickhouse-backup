@@ -53,7 +53,9 @@ type Backuper struct {
 	// DryRun report what the command would do instead of doing it, see issues/1012
 	DryRun bool
 	// DryRunResult holds the report produced when DryRun is set, so REST API handlers can read it after the command returns
-	DryRunResult           *DryRunReport
+	DryRunResult *DryRunReport
+	// DiskLimit - max allowed local disk usage in percent after download, 0 disables the check, see issues/1458
+	DiskLimit              int
 	shadowBackupUUIDs      []string
 	shadowBackupUUIDsMutex sync.Mutex
 	fileManifest           *storage.ManifestWriter

@@ -273,6 +273,7 @@ func (ch *ClickHouse) getDisksFromSystemSettings(ctx context.Context) ([]Disk, e
 			Path:            path.Join("/", clickhouseData),
 			Type:            "local",
 			FreeSpace:       du.NewDiskUsage(path.Join("/", clickhouseData)).Free(),
+			TotalSpace:      du.NewDiskUsage(path.Join("/", clickhouseData)).Size(),
 			StoragePolicies: []string{"default"},
 		}}, nil
 	}
@@ -401,8 +402,10 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		groupBySQL := "d.path, if(d.path='', d.name, '')"
 
 		diskFreeSpaceSQL := "toUInt64(0)"
+		diskTotalSpaceSQL := "toUInt64(0)"
 		if len(diskFields) > 0 && diskFields[0].FreeSpacePresent > 0 {
 			diskFreeSpaceSQL = "min(d.free_space)"
+			diskTotalSpaceSQL = "min(d.total_space)"
 		}
 		storagePoliciesSQL := "['default']"
 		joinStoragePoliciesSQL := ""
@@ -414,9 +417,9 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		}
 		var result []Disk
 		query := fmt.Sprintf(
-			"SELECT d.path AS path, %s AS name, %s AS type, %s AS metadata_type, %s AS free_space, %s AS storage_policies "+
+			"SELECT d.path AS path, %s AS name, %s AS type, %s AS metadata_type, %s AS free_space, %s AS total_space, %s AS storage_policies "+
 				"FROM system.disks AS d %s GROUP BY %s",
-			diskNameSQL, diskTypeSQL, diskMetadataTypeSQL, diskFreeSpaceSQL, storagePoliciesSQL, joinStoragePoliciesSQL, groupBySQL,
+			diskNameSQL, diskTypeSQL, diskMetadataTypeSQL, diskFreeSpaceSQL, diskTotalSpaceSQL, storagePoliciesSQL, joinStoragePoliciesSQL, groupBySQL,
 		)
 		if err := ch.SelectContext(ctx, &result, query); err != nil {
 			return nil, errors.Wrap(err, "getDisksFromSystemDisks: select disks")

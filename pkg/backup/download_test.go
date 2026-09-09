@@ -400,3 +400,58 @@ func TestCheckFreeSpaceForDownloadHardlinkExistsFiles(t *testing.T) {
 	tables[0].Checksums["all_1_1_0"] = checksum + 1
 	require.Error(t, backuper.checkFreeSpaceForDownload(ctx, freeSpaceRemoteBackup, tables, disks, true, false))
 }
+
+// https://github.com/Altinity/clickhouse-backup/issues/1458
+func TestCheckDiskLimitForDownload(t *testing.T) {
+	ctx := context.Background()
+	backuper := &Backuper{cfg: &config.Config{}}
+	remoteBackup := storage.Backup{BackupMetadata: metadata.BackupMetadata{BackupName: "test_disk_limit", DiskTypes: map[string]string{"default": "local", "hdd1": "local", "s3": "s3"}}}
+	// default is 50% used, hdd1 is 10% used
+	disks := []clickhouse.Disk{
+		{Name: "default", Path: "/var/lib/clickhouse", Type: "local", FreeSpace: 500, TotalSpace: 1000},
+		{Name: "hdd1", Path: "/mnt/hdd1", Type: "local", FreeSpace: 900, TotalSpace: 1000},
+		{Name: "s3", Path: "/var/lib/clickhouse/disks/s3", Type: "s3", FreeSpace: 1 << 60, TotalSpace: 1 << 60},
+	}
+	tables := ListOfTables{
+		{
+			Database: "default",
+			Table:    "test",
+			Parts: map[string][]metadata.Part{
+				"default": {{Name: "all_1_1_0", Size: 300}},
+				// hdd2 doesn't exist locally, its parts land on the least used local disk (hdd1)
+				"hdd2": {{Name: "all_2_2_0", Size: 100}},
+				"s3":   {{Name: "all_3_3_0", Size: 10000}},
+			},
+		},
+	}
+	estimate := backuper.computeDownloadSizeEstimate(ctx, remoteBackup, tables, disks, false)
+	assert.Equal(t, map[string]uint64{"default": 300, "hdd1": 100}, estimate.LocalSizeByDisk)
+	assert.Equal(t, uint64(10000), estimate.ObjectDiskSize)
+
+	// disabled by default
+	require.NoError(t, backuper.checkFreeSpaceForDownload(ctx, remoteBackup, tables, disks, false, false))
+	// default would become 80% > 75%
+	backuper.DiskLimit = 75
+	err := backuper.checkFreeSpaceForDownload(ctx, remoteBackup, tables, disks, false, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "would fill disk default to 80.0% which exceeds --disk-limit=75%")
+	// resume downgrades error to warning
+	require.NoError(t, backuper.checkFreeSpaceForDownload(ctx, remoteBackup, tables, disks, false, true))
+	// 80% is exactly the limit, allowed
+	backuper.DiskLimit = 80
+	require.NoError(t, backuper.checkFreeSpaceForDownload(ctx, remoteBackup, tables, disks, false, false))
+	// default becomes 8% used, hdd1 stays the least used local disk and would become 20% > 15%
+	disks[0].TotalSpace = 10000
+	disks[0].FreeSpace = 9500
+	disks[1].TotalSpace = 100000
+	disks[1].FreeSpace = 90000
+	tables[0].Parts["hdd2"][0].Size = 10000
+	backuper.DiskLimit = 15
+	err = backuper.checkFreeSpaceForDownload(ctx, remoteBackup, tables, disks, false, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "would fill disk hdd1 to 20.0%")
+	// disk without total_space (old clickhouse) is skipped with a warning
+	disks[0].TotalSpace = 0
+	disks[1].TotalSpace = 0
+	require.NoError(t, backuper.checkFreeSpaceForDownload(ctx, remoteBackup, tables, disks, false, false))
+}

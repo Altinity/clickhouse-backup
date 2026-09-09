@@ -43,6 +43,7 @@ type Disk struct {
 	Type            string   `ch:"type"`
 	MetadataType    string   `ch:"metadata_type"`
 	FreeSpace       uint64   `ch:"free_space"`
+	TotalSpace      uint64   `ch:"total_space"`
 	StoragePolicies []string `ch:"storage_policies"`
 	IsBackup        bool
 	// RawPath - `system.disks.path` as reported by clickhouse-server, before GetDisks rewrites the
