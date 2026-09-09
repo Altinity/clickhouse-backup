@@ -104,6 +104,12 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if b.cfg.General.DownloadConcurrency == 0 {
 		return errors.New("`download_concurrency` shall be more than zero")
 	}
+	if b.DiskLimit == 0 {
+		b.DiskLimit = b.cfg.General.DownloadDiskLimit
+	}
+	if b.DiskLimit < 0 || b.DiskLimit > 100 {
+		return errors.Errorf("--disk-limit shall be between 1 and 100 percent, got %d", b.DiskLimit)
+	}
 	b.adjustResumeFlag(resume)
 
 	if backupName == "" {
@@ -372,6 +378,12 @@ func (b *Backuper) downloadTablesMetadata(ctx context.Context, backupName, comma
 		// counts only parts which really will be downloaded (hardlinkable parts are free)
 		if !b.isEmbedded {
 			if freeSpaceErr := b.checkFreeSpaceForDownload(ctx, remoteBackup, tableMetadataAfterDownload, disks, hardlinkExistsFiles, isResumeExists); freeSpaceErr != nil {
+				if !isResumeExists {
+					// only table metadata and the resumable state were written so far, remove them, otherwise the
+					// next run of the same command resumes and the refusal degrades to a warning,
+					// https://github.com/Altinity/clickhouse-backup/issues/1458
+					b.removeRefusedDownload(backupName, disks)
+				}
 				return nil, errors.Wrap(freeSpaceErr, "checkFreeSpaceForDownload")
 			}
 		}
@@ -1218,6 +1230,10 @@ type downloadSizeEstimate struct {
 	PartsCount int
 	// UnknownSizeParts - parts without `size` in metadata (backup created by older clickhouse-backup)
 	UnknownSizeParts int
+	// LocalSizeByDisk - bytes which would land on each local disk, keyed by local disk name, parts of a
+	// disk absent in system.disks are attributed to the local disk with the most free space the same way
+	// getDownloadDiskForNonExistsDisk picks it, object storage parts are not counted, see issues/1458
+	LocalSizeByDisk map[string]uint64
 }
 
 // computeDownloadSizeEstimate walks already filtered table metadata (so --tables and --partitions are
@@ -1227,12 +1243,18 @@ type downloadSizeEstimate struct {
 // required backup are skipped as well, and sizes of `required` parts are resolved read-only up the diff
 // chain, https://github.com/Altinity/clickhouse-backup/issues/1268
 func (b *Backuper) computeDownloadSizeEstimate(ctx context.Context, remoteBackup storage.Backup, tables ListOfTables, disks []clickhouse.Disk, hardlinkExistsFiles bool) downloadSizeEstimate {
-	estimate := downloadSizeEstimate{}
+	estimate := downloadSizeEstimate{LocalSizeByDisk: make(map[string]uint64)}
 	requiredSize := uint64(0)
 	unknownSizeParts := 0
 	diskTypeByName := make(map[string]string, len(disks))
+	leastUsedLocalDisk := ""
+	leastUsedLocalDiskFree := uint64(0)
 	for _, d := range disks {
 		diskTypeByName[d.Name] = d.Type
+		if d.Type == "local" && !d.IsBackup && (leastUsedLocalDisk == "" || d.FreeSpace > leastUsedLocalDiskFree) {
+			leastUsedLocalDisk = d.Name
+			leastUsedLocalDiskFree = d.FreeSpace
+		}
 	}
 	var hardlinkableByHash map[metadata.TableTitle]common.EmptyMap
 	if hardlinkExistsFiles {
@@ -1312,10 +1334,20 @@ func (b *Backuper) computeDownloadSizeEstimate(ctx context.Context, remoteBackup
 			// disk keep the on-disk size, both are accounted in RequiredSize, the object storage share is
 			// tracked separately so `download --dry-run` can report it
 			isObjectDisk := b.isDiskTypeObject(remoteBackup.DiskTypes[diskName]) || remoteBackup.IsPlainDisk(diskName)
+			localDisk := ""
+			if !isObjectDisk {
+				if _, diskExists := diskTypeByName[diskName]; diskExists {
+					localDisk = diskName
+				} else {
+					localDisk = leastUsedLocalDisk
+				}
+			}
 			addSize := func(size uint64) {
 				requiredSize += size
 				if isObjectDisk {
 					estimate.ObjectDiskSize += size
+				} else if localDisk != "" {
+					estimate.LocalSizeByDisk[localDisk] += size
 				}
 			}
 			for i := range parts {
@@ -1363,7 +1395,8 @@ func (b *Backuper) computeDownloadSizeEstimate(ctx context.Context, remoteBackup
 }
 
 // checkFreeSpaceForDownload - https://github.com/Altinity/clickhouse-backup/issues/1268
-// compares the space required by computeDownloadSizeEstimate with the total free space on local disks
+// compares the space required by computeDownloadSizeEstimate with the total free space on local disks,
+// then applies the per-disk usage limit of --disk-limit when set, https://github.com/Altinity/clickhouse-backup/issues/1458
 func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup storage.Backup, tables ListOfTables, disks []clickhouse.Disk, hardlinkExistsFiles, isResumeExists bool) error {
 	estimate := b.computeDownloadSizeEstimate(ctx, remoteBackup, tables, disks, hardlinkExistsFiles)
 	requiredSize := estimate.RequiredSize
@@ -1385,6 +1418,57 @@ func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup s
 	}
 	if unknownSizeParts > 0 {
 		log.Warn().Msgf("%d parts in %s don't contain `size` field in metadata (backup created by older clickhouse-backup version), free space check is not precise: requires at least %s, total free space is %s", unknownSizeParts, remoteBackup.BackupName, utils.FormatBytes(requiredSize), utils.FormatBytes(freeSize))
+	}
+	return b.checkDiskLimitForDownload(remoteBackup, estimate, disks, isResumeExists)
+}
+
+// removeRefusedDownload drops what a download refused by checkFreeSpaceForDownload has already written to the
+// local disks (table metadata and the resumable state), so the next run doesn't resume and re-runs the check
+func (b *Backuper) removeRefusedDownload(backupName string, disks []clickhouse.Disk) {
+	if b.resume && b.resumableState != nil {
+		b.resumableState.Close()
+	}
+	for _, disk := range disks {
+		backupPath := path.Join(disk.Path, "backup", backupName)
+		if disk.IsBackup {
+			backupPath = path.Join(disk.Path, backupName)
+		}
+		if _, statErr := os.Stat(backupPath); statErr != nil {
+			continue
+		}
+		log.Info().Msgf("remove '%s' left by refused download", backupPath)
+		if removeErr := os.RemoveAll(backupPath); removeErr != nil {
+			log.Warn().Err(removeErr).Msgf("can't remove '%s'", backupPath)
+		}
+	}
+}
+
+// checkDiskLimitForDownload - https://github.com/Altinity/clickhouse-backup/issues/1458
+// refuses the download when (used + downloaded) / total of any local disk would exceed b.DiskLimit percent,
+// a download which merely fits into free space can still fill a data disk to 100% and take clickhouse-server down
+func (b *Backuper) checkDiskLimitForDownload(remoteBackup storage.Backup, estimate downloadSizeEstimate, disks []clickhouse.Disk, isResumeExists bool) error {
+	if b.DiskLimit <= 0 {
+		return nil
+	}
+	// walk in system.disks order so the reported disk is deterministic when several exceed the limit
+	for _, d := range disks {
+		downloadSize, exists := estimate.LocalSizeByDisk[d.Name]
+		if !exists {
+			continue
+		}
+		if d.TotalSpace == 0 {
+			log.Warn().Msgf("disk %s doesn't report total_space, --disk-limit=%d is not checked for it", d.Name, b.DiskLimit)
+			continue
+		}
+		used := d.TotalSpace - min(d.FreeSpace, d.TotalSpace)
+		projected := float64(used+downloadSize) * 100 / float64(d.TotalSpace)
+		if projected > float64(b.DiskLimit) {
+			errMsg := fmt.Sprintf("%s download would fill disk %s to %.1f%% which exceeds --disk-limit=%d%%: used %s + download %s of total %s", remoteBackup.BackupName, d.Name, projected, b.DiskLimit, utils.FormatBytes(used), utils.FormatBytes(downloadSize), utils.FormatBytes(d.TotalSpace))
+			if !isResumeExists {
+				return errors.New(errMsg)
+			}
+			log.Warn().Msg(errMsg)
+		}
 	}
 	return nil
 }

@@ -132,6 +132,7 @@ general:
   # When `clickhouse->use_embedded_backup_restore: true`, throttling is delegated to the ClickHouse server via the `max_backup_bandwidth` query setting passed in the BACKUP/RESTORE SETTINGS clause (requires ClickHouse 25.1+); upload_max_bytes_per_second applies to BACKUP, download_max_bytes_per_second to RESTORE. On older ClickHouse versions embedded transfers are not throttled.
   download_max_bytes_per_second: 0  # DOWNLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling 
   upload_max_bytes_per_second: 0    # UPLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling
+  download_disk_limit: 0            # DOWNLOAD_DISK_LIMIT, refuse `download` and `restore_remote` when usage of any local disk would exceed this percent (1..100) after download, 0 means no limit, `--disk-limit` CLI argument or `disk_limit` API parameter overrides it per command, see https://github.com/Altinity/clickhouse-backup/issues/1458
   # MAX_BROKEN_PART_RATIO, maximum allowed fraction (0..1) of broken data parts (e.g. caused by S3-disk or filesystem failures) that still produces a successful but partial backup during backup creation (`create`, and the create stage of `create_remote`).
   # 0 (default) preserves legacy behavior where any broken part stops the backup completely. When >0 and the broken/total part ratio stays at or below this value, creation skips the broken parts, logs a warning, and the backup is marked successful.
   # Skipped parts are recorded in the `broken_parts` section of the table metadata json (next to `parts`) and counted in the `clickhouse_backup_failed_parts_count` prometheus metric in server mode, see https://github.com/Altinity/clickhouse-backup/issues/1418
@@ -679,6 +680,7 @@ Download backup from remote storage: `curl -s localhost:7171/backup/download/<BA
 - Optional boolean query argument `configs-only` works the same as the `--configs-only` CLI argument (download configs
   only).
 - Optional boolean query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate download state and resume download if it already exists on local storage).
+- Optional integer query argument `disk_limit` or `disk-limit` works the same as the `--disk-limit` CLI argument (refuse download when usage of any local disk would exceed this percent after download, 1-100).
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success|cancel","error":"not empty when error happens", "operation_id" : "<random_uuid>", "command":"<full command line>", "duration":"<elapsed>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
 
 Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
@@ -748,6 +750,7 @@ Download and restore data from remote backup: `curl -s localhost:7171/backup/res
 - Optional boolean query argument `replicated_copy_to_detached` or `replicated-copy-to-detached` works the same as the `--replicated-copy-to-detached` CLI argument.
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
 - Optional boolean query argument `hardlink_exists_files` or `hardlink-exists-files` works the same as the `--hardlink-exists-files` CLI argument (Create hardlinks for existing files instead of downloading).
+- Optional integer query argument `disk_limit` or `disk-limit` works the same as the `--disk-limit` CLI argument (refuse download when usage of any local disk would exceed this percent after download, 1-100).
 - Optional boolean query argument `streaming` works the same as the `--streaming` CLI argument (restore each table right after its download and delete its local copy, see [Streaming mode](#streaming-mode)).
 - Optional boolean query argument `skip_empty_tables` or `skip-empty-tables` works the same as the `--skip-empty-tables` CLI argument (skip restoring tables that have no data).
 - Optional boolean query argument `rebind_replica_path_if_exists` or `rebind-replica-path-if-exists` works the same as the `--rebind-replica-path-if-exists` CLI argument (overrides `clickhouse.rebind_replica_path_if_exists` for this request, rebind a restored ReplicatedMergeTree to `default_replica_path` when the original ZK path still has leftover state but our replica entry is absent). WARNING: never set during a concurrent HA multi-replica restore.
@@ -995,6 +998,7 @@ OPTIONS:
    --named-collections-only, --named-collections  Download named collections and settings only, will skip download data, will download schema only if --schema added
    --resume, --resumable                          Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --hardlink-exists-files                        Create hardlinks for existing files instead of downloading
+   --disk-limit int                               Refuse download when usage of any local disk would exceed this percent (1-100) after download, overrides general->download_disk_limit, 0 means use config value, https://github.com/Altinity/clickhouse-backup/issues/1458 (default: 0)
    --dry-run                                      Show tables count and data size which would be downloaded, without downloading
    --help, -h                                     show help
 
@@ -1109,6 +1113,7 @@ OPTIONS:
    --resume, --resumable                                                                                                                Save intermediate download state and resume download if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --restore-schema-as-attach                                                                                                           Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --hardlink-exists-files                                                                                                              Create hardlinks for existing files instead of downloading
+   --disk-limit int                                                                                                                     Refuse download when usage of any local disk would exceed this percent (1-100) after download, overrides general->download_disk_limit, 0 means use config value, https://github.com/Altinity/clickhouse-backup/issues/1458 (default: 0)
    --skip-empty-tables                                                                                                                  Skip restoring tables that have no data (empty tables with only schema)
    --streaming                                                                                                                          Restore each table right after its download and delete its local copy, keeps only a small local footprint, https://github.com/Altinity/clickhouse-backup/issues/780
    --rebind-replica-path-if-exists                                                                                                      Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent

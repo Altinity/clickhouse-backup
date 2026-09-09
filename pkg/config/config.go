@@ -97,6 +97,9 @@ type GeneralConfig struct {
 	RebaseDuringDelete        bool   `yaml:"rebase_during_delete" envconfig:"REBASE_DURING_DELETE"`
 	UploadMaxBytesPerSecond   uint64 `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
 	DownloadMaxBytesPerSecond uint64 `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
+	// DownloadDiskLimit - refuse `download` and `restore_remote` when usage of any local disk would exceed this percent (1..100) after download,
+	// 0 (default) disables the check, `--disk-limit` CLI argument overrides it per command, see https://github.com/Altinity/clickhouse-backup/issues/1458
+	DownloadDiskLimit int `yaml:"download_disk_limit" envconfig:"DOWNLOAD_DISK_LIMIT"`
 	// MaxBrokenPartRatio - maximum allowed fraction (0..1) of broken data parts that still produces a
 	// successful but partial backup during backup creation (`create`, and the create stage of
 	// `create_remote`). 0 (default) preserves legacy behavior where any broken part aborts the whole
@@ -704,6 +707,9 @@ func ValidateConfig(cfg *Config) error {
 	if cfg.General.MaxBrokenPartRatio < 0 || cfg.General.MaxBrokenPartRatio > 1 {
 		return errors.Errorf("max_broken_part_ratio=%v is invalid, it must be between 0 and 1", cfg.General.MaxBrokenPartRatio)
 	}
+	if cfg.General.DownloadDiskLimit < 0 || cfg.General.DownloadDiskLimit > 100 {
+		return errors.Errorf("download_disk_limit=%d is invalid, it must be between 0 and 100", cfg.General.DownloadDiskLimit)
+	}
 	if timeout, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
 		return errors.Wrap(err, "invalid clickhouse timeout")
 	} else {
@@ -911,6 +917,7 @@ func DefaultConfig() *Config {
 			DownloadCopyBufferSize:              0,
 			CompressionUseMultiThread:           true,
 			MaxBrokenPartRatio:                  0,
+			DownloadDiskLimit:                   0,
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",

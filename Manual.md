@@ -175,6 +175,7 @@ OPTIONS:
    --named-collections-only, --named-collections  Download named collections and settings only, will skip download data, will download schema only if --schema added
    --resume, --resumable                          Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --hardlink-exists-files                        Create hardlinks for existing files instead of downloading
+   --disk-limit int                               Refuse download when usage of any local disk would exceed this percent (1-100) after download, overrides general->download_disk_limit, 0 means use config value, https://github.com/Altinity/clickhouse-backup/issues/1458 (default: 0)
    --dry-run                                      Show tables count and data size which would be downloaded, without downloading
    --help, -h                                     show help
 
@@ -289,6 +290,7 @@ OPTIONS:
    --resume, --resumable                                                                                                                Save intermediate download state and resume download if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --restore-schema-as-attach                                                                                                           Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --hardlink-exists-files                                                                                                              Create hardlinks for existing files instead of downloading
+   --disk-limit int                                                                                                                     Refuse download when usage of any local disk would exceed this percent (1-100) after download, overrides general->download_disk_limit, 0 means use config value, https://github.com/Altinity/clickhouse-backup/issues/1458 (default: 0)
    --skip-empty-tables                                                                                                                  Skip restoring tables that have no data (empty tables with only schema)
    --streaming                                                                                                                          Restore each table right after its download and delete its local copy, keeps only a small local footprint, https://github.com/Altinity/clickhouse-backup/issues/780
    --rebind-replica-path-if-exists                                                                                                      Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent

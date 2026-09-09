@@ -2347,6 +2347,19 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		hardlinkExistsFiles = true
 		fullCommand += " --hardlink-exists-files"
 	}
+	// https://github.com/Altinity/clickhouse-backup/issues/1458
+	diskLimit := 0
+	if v, exist := api.getQueryParameter(query, "disk_limit"); exist {
+		parsedDiskLimit, parseErr := strconv.Atoi(v)
+		if parseErr != nil || parsedDiskLimit < 1 || parsedDiskLimit > 100 {
+			err := errors.Errorf("disk_limit shall be an integer between 1 and 100 percent, got %q", v)
+			log.Error().Err(err).Send()
+			api.writeError(w, http.StatusBadRequest, "restore_remote", err)
+			return
+		}
+		diskLimit = parsedDiskLimit
+		fullCommand += fmt.Sprintf(" --disk-limit=%d", diskLimit)
+	}
 
 	// https://github.com/Altinity/clickhouse-backup/issues/780
 	streaming := false
@@ -2403,6 +2416,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
 		b.DryRun = true
+		b.DiskLimit = diskLimit
 		err = b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, streaming, api.clickhouseBackupVersion, commandId)
 		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
 		status.Current.Stop(commandId, err)
@@ -2414,6 +2428,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore_remote", 0, func() error {
 			b := backup.NewBackuper(cfg)
+			b.DiskLimit = diskLimit
 			return b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, streaming, api.clickhouseBackupVersion, commandId)
 		})
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
@@ -2503,6 +2518,19 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		hardlinkExistsFiles = true
 		fullCommand += " --hardlink-exists-files"
 	}
+	// https://github.com/Altinity/clickhouse-backup/issues/1458
+	diskLimit := 0
+	if v, exist := api.getQueryParameter(query, "disk_limit"); exist {
+		parsedDiskLimit, parseErr := strconv.Atoi(v)
+		if parseErr != nil || parsedDiskLimit < 1 || parsedDiskLimit > 100 {
+			err := errors.Errorf("disk_limit shall be an integer between 1 and 100 percent, got %q", v)
+			log.Error().Err(err).Send()
+			api.writeError(w, http.StatusBadRequest, "download", err)
+			return
+		}
+		diskLimit = parsedDiskLimit
+		fullCommand += fmt.Sprintf(" --disk-limit=%d", diskLimit)
+	}
 	if dryRun {
 		fullCommand += " --dry-run"
 	}
@@ -2521,6 +2549,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
 		b.DryRun = true
+		b.DiskLimit = diskLimit
 		err = b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, hardlinkExistsFiles, api.clickhouseBackupVersion, commandId)
 		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
 		status.Current.Stop(commandId, err)
@@ -2532,6 +2561,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("download", 0, func() error {
 			b := backup.NewBackuper(cfg)
+			b.DiskLimit = diskLimit
 			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, hardlinkExistsFiles, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
