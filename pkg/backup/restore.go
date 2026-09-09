@@ -833,6 +833,7 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 			"SETTINGS PROFILE": "settings_profiles",
 			"QUOTA":            "quotas",
 			"USER":             "users",
+			"MASKING POLICY":   "masking_policies",
 		}
 		systemTable, systemTableExists := rbacSystemTableNames[kind]
 		if !systemTableExists {
@@ -946,6 +947,7 @@ func (b *Backuper) dropExistsRBAC(ctx context.Context, kind string, name string,
 		"SETTINGS PROFILE": "S",
 		"QUOTA":            "Q",
 		"USER":             "U",
+		"MASKING POLICY":   "M",
 	}
 	keeperRBACTypePrefix, isKeeperRBACTypePrefixExists := keeperPrefixesRBAC[kind]
 	if !isKeeperRBACTypePrefixExists {
@@ -991,6 +993,7 @@ func (b *Backuper) detectRBACObject(sql string) (string, string, error) {
 		"ATTACH SETTINGS PROFILE": "SETTINGS PROFILE",
 		"ATTACH QUOTA":            "QUOTA",
 		"ATTACH USER":             "USER",
+		"ATTACH MASKING POLICY":   "MASKING POLICY",
 	}
 
 	// Iterate over the prefixes to find a match.
@@ -1019,7 +1022,7 @@ func (b *Backuper) detectRBACObject(sql string) (string, string, error) {
 	} else {
 		name = names[0]
 	}
-	if kind != "ROW POLICY" {
+	if kind != "ROW POLICY" && kind != "MASKING POLICY" {
 		name = strings.Trim(name, "`")
 	}
 	name = strings.TrimSpace(name)
