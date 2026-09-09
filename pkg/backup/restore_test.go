@@ -62,6 +62,18 @@ func TestDetectRBACObject(t *testing.T) {
 			expectedErr:  nil,
 		},
 		{
+			inputSQL:     "ATTACH MASKING POLICY `test_rbac` ON default.test_rbac UPDATE name = 'xxx' TO ID('e1469fb8-e014-c22b-4e5c-406134320f91');\n",
+			expectedKind: "MASKING POLICY",
+			expectedName: "`test_rbac` ON default.test_rbac",
+			expectedErr:  nil,
+		},
+		{
+			inputSQL:     "ATTACH MASKING POLICY mask_email ON default.users UPDATE email = concat(substring(email, 1, 2), '***') WHERE 1 TO ALL PRIORITY 1;\n",
+			expectedKind: "MASKING POLICY",
+			expectedName: "mask_email ON default.users",
+			expectedErr:  nil,
+		},
+		{
 			inputSQL:     "INVALID SQL",
 			expectedKind: "",
 			expectedName: "",
