@@ -159,7 +159,7 @@ func runMetadataNotFoundScenario(t *testing.T, tc metadataNotFoundCase) {
 	r.Error(err, "download must fail when remote table metadata is missing, output: %s", out)
 	// The fail-fast path emits this distinctive message; the raw backend errors
 	// (e.g. "no such file or directory", "BlobNotFound") do not contain it, so a
-	// match proves isRemoteMetadataNotFound classified the 404 correctly.
+	// match proves storage.IsNotFoundErr classified the 404 correctly.
 	r.Contains(strings.ToLower(out), "not found on remote storage", "download must report the missing metadata as not-found, output: %s", out)
 	// "Will wait near Ns and retry" (pkg/backup/backuper.go) is logged on every
 	// retry attempt; its absence proves the permanent 404 broke out immediately.

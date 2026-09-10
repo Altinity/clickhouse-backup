@@ -25,7 +25,11 @@ func TestClassify(t *testing.T) {
 		{context.Canceled, retrier.Fail},
 		{context.DeadlineExceeded, retrier.Fail},
 		{fmt.Errorf("object_disk.CopyObject: %w", context.Canceled), retrier.Fail},
+		// https://github.com/Altinity/clickhouse-backup/issues/1456
+		{fmt.Errorf("DownloadCompressedStream StatFile: %w", storage.NewErrNotFound("shadow/default/t/default_all_1_1_0.tar")), retrier.Fail},
+		{&smithy.GenericAPIError{Code: "NoSuchKey", Message: "The specified key does not exist"}, retrier.Fail},
 		{errors.New("transient network error"), retrier.Retry},
+		{&smithy.GenericAPIError{Code: "SlowDown", Message: "Please reduce your request rate"}, retrier.Retry},
 	}
 	for _, tc := range testcases {
 		if got := b.Classify(tc.err); got != tc.expect {

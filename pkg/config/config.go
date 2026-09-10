@@ -100,6 +100,11 @@ type GeneralConfig struct {
 	// DownloadDiskLimit - refuse `download` and `restore_remote` when usage of any local disk would exceed this percent (1..100) after download,
 	// 0 (default) disables the check, `--disk-limit` CLI argument overrides it per command, see https://github.com/Altinity/clickhouse-backup/issues/1458
 	DownloadDiskLimit int `yaml:"download_disk_limit" envconfig:"DOWNLOAD_DISK_LIMIT"`
+	// AllowMissingFilesOnDownload - salvage mode for partially corrupted remote backups: when a data part file
+	// is missing on remote storage (404/NoSuchKey/BlobNotFound) `download` and `restore_remote` skip the part with
+	// an error-level log and drop it from the local table metadata instead of failing, metadata files are never skipped,
+	// `--allow-missing-files` CLI argument overrides it per command, see https://github.com/Altinity/clickhouse-backup/issues/1456
+	AllowMissingFilesOnDownload bool `yaml:"allow_missing_files_on_download" envconfig:"ALLOW_MISSING_FILES_ON_DOWNLOAD"`
 	// MaxBrokenPartRatio - maximum allowed fraction (0..1) of broken data parts that still produces a
 	// successful but partial backup during backup creation (`create`, and the create stage of
 	// `create_remote`). 0 (default) preserves legacy behavior where any broken part aborts the whole
@@ -919,6 +924,7 @@ func DefaultConfig() *Config {
 			CompressionUseMultiThread:           true,
 			MaxBrokenPartRatio:                  0,
 			DownloadDiskLimit:                   0,
+			AllowMissingFilesOnDownload:         false,
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
@@ -1057,6 +1063,10 @@ func GetConfigFromCli(ctx *cli.Command) *Config {
 	// replica is observationally identical to stale leftovers, so rebinding there causes a split-brain replication group.
 	if ctx.Bool("rebind-replica-path-if-exists") {
 		cfg.ClickHouse.RebindReplicaPathIfExists = true
+	}
+	// `download`/`restore_remote` expose --allow-missing-files, same only-override-when-true semantics, see issues/1456
+	if ctx.Bool("allow-missing-files") {
+		cfg.General.AllowMissingFilesOnDownload = true
 	}
 	return cfg
 }
