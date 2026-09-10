@@ -484,6 +484,10 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 			for _, partitionTuple := range partitionTupleRE.Split(partitionArg, -1) {
 				for _, t := range tablesFromClickHouse {
 					createIdMapAndNameListIfNotExists(t.Database, t.Name, partitionsIdMap, partitionsNameList)
+					// skipped tables (skip_tables, e.g. system.*) are not backed up, don't resolve partition_id for them, https://github.com/Altinity/clickhouse-backup/issues/1547
+					if t.Skip {
+						continue
+					}
 					if partitionId, partitionName, err := GetPartitionIdAndName(ctx, ch, t.Database, t.Name, t.CreateTableQuery, partitionTuple); err != nil {
 						log.Fatal().Stack().Msgf("partition.GetPartitionIdAndName error: %v", err)
 					} else if partitionId != "" {
