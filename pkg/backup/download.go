@@ -42,40 +42,18 @@ var (
 	ErrBackupIsAlreadyExists = errors.New("backup is already exists")
 )
 
-func (b *Backuper) resumeExistingBackup(backupName string) error {
-	_, checkDownloadErr := os.Stat(path.Join(b.DefaultDataPath, "backup", backupName, "download.state2"))
+// resumeExistingBackup checks that the local backup left by an interrupted run carries the resumable state of the
+// same command: "download" for Download, "download_restore_streaming" for restore_remote --streaming
+func (b *Backuper) resumeExistingBackup(backupName, command string) error {
+	stateFile := command + ".state2"
+	_, checkDownloadErr := os.Stat(path.Join(b.DefaultDataPath, "backup", backupName, stateFile))
 	if errors.Is(checkDownloadErr, os.ErrNotExist) {
 		// wrap ErrBackupIsAlreadyExists so RestoreFromRemote keeps reusing an already complete local backup (issue #625),
 		// while a standalone `download --resume` surfaces the guidance below instead of a bare "backup is already exists"
-		return fmt.Errorf("%w: local backup '%s' exists but resumable state 'download.state2' is missing, so it is unknown which parts are complete and resuming on top of partial data risks silent corruption; run `clickhouse-backup delete local %s` and retry the download, or investigate why the resumable state was lost", ErrBackupIsAlreadyExists, backupName, backupName)
+		return fmt.Errorf("%w: local backup '%s' exists but resumable state '%s' is missing, so it is unknown which parts are complete and resuming on top of partial data risks silent corruption; run `clickhouse-backup delete local %s` and retry the download, or investigate why the resumable state was lost", ErrBackupIsAlreadyExists, backupName, stateFile, backupName)
 	}
 	log.Warn().Msgf("%s already exists will try to resume download", backupName)
 	return nil
-}
-
-func isRemoteMetadataNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	message := strings.ToLower(err.Error())
-	// Every remote storage backend phrases "object is missing" differently, so we
-	// match the known permanent-not-found markers across S3/GCS/Azure/FTP/SFTP/FS.
-	for _, marker := range []string{
-		"doesn't exist",             // GCS
-		"does not exist",            // SFTP ("file does not exist"), Azure ("the specified blob does not exist")
-		"no such file or directory", // FTP (550), local filesystem
-		"key not found",
-		"nosuchkey",      // S3
-		"blobnotfound",   // Azure Blob (x-ms-error-code)
-		"statuscode 404", // S3 SDK v2
-		"statuscode: 404",
-		"status: 404", // Azure ("RESPONSE Status: 404")
-	} {
-		if strings.Contains(message, marker) {
-			return true
-		}
-	}
-	return false
 }
 
 func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume bool, hardlinkExistsFiles bool, backupVersion string, commandId int) error {
@@ -101,6 +79,12 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	}
 	if b.cfg.General.DownloadConcurrency == 0 {
 		return errors.New("`download_concurrency` shall be more than zero")
+	}
+	if b.DiskLimit == 0 {
+		b.DiskLimit = b.cfg.General.DownloadDiskLimit
+	}
+	if b.DiskLimit < 0 || b.DiskLimit > 100 {
+		return errors.Errorf("--disk-limit shall be between 1 and 100 percent, got %d", b.DiskLimit)
 	}
 	b.adjustResumeFlag(resume)
 
@@ -129,7 +113,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			if !b.resume {
 				return ErrBackupIsAlreadyExists
 			}
-			if resumeErr := b.resumeExistingBackup(backupName); resumeErr != nil {
+			if resumeErr := b.resumeExistingBackup(backupName, "download"); resumeErr != nil {
 				return resumeErr
 			}
 			isResumeExists = true
@@ -153,52 +137,17 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		}
 	}()
 
-	remoteBackups, err := b.dst.BackupList(ctx, true, backupName, b.cfg.CAS.SkipPrefixes())
+	remoteBackup, backupManifest, tablesForDownload, err := b.downloadRemoteBackupInfo(ctx, backupName, tablePattern, disks, isResumeExists, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, hardlinkExistsFiles)
 	if err != nil {
-		return errors.Wrap(err, "BackupList")
+		return err
 	}
-	found := false
-	var remoteBackup storage.Backup
-	for _, r := range remoteBackups {
-		if backupName == r.BackupName {
-			remoteBackup = r
-			found = true
-			break
-		}
-	}
-	if !found {
-		// Before reporting "not found", check whether the named backup
-		// exists in the CAS namespace. v1 BackupList walks the root level
-		// only and skips the CAS prefix; CAS backups live at
-		// cas/<cluster>/metadata/<name>/, so a name typo from CAS to v1
-		// would hit this branch with a misleading error. Surface the
-		// proper cross-mode refusal instead.
-		if isCASBackupRemote(ctx, b.dst, b.cfg.CAS, backupName) {
-			return cas.ErrCASBackup
-		}
-		return errors.Errorf("'%s' is not found on remote storage", backupName)
-	}
-	// CAS backups must be downloaded via the cas-download CLI
-	// (pkg/cas.Download); the v1 path expects per-part archives + per-disk
-	// metadata trees that the CAS layout does not produce.
-	if remoteBackup.CAS != nil {
-		return cas.ErrCASBackup
-	}
-	// Download file manifest for Walk-free restore (falls back gracefully if not present)
-	backupManifest := b.dst.DownloadManifest(ctx, backupName)
 	defer backupManifest.Close()
 
-	if len(remoteBackup.Tables) == 0 && remoteBackup.RBACSize == 0 && remoteBackup.ConfigSize == 0 && remoteBackup.NamedCollectionsSize == 0 && !b.cfg.General.AllowEmptyBackups {
-		return errors.Errorf("'%s' is empty backup", backupName)
+	// report what would be downloaded before the first side effect, no local directories, no table
+	// metadata files, no resumable state, https://github.com/Altinity/clickhouse-backup/issues/1012
+	if b.DryRun {
+		return b.dryRunDownload(ctx, remoteBackup, disks, tablesForDownload, tablePattern, partitions, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, hardlinkExistsFiles)
 	}
-	// if using hardlink then disable this check, if not use then check disk size
-	if !hardlinkExistsFiles && !schemaOnly && !rbacOnly && !configsOnly {
-		// https://github.com/Altinity/clickhouse-backup/issues/878
-		if freeSizeErr := b.CheckDisksUsage(remoteBackup, disks, isResumeExists, tablePattern); freeSizeErr != nil {
-			return errors.Wrap(freeSizeErr, "CheckDisksUsage")
-		}
-	}
-	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
 
 	if !schemaOnly && !b.cfg.General.DownloadByPart && remoteBackup.RequiredBackup != "" {
 		// The recursive Download reuses this *Backuper and its initDisksPathsAndBackupDestination
@@ -215,76 +164,24 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	}
 
 	dataSize := uint64(0)
-	metadataSize := uint64(0)
-	b.isEmbedded = strings.Contains(remoteBackup.Tags, "embedded")
-	if b.isEmbedded {
-		if err = b.resolveEmbeddedClusterShardReplica(ctx); err != nil {
-			return errors.Wrap(err, "resolveEmbeddedClusterShardReplica")
-		}
-	}
-	localBackupDir := path.Join(b.DefaultDataPath, "backup", backupName)
-	if b.isEmbedded {
-		// will ignore partitions cause can't manipulate .backup
-		partitions = make([]string, 0)
-		localBackupDir = path.Join(b.EmbeddedBackupDataPath, backupName)
-	}
-	err = os.MkdirAll(localBackupDir, 0750)
-	if err != nil && !resume {
-		return errors.Wrap(err, "MkdirAll localBackupDir")
+	doDownloadData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
+	prologue, err := b.downloadTablesMetadata(ctx, backupName, "download", tablePattern, partitions, remoteBackup, tablesForDownload, disks, schemaOnly, resume, hardlinkExistsFiles, isResumeExists, doDownloadData)
+	if err != nil {
+		return err
 	}
 	if b.resume {
-		b.resumableState = resumable.NewState(b.GetStateDir(), backupName, "download", map[string]interface{}{
-			"tablePattern": tablePattern,
-			"partitions":   partitions,
-			"schemaOnly":   schemaOnly,
-		})
 		defer b.resumableState.Close()
 	}
-
-	log.Debug().Str("backup", backupName).Msgf("prepare table METADATA concurrent semaphore with concurrency=%d len(tablesForDownload)=%d", b.cfg.General.DownloadConcurrency, len(tablesForDownload))
-	tableMetadataAfterDownload := make(ListOfTables, len(tablesForDownload))
-	doDownloadData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
-	if doDownloadData || schemaOnly {
-		metadataGroup, metadataCtx := errgroup.WithContext(ctx)
-		metadataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
-		for i, t := range tablesForDownload {
-			metadataLogger := log.With().Str("table_metadata", fmt.Sprintf("%s.%s", t.Database, t.Table)).Logger()
-			idx := i
-			tableTitle := t
-			metadataGroup.Go(func() error {
-				downloadedMetadata, size, downloadMetadataErr := b.downloadTableMetadata(metadataCtx, backupName, disks, tableTitle, schemaOnly, partitions, b.resume, metadataLogger)
-				if downloadMetadataErr != nil {
-					return errors.Wrap(downloadMetadataErr, "downloadTableMetadata")
-				}
-				tableMetadataAfterDownload[idx] = downloadedMetadata
-				atomic.AddUint64(&metadataSize, size)
-				return nil
-			})
-		}
-		if err := metadataGroup.Wait(); err != nil {
-			return errors.Wrap(err, "one of Download Metadata go-routine return error")
-		}
+	if b.localPartIndex != nil {
+		defer func() {
+			b.localPartIndex = nil
+		}()
 	}
-	// download, missed .inner. tables, https://github.com/Altinity/clickhouse-backup/issues/765
-	var missedInnerTableErr error
-	tableMetadataAfterDownload, tablesForDownload, metadataSize, missedInnerTableErr = b.downloadMissedInnerTablesMetadata(ctx, backupName, metadataSize, tablesForDownload, tableMetadataAfterDownload, disks, schemaOnly, partitions)
-	if missedInnerTableErr != nil {
-		return errors.Wrap(missedInnerTableErr, "b.downloadMissedInnerTablesMetadata error")
-	}
+	tableMetadataAfterDownload := prologue.tableMetadataAfterDownload
+	tablesForDownload = prologue.tablesForDownload
+	metadataSize := prologue.metadataSize
 
 	if doDownloadData {
-		if reBalanceErr := b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownload, disks, remoteBackup); reBalanceErr != nil {
-			return errors.Wrap(reBalanceErr, "reBalanceTablesMetadataIfDiskNotExists")
-		}
-		b.filterPartsAndFilesByDisk(tableMetadataAfterDownload, disks)
-		// https://github.com/Altinity/clickhouse-backup/issues/1268
-		// precise check after table metadata is downloaded and filtered by --tables and --partitions,
-		// counts only parts which really will be downloaded (hardlinkable parts are free)
-		if !b.isEmbedded {
-			if freeSpaceErr := b.checkFreeSpaceForDownload(ctx, remoteBackup, tableMetadataAfterDownload, disks, hardlinkExistsFiles, isResumeExists); freeSpaceErr != nil {
-				return errors.Wrap(freeSpaceErr, "checkFreeSpaceForDownload")
-			}
-		}
 		log.Debug().Str("backupName", backupName).Msgf("prepare table DATA concurrent semaphore with concurrency=%d len(tableMetadataAfterDownload)=%d", b.cfg.General.DownloadConcurrency, len(tableMetadataAfterDownload))
 		dataGroup, dataCtx := errgroup.WithContext(ctx)
 		dataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
@@ -325,32 +222,179 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			return errors.Wrap(err, "one of Download go-routine return error")
 		}
 	}
-	var rbacSize, configSize, namedCollectionsSize uint64
-	if rbacOnly || rbacOnly == configsOnly == namedCollectionsOnly == false {
-		rbacSize, err = b.downloadRBACData(ctx, remoteBackup)
-		if err != nil {
-			return errors.Wrap(err, "download RBAC error")
+	return b.downloadEpilogue(ctx, backupName, remoteBackup, tablesForDownload, disks, dataSize, metadataSize, doDownloadData, rbacOnly, configsOnly, namedCollectionsOnly, backupVersion, startDownload)
+}
+
+// downloadRemoteBackupInfo looks up the backup on remote storage, downloads its file manifest, checks emptiness
+// and disk usage and resolves the table list matching tablePattern, the caller is responsible for closing the manifest
+func (b *Backuper) downloadRemoteBackupInfo(ctx context.Context, backupName, tablePattern string, disks []clickhouse.Disk, isResumeExists, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, hardlinkExistsFiles bool) (storage.Backup, *storage.ManifestReader, []metadata.TableTitle, error) {
+	remoteBackups, err := b.dst.BackupList(ctx, true, backupName, b.cfg.CAS.SkipPrefixes())
+	if err != nil {
+		return storage.Backup{}, nil, nil, errors.Wrap(err, "BackupList")
+	}
+	found := false
+	var remoteBackup storage.Backup
+	for _, r := range remoteBackups {
+		if backupName == r.BackupName {
+			remoteBackup = r
+			found = true
+			break
 		}
 	}
+	if !found {
+		// Before reporting "not found", check whether the named backup
+		// exists in the CAS namespace. v1 BackupList walks the root level
+		// only and skips the CAS prefix; CAS backups live at
+		// cas/<cluster>/metadata/<name>/, so a name typo from CAS to v1
+		// would hit this branch with a misleading error. Surface the
+		// proper cross-mode refusal instead.
+		if isCASBackupRemote(ctx, b.dst, b.cfg.CAS, backupName) {
+			return storage.Backup{}, nil, nil, cas.ErrCASBackup
+		}
+		return storage.Backup{}, nil, nil, errors.Errorf("'%s' is not found on remote storage", backupName)
+	}
+	// CAS backups must be downloaded via the cas-download CLI
+	// (pkg/cas.Download); the v1 path expects per-part archives + per-disk
+	// metadata trees that the CAS layout does not produce.
+	if remoteBackup.CAS != nil {
+		return storage.Backup{}, nil, nil, cas.ErrCASBackup
+	}
+	// Download file manifest for Walk-free restore (falls back gracefully if not present)
+	backupManifest := b.dst.DownloadManifest(ctx, backupName)
 
-	if configsOnly || rbacOnly == configsOnly == namedCollectionsOnly == false {
-		configSize, err = b.downloadConfigData(ctx, remoteBackup)
-		if err != nil {
-			return errors.Wrap(err, "download CONFIGS error")
+	if len(remoteBackup.Tables) == 0 && remoteBackup.RBACSize == 0 && remoteBackup.ConfigSize == 0 && remoteBackup.NamedCollectionsSize == 0 && !b.cfg.General.AllowEmptyBackups {
+		backupManifest.Close()
+		return storage.Backup{}, nil, nil, errors.Errorf("'%s' is empty backup", backupName)
+	}
+	// if using hardlink then disable this check, if not use then check disk size
+	if !hardlinkExistsFiles && !schemaOnly && !rbacOnly && !configsOnly {
+		// https://github.com/Altinity/clickhouse-backup/issues/878
+		if freeSizeErr := b.CheckDisksUsage(remoteBackup, disks, isResumeExists, tablePattern); freeSizeErr != nil {
+			backupManifest.Close()
+			return storage.Backup{}, nil, nil, errors.Wrap(freeSizeErr, "CheckDisksUsage")
 		}
 	}
+	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
+	return remoteBackup, backupManifest, tablesForDownload, nil
+}
 
-	if namedCollectionsOnly || rbacOnly == configsOnly == namedCollectionsOnly == false {
-		namedCollectionsSize, err = b.downloadNamedCollectionsData(ctx, remoteBackup)
-		if err != nil {
-			return errors.Wrap(err, "download NAMED COLLECTIONS error")
+// downloadTablesMetadataResult holds what the download data loop and downloadEpilogue need
+type downloadTablesMetadataResult struct {
+	tableMetadataAfterDownload ListOfTables
+	// tablesForDownload is extended with missed .inner. tables
+	tablesForDownload []metadata.TableTitle
+	metadataSize      uint64
+}
+
+// downloadTablesMetadata creates the local backup dir and resumable state, downloads table metadata files,
+// re-balances/filters parts by existing disks, builds the hardlink index and checks free space,
+// on success the caller is responsible for closing b.resumableState and resetting b.localPartIndex,
+// command is the resumable state name: "download" for Download, "download_restore_streaming" for restore_remote --streaming
+func (b *Backuper) downloadTablesMetadata(ctx context.Context, backupName, command, tablePattern string, partitions []string, remoteBackup storage.Backup, tablesForDownload []metadata.TableTitle, disks []clickhouse.Disk, schemaOnly, resume, hardlinkExistsFiles, isResumeExists, doDownloadData bool) (*downloadTablesMetadataResult, error) {
+	var err error
+	metadataSize := uint64(0)
+	b.isEmbedded = strings.Contains(remoteBackup.Tags, "embedded")
+	if b.isEmbedded {
+		if err = b.resolveEmbeddedClusterShardReplica(ctx); err != nil {
+			return nil, errors.Wrap(err, "resolveEmbeddedClusterShardReplica")
 		}
 	}
+	localBackupDir := path.Join(b.DefaultDataPath, "backup", backupName)
+	if b.isEmbedded {
+		// will ignore partitions cause can't manipulate .backup
+		partitions = make([]string, 0)
+		localBackupDir = path.Join(b.EmbeddedBackupDataPath, backupName)
+	}
+	err = os.MkdirAll(localBackupDir, 0750)
+	if err != nil && !resume {
+		return nil, errors.Wrap(err, "MkdirAll localBackupDir")
+	}
+	if b.resume {
+		b.resumableState = resumable.NewState(b.GetStateDir(), backupName, command, map[string]interface{}{
+			"tablePattern": tablePattern,
+			"partitions":   partitions,
+			"schemaOnly":   schemaOnly,
+		})
+	}
 
-	backupMetadata := remoteBackup.BackupMetadata
-	backupMetadata.Tables = tablesForDownload
+	log.Debug().Str("backup", backupName).Msgf("prepare table METADATA concurrent semaphore with concurrency=%d len(tablesForDownload)=%d", b.cfg.General.DownloadConcurrency, len(tablesForDownload))
+	tableMetadataAfterDownload := make(ListOfTables, len(tablesForDownload))
+	if doDownloadData || schemaOnly {
+		metadataGroup, metadataCtx := errgroup.WithContext(ctx)
+		metadataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
+		for i, t := range tablesForDownload {
+			metadataLogger := log.With().Str("table_metadata", fmt.Sprintf("%s.%s", t.Database, t.Table)).Logger()
+			idx := i
+			tableTitle := t
+			metadataGroup.Go(func() error {
+				downloadedMetadata, size, downloadMetadataErr := b.downloadTableMetadata(metadataCtx, backupName, disks, tableTitle, schemaOnly, partitions, b.resume, metadataLogger)
+				if downloadMetadataErr != nil {
+					return errors.Wrap(downloadMetadataErr, "downloadTableMetadata")
+				}
+				tableMetadataAfterDownload[idx] = downloadedMetadata
+				atomic.AddUint64(&metadataSize, size)
+				return nil
+			})
+		}
+		if err := metadataGroup.Wait(); err != nil {
+			return nil, errors.Wrap(err, "one of Download Metadata go-routine return error")
+		}
+	}
+	// download, missed .inner. tables, https://github.com/Altinity/clickhouse-backup/issues/765
+	var missedInnerTableErr error
+	tableMetadataAfterDownload, tablesForDownload, metadataSize, missedInnerTableErr = b.downloadMissedInnerTablesMetadata(ctx, backupName, metadataSize, tablesForDownload, tableMetadataAfterDownload, disks, schemaOnly, partitions)
+	if missedInnerTableErr != nil {
+		return nil, errors.Wrap(missedInnerTableErr, "b.downloadMissedInnerTablesMetadata error")
+	}
 
-	if doDownloadData && b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" && backupMetadata.Tables != nil && len(backupMetadata.Tables) > 0 {
+	if doDownloadData {
+		if reBalanceErr := b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownload, disks, remoteBackup); reBalanceErr != nil {
+			return nil, errors.Wrap(reBalanceErr, "reBalanceTablesMetadataIfDiskNotExists")
+		}
+		b.filterPartsAndFilesByDisk(tableMetadataAfterDownload, disks)
+		if hardlinkExistsFiles {
+			// index local backups once instead of globbing them per part, both the free space
+			// probe below and downloadTableData reuse it, the RequiredBackup downloaded by the
+			// recursive call above is already on disk and gets indexed too,
+			// https://github.com/Altinity/clickhouse-backup/issues/1457
+			indexedLocalBackups, _, localBackupsErr := b.GetLocalBackups(ctx, disks)
+			if localBackupsErr != nil {
+				log.Warn().Err(localBackupsErr).Msg("can't list local backups to index hardlink candidates, will fallback to glob")
+			} else {
+				b.localPartIndex = b.buildLocalPartIndex(indexedLocalBackups, disks)
+			}
+		}
+		// https://github.com/Altinity/clickhouse-backup/issues/1268
+		// precise check after table metadata is downloaded and filtered by --tables and --partitions,
+		// counts only parts which really will be downloaded (hardlinkable parts are free)
+		if !b.isEmbedded {
+			if freeSpaceErr := b.checkFreeSpaceForDownload(ctx, remoteBackup, tableMetadataAfterDownload, disks, hardlinkExistsFiles, isResumeExists); freeSpaceErr != nil {
+				if !isResumeExists {
+					// only table metadata and the resumable state were written so far, remove them, otherwise the
+					// next run of the same command resumes and the refusal degrades to a warning,
+					// https://github.com/Altinity/clickhouse-backup/issues/1458
+					b.removeRefusedDownload(backupName, disks)
+				}
+				return nil, errors.Wrap(freeSpaceErr, "checkFreeSpaceForDownload")
+			}
+		}
+	}
+	return &downloadTablesMetadataResult{
+		tableMetadataAfterDownload: tableMetadataAfterDownload,
+		tablesForDownload:          tablesForDownload,
+		metadataSize:               metadataSize,
+	}, nil
+}
+
+// downloadEpilogue downloads rbac/configs/named collections and the embedded .backup file, saves local
+// backup-level metadata.json, chowns backup disks and cleans partially downloaded required backup
+func (b *Backuper) downloadEpilogue(ctx context.Context, backupName string, remoteBackup storage.Backup, tablesForDownload []metadata.TableTitle, disks []clickhouse.Disk, dataSize, metadataSize uint64, doDownloadData, rbacOnly, configsOnly, namedCollectionsOnly bool, backupVersion string, startDownload time.Time) error {
+	rbacSize, configSize, namedCollectionsSize, err := b.downloadBackupRelatedData(ctx, remoteBackup, rbacOnly, configsOnly, namedCollectionsOnly)
+	if err != nil {
+		return err
+	}
+
+	if doDownloadData && b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" && tablesForDownload != nil && len(tablesForDownload) > 0 {
 		localClickHouseBackupFile := path.Join(b.EmbeddedBackupDataPath, backupName, ".backup")
 		remoteClickHouseBackupFile := path.Join(backupName, ".backup")
 		localEmbeddedMetadataSize := int64(0)
@@ -360,19 +404,9 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		metadataSize += uint64(localEmbeddedMetadataSize)
 	}
 
-	backupMetadata.CompressedSize = 0
-	backupMetadata.DataFormat = ""
-	backupMetadata.DataSize = dataSize
-	backupMetadata.MetadataSize = metadataSize
-	backupMetadata.ConfigSize = configSize
-	backupMetadata.RBACSize = rbacSize
-	backupMetadata.ClickhouseBackupVersion = backupVersion
-	backupMetafileLocalPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")
-	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
-		backupMetafileLocalPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata.json")
-	}
-	if err := backupMetadata.Save(backupMetafileLocalPath); err != nil {
-		return errors.Wrap(err, "save backup metadata")
+	backupMetadata, err := b.saveLocalBackupMetadata(backupName, remoteBackup.BackupMetadata, tablesForDownload, dataSize, metadataSize, rbacSize, configSize, namedCollectionsSize, backupVersion)
+	if err != nil {
+		return err
 	}
 	for _, disk := range disks {
 		if disk.IsBackup {
@@ -397,8 +431,59 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		"object_disk_size": utils.FormatBytes(backupMetadata.ObjectDiskSize),
 		"version":          backupVersion,
 	}).Msg("done")
+	if skipped := b.skippedMissingParts.Load(); skipped > 0 {
+		log.Error().Msgf("%d data parts were missing on remote storage and skipped because allow_missing_files_on_download=true, local backup %s is partial", skipped, backupName)
+	}
 
 	return nil
+}
+
+// downloadBackupRelatedData downloads rbac, configs and named collections directories, each one when explicitly
+// requested or when none of the *Only flags is set, returns their sizes
+func (b *Backuper) downloadBackupRelatedData(ctx context.Context, remoteBackup storage.Backup, rbacOnly, configsOnly, namedCollectionsOnly bool) (rbacSize, configSize, namedCollectionsSize uint64, err error) {
+	if rbacOnly || rbacOnly == configsOnly == namedCollectionsOnly == false {
+		rbacSize, err = b.downloadRBACData(ctx, remoteBackup)
+		if err != nil {
+			return 0, 0, 0, errors.Wrap(err, "download RBAC error")
+		}
+	}
+
+	if configsOnly || rbacOnly == configsOnly == namedCollectionsOnly == false {
+		configSize, err = b.downloadConfigData(ctx, remoteBackup)
+		if err != nil {
+			return 0, 0, 0, errors.Wrap(err, "download CONFIGS error")
+		}
+	}
+
+	if namedCollectionsOnly || rbacOnly == configsOnly == namedCollectionsOnly == false {
+		namedCollectionsSize, err = b.downloadNamedCollectionsData(ctx, remoteBackup)
+		if err != nil {
+			return 0, 0, 0, errors.Wrap(err, "download NAMED COLLECTIONS error")
+		}
+	}
+	return rbacSize, configSize, namedCollectionsSize, nil
+}
+
+// saveLocalBackupMetadata writes local backup-level metadata.json derived from remote backup metadata
+// with the downloaded tables list and local sizes, returns the saved metadata
+func (b *Backuper) saveLocalBackupMetadata(backupName string, backupMetadata metadata.BackupMetadata, tables []metadata.TableTitle, dataSize, metadataSize, rbacSize, configSize, namedCollectionsSize uint64, backupVersion string) (metadata.BackupMetadata, error) {
+	backupMetadata.Tables = tables
+	backupMetadata.CompressedSize = 0
+	backupMetadata.DataFormat = ""
+	backupMetadata.DataSize = dataSize
+	backupMetadata.MetadataSize = metadataSize
+	backupMetadata.ConfigSize = configSize
+	backupMetadata.RBACSize = rbacSize
+	backupMetadata.NamedCollectionsSize = namedCollectionsSize
+	backupMetadata.ClickhouseBackupVersion = backupVersion
+	backupMetafileLocalPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")
+	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+		backupMetafileLocalPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata.json")
+	}
+	if err := backupMetadata.Save(backupMetafileLocalPath); err != nil {
+		return backupMetadata, errors.Wrap(err, "save backup metadata")
+	}
+	return backupMetadata, nil
 }
 
 func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownload ListOfTables, disks []clickhouse.Disk, remoteBackup storage.Backup) error {
@@ -573,7 +658,7 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 		err := retry.RunCtx(ctx, func(ctx context.Context) error {
 			tmReader, err := b.dst.GetFileReader(ctx, remoteMetadataFile)
 			if err != nil {
-				if isRemoteMetadataNotFound(err) {
+				if storage.IsNotFoundErr(err) {
 					metadataNotFound = true
 					return nil
 				}
@@ -771,12 +856,102 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 	return uint64(remoteFileInfo.Size()), nil
 }
 
+// missingParts collects data parts whose files are missing on remote storage and were skipped
+// because of allow_missing_files_on_download, so they can be dropped from the local table metadata
+// after all download goroutines finish, see https://github.com/Altinity/clickhouse-backup/issues/1456
+type missingParts struct {
+	mu    sync.Mutex
+	parts map[string]map[string]bool // disk -> part names
+	files map[string]map[string]bool // disk -> archive file names
+}
+
+func (m *missingParts) addPart(disk, partName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.parts == nil {
+		m.parts = map[string]map[string]bool{}
+	}
+	if m.parts[disk] == nil {
+		m.parts[disk] = map[string]bool{}
+	}
+	m.parts[disk][partName] = true
+}
+
+// addFile records an archive from table.Files, which is keyed by the original disk even when the part is rebalanced
+func (m *missingParts) addFile(disk, archiveFile string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.files == nil {
+		m.files = map[string]map[string]bool{}
+	}
+	if m.files[disk] == nil {
+		m.files[disk] = map[string]bool{}
+	}
+	m.files[disk][archiveFile] = true
+}
+
+// apply removes the collected parts and archive files from table, returns true when table changed
+func (m *missingParts) apply(table *metadata.TableMetadata) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	changed := false
+	for disk, names := range m.parts {
+		kept := make([]metadata.Part, 0, len(table.Parts[disk]))
+		for _, part := range table.Parts[disk] {
+			if !names[part.Name] {
+				kept = append(kept, part)
+			}
+		}
+		if len(kept) != len(table.Parts[disk]) {
+			table.Parts[disk] = kept
+			changed = true
+		}
+	}
+	for disk, names := range m.files {
+		kept := make([]string, 0, len(table.Files[disk]))
+		for _, f := range table.Files[disk] {
+			if !names[f] {
+				kept = append(kept, f)
+			}
+		}
+		if len(kept) != len(table.Files[disk]) {
+			table.Files[disk] = kept
+			changed = true
+		}
+	}
+	return changed
+}
+
+// skipMissingPart logs and records a part whose data is missing on remote storage when allow_missing_files_on_download is set,
+// returns false when the error must be propagated instead
+func (b *Backuper) skipMissingPart(err error, missing *missingParts, table metadata.TableMetadata, disk, partName, remoteFile string) bool {
+	if !b.cfg.General.AllowMissingFilesOnDownload || !storage.IsNotFoundErr(err) {
+		return false
+	}
+	log.Error().Err(err).Msgf("%s.%s part %s on disk %s is missing on remote storage (%s), skip it because allow_missing_files_on_download=true, backup will be partial", table.Database, table.Table, partName, disk, remoteFile)
+	missing.addPart(disk, partName)
+	b.skippedMissingParts.Add(1)
+	return true
+}
+
 func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, disks []clickhouse.Disk, hardlinkExistsFiles bool, manifest *storage.ManifestReader) (uint64, error) {
 	dbAndTableDir := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 	dataGroup, dataCtx := errgroup.WithContext(ctx)
 	dataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
 	downloadedSize := uint64(0)
 	var isRebalancedAfterHardLinks atomic.Bool
+	missing := &missingParts{}
+
+	// one system.parts read per table replaces one per part, built before the part goroutines start
+	// and read-only afterwards, https://github.com/Altinity/clickhouse-backup/issues/1457
+	var livePartsByHash map[string][]livePartRow
+	if hardlinkExistsFiles {
+		var hashErr error
+		if livePartsByHash, hashErr = b.fetchLivePartsByHash(ctx, table); hashErr != nil {
+			log.Warn().Err(hashErr).Msgf("can't snapshot system.parts by hash_of_all_files for %s.%s, will read system.parts per part", table.Database, table.Table)
+			livePartsByHash = nil
+		}
+	}
 
 	if remoteBackup.DataFormat != DirectoryFormat {
 		capacity := 0
@@ -828,7 +1003,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 							}
 						}
 						if foundPart != nil {
-							found, size, err := b.hardlinkIfLocalPartExistsAndChecksumEqual(remoteBackup.BackupName, table, foundPart, disks, capturedDisk, dbAndTableDir)
+							found, size, err := b.hardlinkIfLocalPartExistsAndChecksumEqual(remoteBackup.BackupName, table, foundPart, disks, capturedDisk, dbAndTableDir, livePartsByHash)
 							if err != nil {
 								return errors.Wrap(err, "hardlinkIfLocalPartExistsAndChecksumEqual")
 							}
@@ -863,6 +1038,18 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 						return nil
 					})
 					if err != nil {
+						if b.cfg.General.AllowMissingFilesOnDownload && storage.IsNotFoundErr(err) {
+							// with upload_by_part=true each archive holds exactly one part named <disk>_<part>.<ext>,
+							// otherwise the archive is a size-based bundle of many parts and can't be skipped one by one
+							partName := strings.TrimPrefix(strings.TrimSuffix(archiveFile, "."+config.ArchiveExtensions[remoteBackup.DataFormat]), disk+"_")
+							for _, part := range capturedParts {
+								if part.Name == partName && b.skipMissingPart(err, missing, table, capturedDisk, partName, tableRemoteFile) {
+									missing.addFile(disk, archiveFile)
+									return nil
+								}
+							}
+							return errors.Wrapf(err, "%s is missing on remote storage and contains several parts (upload_by_part=false), can't skip it even with allow_missing_files_on_download=true", tableRemoteFile)
+						}
 						return errors.Wrap(err, "DownloadCompressedStream")
 					}
 					atomic.AddUint64(&downloadedSize, uint64(downloadedBytes))
@@ -932,7 +1119,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 						}
 					}
 					if hardlinkExistsFiles {
-						found, size, err := b.hardlinkIfLocalPartExistsAndChecksumEqual(remoteBackup.BackupName, table, &capturedPart, disks, capturedDisk, dbAndTableDir)
+						found, size, err := b.hardlinkIfLocalPartExistsAndChecksumEqual(remoteBackup.BackupName, table, &capturedPart, disks, capturedDisk, dbAndTableDir, livePartsByHash)
 						if err != nil {
 							return errors.Wrap(err, "hardlinkIfLocalPartExistsAndChecksumEqual")
 						}
@@ -961,6 +1148,9 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 						if len(manifestFiles) > 0 {
 							pathSize, downloadErr := b.dst.DownloadPathWithManifest(dataCtx, partRemotePath, partLocalPath, manifestFiles, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.DownloadMaxBytesPerSecond)
 							if downloadErr != nil {
+								if b.skipMissingPart(downloadErr, missing, table, capturedDisk, capturedPart.Name, partRemotePath) {
+									return os.RemoveAll(partLocalPath)
+								}
 								return errors.WithMessage(downloadErr, "DownloadPathWithManifest")
 							}
 							atomic.AddUint64(&downloadedSize, uint64(pathSize))
@@ -976,6 +1166,9 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 					// Fall back to Walk (ListObjectsV2) when no manifest is available
 					pathSize, downloadErr := b.dst.DownloadPath(dataCtx, partRemotePath, partLocalPath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.DownloadMaxBytesPerSecond)
 					if downloadErr != nil {
+						if b.skipMissingPart(downloadErr, missing, table, capturedDisk, capturedPart.Name, partRemotePath) {
+							return os.RemoveAll(partLocalPath)
+						}
 						return errors.Wrap(downloadErr, "DownloadPath")
 					}
 					atomic.AddUint64(&downloadedSize, uint64(pathSize))
@@ -993,13 +1186,13 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 	if err := dataGroup.Wait(); err != nil {
 		return 0, errors.Wrap(err, "one of downloadTableData go-routine return error")
 	}
-	if isRebalancedAfterHardLinks.Load() {
+	if missing.apply(&table) || isRebalancedAfterHardLinks.Load() {
 		if _, saveErr := table.Save(table.LocalFile, false); saveErr != nil {
 			return 0, errors.Wrap(saveErr, "save rebalanced table after hardlinks")
 		}
 	}
 	if !b.isEmbedded && remoteBackup.RequiredBackup != "" {
-		diffBytes, err := b.downloadDiffParts(ctx, remoteBackup, table, dbAndTableDir, disks, hardlinkExistsFiles)
+		diffBytes, err := b.downloadDiffParts(ctx, remoteBackup, table, dbAndTableDir, disks, hardlinkExistsFiles, livePartsByHash)
 		if err != nil {
 			return 0, errors.Wrap(err, "downloadDiffParts")
 		}
@@ -1009,7 +1202,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 	return downloadedSize, nil
 }
 
-func (b *Backuper) hardlinkIfLocalPartExistsAndChecksumEqual(backupName string, table metadata.TableMetadata, part *metadata.Part, disks []clickhouse.Disk, diskName, dbAndTableDir string) (bool, int64, error) {
+func (b *Backuper) hardlinkIfLocalPartExistsAndChecksumEqual(backupName string, table metadata.TableMetadata, part *metadata.Part, disks []clickhouse.Disk, diskName, dbAndTableDir string, livePartsByHash map[string][]livePartRow) (bool, int64, error) {
 	diskType := ""
 	for _, d := range disks {
 		if d.Name == diskName {
@@ -1022,7 +1215,7 @@ func (b *Backuper) hardlinkIfLocalPartExistsAndChecksumEqual(backupName string, 
 		return false, 0, errors.Errorf("can't find %s in disks=%v", diskName, disks)
 	}
 	if _, ok := table.HashOfAllFiles[part.Name]; ok {
-		found, size, err := b.hardlinkByHashOfAllFiles(context.Background(), backupName, table, part, disks, diskName, dbAndTableDir)
+		found, size, err := b.hardlinkByHashOfAllFiles(context.Background(), backupName, table, part, disks, diskName, dbAndTableDir, livePartsByHash)
 		if err != nil {
 			log.Warn().Err(err).Msgf("hardlinkByHashOfAllFiles failed for %s.%s/%s, falling back to CRC64", table.Database, table.Table, part.Name)
 		} else if found {
@@ -1086,11 +1279,17 @@ func (b *Backuper) findLocalPartWithSameChecksum(table metadata.TableMetadata, p
 		}
 		// https://github.com/Altinity/clickhouse-backup/issues/1244
 		if len(existingPartPaths) == 0 {
-			globDir, globErr := filepath.Glob(path.Join(localDisk.Path, "backup", "*", "shadow", dbAndTableDir, localDisk.Name, part.Name))
-			if globErr != nil {
-				return "", nil, errors.Wrap(globErr, "filepath.Glob")
+			// a complete index knows every shadow part of every local backup, so a miss is a real miss
+			// and the glob can be skipped entirely, https://github.com/Altinity/clickhouse-backup/issues/1457
+			if b.localPartIndex != nil && b.localPartIndex.complete {
+				existingPartPaths = b.localPartIndex.lookup(table.Database, table.Table, localDisk.Name, part.Name)
+			} else {
+				globDir, globErr := filepath.Glob(path.Join(localDisk.Path, "backup", "*", "shadow", dbAndTableDir, localDisk.Name, part.Name))
+				if globErr != nil {
+					return "", nil, errors.Wrap(globErr, "filepath.Glob")
+				}
+				existingPartPaths = append(existingPartPaths, globDir...)
 			}
-			existingPartPaths = append(existingPartPaths, globDir...)
 		}
 
 		for i, existingPartPath := range existingPartPaths {
@@ -1111,17 +1310,42 @@ func (b *Backuper) findLocalPartWithSameChecksum(table metadata.TableMetadata, p
 	return "", nil, nil
 }
 
-// checkFreeSpaceForDownload - https://github.com/Altinity/clickhouse-backup/issues/1268
-// calculates required disk space from per-part `size` fields in already downloaded and filtered
-// table metadata (so --tables and --partitions are respected) and compares it with the total free
-// space. When hardlinkExistsFiles is true, parts which can be hardlinked from existing local parts
-// (matched by hash_of_all_files via system.parts or by CRC64 of checksums.txt) are not counted.
-func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup storage.Backup, tables ListOfTables, disks []clickhouse.Disk, hardlinkExistsFiles, isResumeExists bool) error {
+// downloadSizeEstimate is the outcome of walking filtered table metadata and counting only the parts
+// which really would be downloaded, see computeDownloadSizeEstimate
+type downloadSizeEstimate struct {
+	// RequiredSize - bytes which would be allocated on local disks, including ObjectDiskSize
+	RequiredSize uint64
+	// ObjectDiskSize - subset of RequiredSize which belongs to parts stored on object storage disks
+	ObjectDiskSize uint64
+	// PartsCount - parts which would be downloaded, including parts with unknown size
+	PartsCount int
+	// UnknownSizeParts - parts without `size` in metadata (backup created by older clickhouse-backup)
+	UnknownSizeParts int
+	// LocalSizeByDisk - bytes which would land on each local disk, keyed by local disk name, parts of a
+	// disk absent in system.disks are attributed to the local disk with the most free space the same way
+	// getDownloadDiskForNonExistsDisk picks it, object storage parts are not counted, see issues/1458
+	LocalSizeByDisk map[string]uint64
+}
+
+// computeDownloadSizeEstimate walks already filtered table metadata (so --tables and --partitions are
+// respected) and sums per-part `size` fields of the parts which really would be downloaded. Parts which
+// can be hardlinked from existing local parts (matched by hash_of_all_files via system.parts or by CRC64
+// of checksums.txt) are skipped when hardlinkExistsFiles is true, parts already present in the local
+// required backup are skipped as well, and sizes of `required` parts are resolved read-only up the diff
+// chain, https://github.com/Altinity/clickhouse-backup/issues/1268
+func (b *Backuper) computeDownloadSizeEstimate(ctx context.Context, remoteBackup storage.Backup, tables ListOfTables, disks []clickhouse.Disk, hardlinkExistsFiles bool) downloadSizeEstimate {
+	estimate := downloadSizeEstimate{LocalSizeByDisk: make(map[string]uint64)}
 	requiredSize := uint64(0)
 	unknownSizeParts := 0
 	diskTypeByName := make(map[string]string, len(disks))
+	leastUsedLocalDisk := ""
+	leastUsedLocalDiskFree := uint64(0)
 	for _, d := range disks {
 		diskTypeByName[d.Name] = d.Type
+		if d.Type == "local" && !d.IsBackup && (leastUsedLocalDisk == "" || d.FreeSpace > leastUsedLocalDiskFree) {
+			leastUsedLocalDisk = d.Name
+			leastUsedLocalDiskFree = d.FreeSpace
+		}
 	}
 	var hardlinkableByHash map[metadata.TableTitle]common.EmptyMap
 	if hardlinkExistsFiles {
@@ -1151,7 +1375,15 @@ func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup s
 			tableMetadataCacheKey := path.Join(requiredBackupName, title.Database, title.Table)
 			requiredTableMetadata, exists := requiredTableMetadataCache[tableMetadataCacheKey]
 			if !exists {
-				m, err := b.downloadTableMetadataIfNotExists(ctx, requiredBackupName, title)
+				var m *metadata.TableMetadata
+				var err error
+				if b.DryRun {
+					// a dry-run must not write anything to the local disk, read the required table
+					// metadata into memory instead of caching it as a local file
+					m, _, err = b.readRemoteTableMetadata(ctx, requiredBackupName, title)
+				} else {
+					m, err = b.downloadTableMetadataIfNotExists(ctx, requiredBackupName, title)
+				}
 				if err != nil {
 					log.Warn().Err(err).Msgf("can't download %s table metadata to resolve required part %s size", tableMetadataCacheKey, partName)
 					return 0, false
@@ -1189,6 +1421,26 @@ func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup s
 		dbAndTableDir := path.Join(common.TablePathEncode(t.Database), common.TablePathEncode(t.Table))
 		byHash := hardlinkableByHash[title]
 		for diskName, parts := range t.Parts {
+			// parts of an object storage disk keep the object storage size in part.Size, parts of a local
+			// disk keep the on-disk size, both are accounted in RequiredSize, the object storage share is
+			// tracked separately so `download --dry-run` can report it
+			isObjectDisk := b.isDiskTypeObject(remoteBackup.DiskTypes[diskName]) || remoteBackup.IsPlainDisk(diskName)
+			localDisk := ""
+			if !isObjectDisk {
+				if _, diskExists := diskTypeByName[diskName]; diskExists {
+					localDisk = diskName
+				} else {
+					localDisk = leastUsedLocalDisk
+				}
+			}
+			addSize := func(size uint64) {
+				requiredSize += size
+				if isObjectDisk {
+					estimate.ObjectDiskSize += size
+				} else if localDisk != "" {
+					estimate.LocalSizeByDisk[localDisk] += size
+				}
+			}
 			for i := range parts {
 				part := parts[i]
 				if hardlinkExistsFiles {
@@ -1200,8 +1452,9 @@ func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup s
 					}
 				}
 				if !part.Required {
+					estimate.PartsCount++
 					if part.Size > 0 {
-						requiredSize += part.Size
+						addSize(part.Size)
 					} else {
 						unknownSizeParts++
 					}
@@ -1218,14 +1471,27 @@ func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup s
 						continue
 					}
 				}
+				estimate.PartsCount++
 				if size, sizeResolved := resolveRequiredPartSize(remoteBackup.RequiredBackup, title, part.Name); sizeResolved {
-					requiredSize += size
+					addSize(size)
 				} else {
 					unknownSizeParts++
 				}
 			}
 		}
 	}
+	estimate.RequiredSize = requiredSize
+	estimate.UnknownSizeParts = unknownSizeParts
+	return estimate
+}
+
+// checkFreeSpaceForDownload - https://github.com/Altinity/clickhouse-backup/issues/1268
+// compares the space required by computeDownloadSizeEstimate with the total free space on local disks,
+// then applies the per-disk usage limit of --disk-limit when set, https://github.com/Altinity/clickhouse-backup/issues/1458
+func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup storage.Backup, tables ListOfTables, disks []clickhouse.Disk, hardlinkExistsFiles, isResumeExists bool) error {
+	estimate := b.computeDownloadSizeEstimate(ctx, remoteBackup, tables, disks, hardlinkExistsFiles)
+	requiredSize := estimate.RequiredSize
+	unknownSizeParts := estimate.UnknownSizeParts
 	if requiredSize == 0 && unknownSizeParts == 0 {
 		return nil
 	}
@@ -1243,6 +1509,57 @@ func (b *Backuper) checkFreeSpaceForDownload(ctx context.Context, remoteBackup s
 	}
 	if unknownSizeParts > 0 {
 		log.Warn().Msgf("%d parts in %s don't contain `size` field in metadata (backup created by older clickhouse-backup version), free space check is not precise: requires at least %s, total free space is %s", unknownSizeParts, remoteBackup.BackupName, utils.FormatBytes(requiredSize), utils.FormatBytes(freeSize))
+	}
+	return b.checkDiskLimitForDownload(remoteBackup, estimate, disks, isResumeExists)
+}
+
+// removeRefusedDownload drops what a download refused by checkFreeSpaceForDownload has already written to the
+// local disks (table metadata and the resumable state), so the next run doesn't resume and re-runs the check
+func (b *Backuper) removeRefusedDownload(backupName string, disks []clickhouse.Disk) {
+	if b.resume && b.resumableState != nil {
+		b.resumableState.Close()
+	}
+	for _, disk := range disks {
+		backupPath := path.Join(disk.Path, "backup", backupName)
+		if disk.IsBackup {
+			backupPath = path.Join(disk.Path, backupName)
+		}
+		if _, statErr := os.Stat(backupPath); statErr != nil {
+			continue
+		}
+		log.Info().Msgf("remove '%s' left by refused download", backupPath)
+		if removeErr := os.RemoveAll(backupPath); removeErr != nil {
+			log.Warn().Err(removeErr).Msgf("can't remove '%s'", backupPath)
+		}
+	}
+}
+
+// checkDiskLimitForDownload - https://github.com/Altinity/clickhouse-backup/issues/1458
+// refuses the download when (used + downloaded) / total of any local disk would exceed b.DiskLimit percent,
+// a download which merely fits into free space can still fill a data disk to 100% and take clickhouse-server down
+func (b *Backuper) checkDiskLimitForDownload(remoteBackup storage.Backup, estimate downloadSizeEstimate, disks []clickhouse.Disk, isResumeExists bool) error {
+	if b.DiskLimit <= 0 {
+		return nil
+	}
+	// walk in system.disks order so the reported disk is deterministic when several exceed the limit
+	for _, d := range disks {
+		downloadSize, exists := estimate.LocalSizeByDisk[d.Name]
+		if !exists {
+			continue
+		}
+		if d.TotalSpace == 0 {
+			log.Warn().Msgf("disk %s doesn't report total_space, --disk-limit=%d is not checked for it", d.Name, b.DiskLimit)
+			continue
+		}
+		used := d.TotalSpace - min(d.FreeSpace, d.TotalSpace)
+		projected := float64(used+downloadSize) * 100 / float64(d.TotalSpace)
+		if projected > float64(b.DiskLimit) {
+			errMsg := fmt.Sprintf("%s download would fill disk %s to %.1f%% which exceeds --disk-limit=%d%%: used %s + download %s of total %s", remoteBackup.BackupName, d.Name, projected, b.DiskLimit, utils.FormatBytes(used), utils.FormatBytes(downloadSize), utils.FormatBytes(d.TotalSpace))
+			if !isResumeExists {
+				return errors.New(errMsg)
+			}
+			log.Warn().Msg(errMsg)
+		}
 	}
 	return nil
 }
@@ -1308,65 +1625,99 @@ func (b *Backuper) findHardlinkablePartsByHash(ctx context.Context, tables ListO
 	return result, nil
 }
 
-// hardlinkByHashOfAllFiles looks up an existing live part in system.parts whose
-// hash_of_all_files matches the expected value from backup metadata. If several
-// candidates exist (e.g. copies of the same data under different part names),
-// the one with the smallest Levenshtein distance to part.Name wins. On success
-// it hardlinks the resolved on-disk directory into the backup shadow path.
-func (b *Backuper) hardlinkByHashOfAllFiles(ctx context.Context, backupName string, table metadata.TableMetadata, part *metadata.Part, disks []clickhouse.Disk, diskName, dbAndTableDir string) (bool, int64, error) {
+// hardlinkByHashOfAllFiles looks up an existing live part whose hash_of_all_files matches the
+// expected value from backup metadata, preferring the per-table livePartsByHash snapshot and
+// falling back to reading system.parts for this single part. If several candidates exist (e.g.
+// copies of the same data under different part names), the one with the smallest Levenshtein
+// distance to part.Name wins, see hardlinkFromLiveParts. On success it hardlinks the resolved
+// on-disk directory into the backup shadow path.
+func (b *Backuper) hardlinkByHashOfAllFiles(ctx context.Context, backupName string, table metadata.TableMetadata, part *metadata.Part, disks []clickhouse.Disk, diskName, dbAndTableDir string, livePartsByHash map[string][]livePartRow) (bool, int64, error) {
 	expected, ok := table.HashOfAllFiles[part.Name]
 	if !ok {
 		return false, 0, nil
 	}
-	var rows []struct {
-		Name     string `ch:"name"`
-		Path     string `ch:"path"`
-		Disk     string `ch:"disk_name"`
-		Database string `ch:"database"`
-		Table    string `ch:"table"`
+	expected = strings.ToLower(expected)
+	// the per-table snapshot answers without a query, https://github.com/Altinity/clickhouse-backup/issues/1457
+	// it can only go stale by a merge dropping the part after the snapshot was taken, which is
+	// detected before the hardlink and repaired by re-reading system.parts for that single part
+	if livePartsByHash != nil {
+		cachedRows := livePartsByHash[expected]
+		if len(cachedRows) == 0 {
+			return false, 0, nil
+		}
+		found, size, err := b.hardlinkFromLiveParts(cachedRows, true, backupName, table, part, disks, diskName, dbAndTableDir)
+		if err != nil {
+			return false, 0, err
+		}
+		if found {
+			return true, size, nil
+		}
+		log.Warn().Msgf("system.parts snapshot for %s.%s part %s went stale, re-reading system.parts", table.Database, table.Table, part.Name)
 	}
+	var rows []livePartRow
 	// A part with an identical hash_of_all_files can live under a different
 	// table name (e.g. the table was renamed, or the same data was inserted
 	// into another table). A matching hash_of_all_files means the part files
 	// are byte-identical, so the directory is safe to hardlink regardless of
 	// which table currently owns it. See
 	// https://github.com/Altinity/clickhouse-backup/issues/1398
-	q := "SELECT name, path, disk_name, database, `table` FROM system.parts WHERE lower(hash_of_all_files)=? AND active"
+	q := "SELECT name, path, disk_name, database, `table`, lower(hash_of_all_files) AS hash FROM system.parts WHERE lower(hash_of_all_files)=? AND active"
 	if err := b.ch.SelectContext(ctx, &rows, q, expected); err != nil {
 		return false, 0, errors.Wrap(err, "system.parts lookup by hash_of_all_files")
 	}
 	if len(rows) == 0 {
 		return false, 0, nil
 	}
-	sort.SliceStable(rows, func(i, j int) bool {
+	return b.hardlinkFromLiveParts(rows, false, backupName, table, part, disks, diskName, dbAndTableDir)
+}
+
+// hardlinkFromLiveParts picks the best candidate among live parts sharing the expected
+// hash_of_all_files and hardlinks its directory into the backup shadow path. When tolerateStale is
+// set, a candidate which disappeared from disk is reported as not found instead of failing, so the
+// caller can re-read system.parts, https://github.com/Altinity/clickhouse-backup/issues/1457
+func (b *Backuper) hardlinkFromLiveParts(rows []livePartRow, tolerateStale bool, backupName string, table metadata.TableMetadata, part *metadata.Part, disks []clickhouse.Disk, diskName, dbAndTableDir string) (bool, int64, error) {
+	// the snapshot slice is shared by the concurrent part goroutines and the order depends on
+	// part.Name, so sort a private copy and keep the snapshot read-only
+	candidates := make([]livePartRow, len(rows))
+	copy(candidates, rows)
+	sort.SliceStable(candidates, func(i, j int) bool {
 		// Prefer a candidate from the same table, then the closest part name.
-		sameI := rows[i].Database == table.Database && rows[i].Table == table.Table
-		sameJ := rows[j].Database == table.Database && rows[j].Table == table.Table
+		sameI := candidates[i].Database == table.Database && candidates[i].Table == table.Table
+		sameJ := candidates[j].Database == table.Database && candidates[j].Table == table.Table
 		if sameI != sameJ {
 			return sameI
 		}
-		di := levenshtein(rows[i].Name, part.Name)
-		dj := levenshtein(rows[j].Name, part.Name)
+		di := levenshtein(candidates[i].Name, part.Name)
+		dj := levenshtein(candidates[j].Name, part.Name)
 		if di != dj {
 			return di < dj
 		}
-		return rows[i].Name < rows[j].Name
+		return candidates[i].Name < candidates[j].Name
 	})
 
 	var localDisk *clickhouse.Disk
 	for i := range disks {
-		if disks[i].Name == rows[0].Disk {
+		if disks[i].Name == candidates[0].Disk {
 			localDisk = &disks[i]
 			break
 		}
 	}
 	if localDisk == nil {
-		return false, 0, errors.Errorf("disk %q from system.parts not found in disks=%v", rows[0].Disk, disks)
+		return false, 0, errors.Errorf("disk %q from system.parts not found in disks=%v", candidates[0].Disk, disks)
 	}
-	srcPath := strings.TrimRight(rows[0].Path, "/")
+	srcPath := strings.TrimRight(candidates[0].Path, "/")
+	if tolerateStale {
+		if _, statErr := os.Stat(srcPath); statErr != nil {
+			return false, 0, nil
+		}
+	}
 	partLocalPath := path.Join(b.getLocalBackupDataPathForTable(backupName, localDisk.Name, dbAndTableDir), part.Name)
-	log.Info().Msgf("hash_of_all_files match: hardlink %s -> %s (live part %q from %s.%s)", srcPath, partLocalPath, rows[0].Name, rows[0].Database, rows[0].Table)
+	log.Info().Msgf("hash_of_all_files match: hardlink %s -> %s (live part %q from %s.%s)", srcPath, partLocalPath, candidates[0].Name, candidates[0].Database, candidates[0].Table)
 	if err := b.makePartHardlinks(srcPath, partLocalPath); err != nil {
+		if tolerateStale {
+			log.Warn().Err(err).Msgf("hardlink from the cached live part %s failed", srcPath)
+			return false, 0, nil
+		}
 		return false, 0, errors.Wrapf(err, "failed to create hardlinks for %s", srcPath)
 	}
 	if diskName != localDisk.Name {
@@ -1424,7 +1775,7 @@ func levenshtein(a, b string) int {
 	return prev[lb]
 }
 
-func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, dbAndTableDir string, disks []clickhouse.Disk, hardlinkExistsFiles bool) (int64, error) {
+func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, dbAndTableDir string, disks []clickhouse.Disk, hardlinkExistsFiles bool, livePartsByHash map[string][]livePartRow) (int64, error) {
 	log.Debug().
 		Str("backup", remoteBackup.BackupName).
 		Str("operation", "downloadDiffParts").
@@ -1437,6 +1788,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 	downloadedDiffParts := uint32(0)
 	downloadDiffGroup, downloadDiffCtx := errgroup.WithContext(ctx)
 	downloadDiffGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
+	missing := &missingParts{}
 	diffRemoteFilesCache := map[string]*sync.Mutex{}
 	diffRemoteFilesLock := &sync.Mutex{}
 	isRebalancedAfterHardLinks := false
@@ -1536,7 +1888,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 				idx := i
 				downloadDiffGroup.Go(func() error {
 					if hardlinkExistsFiles {
-						found, size, err := b.hardlinkIfLocalPartExistsAndChecksumEqual(remoteBackup.BackupName, table, &partForDownload, disks, capturedDisk, dbAndTableDir)
+						found, size, err := b.hardlinkIfLocalPartExistsAndChecksumEqual(remoteBackup.BackupName, table, &partForDownload, disks, capturedDisk, dbAndTableDir, livePartsByHash)
 						if err != nil {
 							return errors.Wrap(err, "hardlinkIfLocalPartExistsAndChecksumEqual")
 						}
@@ -1563,6 +1915,9 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 					for tableRemoteFile, tableLocalDir := range tableRemoteFiles {
 						fileDiffBytes, downloadErr := b.downloadDiffRemoteFile(downloadDiffCtx, diffRemoteFilesLock, diffRemoteFilesCache, tableRemoteFile, tableLocalDir)
 						if downloadErr != nil {
+							if b.skipMissingPart(downloadErr, missing, table, capturedDisk, partForDownload.Name, tableRemoteFile) {
+								return nil
+							}
 							return errors.Wrap(downloadErr, "downloadDiffRemoteFile")
 						}
 						downloadedPartPath := path.Join(tableLocalDir, partForDownload.Name)
@@ -1612,7 +1967,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 	if err := downloadDiffGroup.Wait(); err != nil {
 		return 0, errors.Wrap(err, "one of downloadDiffParts go-routine return error")
 	}
-	if isRebalancedAfterHardLinks {
+	if missing.apply(&table) || isRebalancedAfterHardLinks {
 		if _, saveErr := table.Save(table.LocalFile, false); saveErr != nil {
 			return 0, errors.Wrap(saveErr, "save rebalanced table after hardlinks in downloadDiffParts")
 		}

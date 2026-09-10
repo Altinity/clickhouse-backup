@@ -1,21 +1,24 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
+
 	"github.com/stretchr/testify/require"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 )
 
 func TestCLIStatus_CallbackDispatchedOnCommandSuccess(t *testing.T) {
@@ -23,7 +26,7 @@ func TestCLIStatus_CallbackDispatchedOnCommandSuccess(t *testing.T) {
 	payloads, srv := callbackReceiver(t)
 	defer srv.Close()
 
-	err := runWithCLIStatus(newTestCLIContext(t, srv.URL, "create"), "create", func(c *cli.Context) error {
+	err := runWithCLIStatus(context.Background(), newTestCLIContext(t, srv.URL, "create"), "create", func(_ context.Context, c *cli.Command) error {
 		return nil
 	})
 	r.NoError(err)
@@ -42,7 +45,7 @@ func TestCLIStatus_CallbackDispatchedOnCommandFailure(t *testing.T) {
 	defer srv.Close()
 
 	actionErr := errors.New("invalid table pattern")
-	err := runWithCLIStatus(newTestCLIContext(t, srv.URL, "create"), "create", func(c *cli.Context) error {
+	err := runWithCLIStatus(context.Background(), newTestCLIContext(t, srv.URL, "create"), "create", func(_ context.Context, c *cli.Command) error {
 		return actionErr
 	})
 	r.ErrorIs(err, actionErr)
@@ -61,7 +64,7 @@ func TestCLIStatus_CallbackFailureDoesNotAffectExitCode(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := runWithCLIStatus(newTestCLIContext(t, srv.URL, "create"), "create", func(c *cli.Context) error {
+	err := runWithCLIStatus(context.Background(), newTestCLIContext(t, srv.URL, "create"), "create", func(_ context.Context, c *cli.Command) error {
 		return nil
 	})
 	r.NoError(err)
@@ -74,8 +77,8 @@ func TestCLIStatus_SkippedWhenSpawnedFromAPI(t *testing.T) {
 	payloads, srv := callbackReceiver(t)
 	defer srv.Close()
 
-	ctx := newTestCLIContextWithCommandId(t, srv.URL, "create", 7)
-	err := runWithCLIStatus(ctx, "create", func(c *cli.Context) error { return nil })
+	cmd := newTestCLIContextWithCommandId(t, srv.URL, "create", 7)
+	err := runWithCLIStatus(context.Background(), cmd, "create", func(_ context.Context, c *cli.Command) error { return nil })
 	r.NoError(err)
 
 	select {
@@ -92,8 +95,8 @@ func TestCLIStatus_FullCommandIncludesArguments(t *testing.T) {
 	payloads, srv := callbackReceiver(t)
 	defer srv.Close()
 
-	ctx := newTestCLIContext(t, srv.URL, "create_remote")
-	err := runWithCLIStatus(ctx, "create_remote", func(c *cli.Context) error { return nil })
+	cmd := newTestCLIContext(t, srv.URL, "create_remote")
+	err := runWithCLIStatus(context.Background(), cmd, "create_remote", func(_ context.Context, c *cli.Command) error { return nil })
 	r.NoError(err)
 
 	got := awaitCallback(t, payloads)
@@ -104,11 +107,11 @@ func TestCLIStatus_FullCommandIncludesArguments(t *testing.T) {
 // leave everything else untouched, without any command name list of its own.
 func TestRegisterCLIStatus_WrapsEligibleCommandsRecursively(t *testing.T) {
 	r := require.New(t)
-	noop := func(c *cli.Context) error { return nil }
-	commands := []cli.Command{
+	noop := func(_ context.Context, c *cli.Command) error { return nil }
+	commands := []*cli.Command{
 		{Name: "create", Action: noop},
 		{Name: "list", Action: noop},
-		{Name: "server", Action: noop, Subcommands: []cli.Command{{Name: "restore", Action: noop}}},
+		{Name: "server", Action: noop, Commands: []*cli.Command{{Name: "restore", Action: noop}}},
 	}
 	original := commands[1].Action
 
@@ -118,7 +121,7 @@ func TestRegisterCLIStatus_WrapsEligibleCommandsRecursively(t *testing.T) {
 	r.False(sameAction(commands[0].Action, noop), "eligible command `create` must be wrapped")
 	r.True(sameAction(commands[1].Action, original), "read-only command `list` must stay untouched")
 	r.True(sameAction(commands[2].Action, noop), "supervisor command `server` must stay untouched")
-	r.False(sameAction(commands[2].Subcommands[0].Action, noop), "nested eligible command `restore` must be wrapped")
+	r.False(sameAction(commands[2].Commands[0].Action, noop), "nested eligible command `restore` must be wrapped")
 }
 
 func sameAction(a, b interface{}) bool {
@@ -156,42 +159,51 @@ func awaitCallback(t *testing.T, payloads chan status.CallbackPayload) status.Ca
 	}
 }
 
-func newTestCLIContext(t *testing.T, callbackURL, commandName string) *cli.Context {
+func newTestCLIContext(t *testing.T, callbackURL, commandName string) *cli.Command {
 	t.Helper()
 	return newTestCLIContextWithCommandId(t, callbackURL, commandName, status.NotFromAPI)
 }
 
-func newTestCLIContextWithCommandId(t *testing.T, callbackURL, commandName string, commandId int) *cli.Context {
+func newTestCLIContextWithCommandId(t *testing.T, callbackURL, commandName string, commandId int) *cli.Command {
 	t.Helper()
 	configPath := filepath.Join(t.TempDir(), "config.yml")
 	content := "general:\n  callback_url: \"" + callbackURL + "\"\n  callback_timeout: \"2s\"\n"
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	app := cli.NewApp()
-	app.Commands = []cli.Command{{Name: commandName}}
 
-	// Mirror the real flag layout: main.go declares command-id at app level and
-	// every command re-declares it via `Flags: append(cliapp.Flags, ...)`. The API
-	// server passes --command-id *before* the command name, so it lands in the app
-	// flag set while the command keeps its own default. A helper that puts it only
-	// on the command flag set cannot catch a lookup reading the wrong one.
-	appSet := flag.NewFlagSet("clickhouse-backup", flag.ContinueOnError)
-	appSet.String("config", configPath, "")
-	appSet.Int("command-id", commandId, "")
-	parent := cli.NewContext(app, appSet, nil)
-
-	cmdSet := flag.NewFlagSet(commandName, flag.ContinueOnError)
-	cmdSet.String("config", configPath, "")
-	cmdSet.Int("command-id", status.NotFromAPI, "")
-	if commandName == "create_remote" {
-		if err := cmdSet.Parse([]string{"backup-name"}); err != nil {
-			t.Fatalf("parse args: %v", err)
-		}
+	// Mirror the real flag layout: main.go declares config and command-id once, on
+	// the root command, and both are persistent. The API server passes
+	// --command-id *before* the command name, so it is parsed by the root and only
+	// a lineage aware lookup can see it from the sub-command.
+	args := []string{"clickhouse-backup", "-c", configPath}
+	if commandId != status.NotFromAPI {
+		args = append(args, "--command-id", strconv.Itoa(commandId))
 	}
-	ctx := cli.NewContext(app, cmdSet, parent)
-	ctx.Command = app.Commands[0]
-	return ctx
+	args = append(args, commandName)
+	if commandName == "create_remote" {
+		args = append(args, "backup-name")
+	}
+
+	var parsed *cli.Command
+	root := &cli.Command{
+		Name: "clickhouse-backup",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "config", Aliases: []string{"c"}, Value: config.DefaultConfigPath},
+			&cli.IntFlag{Name: "command-id", Hidden: true, Value: status.NotFromAPI},
+		},
+		Commands: []*cli.Command{{
+			Name: commandName,
+			Action: func(_ context.Context, cmd *cli.Command) error {
+				parsed = cmd
+				return nil
+			},
+		}},
+	}
+	if err := root.Run(context.Background(), args); err != nil {
+		t.Fatalf("parse %v: %v", args, err)
+	}
+	return parsed
 }
 
 // commandIdFromCli must find --command-id where the API server actually puts it:
@@ -215,7 +227,7 @@ func TestCLIStatus_SkippedInAPIServerMode(t *testing.T) {
 	status.SetAPIServerMode()
 	defer status.ResetAPIServerModeForTest()
 
-	err := runWithCLIStatus(newTestCLIContext(t, srv.URL, "create"), "create", func(c *cli.Context) error { return nil })
+	err := runWithCLIStatus(context.Background(), newTestCLIContext(t, srv.URL, "create"), "create", func(_ context.Context, c *cli.Command) error { return nil })
 	r.NoError(err)
 
 	select {

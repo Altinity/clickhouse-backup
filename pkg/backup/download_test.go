@@ -2,7 +2,6 @@ package backup
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path"
 	"regexp"
@@ -97,26 +96,6 @@ var remoteBackup = storage.Backup{
 	UploadDate: time.Now(),
 }
 
-func TestIsRemoteMetadataNotFound(t *testing.T) {
-	notFoundMessages := []string{
-		"object doesn't exist",
-		"key not found: metadata/default/test.json",
-		"NoSuchKey: The specified key does not exist",
-		"operation error S3: GetObject, https response error StatusCode: 404",
-		"StatusCode 404",
-		// real backend phrasings observed in test/integration TestMetadataNotFound*
-		"550 /backup/metadata/default/test.json: No such file or directory", // FTP
-		"file does not exist", // SFTP
-		"AzureBlob GetFileReaderAbsolute Download: RESPONSE ERROR (ServiceCode=BlobNotFound) RESPONSE Status: 404 The specified blob does not exist.", // Azure
-	}
-	for _, msg := range notFoundMessages {
-		assert.True(t, isRemoteMetadataNotFound(errors.New(msg)), msg)
-	}
-
-	assert.False(t, isRemoteMetadataNotFound(nil))
-	assert.False(t, isRemoteMetadataNotFound(errors.New("temporary network timeout")))
-}
-
 func TestResumeExistingBackupMissingStateFileReturnsError(t *testing.T) {
 	backupName := "test_resume_crash"
 	defaultDataPath := t.TempDir()
@@ -125,7 +104,7 @@ func TestResumeExistingBackupMissingStateFileReturnsError(t *testing.T) {
 
 	backuper := &Backuper{DefaultDataPath: defaultDataPath}
 
-	err := backuper.resumeExistingBackup(backupName)
+	err := backuper.resumeExistingBackup(backupName, "download")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "download.state2")
 	assert.Contains(t, err.Error(), "delete local "+backupName)
@@ -133,7 +112,7 @@ func TestResumeExistingBackupMissingStateFileReturnsError(t *testing.T) {
 	assert.ErrorIs(t, err, ErrBackupIsAlreadyExists)
 
 	assert.NoError(t, os.WriteFile(path.Join(backupDir, "download.state2"), []byte("state"), 0o640))
-	assert.NoError(t, backuper.resumeExistingBackup(backupName))
+	assert.NoError(t, backuper.resumeExistingBackup(backupName, "download"))
 }
 
 func TestReBalanceTablesMetadataIfDiskNotExists_Files_NoErrors(t *testing.T) {
@@ -399,4 +378,59 @@ func TestCheckFreeSpaceForDownloadHardlinkExistsFiles(t *testing.T) {
 	// checksum mismatch means the part will be downloaded and counted again
 	tables[0].Checksums["all_1_1_0"] = checksum + 1
 	require.Error(t, backuper.checkFreeSpaceForDownload(ctx, freeSpaceRemoteBackup, tables, disks, true, false))
+}
+
+// https://github.com/Altinity/clickhouse-backup/issues/1458
+func TestCheckDiskLimitForDownload(t *testing.T) {
+	ctx := context.Background()
+	backuper := &Backuper{cfg: &config.Config{}}
+	remoteBackup := storage.Backup{BackupMetadata: metadata.BackupMetadata{BackupName: "test_disk_limit", DiskTypes: map[string]string{"default": "local", "hdd1": "local", "s3": "s3"}}}
+	// default is 50% used, hdd1 is 10% used
+	disks := []clickhouse.Disk{
+		{Name: "default", Path: "/var/lib/clickhouse", Type: "local", FreeSpace: 500, TotalSpace: 1000},
+		{Name: "hdd1", Path: "/mnt/hdd1", Type: "local", FreeSpace: 900, TotalSpace: 1000},
+		{Name: "s3", Path: "/var/lib/clickhouse/disks/s3", Type: "s3", FreeSpace: 1 << 60, TotalSpace: 1 << 60},
+	}
+	tables := ListOfTables{
+		{
+			Database: "default",
+			Table:    "test",
+			Parts: map[string][]metadata.Part{
+				"default": {{Name: "all_1_1_0", Size: 300}},
+				// hdd2 doesn't exist locally, its parts land on the least used local disk (hdd1)
+				"hdd2": {{Name: "all_2_2_0", Size: 100}},
+				"s3":   {{Name: "all_3_3_0", Size: 10000}},
+			},
+		},
+	}
+	estimate := backuper.computeDownloadSizeEstimate(ctx, remoteBackup, tables, disks, false)
+	assert.Equal(t, map[string]uint64{"default": 300, "hdd1": 100}, estimate.LocalSizeByDisk)
+	assert.Equal(t, uint64(10000), estimate.ObjectDiskSize)
+
+	// disabled by default
+	require.NoError(t, backuper.checkFreeSpaceForDownload(ctx, remoteBackup, tables, disks, false, false))
+	// default would become 80% > 75%
+	backuper.DiskLimit = 75
+	err := backuper.checkFreeSpaceForDownload(ctx, remoteBackup, tables, disks, false, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "would fill disk default to 80.0% which exceeds --disk-limit=75%")
+	// resume downgrades error to warning
+	require.NoError(t, backuper.checkFreeSpaceForDownload(ctx, remoteBackup, tables, disks, false, true))
+	// 80% is exactly the limit, allowed
+	backuper.DiskLimit = 80
+	require.NoError(t, backuper.checkFreeSpaceForDownload(ctx, remoteBackup, tables, disks, false, false))
+	// default becomes 8% used, hdd1 stays the least used local disk and would become 20% > 15%
+	disks[0].TotalSpace = 10000
+	disks[0].FreeSpace = 9500
+	disks[1].TotalSpace = 100000
+	disks[1].FreeSpace = 90000
+	tables[0].Parts["hdd2"][0].Size = 10000
+	backuper.DiskLimit = 15
+	err = backuper.checkFreeSpaceForDownload(ctx, remoteBackup, tables, disks, false, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "would fill disk hdd1 to 20.0%")
+	// disk without total_space (old clickhouse) is skipped with a warning
+	disks[0].TotalSpace = 0
+	disks[1].TotalSpace = 0
+	require.NoError(t, backuper.checkFreeSpaceForDownload(ctx, remoteBackup, tables, disks, false, false))
 }

@@ -8,7 +8,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/require"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
@@ -31,11 +31,8 @@ func newTestAPI(t *testing.T) *APIServer {
 	// Ensure AllowParallel default is false — tests set it explicitly.
 	cfg.API.AllowParallel = false
 
-	app := cli.NewApp()
-	app.Version = "test"
-
 	return &APIServer{
-		cliApp:                  app,
+		newCliApp:               func() *cli.Command { return &cli.Command{Name: "clickhouse-backup", Version: "test"} },
 		configPath:              "/nonexistent/config.yaml", // causes LoadConfig to use DefaultConfig
 		config:                  cfg,
 		metrics:                 testMetrics,
@@ -396,4 +393,3 @@ func TestCASActionsDispatcher_LockedWhenBusy(t *testing.T) {
 func TestHttpListHandler_KindFieldPresent(t *testing.T) {
 	t.Skip("requires live ClickHouse connection; covered by integration TestCASAPI_ListMixedBackups")
 }
-

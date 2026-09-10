@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog/log"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/acvpwrapper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
@@ -30,26 +30,1271 @@ var (
 	buildArch = "unknown"
 )
 
-// commandIdFromCli reads --command-id from wherever urfave/cli v1 parsed it.
+// commandIdFromCli reads --command-id wherever urfave/cli parsed it.
 //
-// `command-id` is declared once in cliapp.Flags, but every command re-declares it
-// through `Flags: append(cliapp.Flags, ...)`, so it exists in two flag sets. In
-// urfave/cli v1 (unlike v2) c.Int does NOT walk the lineage: it reads only the
-// command's own copy, which holds the default unless the flag follows the command
-// name. The API server passes `--command-id N` *before* the command name
-// (APIServer.actionsAsyncCommandsHandler and friends), so the value lands in the
-// app flag set and is only reachable via c.GlobalInt.
+// `command-id` is declared once, on the root command, and is persistent, so
+// c.Int walks the lineage and finds it whether the API server passed it before
+// the command name (APIServer.actionsAsyncCommandsHandler and friends) or a
+// caller put it after.
 //
-// Reading just c.Int made every command started through POST /backup/actions see
-// status.NotFromAPI, so it ran with a fresh background context instead of the one
-// owned by its status row and /backup/kill could not cancel it. Broken since
-// 0a26ee69 (v2.1.0), which moved the flag from the commands to the app but kept
-// the c.Int lookups. config.GetConfigPath handles the same duplication the same way.
-func commandIdFromCli(c *cli.Context) int {
-	if id := c.GlobalInt("command-id"); id != status.NotFromAPI {
-		return id
-	}
+// Reading a command-local copy made every command started through POST
+// /backup/actions see status.NotFromAPI, so it ran with a fresh background
+// context instead of the one owned by its status row and /backup/kill could not
+// cancel it. Broken since 0a26ee69 (v2.1.0), which moved the flag from the
+// commands to the app but kept the command-local lookups.
+func commandIdFromCli(c *cli.Command) int {
 	return c.Int("command-id")
+}
+
+// withDryRunResult publishes the report of a successful `--dry-run` command as the
+// `result` field of its status row, so it is visible in /backup/status,
+// GET /backup/actions and system.backup_actions and not only in the log.
+// It is a no-op without `--dry-run` (DryRunResult stays nil) and outside the API
+// (commandIdFromCli returns status.NotFromAPI, which owns no row).
+// https://github.com/Altinity/clickhouse-backup/issues/1012
+func withDryRunResult(c *cli.Command, b *backup.Backuper, err error) error {
+	if err == nil {
+		status.Current.SetResult(commandIdFromCli(c), b.DryRunResult.JSONString())
+	}
+	return err
+}
+
+// newRootCommand builds a fresh root command. In urfave/cli v3 parsed values live
+// in the cli.Flag structs themselves and are not reset between Command.Run calls,
+// so the API server, which re-enters the CLI in process and may do so in parallel
+// (api.allow_parallel), builds a new tree per run instead of sharing one.
+func newRootCommand() *cli.Command {
+	cliapp := &cli.Command{}
+	cliapp.Name = "clickhouse-backup"
+	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud support"
+	cliapp.UsageText = "clickhouse-backup <command> [-t, --tables=<db>.<table>] <backup_name>"
+	cliapp.Description = "Run as 'root' or 'clickhouse' user"
+	cliapp.Version = version
+	// Wire the build version into CAS marker JSON (inprogress / prune
+	// markers carry this for forensic context — see pkg/cas/markers.go).
+	cas.SetMarkerTool(fmt.Sprintf("clickhouse-backup/%s", version))
+	cliapp.Flags = []cli.Flag{
+		&cli.StringFlag{
+			Name:     "config",
+			Aliases:  []string{"c"},
+			Value:    config.DefaultConfigPath,
+			Usage:    "Config 'FILE' name.",
+			Sources:  cli.EnvVars("CLICKHOUSE_BACKUP_CONFIG"),
+			Required: false,
+		},
+		&cli.StringSliceFlag{
+			Name:     "environment-override",
+			Aliases:  []string{"env"},
+			Usage:    "override any environment variable via CLI parameter",
+			Required: false,
+		},
+		&cli.IntFlag{
+			Name:     "command-id",
+			Hidden:   true,
+			Value:    -1,
+			Required: false,
+			Usage:    "internal parameter for API call",
+		},
+	}
+	cliapp.CommandNotFound = func(_ context.Context, c *cli.Command, command string) {
+		fmt.Printf("Error. Unknown command: '%s'\n\n", command)
+		cli.ShowAppHelpAndExit(c, 1)
+	}
+
+	cliapp.Commands = []*cli.Command{
+		{
+			Name:      "tables",
+			Usage:     "List of tables, exclude skip_tables",
+			UsageText: "clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all] [--parts] [--partitions]",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				return b.PrintTables(c.Bool("all"), c.String("table"), c.String("remote-backup"), c.String("local-backup"), c.String("format"), c.Bool("parts"), c.Bool("partitions"))
+			},
+			Flags: []cli.Flag{
+				&cli.BoolFlag{
+					Name:    "all",
+					Aliases: []string{"a"},
+					Hidden:  false,
+					Usage:   "Print table even when match with skip_tables pattern",
+				},
+				&cli.StringFlag{
+					Name:    "table",
+					Aliases: []string{"tables", "t"},
+					Hidden:  false,
+					Usage:   "List tables only match with table name patterns, separated by comma, allow ? and * as wildcard",
+				},
+				&cli.StringFlag{
+					Name:   "remote-backup",
+					Hidden: false,
+					Usage:  "List tables from a remote backup, including per-table size and parts count",
+				},
+				&cli.StringFlag{
+					Name:   "local-backup",
+					Hidden: false,
+					Usage:  "List tables from a local backup (read from disk, no live ClickHouse query), including per-table size and parts count",
+				},
+				&cli.StringFlag{
+					Name:    "format",
+					Aliases: []string{"f"},
+					Hidden:  false,
+					Usage:   "Output format (text|json|yaml|csv|tsv)",
+				},
+				&cli.BoolFlag{
+					Name:    "parts",
+					Aliases: []string{"list-parts"},
+					Hidden:  false,
+					Usage: "Also list every physical part for each table (name, partition_id, size)\n" +
+						"Against the live server, reads name/partition_id/bytes_on_disk from `system.parts`\n" +
+						"Against --local-backup/--remote-backup, reads part names from backup metadata (partition_id derived from the name, no size available)",
+				},
+				&cli.BoolFlag{
+					Name:    "partitions",
+					Aliases: []string{"list-partitions"},
+					Hidden:  false,
+					Usage: "Also list the distinct partitions for each table (partition_id, partition, parts count, size), aggregated from parts\n" +
+						"Against the live server, reads partition_id/partition/parts/size from `system.parts`\n" +
+						"Against --local-backup/--remote-backup, derives partition_id and parts count from part names (no partition value or per-partition size available)",
+				},
+			},
+		},
+		{
+			Name:        "create",
+			Usage:       "Create new backup",
+			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from-remote=<backup-name>] [-s, --schema] [--rbac] [--configs] [--named-collections] [--skip-check-parts-columns] [--resume] <backup_name>",
+			Description: "Create new backup",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				b.DryRun = c.Bool("dry-run")
+				return withDryRunResult(c, b, b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("skip-check-parts-columns"), c.StringSlice("skip-projections"), c.Bool("resume"), version, commandIdFromCli(c)))
+			},
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:    "table",
+					Aliases: []string{"tables", "t"},
+					Hidden:  false,
+					Usage:   "Create backup only matched with table name patterns, separated by comma, allow ? and * as wildcard",
+				},
+				&cli.StringFlag{
+					Name:   "diff-from-remote",
+					Hidden: false,
+					Usage:  "Create incremental embedded backup or upload incremental object disk data based on other remote backup name",
+				},
+				&cli.StringSliceFlag{
+					Name:   "partitions",
+					Hidden: false,
+					Usage: "Create backup only for selected partition names, separated by comma\n" +
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+				},
+				&cli.BoolFlag{
+					Name:    "schema",
+					Aliases: []string{"s"},
+					Hidden:  false,
+					Usage:   "Backup schemas only, will skip data",
+				},
+				&cli.BoolFlag{
+					Name:    "rbac",
+					Aliases: []string{"backup-rbac", "do-backup-rbac"},
+					Hidden:  false,
+					Usage:   "Backup RBAC related objects",
+				},
+				&cli.BoolFlag{
+					Name:    "configs",
+					Aliases: []string{"backup-configs", "do-backup-configs"},
+					Hidden:  false,
+					Usage:   "Backup 'clickhouse-server' configuration files",
+				},
+				&cli.BoolFlag{
+					Name:    "named-collections",
+					Aliases: []string{"backup-named-collections", "do-backup-named-collections"},
+					Hidden:  false,
+					Usage:   "Backup named collections",
+				},
+				&cli.BoolFlag{
+					Name:   "rbac-only",
+					Hidden: false,
+					Usage:  "Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added",
+				},
+				&cli.BoolFlag{
+					Name:   "configs-only",
+					Hidden: false,
+					Usage:  "Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added",
+				},
+				&cli.BoolFlag{
+					Name:   "named-collections-only",
+					Hidden: false,
+					Usage:  "Backup named collections only, will skip backup data, will backup schema only if --schema added",
+				},
+				&cli.BoolFlag{
+					Name:   "skip-check-parts-columns",
+					Hidden: false,
+					Usage:  "Skip check system.parts_columns to allow backup inconsistent column types for data parts",
+				},
+				&cli.StringSliceFlag{
+					Name:   "skip-projections",
+					Hidden: false,
+					Usage:  "Skip make hardlinks to *.proj/* files during backup creation, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
+				},
+				&cli.BoolFlag{
+					Name:    "resume",
+					Aliases: []string{"resumable"},
+					Hidden:  false,
+					Usage:   "Will resume upload for object disk data, hard links on local disk still continue to recreate, not work when `use_embedded_backup_restore: true`",
+				},
+				&cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Show tables count and data size which would be created, without creating",
+				},
+			},
+		},
+		{
+			Name:        "create_remote",
+			Usage:       "Create and upload new backup",
+			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from=<local_backup_name>] [--diff-from-remote=<local_backup_name>] [--schema] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-check-parts-columns] <backup_name>",
+			Description: "Create and upload",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				b.DryRun = c.Bool("dry-run")
+				return withDryRunResult(c, b, b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("skip-check-parts-columns"), c.Bool("resume"), c.Bool("streaming"), version, commandIdFromCli(c)))
+			},
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:    "table",
+					Aliases: []string{"tables", "t"},
+					Hidden:  false,
+					Usage:   "Create and upload backup only matched with table name patterns, separated by comma, allow ? and * as wildcard",
+				},
+				&cli.StringSliceFlag{
+					Name:   "partitions",
+					Hidden: false,
+					Usage: "Create and upload backup only for selected partition names, separated by comma\n" +
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+				},
+				&cli.StringFlag{
+					Name:   "diff-from",
+					Hidden: false,
+					Usage:  "Local backup name which used to upload current backup as incremental",
+				},
+				&cli.StringFlag{
+					Name:   "diff-from-remote",
+					Hidden: false,
+					Usage:  "Remote backup name which used to upload current backup as incremental",
+				},
+				&cli.BoolFlag{
+					Name:    "schema",
+					Aliases: []string{"s"},
+					Hidden:  false,
+					Usage:   "Backup and upload metadata schema only, will skip data backup",
+				},
+				&cli.BoolFlag{
+					Name:    "rbac",
+					Aliases: []string{"backup-rbac", "do-backup-rbac"},
+					Hidden:  false,
+					Usage:   "Backup and upload RBAC related objects",
+				},
+				&cli.BoolFlag{
+					Name:    "configs",
+					Aliases: []string{"backup-configs", "do-backup-configs"},
+					Hidden:  false,
+					Usage:   "Backup and upload 'clickhouse-server' configuration files",
+				},
+				&cli.BoolFlag{
+					Name:    "named-collections",
+					Aliases: []string{"backup-named-collections", "do-backup-named-collections"},
+					Hidden:  false,
+					Usage:   "Backup and upload named collections and settings",
+				},
+				&cli.BoolFlag{
+					Name:   "rbac-only",
+					Hidden: false,
+					Usage:  "Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added",
+				},
+				&cli.BoolFlag{
+					Name:   "configs-only",
+					Hidden: false,
+					Usage:  "Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added",
+				},
+				&cli.BoolFlag{
+					Name:   "named-collections-only",
+					Hidden: false,
+					Usage:  "Backup named collections only, will skip backup data, will backup schema only if --schema added",
+				},
+				&cli.BoolFlag{
+					Name:    "resume",
+					Aliases: []string{"resumable"},
+					Hidden:  false,
+					Usage:   "Save intermediate upload state and resume upload if backup exists on remote storage, ignore when 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
+				},
+				&cli.BoolFlag{
+					Name:   "skip-check-parts-columns",
+					Hidden: false,
+					Usage:  "Skip check system.parts_columns to allow backup inconsistent column types for data parts",
+				},
+				&cli.StringSliceFlag{
+					Name:   "skip-projections",
+					Hidden: false,
+					Usage:  "Skip make and upload hardlinks to *.proj/* files during backup creation, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
+				},
+				&cli.BoolFlag{
+					Name:    "delete",
+					Aliases: []string{"delete-source", "delete-local"},
+					Hidden:  false,
+					Usage:   "explicitly delete local backup during upload",
+				},
+				&cli.BoolFlag{
+					Name:   "streaming",
+					Hidden: false,
+					Usage:  "Upload each table right after its freeze and delete its local copy, keeps only a small local footprint, https://github.com/Altinity/clickhouse-backup/issues/780",
+				},
+				&cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Show tables count and data size which would be created and uploaded, without creating and uploading",
+				},
+			},
+		},
+		{
+			Name:        "upload",
+			Usage:       "Upload backup to remote storage",
+			UsageText:   "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
+			Description: "Upload a local backup to remote storage using the v1 layout (per-part archives + RequiredBackup chain for incrementals).\n\nIf you back up frequently or run mutations, consider `cas-upload` instead: it deduplicates content across backups, every backup is independent (no incremental chain), and only changed data is uploaded.",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				b.DryRun = c.Bool("dry-run")
+				return withDryRunResult(c, b, b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("named-collections-only"), c.Bool("resume"), version, commandIdFromCli(c)))
+			},
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:   "diff-from",
+					Hidden: false,
+					Usage:  "Local backup name which used to upload current backup as incremental",
+				},
+				&cli.StringFlag{
+					Name:   "diff-from-remote",
+					Hidden: false,
+					Usage:  "Remote backup name which used to upload current backup as incremental",
+				},
+				&cli.StringFlag{
+					Name:    "table",
+					Aliases: []string{"tables", "t"},
+					Usage:   "Upload data only for matched table name patterns, separated by comma, allow ? and * as wildcard",
+					Hidden:  false,
+				},
+				&cli.StringSliceFlag{
+					Name:   "partitions",
+					Hidden: false,
+					Usage: "Upload backup only for selected partition names, separated by comma\n" +
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+				},
+				&cli.BoolFlag{
+					Name:    "schema",
+					Aliases: []string{"s"},
+					Hidden:  false,
+					Usage:   "Upload schemas only",
+				},
+				&cli.BoolFlag{
+					Name:    "rbac-only",
+					Aliases: []string{"rbac"},
+					Hidden:  false,
+					Usage:   "Upload RBAC related objects only, will skip upload data, will backup schema only if --schema added",
+				},
+				&cli.BoolFlag{
+					Name:    "configs-only",
+					Aliases: []string{"configs"},
+					Hidden:  false,
+					Usage:   "Upload 'clickhouse-server' configuration files only, will skip upload data, will backup schema only if --schema added",
+				},
+				&cli.BoolFlag{
+					Name:    "named-collections-only",
+					Aliases: []string{"named-collections"},
+					Hidden:  false,
+					Usage:   "Upload named collections and settings only, will skip upload data, will backup schema only if --schema added",
+				},
+				&cli.StringSliceFlag{
+					Name:   "skip-projections",
+					Hidden: false,
+					Usage:  "Skip make and upload hardlinks to *.proj/* files during backup creation, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
+				},
+				&cli.BoolFlag{
+					Name:    "resume",
+					Aliases: []string{"resumable"},
+					Hidden:  false,
+					Usage:   "Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
+				},
+				&cli.BoolFlag{
+					Name:    "delete",
+					Aliases: []string{"delete-source", "delete-local"},
+					Hidden:  false,
+					Usage:   "explicitly delete local backup during upload",
+				},
+				&cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Show tables count and data size which would be uploaded, without uploading",
+				},
+			},
+		},
+		{
+			Name:      "list",
+			Usage:     "List of backups",
+			UsageText: "clickhouse-backup list [all|local|remote] [latest|previous]",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				err := b.List(c.Args().Get(0), c.Args().Get(1), c.String("format"))
+				return err
+			},
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:    "format",
+					Aliases: []string{"f"},
+					Usage:   "Output format (text|json|yaml|csv|tsv)",
+					Hidden:  false,
+				},
+			},
+		},
+		{
+			Name:      "download",
+			Usage:     "Download backup from remote storage",
+			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--resumable] <backup_name>",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				b.DryRun = c.Bool("dry-run")
+				b.DiskLimit = c.Int("disk-limit")
+				return withDryRunResult(c, b, b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("hardlink-exists-files"), version, commandIdFromCli(c)))
+			},
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:    "table",
+					Aliases: []string{"tables", "t"},
+					Usage:   "Download objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
+					Hidden:  false,
+				},
+				&cli.StringSliceFlag{
+					Name:   "partitions",
+					Hidden: false,
+					Usage: "Download backup data only for selected partition names, separated by comma\n" +
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+				},
+				&cli.BoolFlag{
+					Name:    "schema",
+					Aliases: []string{"schema-only", "s"},
+					Hidden:  false,
+					Usage:   "Download schema only",
+				},
+				&cli.BoolFlag{
+					Name:    "rbac-only",
+					Aliases: []string{"rbac"},
+					Hidden:  false,
+					Usage:   "Download RBAC related objects only, will skip download data, will download schema only if --schema added",
+				},
+				&cli.BoolFlag{
+					Name:    "configs-only",
+					Aliases: []string{"configs"},
+					Hidden:  false,
+					Usage:   "Download 'clickhouse-server' configuration files only, will skip download data, will download schema only if --schema added",
+				},
+				&cli.BoolFlag{
+					Name:    "named-collections-only",
+					Aliases: []string{"named-collections"},
+					Hidden:  false,
+					Usage:   "Download named collections and settings only, will skip download data, will download schema only if --schema added",
+				},
+				&cli.BoolFlag{
+					Name:    "resume",
+					Aliases: []string{"resumable"},
+					Hidden:  false,
+					Usage:   "Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
+				},
+				&cli.BoolFlag{
+					Name:   "hardlink-exists-files",
+					Hidden: false,
+					Usage:  "Create hardlinks for existing files instead of downloading",
+				},
+				&cli.IntFlag{
+					Name:   "disk-limit",
+					Hidden: false,
+					Usage:  "Refuse download when usage of any local disk would exceed this percent (1-100) after download, overrides general->download_disk_limit, 0 means use config value, https://github.com/Altinity/clickhouse-backup/issues/1458",
+				},
+				&cli.BoolFlag{
+					Name:   "allow-missing-files",
+					Hidden: false,
+					Usage:  "Skip data part files which are missing on remote storage (404/NoSuchKey) with an error log and drop them from local table metadata instead of failing, salvage mode for partially corrupted backups, overrides general->allow_missing_files_on_download, https://github.com/Altinity/clickhouse-backup/issues/1456",
+				},
+				&cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Show tables count and data size which would be downloaded, without downloading",
+				},
+			},
+		},
+		{
+			Name:      "rebase",
+			Usage:     "Copy required parts from `required_backup` chain into remote backup and remove `required_backup` dependency, so backup becomes full",
+			UsageText: "clickhouse-backup rebase <backup_name>",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				if c.Args().First() == "" {
+					log.Err(fmt.Errorf("backup name must be defined")).Send()
+					cli.ShowCommandHelpAndExit(ctx, c.Root(), c.Name, 1)
+				}
+				return b.Rebase(c.Args().First(), commandIdFromCli(c))
+			},
+		},
+		{
+			Name:      "rebalance",
+			Usage:     "Move data parts inside local backup between disks to match current system.parts layout and storage policy, skip parts on object disks",
+			UsageText: "clickhouse-backup rebalance [-t, --tables=<db>.<table>] [--dry-run] <backup_name>",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				if c.Args().First() == "" {
+					log.Err(fmt.Errorf("backup name must be defined")).Send()
+					cli.ShowCommandHelpAndExit(ctx, c.Root(), c.Name, 1)
+				}
+				return b.Rebalance(c.Args().First(), c.String("tables"), c.Bool("dry-run"), commandIdFromCli(c))
+			},
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:    "table",
+					Aliases: []string{"tables", "t"},
+					Usage:   "Rebalance only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
+					Hidden:  false,
+				},
+				&cli.BoolFlag{
+					Name:   "dry-run",
+					Hidden: false,
+					Usage:  "Only log which parts would move between disks, change nothing",
+				},
+			},
+		},
+		{
+			Name:      "restore",
+			Usage:     "Create schema and restore data from backup",
+			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] [--skip-empty-tables] <backup_name>",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				b.DryRun = c.Bool("dry-run")
+				return withDryRunResult(c, b, b.Restore(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), version, commandIdFromCli(c)))
+			},
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:    "table",
+					Aliases: []string{"tables", "t"},
+					Usage:   "Restore only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
+					Hidden:  false,
+				},
+				&cli.StringSliceFlag{
+					Name:    "restore-database-mapping",
+					Aliases: []string{"m"},
+					Usage:   "Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.",
+					Hidden:  false,
+				},
+				&cli.StringSliceFlag{
+					Name:    "restore-table-mapping",
+					Aliases: []string{"tm"},
+					Usage:   "Define the rule to restore data. For the table not defined in this struct, the program will not deal with it.",
+					Hidden:  false,
+				},
+				&cli.StringSliceFlag{
+					Name:   "partitions",
+					Hidden: false,
+					Usage: "Restore backup only for selected partition names, separated by comma\n" +
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+				},
+				&cli.BoolFlag{
+					Name:    "schema",
+					Aliases: []string{"s"},
+					Hidden:  false,
+					Usage:   "Restore schema only",
+				},
+				&cli.BoolFlag{
+					Name:    "data",
+					Aliases: []string{"d"},
+					Hidden:  false,
+					Usage:   "Restore data only",
+				},
+				&cli.BoolFlag{
+					Name:    "rm",
+					Aliases: []string{"drop"},
+					Hidden:  false,
+					Usage:   "Drop exists schema objects before restore",
+				},
+				&cli.BoolFlag{
+					Name:    "i",
+					Aliases: []string{"ignore-dependencies"},
+					Hidden:  false,
+					Usage:   "Ignore dependencies when drop exists schema objects",
+				},
+				&cli.BoolFlag{
+					Name:    "rbac",
+					Aliases: []string{"restore-rbac", "do-restore-rbac"},
+					Hidden:  false,
+					Usage:   "Restore RBAC related objects",
+				},
+				&cli.BoolFlag{
+					Name:    "configs",
+					Aliases: []string{"restore-configs", "do-restore-configs"},
+					Hidden:  false,
+					Usage:   "Restore 'clickhouse-server' CONFIG related files",
+				},
+				&cli.BoolFlag{
+					Name:    "named-collections",
+					Aliases: []string{"restore-named-collections", "do-restore-named-collections"},
+					Hidden:  false,
+					Usage:   "Restore named collections and settings",
+				},
+				&cli.BoolFlag{
+					Name:   "rbac-only",
+					Hidden: false,
+					Usage:  "Restore RBAC related objects only, will skip restore data, will restore schema only if --schema added",
+				},
+				&cli.BoolFlag{
+					Name:   "configs-only",
+					Hidden: false,
+					Usage:  "Restore 'clickhouse-server' configuration files only, will skip restore data, will restore schema only if --schema added",
+				},
+				&cli.BoolFlag{
+					Name:   "named-collections-only",
+					Hidden: false,
+					Usage:  "Restore named collections only, will skip restore data, will restore schema only if --schema added",
+				},
+				&cli.StringSliceFlag{
+					Name:   "skip-projections",
+					Hidden: false,
+					Usage:  "Skip make hardlinks to *.proj/* files during backup restoring, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
+				},
+				&cli.BoolFlag{
+					Name:    "resume",
+					Aliases: []string{"resumable"},
+					Hidden:  false,
+					Usage:   "Will resume download for object disk data",
+				},
+				&cli.BoolFlag{
+					Name:   "restore-schema-as-attach",
+					Hidden: false,
+					Usage:  "Use DETACH/ATTACH instead of DROP/CREATE for schema restoration",
+				},
+				&cli.BoolFlag{
+					Name:   "replicated-copy-to-detached",
+					Hidden: false,
+					Usage:  "Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step",
+				},
+				&cli.BoolFlag{
+					Name:   "skip-empty-tables",
+					Hidden: false,
+					Usage:  "Skip restoring tables that have no data (empty tables with only schema)",
+				},
+				&cli.BoolFlag{
+					Name:   "rebind-replica-path-if-exists",
+					Hidden: false,
+					Usage:  "Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent",
+				},
+				&cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Show tables count and data size which would be restored, without restoring",
+				},
+			},
+		},
+		{
+			Name:      "restore_remote",
+			Usage:     "Download and restore",
+			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] <backup_name>",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				b.DryRun = c.Bool("dry-run")
+				b.DiskLimit = c.Int("disk-limit")
+				return withDryRunResult(c, b, b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), c.Bool("hardlink-exists-files"), c.Bool("streaming"), version, commandIdFromCli(c)))
+			},
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:    "table",
+					Aliases: []string{"tables", "t"},
+					Usage:   "Download and restore objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
+					Hidden:  false,
+				},
+				&cli.StringSliceFlag{
+					Name:    "restore-database-mapping",
+					Aliases: []string{"m"},
+					Usage:   "Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.",
+					Hidden:  false,
+				},
+				&cli.StringSliceFlag{
+					Name:    "restore-table-mapping",
+					Aliases: []string{"tm"},
+					Usage:   "Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.",
+					Hidden:  false,
+				},
+				&cli.StringSliceFlag{
+					Name:   "partitions",
+					Hidden: false,
+					Usage: "Download and restore backup only for selected partition names, separated by comma\n" +
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+				},
+				&cli.BoolFlag{
+					Name:    "schema",
+					Aliases: []string{"s"},
+					Hidden:  false,
+					Usage:   "Download and Restore schema only",
+				},
+				&cli.BoolFlag{
+					Name:    "data",
+					Aliases: []string{"d"},
+					Hidden:  false,
+					Usage:   "Download and Restore data only",
+				},
+				&cli.BoolFlag{
+					Name:    "rm",
+					Aliases: []string{"drop"},
+					Hidden:  false,
+					Usage:   "Drop schema objects before restore",
+				},
+				&cli.BoolFlag{
+					Name:    "i",
+					Aliases: []string{"ignore-dependencies"},
+					Hidden:  false,
+					Usage:   "Ignore dependencies when drop exists schema objects",
+				},
+				&cli.BoolFlag{
+					Name:    "rbac",
+					Aliases: []string{"restore-rbac", "do-restore-rbac"},
+					Hidden:  false,
+					Usage:   "Download and Restore RBAC related objects",
+				},
+				&cli.BoolFlag{
+					Name:    "configs",
+					Aliases: []string{"restore-configs", "do-restore-configs"},
+					Hidden:  false,
+					Usage:   "Download and Restore 'clickhouse-server' CONFIG related files",
+				},
+				&cli.BoolFlag{
+					Name:    "named-collections",
+					Aliases: []string{"restore-named-collections", "do-restore-named-collections"},
+					Hidden:  false,
+					Usage:   "Download and Restore named collections and settings",
+				},
+				&cli.BoolFlag{
+					Name:   "rbac-only",
+					Hidden: false,
+					Usage:  "Restore RBAC related objects only, will skip backup data, will backup schema only if --schema added",
+				},
+				&cli.BoolFlag{
+					Name:   "configs-only",
+					Hidden: false,
+					Usage:  "Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added",
+				},
+				&cli.BoolFlag{
+					Name:   "named-collections-only",
+					Hidden: false,
+					Usage:  "Restore named collections only, will skip restore data, will restore schema only if --schema added",
+				},
+				&cli.StringSliceFlag{
+					Name:   "skip-projections",
+					Hidden: false,
+					Usage:  "Skip make hardlinks to *.proj/* files during backup restoring, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
+				},
+				&cli.BoolFlag{
+					Name:    "resume",
+					Aliases: []string{"resumable"},
+					Hidden:  false,
+					Usage:   "Save intermediate download state and resume download if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
+				},
+				&cli.BoolFlag{
+					Name:   "restore-schema-as-attach",
+					Hidden: false,
+					Usage:  "Use DETACH/ATTACH instead of DROP/CREATE for schema restoration",
+				},
+				&cli.BoolFlag{
+					Name:   "hardlink-exists-files",
+					Hidden: false,
+					Usage:  "Create hardlinks for existing files instead of downloading",
+				},
+				&cli.IntFlag{
+					Name:   "disk-limit",
+					Hidden: false,
+					Usage:  "Refuse download when usage of any local disk would exceed this percent (1-100) after download, overrides general->download_disk_limit, 0 means use config value, https://github.com/Altinity/clickhouse-backup/issues/1458",
+				},
+				&cli.BoolFlag{
+					Name:   "allow-missing-files",
+					Hidden: false,
+					Usage:  "Skip data part files which are missing on remote storage (404/NoSuchKey) with an error log and drop them from local table metadata instead of failing, salvage mode for partially corrupted backups, overrides general->allow_missing_files_on_download, https://github.com/Altinity/clickhouse-backup/issues/1456",
+				},
+				&cli.BoolFlag{
+					Name:   "skip-empty-tables",
+					Hidden: false,
+					Usage:  "Skip restoring tables that have no data (empty tables with only schema)",
+				},
+				&cli.BoolFlag{
+					Name:   "streaming",
+					Hidden: false,
+					Usage:  "Restore each table right after its download and delete its local copy, keeps only a small local footprint, https://github.com/Altinity/clickhouse-backup/issues/780",
+				},
+				&cli.BoolFlag{
+					Name:   "rebind-replica-path-if-exists",
+					Hidden: false,
+					Usage:  "Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent",
+				},
+				&cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Show tables count and data size which would be downloaded and restored, without downloading and restoring",
+				},
+			},
+		},
+		{
+			Name:      "restore_cloud",
+			Usage:     "Restore ClickHouse Cloud native S3 backup (Shared engines) as Atomic databases and Replicated*MergeTree tables on the current server",
+			UsageText: "clickhouse-backup restore_cloud [--bucket=<bucket>] [--region=<region>] [--endpoint=<url>] [--container=<container>] [--base-prefix=<prefix>] [--s3-restore-url=<url>] [--azblob-restore-url=<url>] [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--restore-on-cluster=<cluster>] [--replicated-zk-path=<path>] [--replicated-replica=<replica>] [--skip-empty-tables] [--continue-on-error] [--drop] [--parallel=<n>] [--dry-run] <backup_prefix>",
+			Description: "Read the .backup manifest from S3 or AzureBlobStorage, rewrite ClickHouse Cloud DDL (database ENGINE=Shared to Atomic, Shared*MergeTree to Replicated*MergeTree) and run RESTORE TABLE ... FROM S3(...) / AzureBlobStorage(...) with allow_different_database_def/allow_different_table_def\n" +
+				"   Credentials and defaults are taken from the s3 config section (also works for GCS via s3->endpoint=https://storage.googleapis.com with HMAC keys), or from the azblob config section when --container / --azblob-restore-url is passed or general->remote_storage is azblob\n" +
+				"   When s3->assume_role_arn is set, the manifest is read and RESTORE ... FROM S3(..., extra_credentials(role_arn='...')) is executed with the assumed AWS IAM role, the static keys only sign the STS AssumeRole call (requires ClickHouse 25.8+);\n" +
+				"   without any static keys the STS AssumeRole call is signed by the ambient AWS identity instead: shared credentials file / IRSA / EC2-ECS instance profile for the manifest reads, and the ClickHouse server's own environment for the RESTORE statement\n" +
+				"   https://github.com/Altinity/clickhouse-backup/issues/1508",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				if c.Args().First() == "" {
+					log.Err(fmt.Errorf("backup prefix must be defined")).Send()
+					cli.ShowCommandHelpAndExit(ctx, c.Root(), c.Name, 1)
+				}
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				b.DryRun = c.Bool("dry-run")
+				return b.RestoreCloud(backup.RestoreCloudOptions{
+					Prefix:            c.Args().First(),
+					Bucket:            c.String("bucket"),
+					Region:            c.String("region"),
+					Endpoint:          c.String("endpoint"),
+					Container:         c.String("container"),
+					BasePrefix:        c.String("base-prefix"),
+					S3RestoreURL:      c.String("s3-restore-url"),
+					AzblobRestoreURL:  c.String("azblob-restore-url"),
+					TablePattern:      c.String("tables"),
+					Partitions:        c.StringSlice("partitions"),
+					RestoreOnCluster:  c.String("restore-on-cluster"),
+					ReplicatedZkPath:  c.String("replicated-zk-path"),
+					ReplicatedReplica: c.String("replicated-replica"),
+					SkipEmptyTables:   c.Bool("skip-empty-tables"),
+					ContinueOnError:   c.Bool("continue-on-error"),
+					Drop:              c.Bool("drop"),
+					Parallel:          c.Int("parallel"),
+				}, commandIdFromCli(c))
+			},
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:   "bucket",
+					Hidden: false,
+					Usage:  "S3 bucket with the ClickHouse Cloud backup, overrides s3->bucket from config",
+				},
+				&cli.StringFlag{
+					Name:   "region",
+					Hidden: false,
+					Usage:  "AWS region of the bucket, overrides s3->region from config",
+				},
+				&cli.StringFlag{
+					Name:   "endpoint",
+					Hidden: false,
+					Usage:  "Custom S3 endpoint (MinIO, etc.), overrides s3->endpoint from config",
+				},
+				&cli.StringFlag{
+					Name:   "base-prefix",
+					Hidden: false,
+					Usage:  "S3 key prefix of the base backup, for incremental backups with use_base files",
+				},
+				&cli.StringFlag{
+					Name:   "s3-restore-url",
+					Hidden: false,
+					Usage:  "URL passed to RESTORE ... FROM S3('...'), default https://s3.<region>.amazonaws.com/<bucket>/<prefix>",
+				},
+				&cli.StringFlag{
+					Name:   "container",
+					Hidden: false,
+					Usage:  "AzureBlobStorage container with the ClickHouse Cloud backup, overrides azblob->container from config and switches the source to AzureBlobStorage",
+				},
+				&cli.StringFlag{
+					Name:   "azblob-restore-url",
+					Hidden: false,
+					Usage:  "Blob endpoint passed to RESTORE ... FROM AzureBlobStorage(...), e.g. http://azurite:10000/devstoreaccount1, when it differs from azblob config section, switches the source to AzureBlobStorage",
+				},
+				&cli.StringFlag{
+					Name:    "table",
+					Aliases: []string{"tables", "t"},
+					Hidden:  false,
+					Usage:   "Restore only objects matched with table name patterns, separated by comma, allow ? and * as wildcard",
+				},
+				&cli.StringSliceFlag{
+					Name:   "partitions",
+					Hidden: false,
+					Usage: "Restore backup only for selected partition names, separated by comma\n" +
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+				},
+				&cli.StringFlag{
+					Name:   "restore-on-cluster",
+					Hidden: false,
+					Usage:  "Execute CREATE and RESTORE with ON CLUSTER '<cluster>', macros like {cluster} are resolved via system.macros; requires the same shard count in the backup and in the cluster, replica counts may differ (ReplicatedMergeTree replicates the restored data)",
+				},
+				&cli.StringFlag{
+					Name:   "replicated-zk-path",
+					Hidden: false,
+					Usage:  "First Replicated*MergeTree engine argument when Cloud DDL has none, default '/clickhouse/tables/{uuid}/{shard}'",
+				},
+				&cli.StringFlag{
+					Name:   "replicated-replica",
+					Hidden: false,
+					Usage:  "Second Replicated*MergeTree engine argument when Cloud DDL has none, default '{replica}'",
+				},
+				&cli.BoolFlag{
+					Name:   "skip-empty-tables",
+					Hidden: false,
+					Usage:  "Skip objects with no data/<db>/<table>/ files in the backup, also skips views and dictionaries",
+				},
+				&cli.BoolFlag{
+					Name:   "continue-on-error",
+					Hidden: false,
+					Usage:  "Continue with the next object after an error, exit code is still non-zero",
+				},
+				&cli.BoolFlag{
+					Name:   "drop",
+					Hidden: false,
+					Usage:  "Execute DROP TABLE / DICTIONARY IF EXISTS ... SYNC before CREATE, to re-run a failed or interrupted restore into non-empty tables",
+				},
+				&cli.IntFlag{
+					Name:   "parallel",
+					Hidden: false,
+					Usage:  "How many tables of one database restore concurrently (dictionaries and tables first, then views), default is the number of CPU cores",
+				},
+				&cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Only log DDL and RESTORE statements which would be executed, without executing",
+				},
+			},
+		},
+		{
+			Name:      "delete",
+			Usage:     "Delete specific backup",
+			UsageText: "clickhouse-backup delete [--force] <local|remote> <backup_name>",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				if c.Args().Get(0) != "local" && c.Args().Get(0) != "remote" {
+					log.Err(fmt.Errorf("Unknown sub-command '%s', use 'local' or 'remote'\n", c.Args().Get(0))).Send()
+					cli.ShowCommandHelpAndExit(ctx, c.Root(), c.Name, 1)
+				}
+				if c.Args().Get(1) == "" {
+					log.Err(fmt.Errorf("backup name must be defined")).Send()
+					cli.ShowCommandHelpAndExit(ctx, c.Root(), c.Name, 1)
+				}
+				b.DryRun = c.Bool("dry-run")
+				return withDryRunResult(c, b, b.Delete(c.Args().Get(0), c.Args().Get(1), c.Bool("force"), commandIdFromCli(c)))
+			},
+			Flags: []cli.Flag{
+				&cli.BoolFlag{
+					Name:    "force",
+					Aliases: []string{"f"},
+					Hidden:  false,
+					Usage:   "Delete the backup even when other backups depend on it via required_backup, breaks the incremental backups chain, also skips general.rebase_during_delete",
+				},
+				&cli.BoolFlag{
+					Name:  "dry-run",
+					Usage: "Show tables count and data size which would be deleted, without deleting",
+				},
+			},
+		},
+		{
+			Name:  "default-config",
+			Usage: "Print default config",
+			Action: func(context.Context, *cli.Command) error {
+				return config.PrintConfig(nil)
+			},
+		},
+		{
+			Name:  "print-config",
+			Usage: "Print current config merged with environment variables",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				return config.PrintConfig(c)
+			},
+		},
+		{
+			Name:  "clean",
+			Usage: "Remove data in 'shadow' folder from all 'path' folders available from 'system.disks'",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				return b.Clean(context.Background())
+			},
+		},
+		{
+			Name:      "clean_remote_broken",
+			Usage:     "Remove all broken remote backups",
+			UsageText: "clickhouse-backup clean_remote_broken [--include=glob ...]",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				return b.CleanRemoteBroken(status.NotFromAPI, c.StringSlice("include"))
+			},
+			Flags: []cli.Flag{
+				&cli.StringSliceFlag{
+					Name:  "include",
+					Usage: "Glob (path.Match syntax) to scope cleanup only to broken backup names matching these patterns; can be passed multiple times; if omitted, all broken backups are deleted",
+				},
+			},
+		},
+		{
+			Name:  "clean_local_broken",
+			Usage: "Remove all broken local backups",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				return b.CleanLocalBroken(status.NotFromAPI)
+			},
+		},
+		{
+			Name:        "clean_broken_retention",
+			Usage:       "Remove orphan entries under remote `path` and `object_disks_path` that are not in the live backup list",
+			UsageText:   "clickhouse-backup clean_broken_retention [--commit] [--include=glob ...] [--exclude=glob ...]",
+			Description: "Walks top-level of remote `path` and `object_disks_path`, batch-deletes (with retry) every entry that is not a live backup and is not excluded by --exclude globs and is matched by --include globs (if provided). Object disk orphans are deleted in parallel with progress tracking. Pass --commit to actually delete; without it the command only logs what would be deleted.",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				return b.CleanBrokenRetention(status.NotFromAPI, c.StringSlice("include"), c.StringSlice("exclude"), c.Bool("commit"))
+			},
+			Flags: []cli.Flag{
+				&cli.StringSliceFlag{
+					Name:  "include",
+					Usage: "Glob (path.Match syntax) to scope cleanup only to backup names matching these patterns; can be passed multiple times; if omitted, all orphans are candidates",
+				},
+				&cli.StringSliceFlag{
+					Name:  "exclude",
+					Usage: "Glob (path.Match syntax) of backup names to preserve even if they appear as orphans; can be passed multiple times",
+				},
+				&cli.BoolFlag{
+					Name:  "commit",
+					Usage: "Actually delete orphans; without this flag the command only logs what would be deleted",
+				},
+			},
+		},
+
+		{
+			Name:        "watch",
+			Usage:       "Run infinite loop which create full + incremental backup sequence to allow efficient backup sequences",
+			UsageText:   "clickhouse-backup watch [--watch-interval=1h] [--full-interval=24h] [--watch-backup-name-template=shard{shard}-{type}-{time:20060102150405}] [--schedule=name=<name>,full=<cron>,increment=<cron>] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--schema] [--rbac] [--configs] [--skip-check-parts-columns]",
+			Description: "Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups. Use `--schedule` instead of intervals to run backups on cron expressions",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.StringSlice("schedule"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), c.Bool("named-collections"), c.Bool("skip-check-parts-columns"), c.Bool("delete-source"), c.Bool("streaming"), version, commandIdFromCli(c), nil, c)
+			},
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:   "watch-interval",
+					Usage:  "Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration",
+					Hidden: false,
+				},
+				&cli.StringFlag{
+					Name:   "full-interval",
+					Usage:  "Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration",
+					Hidden: false,
+				},
+				&cli.StringFlag{
+					Name:   "watch-backup-name-template",
+					Usage:  "Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples",
+					Hidden: false,
+				},
+				&cli.StringSliceFlag{
+					Name: "schedule",
+					Usage: "Named cron driven backup chain in name=<name>,full=<cron>[,increment=<cron>][,full_type=create|rebase][,delete_previous_cycle=true|false] format, can be specified multiple times, mutually exclusive with --watch-interval and --full-interval\n" +
+						"	cron expression contains standard 5 fields, optional leading seconds field and @every/@daily descriptors, see https://pkg.go.dev/github.com/robfig/cron/v3#hdr-CRON_Expression_Format\n" +
+						"	name added as prefix to --watch-backup-name-template to isolate backup chains\n" +
+						"	full_type=rebase creates scheduled full backup as increment + rebase command, server-side copy of previous chain instead of full re-upload\n" +
+						"	delete_previous_cycle=true deletes all older backups of the chain after successful full backup",
+					Hidden: false,
+				},
+				&cli.StringFlag{
+					Name:    "table",
+					Aliases: []string{"tables", "t"},
+					Usage:   "Create and upload only objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
+					Hidden:  false,
+				},
+				&cli.StringSliceFlag{
+					Name:   "partitions",
+					Hidden: false,
+					Usage: "Partitions names, separated by comma\n" +
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+				},
+				&cli.BoolFlag{
+					Name:    "schema",
+					Aliases: []string{"s"},
+					Hidden:  false,
+					Usage:   "Schemas only",
+				},
+				&cli.BoolFlag{
+					Name:    "rbac",
+					Aliases: []string{"backup-rbac", "do-backup-rbac"},
+					Hidden:  false,
+					Usage:   "Backup RBAC related objects",
+				},
+				&cli.BoolFlag{
+					Name:    "configs",
+					Aliases: []string{"backup-configs", "do-backup-configs"},
+					Hidden:  false,
+					Usage:   "Backup `clickhouse-server' configuration files",
+				},
+				&cli.BoolFlag{
+					Name:    "named-collections",
+					Aliases: []string{"backup-named-collections", "do-backup-named-collections"},
+					Hidden:  false,
+					Usage:   "Backup named collections and settings",
+				},
+				&cli.BoolFlag{
+					Name:   "skip-check-parts-columns",
+					Hidden: false,
+					Usage:  "Skip check system.parts_columns to allow backup inconsistent column types for data parts",
+				},
+				&cli.StringSliceFlag{
+					Name:   "skip-projections",
+					Hidden: false,
+					Usage:  "Skip make and upload hardlinks to *.proj/* files during backup creation, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
+				},
+				&cli.BoolFlag{
+					Name:    "delete",
+					Aliases: []string{"delete-source", "delete-local"},
+					Hidden:  false,
+					Usage:   "explicitly delete local backup during upload",
+				},
+				&cli.BoolFlag{
+					Name:   "streaming",
+					Hidden: false,
+					Usage:  "Use streaming mode for create_remote inside watch, see create_remote --streaming",
+				},
+			},
+		},
+		{
+			Name:      "acvp",
+			Usage:     "Run ACVP wrapper protocol over stdin/stdout",
+			UsageText: "clickhouse-backup acvp",
+			Action: func(context.Context, *cli.Command) error {
+				return acvpwrapper.Run(os.Stdin, os.Stdout)
+			},
+		},
+		{
+			Name:  "server",
+			Usage: "Run API server",
+			Action: func(ctx context.Context, c *cli.Command) error {
+				return server.Run(c, newRootCommand, config.GetConfigPath(c), version)
+			},
+			Flags: []cli.Flag{
+				&cli.BoolFlag{
+					Name:   "watch",
+					Usage:  "Run watch go-routine for 'create_remote' + 'delete local', after API server startup",
+					Hidden: false,
+				},
+				&cli.StringFlag{
+					Name:   "watch-interval",
+					Usage:  "Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration",
+					Hidden: false,
+				},
+				&cli.StringFlag{
+					Name:   "full-interval",
+					Usage:  "Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration",
+					Hidden: false,
+				},
+				&cli.StringFlag{
+					Name:   "watch-backup-name-template",
+					Usage:  "Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples",
+					Hidden: false,
+				},
+				&cli.StringSliceFlag{
+					Name:   "schedule",
+					Usage:  "Named cron driven backup chain for watch in name=<name>,full=<cron>[,increment=<cron>][,full_type=create|rebase][,delete_previous_cycle=true|false] format, can be specified multiple times, mutually exclusive with --watch-interval and --full-interval",
+					Hidden: false,
+				},
+				&cli.BoolFlag{
+					Name:    "rbac",
+					Aliases: []string{"backup-rbac", "do-backup-rbac"},
+					Hidden:  false,
+					Usage:   "Backup RBAC related objects during --watch",
+				},
+				&cli.BoolFlag{
+					Name:    "configs",
+					Aliases: []string{"backup-configs", "do-backup-configs"},
+					Hidden:  false,
+					Usage:   "Backup `clickhouse-server' configuration files during --watch",
+				},
+				&cli.BoolFlag{
+					Name:    "named-collections",
+					Aliases: []string{"backup-named-collections", "do-backup-named-collections"},
+					Hidden:  false,
+					Usage:   "Backup named collections and settings during --watch",
+				},
+				&cli.BoolFlag{
+					Name:    "watch-delete-source",
+					Aliases: []string{"watch-delete-local"},
+					Hidden:  false,
+					Usage:   "explicitly delete local backup during upload in watch",
+				},
+				&cli.BoolFlag{
+					Name:   "watch-streaming",
+					Hidden: false,
+					Usage:  "Use streaming mode for create_remote inside watch, see create_remote --streaming",
+				},
+			},
+		},
+	}
+	cliapp.Commands = append(cliapp.Commands, casCommands()...)
+	// app-level only flag, Local keeps it out of every sub-command
+	cliapp.Flags = append(cliapp.Flags, &cli.BoolFlag{
+		Name:  "fips-info",
+		Local: true,
+		Usage: "Display FIPS build/runtime info and exit (no Go toolchain required).",
+	})
+	cliapp.Action = func(_ context.Context, c *cli.Command) error {
+		if c.Bool("fips-info") {
+			fips.PrintInfo(os.Stdout, "clickhouse-backup", version, gitCommit, buildDate)
+			return nil
+		}
+		return cli.ShowAppHelp(c)
+	}
+	disableSliceFlagSeparator(cliapp)
+	registerCLIStatus(cliapp.Commands)
+	return cliapp
+}
+
+// disableSliceFlagSeparator keeps a slice flag value the way urfave/cli v1 passed
+// it: appended verbatim, one element per occurrence. v3 splits every value on ","
+// instead, which fragments the `--partitions=(0,'a'),(0,'b')` tuple syntax, drops
+// the table scope from `--partitions=db.t:p1,p2`, cuts `--schedule` specs into
+// pieces and truncates `--env FOO=a,b`. The consumers do their own splitting, see
+// partition.ConvertPartitionsToIdsMapAndNamesList. The flag reads this setting
+// from the command that parses it, not from the lineage, so every command needs it.
+func disableSliceFlagSeparator(cmd *cli.Command) {
+	cmd.DisableSliceFlagSeparator = true
+	for _, sub := range cmd.Commands {
+		disableSliceFlagSeparator(sub)
+	}
 }
 
 func main() {
@@ -62,963 +1307,19 @@ func main() {
 		}
 		return
 	}
-	cliapp := cli.NewApp()
-	cliapp.Name = "clickhouse-backup"
-	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud support"
-	cliapp.UsageText = "clickhouse-backup <command> [-t, --tables=<db>.<table>] <backup_name>"
-	cliapp.Description = "Run as 'root' or 'clickhouse' user"
-	cliapp.Version = version
-	// Wire the build version into CAS marker JSON (inprogress / prune
-	// markers carry this for forensic context — see pkg/cas/markers.go).
-	cas.SetMarkerTool(fmt.Sprintf("clickhouse-backup/%s", version))
 	// @todo add GCS and Azure support when resolve https://github.com/googleapis/google-cloud-go/issues/8169 and https://github.com/Azure/azure-sdk-for-go/issues/21047
 	if strings.HasSuffix(version, "fips") {
 		_ = os.Setenv("AWS_USE_FIPS_ENDPOINT", "true")
 	}
-	cliapp.Flags = []cli.Flag{
-		cli.StringFlag{
-			Name:     "config, c",
-			Value:    config.DefaultConfigPath,
-			Usage:    "Config 'FILE' name.",
-			EnvVar:   "CLICKHOUSE_BACKUP_CONFIG",
-			Required: false,
-		},
-		cli.StringSliceFlag{
-			Name:     "environment-override, env",
-			Usage:    "override any environment variable via CLI parameter",
-			Required: false,
-		},
-		cli.IntFlag{
-			Name:     "command-id",
-			Hidden:   true,
-			Value:    -1,
-			Required: false,
-			Usage:    "internal parameter for API call",
-		},
-	}
-	cliapp.CommandNotFound = func(c *cli.Context, command string) {
-		fmt.Printf("Error. Unknown command: '%s'\n\n", command)
-		cli.ShowAppHelpAndExit(c, 1)
-	}
-
-	cli.VersionPrinter = func(c *cli.Context) {
-		fmt.Println("Version:\t", c.App.Version)
+	cli.VersionPrinter = func(c *cli.Command) {
+		fmt.Println("Version:\t", c.Root().Version)
 		fmt.Println("Git Commit:\t", gitCommit)
 		fmt.Println("Build Date:\t", buildDate)
 		fmt.Println("Runtime Architecture:\t", runtime.GOOS, "/", runtime.GOARCH)
 		fmt.Println("Build Architecture:\t", buildArch)
 		fmt.Println("FIPS 140-3:\t", fips140.Enabled())
 	}
-
-	cliapp.Commands = []cli.Command{
-		{
-			Name:      "tables",
-			Usage:     "List of tables, exclude skip_tables",
-			UsageText: "clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--local-backup=<backup-name>] [-f, --format=<text|json|yaml|csv|tsv>] [--all] [--parts] [--partitions]",
-			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.PrintTables(c.Bool("all"), c.String("table"), c.String("remote-backup"), c.String("local-backup"), c.String("format"), c.Bool("parts"), c.Bool("partitions"))
-			},
-			Flags: append(cliapp.Flags,
-				cli.BoolFlag{
-					Name:   "all, a",
-					Hidden: false,
-					Usage:  "Print table even when match with skip_tables pattern",
-				},
-				cli.StringFlag{
-					Name:   "table, tables, t",
-					Hidden: false,
-					Usage:  "List tables only match with table name patterns, separated by comma, allow ? and * as wildcard",
-				},
-				cli.StringFlag{
-					Name:   "remote-backup",
-					Hidden: false,
-					Usage:  "List tables from a remote backup, including per-table size and parts count",
-				},
-				cli.StringFlag{
-					Name:   "local-backup",
-					Hidden: false,
-					Usage:  "List tables from a local backup (read from disk, no live ClickHouse query), including per-table size and parts count",
-				},
-				cli.StringFlag{
-					Name:   "format, f",
-					Hidden: false,
-					Usage:  "Output format (text|json|yaml|csv|tsv)",
-				},
-				cli.BoolFlag{
-					Name:   "parts, list-parts",
-					Hidden: false,
-					Usage: "Also list every physical part for each table (name, partition_id, size)\n" +
-						"Against the live server, reads name/partition_id/bytes_on_disk from `system.parts`\n" +
-						"Against --local-backup/--remote-backup, reads part names from backup metadata (partition_id derived from the name, no size available)",
-				},
-				cli.BoolFlag{
-					Name:   "partitions, list-partitions",
-					Hidden: false,
-					Usage: "Also list the distinct partitions for each table (partition_id, partition, parts count, size), aggregated from parts\n" +
-						"Against the live server, reads partition_id/partition/parts/size from `system.parts`\n" +
-						"Against --local-backup/--remote-backup, derives partition_id and parts count from part names (no partition value or per-partition size available)",
-				},
-			),
-		},
-		{
-			Name:        "create",
-			Usage:       "Create new backup",
-			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from-remote=<backup-name>] [-s, --schema] [--rbac] [--configs] [--named-collections] [--skip-check-parts-columns] [--resume] <backup_name>",
-			Description: "Create new backup",
-			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("skip-check-parts-columns"), c.StringSlice("skip-projections"), c.Bool("resume"), version, commandIdFromCli(c))
-			},
-			Flags: append(cliapp.Flags,
-				cli.StringFlag{
-					Name:   "table, tables, t",
-					Hidden: false,
-					Usage:  "Create backup only matched with table name patterns, separated by comma, allow ? and * as wildcard",
-				},
-				cli.StringFlag{
-					Name:   "diff-from-remote",
-					Hidden: false,
-					Usage:  "Create incremental embedded backup or upload incremental object disk data based on other remote backup name",
-				},
-				cli.StringSliceFlag{
-					Name:   "partitions",
-					Hidden: false,
-					Usage: "Create backup only for selected partition names, separated by comma\n" +
-						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
-						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
-						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
-						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
-				},
-				cli.BoolFlag{
-					Name:   "schema, s",
-					Hidden: false,
-					Usage:  "Backup schemas only, will skip data",
-				},
-				cli.BoolFlag{
-					Name:   "rbac, backup-rbac, do-backup-rbac",
-					Hidden: false,
-					Usage:  "Backup RBAC related objects",
-				},
-				cli.BoolFlag{
-					Name:   "configs, backup-configs, do-backup-configs",
-					Hidden: false,
-					Usage:  "Backup 'clickhouse-server' configuration files",
-				},
-				cli.BoolFlag{
-					Name:   "named-collections, backup-named-collections, do-backup-named-collections",
-					Hidden: false,
-					Usage:  "Backup named collections",
-				},
-				cli.BoolFlag{
-					Name:   "rbac-only",
-					Hidden: false,
-					Usage:  "Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added",
-				},
-				cli.BoolFlag{
-					Name:   "configs-only",
-					Hidden: false,
-					Usage:  "Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added",
-				},
-				cli.BoolFlag{
-					Name:   "named-collections-only",
-					Hidden: false,
-					Usage:  "Backup named collections only, will skip backup data, will backup schema only if --schema added",
-				},
-				cli.BoolFlag{
-					Name:   "skip-check-parts-columns",
-					Hidden: false,
-					Usage:  "Skip check system.parts_columns to allow backup inconsistent column types for data parts",
-				},
-				cli.StringSliceFlag{
-					Name:   "skip-projections",
-					Hidden: false,
-					Usage:  "Skip make hardlinks to *.proj/* files during backup creation, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
-				},
-				cli.BoolFlag{
-					Name:   "resume, resumable",
-					Hidden: false,
-					Usage:  "Will resume upload for object disk data, hard links on local disk still continue to recreate, not work when `use_embedded_backup_restore: true`",
-				},
-			),
-		},
-		{
-			Name:        "create_remote",
-			Usage:       "Create and upload new backup",
-			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from=<local_backup_name>] [--diff-from-remote=<local_backup_name>] [--schema] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-check-parts-columns] <backup_name>",
-			Description: "Create and upload",
-			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("skip-check-parts-columns"), c.Bool("resume"), version, commandIdFromCli(c))
-			},
-			Flags: append(cliapp.Flags,
-				cli.StringFlag{
-					Name:   "table, tables, t",
-					Hidden: false,
-					Usage:  "Create and upload backup only matched with table name patterns, separated by comma, allow ? and * as wildcard",
-				},
-				cli.StringSliceFlag{
-					Name:   "partitions",
-					Hidden: false,
-					Usage: "Create and upload backup only for selected partition names, separated by comma\n" +
-						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
-						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
-						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
-						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
-				},
-				cli.StringFlag{
-					Name:   "diff-from",
-					Hidden: false,
-					Usage:  "Local backup name which used to upload current backup as incremental",
-				},
-				cli.StringFlag{
-					Name:   "diff-from-remote",
-					Hidden: false,
-					Usage:  "Remote backup name which used to upload current backup as incremental",
-				},
-				cli.BoolFlag{
-					Name:   "schema, s",
-					Hidden: false,
-					Usage:  "Backup and upload metadata schema only, will skip data backup",
-				},
-				cli.BoolFlag{
-					Name:   "rbac, backup-rbac, do-backup-rbac",
-					Hidden: false,
-					Usage:  "Backup and upload RBAC related objects",
-				},
-				cli.BoolFlag{
-					Name:   "configs, backup-configs, do-backup-configs",
-					Hidden: false,
-					Usage:  "Backup and upload 'clickhouse-server' configuration files",
-				},
-				cli.BoolFlag{
-					Name:   "named-collections, backup-named-collections, do-backup-named-collections",
-					Hidden: false,
-					Usage:  "Backup and upload named collections and settings",
-				},
-				cli.BoolFlag{
-					Name:   "rbac-only",
-					Hidden: false,
-					Usage:  "Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added",
-				},
-				cli.BoolFlag{
-					Name:   "configs-only",
-					Hidden: false,
-					Usage:  "Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added",
-				},
-				cli.BoolFlag{
-					Name:   "named-collections-only",
-					Hidden: false,
-					Usage:  "Backup named collections only, will skip backup data, will backup schema only if --schema added",
-				},
-				cli.BoolFlag{
-					Name:   "resume, resumable",
-					Hidden: false,
-					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignore when 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
-				},
-				cli.BoolFlag{
-					Name:   "skip-check-parts-columns",
-					Hidden: false,
-					Usage:  "Skip check system.parts_columns to allow backup inconsistent column types for data parts",
-				},
-				cli.StringSliceFlag{
-					Name:   "skip-projections",
-					Hidden: false,
-					Usage:  "Skip make and upload hardlinks to *.proj/* files during backup creation, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
-				},
-				cli.BoolFlag{
-					Name:   "delete, delete-source, delete-local",
-					Hidden: false,
-					Usage:  "explicitly delete local backup during upload",
-				},
-			),
-		},
-		{
-			Name:        "upload",
-			Usage:       "Upload backup to remote storage",
-			UsageText:   "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
-			Description: "Upload a local backup to remote storage using the v1 layout (per-part archives + RequiredBackup chain for incrementals).\n\nIf you back up frequently or run mutations, consider `cas-upload` instead: it deduplicates content across backups, every backup is independent (no incremental chain), and only changed data is uploaded.",
-			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("named-collections-only"), c.Bool("resume"), version, commandIdFromCli(c))
-			},
-			Flags: append(cliapp.Flags,
-				cli.StringFlag{
-					Name:   "diff-from",
-					Hidden: false,
-					Usage:  "Local backup name which used to upload current backup as incremental",
-				},
-				cli.StringFlag{
-					Name:   "diff-from-remote",
-					Hidden: false,
-					Usage:  "Remote backup name which used to upload current backup as incremental",
-				},
-				cli.StringFlag{
-					Name:   "table, tables, t",
-					Usage:  "Upload data only for matched table name patterns, separated by comma, allow ? and * as wildcard",
-					Hidden: false,
-				},
-				cli.StringSliceFlag{
-					Name:   "partitions",
-					Hidden: false,
-					Usage: "Upload backup only for selected partition names, separated by comma\n" +
-						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
-						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
-						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
-						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
-				},
-				cli.BoolFlag{
-					Name:   "schema, s",
-					Hidden: false,
-					Usage:  "Upload schemas only",
-				},
-				cli.BoolFlag{
-					Name:   "rbac-only, rbac",
-					Hidden: false,
-					Usage:  "Upload RBAC related objects only, will skip upload data, will backup schema only if --schema added",
-				},
-				cli.BoolFlag{
-					Name:   "configs-only, configs",
-					Hidden: false,
-					Usage:  "Upload 'clickhouse-server' configuration files only, will skip upload data, will backup schema only if --schema added",
-				},
-				cli.BoolFlag{
-					Name:   "named-collections-only, named-collections",
-					Hidden: false,
-					Usage:  "Upload named collections and settings only, will skip upload data, will backup schema only if --schema added",
-				},
-				cli.StringSliceFlag{
-					Name:   "skip-projections",
-					Hidden: false,
-					Usage:  "Skip make and upload hardlinks to *.proj/* files during backup creation, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
-				},
-				cli.BoolFlag{
-					Name:   "resume, resumable",
-					Hidden: false,
-					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
-				},
-				cli.BoolFlag{
-					Name:   "delete, delete-source, delete-local",
-					Hidden: false,
-					Usage:  "explicitly delete local backup during upload",
-				},
-			),
-		},
-		{
-			Name:      "list",
-			Usage:     "List of backups",
-			UsageText: "clickhouse-backup list [all|local|remote] [latest|previous]",
-			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				err := b.List(c.Args().Get(0), c.Args().Get(1), c.String("format"))
-				return err
-			},
-			Flags: append(cliapp.Flags,
-				cli.StringFlag{
-					Name:   "format, f",
-					Usage:  "Output format (text|json|yaml|csv|tsv)",
-					Hidden: false,
-				},
-			),
-		},
-		{
-			Name:      "download",
-			Usage:     "Download backup from remote storage",
-			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--resumable] <backup_name>",
-			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("hardlink-exists-files"), version, commandIdFromCli(c))
-			},
-			Flags: append(cliapp.Flags,
-				cli.StringFlag{
-					Name:   "table, tables, t",
-					Usage:  "Download objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
-					Hidden: false,
-				},
-				cli.StringSliceFlag{
-					Name:   "partitions",
-					Hidden: false,
-					Usage: "Download backup data only for selected partition names, separated by comma\n" +
-						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
-						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
-						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
-						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
-				},
-				cli.BoolFlag{
-					Name:   "schema, schema-only, s",
-					Hidden: false,
-					Usage:  "Download schema only",
-				},
-				cli.BoolFlag{
-					Name:   "rbac-only, rbac",
-					Hidden: false,
-					Usage:  "Download RBAC related objects only, will skip download data, will download schema only if --schema added",
-				},
-				cli.BoolFlag{
-					Name:   "configs-only, configs",
-					Hidden: false,
-					Usage:  "Download 'clickhouse-server' configuration files only, will skip download data, will download schema only if --schema added",
-				},
-				cli.BoolFlag{
-					Name:   "named-collections-only, named-collections",
-					Hidden: false,
-					Usage:  "Download named collections and settings only, will skip download data, will download schema only if --schema added",
-				},
-				cli.BoolFlag{
-					Name:   "resume, resumable",
-					Hidden: false,
-					Usage:  "Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
-				},
-				cli.BoolFlag{
-					Name:   "hardlink-exists-files",
-					Hidden: false,
-					Usage:  "Create hardlinks for existing files instead of downloading",
-				},
-			),
-		},
-		{
-			Name:      "rebase",
-			Usage:     "Copy required parts from `required_backup` chain into remote backup and remove `required_backup` dependency, so backup becomes full",
-			UsageText: "clickhouse-backup rebase <backup_name>",
-			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				if c.Args().First() == "" {
-					log.Err(fmt.Errorf("backup name must be defined")).Send()
-					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
-				}
-				return b.Rebase(c.Args().First(), commandIdFromCli(c))
-			},
-			Flags: cliapp.Flags,
-		},
-		{
-			Name:      "rebalance",
-			Usage:     "Move data parts inside local backup between disks to match current system.parts layout and storage policy, skip parts on object disks",
-			UsageText: "clickhouse-backup rebalance [-t, --tables=<db>.<table>] [--dry-run] <backup_name>",
-			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				if c.Args().First() == "" {
-					log.Err(fmt.Errorf("backup name must be defined")).Send()
-					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
-				}
-				return b.Rebalance(c.Args().First(), c.String("tables"), c.Bool("dry-run"), commandIdFromCli(c))
-			},
-			Flags: append(cliapp.Flags,
-				cli.StringFlag{
-					Name:   "table, tables, t",
-					Usage:  "Rebalance only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
-					Hidden: false,
-				},
-				cli.BoolFlag{
-					Name:   "dry-run",
-					Hidden: false,
-					Usage:  "Only log which parts would move between disks, change nothing",
-				},
-			),
-		},
-		{
-			Name:      "restore",
-			Usage:     "Create schema and restore data from backup",
-			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] [--skip-empty-tables] <backup_name>",
-			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Restore(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), version, commandIdFromCli(c))
-			},
-			Flags: append(cliapp.Flags,
-				cli.StringFlag{
-					Name:   "table, tables, t",
-					Usage:  "Restore only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
-					Hidden: false,
-				},
-				cli.StringSliceFlag{
-					Name:   "restore-database-mapping, m",
-					Usage:  "Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.",
-					Hidden: false,
-				},
-				cli.StringSliceFlag{
-					Name:   "restore-table-mapping, tm",
-					Usage:  "Define the rule to restore data. For the table not defined in this struct, the program will not deal with it.",
-					Hidden: false,
-				},
-				cli.StringSliceFlag{
-					Name:   "partitions",
-					Hidden: false,
-					Usage: "Restore backup only for selected partition names, separated by comma\n" +
-						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
-						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
-						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
-						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
-				},
-				cli.BoolFlag{
-					Name:   "schema, s",
-					Hidden: false,
-					Usage:  "Restore schema only",
-				},
-				cli.BoolFlag{
-					Name:   "data, d",
-					Hidden: false,
-					Usage:  "Restore data only",
-				},
-				cli.BoolFlag{
-					Name:   "rm, drop",
-					Hidden: false,
-					Usage:  "Drop exists schema objects before restore",
-				},
-				cli.BoolFlag{
-					Name:   "i, ignore-dependencies",
-					Hidden: false,
-					Usage:  "Ignore dependencies when drop exists schema objects",
-				},
-				cli.BoolFlag{
-					Name:   "rbac, restore-rbac, do-restore-rbac",
-					Hidden: false,
-					Usage:  "Restore RBAC related objects",
-				},
-				cli.BoolFlag{
-					Name:   "configs, restore-configs, do-restore-configs",
-					Hidden: false,
-					Usage:  "Restore 'clickhouse-server' CONFIG related files",
-				},
-				cli.BoolFlag{
-					Name:   "named-collections, restore-named-collections, do-restore-named-collections",
-					Hidden: false,
-					Usage:  "Restore named collections and settings",
-				},
-				cli.BoolFlag{
-					Name:   "rbac-only",
-					Hidden: false,
-					Usage:  "Restore RBAC related objects only, will skip restore data, will restore schema only if --schema added",
-				},
-				cli.BoolFlag{
-					Name:   "configs-only",
-					Hidden: false,
-					Usage:  "Restore 'clickhouse-server' configuration files only, will skip restore data, will restore schema only if --schema added",
-				},
-				cli.BoolFlag{
-					Name:   "named-collections-only",
-					Hidden: false,
-					Usage:  "Restore named collections only, will skip restore data, will restore schema only if --schema added",
-				},
-				cli.StringSliceFlag{
-					Name:   "skip-projections",
-					Hidden: false,
-					Usage:  "Skip make hardlinks to *.proj/* files during backup restoring, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
-				},
-				cli.BoolFlag{
-					Name:   "resume, resumable",
-					Hidden: false,
-					Usage:  "Will resume download for object disk data",
-				},
-				cli.BoolFlag{
-					Name:   "restore-schema-as-attach",
-					Hidden: false,
-					Usage:  "Use DETACH/ATTACH instead of DROP/CREATE for schema restoration",
-				},
-				cli.BoolFlag{
-					Name:   "replicated-copy-to-detached",
-					Hidden: false,
-					Usage:  "Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step",
-				},
-				cli.BoolFlag{
-					Name:   "skip-empty-tables",
-					Hidden: false,
-					Usage:  "Skip restoring tables that have no data (empty tables with only schema)",
-				},
-				cli.BoolFlag{
-					Name:   "rebind-replica-path-if-exists",
-					Hidden: false,
-					Usage:  "Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent",
-				},
-			),
-		},
-		{
-			Name:      "restore_remote",
-			Usage:     "Download and restore",
-			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] <backup_name>",
-			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), c.Bool("hardlink-exists-files"), version, commandIdFromCli(c))
-			},
-			Flags: append(cliapp.Flags,
-				cli.StringFlag{
-					Name:   "table, tables, t",
-					Usage:  "Download and restore objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
-					Hidden: false,
-				},
-				cli.StringSliceFlag{
-					Name:   "restore-database-mapping, m",
-					Usage:  "Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.",
-					Hidden: false,
-				},
-				cli.StringSliceFlag{
-					Name:   "restore-table-mapping, tm",
-					Usage:  "Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.",
-					Hidden: false,
-				},
-				cli.StringSliceFlag{
-					Name:   "partitions",
-					Hidden: false,
-					Usage: "Download and restore backup only for selected partition names, separated by comma\n" +
-						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
-						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
-						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
-						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
-				},
-				cli.BoolFlag{
-					Name:   "schema, s",
-					Hidden: false,
-					Usage:  "Download and Restore schema only",
-				},
-				cli.BoolFlag{
-					Name:   "data, d",
-					Hidden: false,
-					Usage:  "Download and Restore data only",
-				},
-				cli.BoolFlag{
-					Name:   "rm, drop",
-					Hidden: false,
-					Usage:  "Drop schema objects before restore",
-				},
-				cli.BoolFlag{
-					Name:   "i, ignore-dependencies",
-					Hidden: false,
-					Usage:  "Ignore dependencies when drop exists schema objects",
-				},
-				cli.BoolFlag{
-					Name:   "rbac, restore-rbac, do-restore-rbac",
-					Hidden: false,
-					Usage:  "Download and Restore RBAC related objects",
-				},
-				cli.BoolFlag{
-					Name:   "configs, restore-configs, do-restore-configs",
-					Hidden: false,
-					Usage:  "Download and Restore 'clickhouse-server' CONFIG related files",
-				},
-				cli.BoolFlag{
-					Name:   "named-collections, restore-named-collections, do-restore-named-collections",
-					Hidden: false,
-					Usage:  "Download and Restore named collections and settings",
-				},
-				cli.BoolFlag{
-					Name:   "rbac-only",
-					Hidden: false,
-					Usage:  "Restore RBAC related objects only, will skip backup data, will backup schema only if --schema added",
-				},
-				cli.BoolFlag{
-					Name:   "configs-only",
-					Hidden: false,
-					Usage:  "Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added",
-				},
-				cli.BoolFlag{
-					Name:   "named-collections-only",
-					Hidden: false,
-					Usage:  "Restore named collections only, will skip restore data, will restore schema only if --schema added",
-				},
-				cli.StringSliceFlag{
-					Name:   "skip-projections",
-					Hidden: false,
-					Usage:  "Skip make hardlinks to *.proj/* files during backup restoring, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
-				},
-				cli.BoolFlag{
-					Name:   "resume, resumable",
-					Hidden: false,
-					Usage:  "Save intermediate download state and resume download if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
-				},
-				cli.BoolFlag{
-					Name:   "restore-schema-as-attach",
-					Hidden: false,
-					Usage:  "Use DETACH/ATTACH instead of DROP/CREATE for schema restoration",
-				},
-				cli.BoolFlag{
-					Name:   "hardlink-exists-files",
-					Hidden: false,
-					Usage:  "Create hardlinks for existing files instead of downloading",
-				},
-				cli.BoolFlag{
-					Name:   "skip-empty-tables",
-					Hidden: false,
-					Usage:  "Skip restoring tables that have no data (empty tables with only schema)",
-				},
-				cli.BoolFlag{
-					Name:   "rebind-replica-path-if-exists",
-					Hidden: false,
-					Usage:  "Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent",
-				},
-			),
-		},
-		{
-			Name:      "delete",
-			Usage:     "Delete specific backup",
-			UsageText: "clickhouse-backup delete [--force] <local|remote> <backup_name>",
-			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				if c.Args().Get(0) != "local" && c.Args().Get(0) != "remote" {
-					log.Err(fmt.Errorf("Unknown sub-command '%s', use 'local' or 'remote'\n", c.Args().Get(0))).Send()
-					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
-				}
-				if c.Args().Get(1) == "" {
-					log.Err(fmt.Errorf("backup name must be defined")).Send()
-					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
-				}
-				return b.Delete(c.Args().Get(0), c.Args().Get(1), c.Bool("force"), commandIdFromCli(c))
-			},
-			Flags: append(cliapp.Flags,
-				cli.BoolFlag{
-					Name:   "force, f",
-					Hidden: false,
-					Usage:  "Delete the backup even when other backups depend on it via required_backup, breaks the incremental backups chain, also skips general.rebase_during_delete",
-				},
-			),
-		},
-		{
-			Name:  "default-config",
-			Usage: "Print default config",
-			Action: func(*cli.Context) error {
-				return config.PrintConfig(nil)
-			},
-			Flags: cliapp.Flags,
-		},
-		{
-			Name:  "print-config",
-			Usage: "Print current config merged with environment variables",
-			Action: func(c *cli.Context) error {
-				return config.PrintConfig(c)
-			},
-			Flags: cliapp.Flags,
-		},
-		{
-			Name:  "clean",
-			Usage: "Remove data in 'shadow' folder from all 'path' folders available from 'system.disks'",
-			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Clean(context.Background())
-			},
-			Flags: cliapp.Flags,
-		},
-		{
-			Name:      "clean_remote_broken",
-			Usage:     "Remove all broken remote backups",
-			UsageText: "clickhouse-backup clean_remote_broken [--include=glob ...]",
-			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CleanRemoteBroken(status.NotFromAPI, c.StringSlice("include"))
-			},
-			Flags: append(cliapp.Flags,
-				cli.StringSliceFlag{
-					Name:  "include",
-					Usage: "Glob (path.Match syntax) to scope cleanup only to broken backup names matching these patterns; can be passed multiple times; if omitted, all broken backups are deleted",
-				},
-			),
-		},
-		{
-			Name:  "clean_local_broken",
-			Usage: "Remove all broken local backups",
-			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CleanLocalBroken(status.NotFromAPI)
-			},
-			Flags: cliapp.Flags,
-		},
-		{
-			Name:        "clean_broken_retention",
-			Usage:       "Remove orphan entries under remote `path` and `object_disks_path` that are not in the live backup list",
-			UsageText:   "clickhouse-backup clean_broken_retention [--commit] [--include=glob ...] [--exclude=glob ...]",
-			Description: "Walks top-level of remote `path` and `object_disks_path`, batch-deletes (with retry) every entry that is not a live backup and is not excluded by --exclude globs and is matched by --include globs (if provided). Object disk orphans are deleted in parallel with progress tracking. Pass --commit to actually delete; without it the command only logs what would be deleted.",
-			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CleanBrokenRetention(status.NotFromAPI, c.StringSlice("include"), c.StringSlice("exclude"), c.Bool("commit"))
-			},
-			Flags: append(cliapp.Flags,
-				cli.StringSliceFlag{
-					Name:  "include",
-					Usage: "Glob (path.Match syntax) to scope cleanup only to backup names matching these patterns; can be passed multiple times; if omitted, all orphans are candidates",
-				},
-				cli.StringSliceFlag{
-					Name:  "exclude",
-					Usage: "Glob (path.Match syntax) of backup names to preserve even if they appear as orphans; can be passed multiple times",
-				},
-				cli.BoolFlag{
-					Name:  "commit",
-					Usage: "Actually delete orphans; without this flag the command only logs what would be deleted",
-				},
-			),
-		},
-
-		{
-			Name:        "watch",
-			Usage:       "Run infinite loop which create full + incremental backup sequence to allow efficient backup sequences",
-			UsageText:   "clickhouse-backup watch [--watch-interval=1h] [--full-interval=24h] [--watch-backup-name-template=shard{shard}-{type}-{time:20060102150405}] [--schedule=name=<name>,full=<cron>,increment=<cron>] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--schema] [--rbac] [--configs] [--skip-check-parts-columns]",
-			Description: "Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups. Use `--schedule` instead of intervals to run backups on cron expressions",
-			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.StringSlice("schedule"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), c.Bool("named-collections"), c.Bool("skip-check-parts-columns"), c.Bool("delete-source"), version, commandIdFromCli(c), nil, c)
-			},
-			Flags: append(cliapp.Flags,
-				cli.StringFlag{
-					Name:   "watch-interval",
-					Usage:  "Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration",
-					Hidden: false,
-				},
-				cli.StringFlag{
-					Name:   "full-interval",
-					Usage:  "Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration",
-					Hidden: false,
-				},
-				cli.StringFlag{
-					Name:   "watch-backup-name-template",
-					Usage:  "Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples",
-					Hidden: false,
-				},
-				cli.StringSliceFlag{
-					Name: "schedule",
-					Usage: "Named cron driven backup chain in name=<name>,full=<cron>[,increment=<cron>][,full_type=create|rebase][,delete_previous_cycle=true|false] format, can be specified multiple times, mutually exclusive with --watch-interval and --full-interval\n" +
-						"	cron expression contains standard 5 fields, optional leading seconds field and @every/@daily descriptors, see https://pkg.go.dev/github.com/robfig/cron/v3#hdr-CRON_Expression_Format\n" +
-						"	name added as prefix to --watch-backup-name-template to isolate backup chains\n" +
-						"	full_type=rebase creates scheduled full backup as increment + rebase command, server-side copy of previous chain instead of full re-upload\n" +
-						"	delete_previous_cycle=true deletes all older backups of the chain after successful full backup",
-					Hidden: false,
-				},
-				cli.StringFlag{
-					Name:   "table, tables, t",
-					Usage:  "Create and upload only objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
-					Hidden: false,
-				},
-				cli.StringSliceFlag{
-					Name:   "partitions",
-					Hidden: false,
-					Usage: "Partitions names, separated by comma\n" +
-						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
-						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
-						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
-						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
-				},
-				cli.BoolFlag{
-					Name:   "schema, s",
-					Hidden: false,
-					Usage:  "Schemas only",
-				},
-				cli.BoolFlag{
-					Name:   "rbac, backup-rbac, do-backup-rbac",
-					Hidden: false,
-					Usage:  "Backup RBAC related objects",
-				},
-				cli.BoolFlag{
-					Name:   "configs, backup-configs, do-backup-configs",
-					Hidden: false,
-					Usage:  "Backup `clickhouse-server' configuration files",
-				},
-				cli.BoolFlag{
-					Name:   "named-collections, backup-named-collections, do-backup-named-collections",
-					Hidden: false,
-					Usage:  "Backup named collections and settings",
-				},
-				cli.BoolFlag{
-					Name:   "skip-check-parts-columns",
-					Hidden: false,
-					Usage:  "Skip check system.parts_columns to allow backup inconsistent column types for data parts",
-				},
-				cli.StringSliceFlag{
-					Name:   "skip-projections",
-					Hidden: false,
-					Usage:  "Skip make and upload hardlinks to *.proj/* files during backup creation, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
-				},
-				cli.BoolFlag{
-					Name:   "delete, delete-source, delete-local",
-					Hidden: false,
-					Usage:  "explicitly delete local backup during upload",
-				},
-			),
-		},
-		{
-			Name:      "acvp",
-			Usage:     "Run ACVP wrapper protocol over stdin/stdout",
-			UsageText: "clickhouse-backup acvp",
-			Action: func(*cli.Context) error {
-				return acvpwrapper.Run(os.Stdin, os.Stdout)
-			},
-		},
-		{
-			Name:  "server",
-			Usage: "Run API server",
-			Action: func(c *cli.Context) error {
-				return server.Run(c, cliapp, config.GetConfigPath(c), version)
-			},
-			Flags: append(cliapp.Flags,
-				cli.BoolFlag{
-					Name:   "watch",
-					Usage:  "Run watch go-routine for 'create_remote' + 'delete local', after API server startup",
-					Hidden: false,
-				},
-				cli.StringFlag{
-					Name:   "watch-interval",
-					Usage:  "Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration",
-					Hidden: false,
-				},
-				cli.StringFlag{
-					Name:   "full-interval",
-					Usage:  "Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration",
-					Hidden: false,
-				},
-				cli.StringFlag{
-					Name:   "watch-backup-name-template",
-					Usage:  "Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples",
-					Hidden: false,
-				},
-				cli.StringSliceFlag{
-					Name:   "schedule",
-					Usage:  "Named cron driven backup chain for watch in name=<name>,full=<cron>[,increment=<cron>][,full_type=create|rebase][,delete_previous_cycle=true|false] format, can be specified multiple times, mutually exclusive with --watch-interval and --full-interval",
-					Hidden: false,
-				},
-				cli.BoolFlag{
-					Name:   "rbac, backup-rbac, do-backup-rbac",
-					Hidden: false,
-					Usage:  "Backup RBAC related objects during --watch",
-				},
-				cli.BoolFlag{
-					Name:   "configs, backup-configs, do-backup-configs",
-					Hidden: false,
-					Usage:  "Backup `clickhouse-server' configuration files during --watch",
-				},
-				cli.BoolFlag{
-					Name:   "named-collections, backup-named-collections, do-backup-named-collections",
-					Hidden: false,
-					Usage:  "Backup named collections and settings during --watch",
-				},
-				cli.BoolFlag{
-					Name:   "watch-delete-source, watch-delete-local",
-					Hidden: false,
-					Usage:  "explicitly delete local backup during upload in watch",
-				}),
-		},
-	}
-	cliapp.Commands = append(cliapp.Commands, casCommands(cliapp.Flags)...)
-	// app-level only flag, appended after Commands so it does not propagate into every sub-command
-	cliapp.Flags = append(cliapp.Flags, cli.BoolFlag{
-		Name:  "fips-info",
-		Usage: "Display FIPS build/runtime info and exit (no Go toolchain required).",
-	})
-	cliapp.Action = func(c *cli.Context) error {
-		if c.Bool("fips-info") {
-			fips.PrintInfo(os.Stdout, "clickhouse-backup", version, gitCommit, buildDate)
-			return nil
-		}
-		return cli.ShowAppHelp(c)
-	}
-	registerCLIStatus(cliapp.Commands)
-	if err := cliapp.Run(os.Args); err != nil {
+	if err := newRootCommand().Run(context.Background(), os.Args); err != nil {
 		log.Fatal().Stack().Err(err).Send()
 	}
 }

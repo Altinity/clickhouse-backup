@@ -2,7 +2,7 @@ package config
 
 import (
 	"bytes"
-	"flag"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,7 +12,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 )
 
 func TestMaskSensitiveEnvValue(t *testing.T) {
@@ -190,17 +190,8 @@ func TestDisableEnvironmentOverride(t *testing.T) {
 			t.Fatalf("can't write config file: %v", err)
 		}
 	}
-	newCliContext := func(envValues ...string) *cli.Context {
-		env := cli.StringSlice{}
-		flagSet := flag.NewFlagSet("test", flag.ContinueOnError)
-		flagSet.Var(&env, "env", "")
-		flagSet.String("config", configPath, "")
-		for _, value := range envValues {
-			if err := flagSet.Set("env", value); err != nil {
-				t.Fatalf("failed to set env flag %q: %v", value, err)
-			}
-		}
-		return cli.NewContext(cli.NewApp(), flagSet, nil)
+	newCliContext := func(envValues ...string) *cli.Command {
+		return parseTestFlags(t, append([]string{"--config", configPath}, envArgs(envValues)...)...)
 	}
 
 	// envconfig overrides config file values by default
@@ -257,18 +248,42 @@ func TestDisableEnvironmentOverride(t *testing.T) {
 	}
 }
 
-func newEnvContext(t *testing.T, values ...string) *cli.Context {
+func newEnvContext(t *testing.T, values ...string) *cli.Command {
+	t.Helper()
+	return parseTestFlags(t, envArgs(values)...)
+}
+
+func envArgs(values []string) []string {
+	args := make([]string, 0, len(values)*2)
+	for _, value := range values {
+		args = append(args, "--env", value)
+	}
+	return args
+}
+
+// parseTestFlags runs a root command declaring the same global flags as main.go
+// and returns it after parsing, so the config helpers see real urfave/cli v3 state.
+func parseTestFlags(t *testing.T, args ...string) *cli.Command {
 	t.Helper()
 
-	env := cli.StringSlice{}
-	flagSet := flag.NewFlagSet("test", flag.ContinueOnError)
-	flagSet.Var(&env, "env", "")
-	for _, value := range values {
-		if err := flagSet.Set("env", value); err != nil {
-			t.Fatalf("failed to set env flag %q: %v", value, err)
-		}
+	var parsed *cli.Command
+	cmd := &cli.Command{
+		Name: "clickhouse-backup",
+		// same as main.go, so an --env value keeps its commas
+		DisableSliceFlagSeparator: true,
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "config", Aliases: []string{"c"}, Value: DefaultConfigPath},
+			&cli.StringSliceFlag{Name: "environment-override", Aliases: []string{"env"}},
+		},
+		Action: func(_ context.Context, c *cli.Command) error {
+			parsed = c
+			return nil
+		},
 	}
-	return cli.NewContext(cli.NewApp(), flagSet, nil)
+	if err := cmd.Run(context.Background(), append([]string{"clickhouse-backup"}, args...)); err != nil {
+		t.Fatalf("failed to parse test flags %v: %v", args, err)
+	}
+	return parsed
 }
 
 func TestValidateConfigCompressionTuning(t *testing.T) {
@@ -527,6 +542,30 @@ func TestValidateConfigErrors(t *testing.T) {
 		{"bad api cancel_operation_timeout", func(cfg *Config) {
 			cfg.API.CancelOperationTimeout = "1parsec"
 		}, "invalid api.cancel_operation_timeout"},
+		{"delete_batch_size zero", func(cfg *Config) {
+			cfg.General.DeleteBatchSize = 0
+		}, "delete_batch_size=0 is invalid"},
+		{"delete_batch_size above s3 limit", func(cfg *Config) {
+			cfg.General.RemoteStorage = "s3"
+			cfg.General.DeleteBatchSize = 1001
+		}, "delete_batch_size=1001 is invalid for s3"},
+		{"delete_batch_size above 1000 allowed for gcs", func(cfg *Config) {
+			cfg.General.RemoteStorage = "gcs"
+			cfg.General.DeleteBatchSize = 5000
+		}, ""},
+		{"s3 delete_batch_min_size above delete_batch_size", func(cfg *Config) {
+			cfg.General.RemoteStorage = "s3"
+			cfg.General.DeleteBatchSize = 100
+			cfg.S3.DeleteBatchMinSize = 101
+		}, "s3->delete_batch_min_size=101 is invalid"},
+		{"s3 delete_batch_min_size negative", func(cfg *Config) {
+			cfg.General.RemoteStorage = "s3"
+			cfg.S3.DeleteBatchMinSize = -1
+		}, "s3->delete_batch_min_size=-1 is invalid"},
+		{"s3 delete_batch_min_size valid", func(cfg *Config) {
+			cfg.General.RemoteStorage = "s3"
+			cfg.S3.DeleteBatchMinSize = 100
+		}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

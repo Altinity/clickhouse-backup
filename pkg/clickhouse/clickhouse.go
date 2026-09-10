@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -212,9 +214,7 @@ func (ch *ClickHouse) GetDisks(ctx context.Context, enrich bool) ([]Disk, error)
 		return disks, nil
 	}
 	dm := map[string]string{}
-	for k, v := range ch.Config.DiskMapping {
-		dm[k] = v
-	}
+	maps.Copy(dm, ch.Config.DiskMapping)
 	for i := range disks {
 		if p, ok := dm[disks[i].Name]; ok {
 			disks[i].Path = p
@@ -273,6 +273,7 @@ func (ch *ClickHouse) getDisksFromSystemSettings(ctx context.Context) ([]Disk, e
 			Path:            path.Join("/", clickhouseData),
 			Type:            "local",
 			FreeSpace:       du.NewDiskUsage(path.Join("/", clickhouseData)).Free(),
+			TotalSpace:      du.NewDiskUsage(path.Join("/", clickhouseData)).Size(),
 			StoragePolicies: []string{"default"},
 		}}, nil
 	}
@@ -282,20 +283,38 @@ func (ch *ClickHouse) getMetadataPath(ctx context.Context) (string, error) {
 	var result []struct {
 		MetadataPath string `ch:"metadata_path"`
 	}
-	query := "SELECT metadata_path FROM system.tables WHERE database = 'system' AND metadata_path!='' LIMIT 1"
-	// https://github.com/ClickHouse/ClickHouse/issues/76546
-	if ch.version >= 25000000 {
-		query = "SELECT data_path AS metadata_path FROM system.databases WHERE name = 'system' LIMIT 1"
+	tablesQuery := "SELECT metadata_path FROM system.tables WHERE database = 'system' AND metadata_path!='' LIMIT 1"
+	databasesQuery := "SELECT data_path AS metadata_path FROM system.databases WHERE name = 'system' LIMIT 1"
+	// ch.version could be still unknown here (`tables` command, API) or unavailable (no grant on system.build_options),
+	// don't read ch.version directly https://github.com/Altinity/clickhouse-backup/issues/1537
+	version, err := ch.GetVersion(ctx)
+	if err != nil {
+		return "", errors.Wrap(err, "getMetadataPath: get version")
 	}
-	if err := ch.SelectContext(ctx, &result, query); err != nil {
+	query := tablesQuery
+	// https://github.com/ClickHouse/ClickHouse/issues/76546
+	if version >= 25000000 {
+		query = databasesQuery
+	}
+	if err = ch.SelectContext(ctx, &result, query); err != nil {
 		return "", errors.Wrap(err, "getMetadataPath: select metadata_path")
 	}
 	if len(result) == 0 {
 		return "", errors.New("can't get metadata_path from system.tables or system.databases")
 	}
+	// 25.1+ returns relative metadata_path in system.tables, when version is unknown detect it by missing leading slash, https://github.com/Altinity/clickhouse-backup/issues/1537
+	if query == tablesQuery && !strings.HasPrefix(result[0].MetadataPath, "/") {
+		result = result[:0]
+		if err = ch.SelectContext(ctx, &result, databasesQuery); err != nil {
+			return "", errors.Wrap(err, "getMetadataPath: select data_path")
+		}
+		if len(result) == 0 {
+			return "", errors.New("can't get data_path from system.databases")
+		}
+	}
 	metadataPath := strings.Split(result[0].MetadataPath, "/")
 	// https://github.com/ClickHouse/ClickHouse/issues/76546
-	if ch.version >= 25000000 && strings.HasSuffix(result[0].MetadataPath, "/store/") {
+	if strings.HasSuffix(result[0].MetadataPath, "/store/") {
 		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-2]...)
 		result[0].MetadataPath = path.Join(result[0].MetadataPath, "metadata")
 	} else if strings.Contains(result[0].MetadataPath, "/store/") {
@@ -383,8 +402,10 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		groupBySQL := "d.path, if(d.path='', d.name, '')"
 
 		diskFreeSpaceSQL := "toUInt64(0)"
+		diskTotalSpaceSQL := "toUInt64(0)"
 		if len(diskFields) > 0 && diskFields[0].FreeSpacePresent > 0 {
 			diskFreeSpaceSQL = "min(d.free_space)"
+			diskTotalSpaceSQL = "min(d.total_space)"
 		}
 		storagePoliciesSQL := "['default']"
 		joinStoragePoliciesSQL := ""
@@ -396,9 +417,9 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		}
 		var result []Disk
 		query := fmt.Sprintf(
-			"SELECT d.path AS path, %s AS name, %s AS type, %s AS metadata_type, %s AS free_space, %s AS storage_policies "+
+			"SELECT d.path AS path, %s AS name, %s AS type, %s AS metadata_type, %s AS free_space, %s AS total_space, %s AS storage_policies "+
 				"FROM system.disks AS d %s GROUP BY %s",
-			diskNameSQL, diskTypeSQL, diskMetadataTypeSQL, diskFreeSpaceSQL, storagePoliciesSQL, joinStoragePoliciesSQL, groupBySQL,
+			diskNameSQL, diskTypeSQL, diskMetadataTypeSQL, diskFreeSpaceSQL, diskTotalSpaceSQL, storagePoliciesSQL, joinStoragePoliciesSQL, groupBySQL,
 		)
 		if err := ch.SelectContext(ctx, &result, query); err != nil {
 			return nil, errors.Wrap(err, "getDisksFromSystemDisks: select disks")
@@ -430,7 +451,7 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	var err error
 	settings := map[string]bool{
 		"show_table_uuid_in_table_create_query_if_not_nil": false,
-		"display_secrets_in_show_and_select":               false,
+		"format_display_secrets_in_show_and_select":        false,
 	}
 	if settings, err = ch.CheckSettingsExists(ctx, settings); err != nil {
 		return nil, errors.Wrap(err, "GetTables: check settings")
@@ -488,11 +509,8 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 		if ch.Config.UseEmbeddedBackupRestore && (strings.HasPrefix(t.Name, ".inner_id.") /*|| strings.HasPrefix(t.Name, ".inner.")*/) {
 			t.Skip = true
 		}
-		for _, engine := range ch.Config.SkipTableEngines {
-			if t.Engine == engine {
-				t.Skip = true
-				break
-			}
+		if slices.Contains(ch.Config.SkipTableEngines, t.Engine) {
+			t.Skip = true
 		}
 		if t.Skip {
 			tables[i] = t
@@ -697,8 +715,8 @@ func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tabl
 	processDbPatterns := func(databases []string, patterns []string) []string {
 		for _, pattern := range patterns {
 			pattern = strings.Trim(pattern, " \r\t\n")
-			if strings.HasSuffix(pattern, ".*") {
-				databases = common.AddStringToSliceIfNotExists(databases, strings.Trim(strings.TrimSuffix(pattern, ".*"), "\"` "))
+			if before, ok := strings.CutSuffix(pattern, ".*"); ok {
+				databases = common.AddStringToSliceIfNotExists(databases, strings.Trim(before, "\"` "))
 			} else {
 				databases = common.AddStringToSliceIfNotExists(databases, strings.Trim(tableNameSuffixRE.ReplaceAllString(pattern, ""), "\"` "))
 			}
@@ -1656,10 +1674,7 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 	}
 	tableDataTypes := make(map[string][]ColumnDataTypes)
 	for start := 0; start < len(conditions); start += partsColumnsBatchSize {
-		end := start + partsColumnsBatchSize
-		if end > len(conditions) {
-			end = len(conditions)
-		}
+		end := min(start+partsColumnsBatchSize, len(conditions))
 		batchConditions := conditions[start:end]
 
 		partColumnsDataTypes := make([]ColumnDataTypesWithTable, 0)
@@ -1706,8 +1721,8 @@ var versioningAggregateRE = regexp.MustCompile(`^[0-9]+,\s*`)
 func (ch *ClickHouse) CheckTypesConsistency(table *Table, partColumnsDataTypes []ColumnDataTypes) error {
 	cleanType := func(dataType string) string {
 		for _, compatiblePrefix := range []string{"LowCardinality(", "Nullable("} {
-			if strings.HasPrefix(dataType, compatiblePrefix) {
-				dataType = strings.TrimPrefix(dataType, compatiblePrefix)
+			if after, ok := strings.CutPrefix(dataType, compatiblePrefix); ok {
+				dataType = after
 				dataType = strings.TrimSuffix(dataType, ")")
 			}
 		}

@@ -77,6 +77,9 @@ type ActionRowStatus struct {
 	Finish      string `json:"finish,omitempty"`
 	Error       string `json:"error,omitempty"`
 	OperationId string `json:"operation_id,omitempty"`
+	// Result carries a command specific JSON payload, currently the DryRunReport
+	// of a `--dry-run` command, https://github.com/Altinity/clickhouse-backup/issues/1012
+	Result string `json:"result,omitempty"`
 }
 
 type ActionRow struct {
@@ -254,6 +257,24 @@ func (status *AsyncStatus) GetContextWithCancel(commandId int) (context.Context,
 		row.Ctx, row.Cancel = context.WithCancel(context.Background())
 	}
 	return row.Ctx, row.Cancel, nil
+}
+
+// SetResult attaches a command specific JSON payload to a row, so it becomes
+// visible in /backup/status, GET /backup/actions and system.backup_actions.
+// MUST be called before Stop, a poller which sees a finished row expects the
+// result to be there already.
+func (status *AsyncStatus) SetResult(commandId int, result string) {
+	if result == "" {
+		return
+	}
+	status.Lock()
+	defer status.Unlock()
+	row := status.rowLocked(commandId)
+	if row == nil {
+		log.Warn().Msgf("api.status.setResult -> commandId=%d not found", commandId)
+		return
+	}
+	row.Result = result
 }
 
 func (status *AsyncStatus) Stop(commandId int, err error) {
@@ -452,6 +473,7 @@ func (status *AsyncStatus) GetStatus(current bool, filter string, last int) []Ac
 				Finish:      command.Finish,
 				Error:       command.Error,
 				OperationId: command.OperationId,
+				Result:      command.Result,
 			})
 		}
 	}
@@ -484,6 +506,7 @@ func (status *AsyncStatus) GetStatusByOperationId(operationId string) []ActionRo
 				Finish:      command.Finish,
 				Error:       command.Error,
 				OperationId: command.OperationId,
+				Result:      command.Result,
 			}}
 		}
 	}

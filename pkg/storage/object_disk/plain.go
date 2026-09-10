@@ -9,7 +9,9 @@ import (
 	"sync"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
+
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 )
 
 // ClickHouse plain_rewritable bucket layout, see PlainRewritableLayout.h in ClickHouse sources:
@@ -52,15 +54,18 @@ func NewPlainDiskLayout(ctx context.Context, diskName string) (*PlainDiskLayout,
 	if connection.MetadataType != "plain" && connection.MetadataType != "plain_rewritable" {
 		return nil, errors.Errorf("NewPlainDiskLayout: disk %s have unexpected metadata_type %q", diskName, connection.MetadataType)
 	}
+	return newPlainDiskLayout(ctx, diskName, connection.MetadataType, connection.GetRemoteStorage())
+}
+
+func newPlainDiskLayout(ctx context.Context, diskName, metadataType string, remoteStorage storage.RemoteStorage) (*PlainDiskLayout, error) {
 	l := &PlainDiskLayout{
 		diskName:   diskName,
-		rewritable: connection.MetadataType == "plain_rewritable",
+		rewritable: metadataType == "plain_rewritable",
 		dirs:       map[string]string{},
 	}
 	if !l.rewritable {
 		return l, nil
 	}
-	remoteStorage := connection.GetRemoteStorage()
 	tokens := make([]string, 0)
 	if walkErr := remoteStorage.Walk(ctx, plainRewritableMetaDir, true, func(_ context.Context, f storage.RemoteFile) error {
 		name := strings.Trim(f.Name(), "/")
@@ -76,6 +81,14 @@ func NewPlainDiskLayout(ctx context.Context, diskName string) (*PlainDiskLayout,
 		prefixPathKey := path.Join(plainRewritableMetaDir, token, plainRewritablePrefixPathName)
 		r, readErr := remoteStorage.GetFileReader(ctx, prefixPathKey)
 		if readErr != nil {
+			// the token directory can vanish between the __meta/ listing above and this read: a
+			// background merge or DROP on the live disk deletes its prefix.path object; ClickHouse
+			// building its own path map at startup would not see the directory either, so skip it,
+			// https://github.com/Altinity/clickhouse-backup/actions/runs/33397256466
+			if _, statErr := remoteStorage.StatFile(ctx, prefixPathKey); errors.Is(statErr, storage.ErrNotFound) {
+				log.Warn().Msgf("NewPlainDiskLayout: %s deleted from disk %s during listing, skipping", prefixPathKey, diskName)
+				continue
+			}
 			return nil, errors.Wrapf(readErr, "NewPlainDiskLayout: can't read %s for disk %s", prefixPathKey, diskName)
 		}
 		content, readAllErr := io.ReadAll(r)

@@ -3,7 +3,6 @@ import inspect
 import io
 import os
 import shlex
-import shutil
 import stat
 import tarfile
 import tempfile
@@ -16,10 +15,11 @@ from testflows.core import *
 from testflows.uexpect import ExpectTimeoutError
 
 import docker
+import docker.errors
 from testcontainers.core.container import DockerContainer
 
 
-def _materialize_binary_from_docker_image(docker_client, image_tag, path_in_image, host_path):
+def _materialize_binary_from_docker_image(docker_client, image_tag, path_in_image: str, host_path: str):
     """Materialize a single file from a local Docker image to ``host_path``.
 
     Used so that when an upstream Makefile target has already produced a binary
@@ -51,7 +51,7 @@ def _materialize_binary_from_docker_image(docker_client, image_tag, path_in_imag
         container = docker_client.containers.create(image_tag)
         bits, _ = container.get_archive(path_in_image)
         buf = io.BytesIO(b"".join(bits))
-        with tarfile.open(fileobj=buf, mode="r") as tar:
+        with tarfile.TarFile(fileobj=buf, mode="r") as tar:
             member_name = os.path.basename(path_in_image)
             try:
                 member = tar.getmember(member_name)
@@ -63,7 +63,7 @@ def _materialize_binary_from_docker_image(docker_client, image_tag, path_in_imag
             os.makedirs(os.path.dirname(host_path) or ".", exist_ok=True)
             tmp_path = host_path + ".tmp"
             with open(tmp_path, "wb") as dst:
-                shutil.copyfileobj(src, dst)
+                dst.write(src.read())
             os.chmod(
                 tmp_path,
                 os.stat(tmp_path).st_mode
@@ -99,7 +99,7 @@ MESSAGES_TO_RETRY = [
 
 
 class Shell(ShellBase):
-    def __exit__(self, shell_type, shell_value, traceback):
+    def __exit__(self, type, value, traceback):
         # send exit and Ctrl-D repeatedly
         # to terminate any open shell commands.
         # This is needed for example
@@ -114,7 +114,7 @@ class Shell(ShellBase):
                     self.send('\x04\r', eol='')
                 except OSError:
                     pass
-        return super(Shell, self).__exit__(shell_type, shell_value, traceback)
+        return super(Shell, self).__exit__(type, value, traceback)
 
 
 class QueryRuntimeException(Exception):
@@ -374,7 +374,7 @@ class ClickHouseNode(Node):
                     continue
                 assert False, "container is not healthy"
 
-    def stop(self, timeout=300, safe=True, num_retries=5):
+    def stop(self, timeout=300, num_retries=5, safe=True):
         """Stop node.
         """
         if safe:
@@ -393,7 +393,7 @@ class ClickHouseNode(Node):
             if r.exitcode == 0:
                 break
 
-    def start(self, timeout=300, wait_healthy=True, num_retries=5):
+    def start(self, timeout=300, num_retries=5, wait_healthy=True):
         """Start node.
         """
         for _ in range(num_retries):
@@ -404,7 +404,7 @@ class ClickHouseNode(Node):
         if wait_healthy:
             self.wait_healthy(timeout)
 
-    def restart(self, timeout=300, safe=True, wait_healthy=True, num_retries=5):
+    def restart(self, timeout=300, num_retries=5, safe=True, wait_healthy=True):
         """Restart node.
         """
         if safe:
@@ -717,7 +717,6 @@ class Cluster(object):
         self.shells = {}
         self._control_shell = None
         self.environ = {} if (environ is None) else environ
-        self.configs_dir = configs_dir
         self.local = local
         self.nodes = nodes or {}
         self._containers = {}      # name -> started DockerContainer
@@ -740,20 +739,20 @@ class Cluster(object):
         caller_dir = os.path.dirname(os.path.abspath(frame.f_globals["__file__"]))
 
         # auto set configs directory
-        if self.configs_dir is None:
-            caller_configs_dir = caller_dir
-            if os.path.exists(caller_configs_dir):
-                self.configs_dir = caller_configs_dir
-
-        if not os.path.exists(self.configs_dir):
-            raise TypeError(f"configs directory '{self.configs_dir}' does not exist")
+        if configs_dir is None and os.path.exists(caller_dir):
+            configs_dir = caller_dir
+        if configs_dir is None or not os.path.exists(configs_dir):
+            raise TypeError(f"configs directory '{configs_dir}' does not exist")
+        self.configs_dir: str = configs_dir
 
         # docker dir contains scripts like custom_entrypoint.sh
         if docker_dir is None:
             caller_docker_dir = os.path.join(caller_dir, "docker")
             if os.path.exists(caller_docker_dir):
                 docker_dir = caller_docker_dir
-        self._docker_dir = docker_dir
+        if docker_dir is None:
+            raise TypeError(f"docker directory not found in '{caller_dir}'")
+        self._docker_dir: str = docker_dir
 
         self.lock = threading.Lock()
 
@@ -780,12 +779,13 @@ class Cluster(object):
         raise RuntimeError(f"No host port mapped for {node_name}:{container_port}")
 
     @property
-    def control_shell(self, timeout=300):
+    def control_shell(self):
         """Must be called with self.lock.acquired.
         """
         if self._control_shell is not None:
             return self._control_shell
 
+        timeout = 300
         time_start = time.time()
         while True:
             shell = Shell()
@@ -834,9 +834,8 @@ class Cluster(object):
 
     def node_wait_healthy(self, node, timeout=300):
         """Wait for a container to become healthy."""
-        container_id = self._container_ids.get(node)
-        if container_id and self._docker_client:
-            _wait_for_container_healthy(self._docker_client, container_id, timeout=timeout)
+        if node in self._container_ids and self._docker_client:
+            _wait_for_container_healthy(self._docker_client, self._container_ids[node], timeout=timeout)
             return
         # Fallback via shell
         time_start = time.time()
@@ -1012,11 +1011,18 @@ class Cluster(object):
     def _remove_network(self):
         """Remove the Docker network."""
         if self._docker_client and self._network_name:
-            try:
-                net = self._docker_client.networks.get(self._network_name)
-                net.remove()
-            except Exception:
-                pass
+            self._docker_step(f"remove network {self._network_name}",
+                              lambda: self._docker_client.networks.get(self._network_name).remove())
+
+    def _docker_step(self, what, fn):
+        """Run one docker teardown call and log it, so a hang in `down()` is attributable
+        in the log tail after run.sh kills the process on timeout."""
+        note(f"docker teardown: {what}")
+        start = time.time()
+        try:
+            fn()
+        except Exception as e:
+            note(f"docker teardown: {what} failed after {time.time() - start:.1f}s: {e}")
 
     def _start_container(self, name, image, hostname=None, env=None, volumes=None,
                          ports=None, entrypoint=None, command=None, cap_add=None,
@@ -1105,14 +1111,10 @@ class Cluster(object):
         """Stop and remove a container."""
         container_id = self._container_ids.get(name)
         if container_id:
-            try:
-                self._docker_client.api.stop(container_id, timeout=5)
-            except Exception:
-                pass
-            try:
-                self._docker_client.api.remove_container(container_id, force=True, v=True)
-            except Exception:
-                pass
+            self._docker_step(f"stop {name} ({container_id[:12]})",
+                              lambda: self._docker_client.api.stop(container_id, timeout=5))
+            self._docker_step(f"remove {name} ({container_id[:12]})",
+                              lambda: self._docker_client.api.remove_container(container_id, force=True, v=True))
             self._container_ids.pop(name, None)
             self._containers.pop(name, None)
 
@@ -1341,7 +1343,7 @@ class Cluster(object):
             with And("I list environment variables to show their values"):
                 self.command(None, "env | grep CLICKHOUSE")
 
-        clickhouse_version = os.environ.get("CLICKHOUSE_VERSION", "26.3")
+        clickhouse_version = os.environ.get("CLICKHOUSE_VERSION", "26.8")
         clickhouse_image = os.environ.get("CLICKHOUSE_IMAGE", "clickhouse/clickhouse-server")
         zookeeper_version = os.environ.get("ZOOKEEPER_VERSION", "3.9.5")
         zookeeper_image = os.environ.get("ZOOKEEPER_IMAGE", "docker.io/zookeeper")
@@ -1832,11 +1834,8 @@ class Cluster(object):
         # Remove shared volumes
         if self._docker_client:
             for vol_name in self._shared_volumes:
-                try:
-                    vol = self._docker_client.volumes.get(vol_name)
-                    vol.remove(force=True)
-                except Exception:
-                    pass
+                self._docker_step(f"remove volume {vol_name}",
+                                  lambda v=vol_name: self._docker_client.volumes.get(v).remove(force=True))
         self._shared_volumes = []
         self._remove_network()
 

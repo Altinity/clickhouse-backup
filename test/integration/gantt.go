@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/rs/zerolog/log"
 )
@@ -206,17 +207,45 @@ func (r *envUsageRecorder) symbolForTest(test string) rune {
 	if symbol, ok := r.symbols[test]; ok {
 		return symbol
 	}
-	symbols := []rune(envUsageSymbols)
-	if len(r.symbols) < len(symbols) {
-		r.symbols[test] = symbols[len(r.symbols)]
-		return r.symbols[test]
-	}
-	if !r.warned {
-		log.Warn().Msgf("test environment usage legend exceeded %d one-character symbols, reusing %q", len(symbols), envUsageOverflow)
+	symbol, exhausted := envUsageSymbolAt(len(r.symbols))
+	if exhausted && !r.warned {
+		log.Warn().Msgf("test environment usage legend exceeded all one-character symbols, reusing %q", envUsageOverflow)
 		r.warned = true
 	}
-	r.symbols[test] = envUsageOverflow
-	return r.symbols[test]
+	r.symbols[test] = symbol
+	return symbol
+}
+
+// envUsageSymbolAt returns the idx-th distinct legend symbol: the 94 printable ASCII characters first,
+// then unicode ranges which stay one terminal cell wide in monospace fonts (wide CJK and emoji would
+// break the Gantt column alignment), ~900 symbols total before the overflow fallback
+func envUsageSymbolAt(idx int) (rune, bool) {
+	ascii := []rune(envUsageSymbols)
+	if idx < len(ascii) {
+		return ascii[idx], false
+	}
+	idx -= len(ascii)
+	for _, block := range envUsageUnicodeBlocks {
+		for symbol := block.lo; symbol <= block.hi; symbol++ {
+			if !unicode.IsPrint(symbol) || unicode.IsSpace(symbol) || unicode.IsMark(symbol) {
+				continue
+			}
+			if idx == 0 {
+				return symbol, false
+			}
+			idx--
+		}
+	}
+	return envUsageOverflow, true
+}
+
+var envUsageUnicodeBlocks = []struct{ lo, hi rune }{
+	{0x00A1, 0x00FF}, // Latin-1 Supplement: ¡ ¢ £ … þ ÿ
+	{0x0100, 0x024F}, // Latin Extended-A/B: Ā ā … ɏ
+	{0x0391, 0x03C9}, // Greek: Α … Ω α … ω
+	{0x0410, 0x044F}, // Cyrillic: А … Я а … я
+	{0x2190, 0x21FF}, // Arrows: ← ↑ → ↓ …
+	{0x2500, 0x25FF}, // Box Drawing + Geometric Shapes: ─ │ ┌ … ◿
 }
 
 func terminalWidth() int {

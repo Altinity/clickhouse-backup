@@ -217,7 +217,7 @@ func TestNewWatchScheduleStatesRemoteError(t *testing.T) {
 
 func TestWatchWithSchedulesStatesError(t *testing.T) {
 	b := newTestUnreachableClickHouseBackuper()
-	err := b.watchWithSchedules(context.Background(), "", "", "", nil, "", nil, nil, false, false, false, false, false, false, "test", 0, nil, nil)
+	err := b.watchWithSchedules(context.Background(), "", "", "", nil, "", nil, nil, false, false, false, false, false, false, false, "test", 0, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "watchWithSchedules newWatchScheduleStates")
 }

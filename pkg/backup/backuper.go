@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
@@ -67,6 +68,12 @@ type Backuper struct {
 	isEmbedded             bool
 	resume                 bool
 	resumableState         *resumable.State
+	// DryRun report what the command would do instead of doing it, see issues/1012
+	DryRun bool
+	// DryRunResult holds the report produced when DryRun is set, so REST API handlers can read it after the command returns
+	DryRunResult *DryRunReport
+	// DiskLimit - max allowed local disk usage in percent after download, 0 disables the check, see issues/1458
+	DiskLimit              int
 	shadowBackupUUIDs      []string
 	shadowBackupUUIDsMutex sync.Mutex
 	fileManifest           *storage.ManifestWriter
@@ -77,6 +84,11 @@ type Backuper struct {
 	// per server lifetime. In CLI mode NewBackuper creates a fresh state so
 	// both fire at most once per process (one-shot invocation).
 	casProbeState *CASProbeState
+	// localPartIndex - read-only after build, maps parts of local backups to their shadow directories
+	// so `download --hardlink-exists-files` doesn't glob all local backups per part, see issues/1457
+	localPartIndex *localPartIndex
+	// skippedMissingParts - data parts skipped by allow_missing_files_on_download during the current download, see issues/1456
+	skippedMissingParts atomic.Uint64
 }
 
 func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {
@@ -114,6 +126,11 @@ func (b *Backuper) Classify(err error) retrier.Action {
 	}
 	// canceled/expired context can't succeed on retry, fail fast so /backup/kill and SIGTERM unwind promptly
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return retrier.Fail
+	}
+	// a missing remote object (404/NoSuchKey/BlobNotFound) will never heal, don't burn the retry budget on it,
+	// see https://github.com/Altinity/clickhouse-backup/issues/1456
+	if storage.IsNotFoundErr(err) {
 		return retrier.Fail
 	}
 	log.Warn().Err(err).Msgf("Will wait near %s and retry", common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter))

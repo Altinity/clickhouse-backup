@@ -905,6 +905,19 @@ EOT
 
 fi
 
+# since 26.8 ProjectionDescription::getProjectionFromAST runs MergeTreeSettings::sanityCheck on DEFAULT settings
+# (ignores server <merge_tree> section), so background_pool_size*ratio must cover the default thresholds
+# (number_of_free_entries_in_pool_to_execute_mutation=20, ..._to_execute_optimize_entire_partition=25),
+# otherwise any CREATE TABLE with PROJECTION fails with code 36.
+# ratio raises task slots only, not threads, so memory usage is unaffected. zz_ prefix to merge after low_memory_in_configd.xml
+if [[ "$CLICKHOUSE_VERSION" == "head" || "${CLICKHOUSE_VERSION}" =~ ^26\.[8-9] || "${CLICKHOUSE_VERSION}" =~ ^26\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[7-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
+cat <<EOT > /etc/clickhouse-server/config.d/zz_merges_mutations_ratio_26_8.xml
+<yandex>
+    <background_merges_mutations_concurrency_ratio>16</background_merges_mutations_concurrency_ratio>
+</yandex>
+EOT
+fi
+
 
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[5-9]\.[0-9]+ ]]; then
 cat <<EOT > /etc/clickhouse-server/config.d/user_defined_zookeeper_path.xml

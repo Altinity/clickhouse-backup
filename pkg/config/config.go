@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +20,7 @@ import (
 	"github.com/kelseyhightower/envconfig"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -98,6 +99,14 @@ type GeneralConfig struct {
 	RebaseDuringDelete        bool   `yaml:"rebase_during_delete" envconfig:"REBASE_DURING_DELETE"`
 	UploadMaxBytesPerSecond   uint64 `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
 	DownloadMaxBytesPerSecond uint64 `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
+	// DownloadDiskLimit - refuse `download` and `restore_remote` when usage of any local disk would exceed this percent (1..100) after download,
+	// 0 (default) disables the check, `--disk-limit` CLI argument overrides it per command, see https://github.com/Altinity/clickhouse-backup/issues/1458
+	DownloadDiskLimit int `yaml:"download_disk_limit" envconfig:"DOWNLOAD_DISK_LIMIT"`
+	// AllowMissingFilesOnDownload - salvage mode for partially corrupted remote backups: when a data part file
+	// is missing on remote storage (404/NoSuchKey/BlobNotFound) `download` and `restore_remote` skip the part with
+	// an error-level log and drop it from the local table metadata instead of failing, metadata files are never skipped,
+	// `--allow-missing-files` CLI argument overrides it per command, see https://github.com/Altinity/clickhouse-backup/issues/1456
+	AllowMissingFilesOnDownload bool `yaml:"allow_missing_files_on_download" envconfig:"ALLOW_MISSING_FILES_ON_DOWNLOAD"`
 	// MaxBrokenPartRatio - maximum allowed fraction (0..1) of broken data parts that still produces a
 	// successful but partial backup during backup creation (`create`, and the create stage of
 	// `create_remote`). 0 (default) preserves legacy behavior where any broken part aborts the whole
@@ -268,7 +277,11 @@ type S3Config struct {
 	RetryMode               string            `yaml:"retry_mode" envconfig:"S3_RETRY_MODE"`
 	ChunkSize               int64             `yaml:"chunk_size" envconfig:"S3_CHUNK_SIZE"`
 	DeleteConcurrency       int               `yaml:"delete_concurrency" envconfig:"S3_DELETE_CONCURRENCY"`
-	Debug                   bool              `yaml:"debug" envconfig:"S3_DEBUG"`
+	// DeleteBatchMinSize - when a whole DeleteObjects batch fails, split it in halves and retry until the batch is not bigger than this value; 0 disables splitting, see https://github.com/Altinity/clickhouse-backup/issues/1532
+	DeleteBatchMinSize int `yaml:"delete_batch_min_size" envconfig:"S3_DELETE_BATCH_MIN_SIZE"`
+	// DeleteBatchFallbackToSingle - when a whole DeleteObjects batch fails (after splitting down to delete_batch_min_size), delete its objects one by one with DeleteObject instead of returning the error, see https://github.com/Altinity/clickhouse-backup/issues/1532
+	DeleteBatchFallbackToSingle bool `yaml:"delete_batch_fallback_to_single" envconfig:"S3_DELETE_BATCH_FALLBACK_TO_SINGLE"`
+	Debug                       bool `yaml:"debug" envconfig:"S3_DEBUG"`
 	// HTTP transport and buffer tuning for high-bandwidth networks, see https://github.com/Altinity/clickhouse-backup/issues/1376
 	// HTTPMaxIdleConns - http.Transport.MaxIdleConns, 0 keeps the AWS SDK default (100)
 	HTTPMaxIdleConns int `yaml:"http_max_idle_conns" envconfig:"S3_HTTP_MAX_IDLE_CONNS"`
@@ -438,23 +451,13 @@ type APIConfig struct {
 // IsBackupActionsSkipCommand returns true if the given command must NOT be recorded
 // into the in-memory async status (system.backup_actions).
 func (cfg *APIConfig) IsBackupActionsSkipCommand(command string) bool {
-	for _, c := range cfg.BackupActionsSkipCommands {
-		if c == command {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(cfg.BackupActionsSkipCommands, command)
 }
 
 // IsCompleteResumableAfterRestartCommand returns true if the given command may
 // be resumed automatically after API server restart.
 func (cfg *APIConfig) IsCompleteResumableAfterRestartCommand(command string) bool {
-	for _, c := range cfg.CompleteResumableAfterRestartCommands {
-		if c == command {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(cfg.CompleteResumableAfterRestartCommands, command)
 }
 
 // ArchiveExtensions - list of available compression formats and associated file extensions
@@ -687,6 +690,17 @@ func ValidateConfig(cfg *Config) error {
 	if cfg.GetCompressionFormat() == "lz4" {
 		return errors.New("clickhouse already compressed data by lz4")
 	}
+	if cfg.General.DeleteBatchSize < 1 {
+		return errors.Errorf("delete_batch_size=%d is invalid, it must be greater than 0", cfg.General.DeleteBatchSize)
+	}
+	if cfg.General.RemoteStorage == "s3" {
+		if cfg.General.DeleteBatchSize > 1000 {
+			return errors.Errorf("delete_batch_size=%d is invalid for s3, DeleteObjects accepts at most 1000 keys per request", cfg.General.DeleteBatchSize)
+		}
+		if cfg.S3.DeleteBatchMinSize < 0 || cfg.S3.DeleteBatchMinSize > cfg.General.DeleteBatchSize {
+			return errors.Errorf("s3->delete_batch_min_size=%d is invalid, it must be between 0 and delete_batch_size=%d", cfg.S3.DeleteBatchMinSize, cfg.General.DeleteBatchSize)
+		}
+	}
 	if _, ok := ArchiveExtensions[cfg.GetCompressionFormat()]; !ok && cfg.GetCompressionFormat() != "none" {
 		return errors.Errorf("'%s' is unsupported compression format", cfg.GetCompressionFormat())
 	}
@@ -699,6 +713,9 @@ func ValidateConfig(cfg *Config) error {
 	// see https://github.com/Altinity/clickhouse-backup/issues/1418
 	if cfg.General.MaxBrokenPartRatio < 0 || cfg.General.MaxBrokenPartRatio > 1 {
 		return errors.Errorf("max_broken_part_ratio=%v is invalid, it must be between 0 and 1", cfg.General.MaxBrokenPartRatio)
+	}
+	if cfg.General.DownloadDiskLimit < 0 || cfg.General.DownloadDiskLimit > 100 {
+		return errors.Errorf("download_disk_limit=%d is invalid, it must be between 0 and 100", cfg.General.DownloadDiskLimit)
 	}
 	if timeout, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
 		return errors.Wrap(err, "invalid clickhouse timeout")
@@ -846,7 +863,7 @@ func ValidateObjectDiskConfig(cfg *Config) error {
 }
 
 // PrintConfig - print default / current config to stdout
-func PrintConfig(ctx *cli.Context) error {
+func PrintConfig(ctx *cli.Command) error {
 	var cfg *Config
 	if ctx == nil {
 		cfg = DefaultConfig()
@@ -910,6 +927,8 @@ func DefaultConfig() *Config {
 			DownloadCopyBufferSize:              0,
 			CompressionUseMultiThread:           true,
 			MaxBrokenPartRatio:                  0,
+			DownloadDiskLimit:                   0,
+			AllowMissingFilesOnDownload:         false,
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
@@ -951,23 +970,24 @@ func DefaultConfig() *Config {
 			DeleteConcurrency: 50,
 		},
 		S3: S3Config{
-			Region:                  "us-east-1",
-			DisableSSL:              false,
-			ACL:                     "private",
-			AssumeRoleARN:           "",
-			CompressionLevel:        1,
-			CompressionFormat:       "tar",
-			DisableCertVerification: false,
-			UseCustomStorageClass:   false,
-			StorageClass:            string(s3types.StorageClassStandard),
-			Concurrency:             int(downloadConcurrency + 1),
-			MaxPartsCount:           4000,
-			RetryMode:               string(aws.RetryModeStandard),
-			ChunkSize:               5 * 1024 * 1024,
-			DeleteConcurrency:       10,
-			HTTP2SendPingTimeout:    "30s",
-			HTTP2PingTimeout:        "15s",
-			HTTP2WriteByteTimeout:   "60s",
+			Region:                      "us-east-1",
+			DisableSSL:                  false,
+			ACL:                         "private",
+			AssumeRoleARN:               "",
+			CompressionLevel:            1,
+			CompressionFormat:           "tar",
+			DisableCertVerification:     false,
+			UseCustomStorageClass:       false,
+			StorageClass:                string(s3types.StorageClassStandard),
+			Concurrency:                 int(downloadConcurrency + 1),
+			MaxPartsCount:               4000,
+			RetryMode:                   string(aws.RetryModeStandard),
+			ChunkSize:                   5 * 1024 * 1024,
+			DeleteConcurrency:           10,
+			DeleteBatchFallbackToSingle: true,
+			HTTP2SendPingTimeout:        "30s",
+			HTTP2PingTimeout:            "15s",
+			HTTP2WriteByteTimeout:       "60s",
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
@@ -1022,7 +1042,7 @@ func DefaultConfig() *Config {
 	}
 }
 
-func GetConfigFromCli(ctx *cli.Context) *Config {
+func GetConfigFromCli(ctx *cli.Command) *Config {
 	var oldEnvValues map[string]oldEnvValues
 	// peek disable_environment_override from the config file before applying --env,
 	// deliberately ignoring the environment, so the option can't be bypassed by the mechanisms it disables
@@ -1040,22 +1060,27 @@ func GetConfigFromCli(ctx *cli.Context) *Config {
 	}
 	RestoreEnvVars(oldEnvValues)
 	// `restore`/`restore_remote` expose --rebind-replica-path-if-exists to override the config value per invocation.
-	// Only override when explicitly passed, so the flag's default `false` doesn't clobber a `true` from the config file.
-	// IsSet/Bool return false for commands that don't declare the flag, so this is safe to evaluate for every command.
+	// Only override when passed as true, so the flag's default `false` doesn't clobber a `true` from the config file.
+	// Bool is false for commands that don't declare the flag, so this is safe to evaluate for every command.
+	// Unlike the old IsSet check, an explicit `--rebind-replica-path-if-exists=false` no longer forces `false`
+	// over a `true` in the config file; failing towards the config file is the safe direction here.
 	// WARNING: never enable this during a concurrent HA multi-replica restore — a path occupied by a live sibling
 	// replica is observationally identical to stale leftovers, so rebinding there causes a split-brain replication group.
-	if ctx.IsSet("rebind-replica-path-if-exists") {
-		cfg.ClickHouse.RebindReplicaPathIfExists = ctx.Bool("rebind-replica-path-if-exists")
+	if ctx.Bool("rebind-replica-path-if-exists") {
+		cfg.ClickHouse.RebindReplicaPathIfExists = true
+	}
+	// `download`/`restore_remote` expose --allow-missing-files, same only-override-when-true semantics, see issues/1456
+	if ctx.Bool("allow-missing-files") {
+		cfg.General.AllowMissingFilesOnDownload = true
 	}
 	return cfg
 }
 
-func GetConfigPath(ctx *cli.Context) string {
+func GetConfigPath(ctx *cli.Command) string {
+	// --config is persistent on the root command, so String walks the lineage and
+	// sees it whether it was passed before or after the command name
 	if ctx.String("config") != DefaultConfigPath {
 		return ctx.String("config")
-	}
-	if ctx.GlobalString("config") != DefaultConfigPath {
-		return ctx.GlobalString("config")
 	}
 	if os.Getenv("CLICKHOUSE_BACKUP_CONFIG") != "" {
 		return os.Getenv("CLICKHOUSE_BACKUP_CONFIG")
@@ -1150,7 +1175,7 @@ func MaskEnvOverrideCommand(command string) string {
 	return masked
 }
 
-func OverrideEnvVars(ctx *cli.Context) map[string]oldEnvValues {
+func OverrideEnvVars(ctx *cli.Command) map[string]oldEnvValues {
 	env := ctx.StringSlice("env")
 	oldValues := map[string]oldEnvValues{}
 	logLevel := "info"

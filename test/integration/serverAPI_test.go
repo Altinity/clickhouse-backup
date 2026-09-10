@@ -44,7 +44,7 @@ func TestServerAPI(t *testing.T) {
 
 	log.Debug().Msg("Run `clickhouse-backup server --watch` in background")
 	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup server --watch &>>/tmp/clickhouse-backup-server.log")
-	time.Sleep(3 * time.Second)
+	waitForAPIServerReady(r, env, 30*time.Second)
 
 	testAPIBackupVersion(r, env)
 
@@ -120,30 +120,30 @@ func TestServerAPIRebase(t *testing.T) {
 	defer func() {
 		_ = env.DockerExec("clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
 	}()
-	time.Sleep(3 * time.Second)
+	waitForAPIServerReady(r, env, 30*time.Second)
 
 	// --- Scenario 1: dedicated POST /backup/rebase/{name} (httpRebaseHandler) ---
 	log.Debug().Msg("Check POST /backup/rebase/{name}")
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/rebase/%s'", directInc2))
-	r.NoError(err, "%s\nunexpected POST /backup/rebase error: %v", out, err)
+	r.NoError(err, "%s\nunexpected POST /backup/rebase error: %v\n%s", out, err, apiServerLogTailOnError(env, err))
 	r.Contains(out, "acknowledged")
 	waitForAPIOperationStatus(r, env, parseAPIOperationID(r, out), "rebase", 120*time.Second)
 
 	// rebase metrics must reflect a successful run
 	waitForAPIMetricsContains(r, env, 30*time.Second, "clickhouse_backup_last_rebase_status 1")
 	metricsOut, err := env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/metrics")
-	r.NoError(err, "%s\nunexpected GET /metrics error: %v", metricsOut, err)
+	r.NoError(err, "%s\nunexpected GET /metrics error: %v\n%s", metricsOut, err, apiServerLogTailOnError(env, err))
 	r.Regexp(regexp.MustCompile(`clickhouse_backup_successful_rebases\s+[1-9]\d*`), metricsOut)
 	r.Regexp(regexp.MustCompile(`clickhouse_backup_last_rebase_duration\s+\d+`), metricsOut)
 
 	// the rebased increment must be restorable after its ancestors are deleted
 	for _, ancestor := range []string{directInc1, directFull} {
 		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/remote/%s'", ancestor))
-		r.NoError(err, "%s\nunexpected POST /backup/delete/remote error: %v", out, err)
+		r.NoError(err, "%s\nunexpected POST /backup/delete/remote error: %v\n%s", out, err, apiServerLogTailOnError(env, err))
 	}
 	env.queryWithNoError(t, r, "DROP TABLE "+directDB+".t1"+dropSuffix)
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/restore_remote/%s?rm=1'", directInc2))
-	r.NoError(err, "%s\nunexpected POST /backup/restore_remote error: %v", out, err)
+	r.NoError(err, "%s\nunexpected POST /backup/restore_remote error: %v\n%s", out, err, apiServerLogTailOnError(env, err))
 	waitForAPIOperationStatus(r, env, parseAPIOperationID(r, out), "restore_remote", 120*time.Second)
 	env.checkCount(r, 1, 300, "SELECT count() FROM "+directDB+".t1")
 
@@ -151,7 +151,7 @@ func TestServerAPIRebase(t *testing.T) {
 	log.Debug().Msg("Check POST /backup/actions with rebase command")
 	rebaseAction := "rebase " + actionsInc2
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST -d '{\"command\":\"%s\"}' 'http://localhost:7171/backup/actions'", rebaseAction))
-	r.NoError(err, "%s\nunexpected POST /backup/actions error: %v", out, err)
+	r.NoError(err, "%s\nunexpected POST /backup/actions error: %v\n%s", out, err, apiServerLogTailOnError(env, err))
 	r.Contains(out, "acknowledged")
 	r.Contains(out, rebaseAction)
 	waitForAPIActionStatus(r, env, rebaseAction, status.SuccessStatus, 120*time.Second)
@@ -159,7 +159,7 @@ func TestServerAPIRebase(t *testing.T) {
 	// the actions rebase is reflected in /metrics and the GET /backup/actions log
 	waitForAPIMetricsContains(r, env, 30*time.Second, "clickhouse_backup_last_rebase_status 1")
 	actionsLog, err := env.DockerExecOut("clickhouse-backup", "curl", "-sfL", "http://localhost:7171/backup/actions?filter=rebase")
-	r.NoError(err, "%s\nunexpected GET /backup/actions?filter=rebase error: %v", actionsLog, err)
+	r.NoError(err, "%s\nunexpected GET /backup/actions?filter=rebase error: %v\n%s", actionsLog, err, apiServerLogTailOnError(env, err))
 	r.Contains(actionsLog, rebaseAction)
 	r.NotContains(actionsLog, "\"status\":\"error\"")
 
@@ -239,7 +239,7 @@ func TestServerAPIRebalance(t *testing.T) {
 	defer func() {
 		_ = env.DockerExec("clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
 	}()
-	time.Sleep(3 * time.Second)
+	waitForAPIServerReady(r, env, 30*time.Second)
 
 	// --- Scenario 1: dedicated POST /backup/rebalance/{name} (httpRebalanceHandler) ---
 	log.Debug().Msg("Check POST /backup/rebalance/{name}?dry-run")
@@ -1257,6 +1257,39 @@ func parseAPIOperationID(r *require.Assertions, out string) string {
 	_, err := uuid.Parse(strings.TrimSpace(resp.OperationId))
 	r.NoError(err, "operation_id is not a valid UUID: %s", resp.OperationId)
 	return resp.OperationId
+}
+
+// waitForAPIServerReady polls the API until it answers. A fixed sleep after
+// `clickhouse-backup server` start flaked in CI: the first real request failed with
+// a bare `curl` exit status 7 (connection refused) and no hint why the server was
+// not listening. On timeout the assertion carries the server log tail instead.
+func waitForAPIServerReady(r *require.Assertions, env *TestEnvironment, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for {
+		out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/version'")
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			r.NoError(err, "clickhouse-backup server is not ready after %s: %s\n%s", timeout, out, apiServerLogTail(env))
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// apiServerLogTail returns the tail of the background API server log for failure messages.
+func apiServerLogTail(env *TestEnvironment) string {
+	logOut, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "tail -n 200 /tmp/clickhouse-backup-server.log 2>&1 || true")
+	return "/tmp/clickhouse-backup-server.log tail:\n" + logOut
+}
+
+// apiServerLogTailOnError is apiServerLogTail for assertion arguments: it only
+// spends a docker exec when the assertion is actually going to fail.
+func apiServerLogTailOnError(env *TestEnvironment, err error) string {
+	if err == nil {
+		return ""
+	}
+	return apiServerLogTail(env)
 }
 
 func waitForAPIOperationStatus(r *require.Assertions, env *TestEnvironment, operationId, operation string, timeout time.Duration) {

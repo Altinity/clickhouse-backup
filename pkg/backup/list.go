@@ -440,6 +440,7 @@ func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk)
 				Path:            "/var/lib/clickhouse",
 				Type:            "local",
 				FreeSpace:       du.NewDiskUsage("/var/lib/clickhouse").Free(),
+				TotalSpace:      du.NewDiskUsage("/var/lib/clickhouse").Size(),
 				StoragePolicies: []string{"default"},
 			},
 		}

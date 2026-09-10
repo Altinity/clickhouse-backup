@@ -219,6 +219,11 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 	if backup == nil {
 		return errors.Errorf("'%s' is not found on local storage", backupName)
 	}
+	if b.DryRun {
+		// dependent backups are reported instead of the `--force` error, a dry-run never breaks a chain
+		b.setDryRunResult(newDeleteDryRunReport(&backup.BackupMetadata, findDependentBackups(backupName, localBackupsChainLinks(backupList))))
+		return nil
+	}
 	if !force {
 		if dependentBackups := findDependentBackups(backupName, localBackupsChainLinks(backupList)); len(dependentBackups) > 0 {
 			return errors.Errorf(
@@ -263,6 +268,22 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 		Str("backup", backupName).
 		Str("duration", utils.HumanizeDuration(time.Since(start))).
 		Msg("done")
+	return nil
+}
+
+// removeTableLocal removes the local shadow data of a single table from every regular disk of a local backup,
+// <disk.Path>/backup/<backupName>/shadow/<dbAndTableDir>, same layout as getLocalBackupDataPathForTable,
+// remote storage and object disk copies are not touched
+func (b *Backuper) removeTableLocal(backupName string, dbAndTableDir string, disks []clickhouse.Disk) error {
+	for _, disk := range disks {
+		if disk.IsBackup {
+			continue
+		}
+		tableShadowPath := path.Join(disk.Path, "backup", backupName, "shadow", dbAndTableDir)
+		if err := os.RemoveAll(tableShadowPath); err != nil && !os.IsNotExist(err) {
+			return errors.Wrapf(err, "os.RemoveAll %s", tableShadowPath)
+		}
+	}
 	return nil
 }
 
@@ -371,6 +392,9 @@ func (b *Backuper) skipIfTheSameRemoteBackupPresent(ctx context.Context, backupN
 // see https://github.com/Altinity/clickhouse-backup/issues/1493
 func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string, force bool) error {
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
+	if backupName == "" {
+		return errors.New("backup name is empty, refuse to delete the whole remote path")
+	}
 	start := time.Now()
 	if b.cfg.General.RemoteStorage == "none" {
 		err := errors.New("aborted: RemoteStorage set to \"none\"")
@@ -400,6 +424,10 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string, fo
 	}()
 
 	b.dst = bd
+
+	if b.DryRun {
+		return b.dryRunRemoveBackupRemote(ctx, backupName)
+	}
 
 	if err = b.processDependentRemoteBackups(ctx, backupName, force); err != nil {
 		return err
@@ -475,6 +503,41 @@ func (b *Backuper) processDependentRemoteBackups(ctx context.Context, backupName
 		}
 	}
 	return nil
+}
+
+// newDeleteDryRunReport - describe what `delete` would remove, issues/1012
+func newDeleteDryRunReport(backupMetadata *metadata.BackupMetadata, dependentBackups []string) *DryRunReport {
+	return &DryRunReport{
+		Command:              "delete",
+		BackupName:           backupMetadata.BackupName,
+		TableCount:           len(backupMetadata.Tables),
+		DataSize:             backupMetadata.DataSize,
+		CompressedSize:       backupMetadata.CompressedSize,
+		ObjectDiskSize:       backupMetadata.ObjectDiskSize,
+		MetadataSize:         backupMetadata.MetadataSize,
+		RBACSize:             backupMetadata.RBACSize,
+		ConfigSize:           backupMetadata.ConfigSize,
+		NamedCollectionsSize: backupMetadata.NamedCollectionsSize,
+		TotalSize:            backupMetadata.GetFullSize(),
+		DependentBackups:     dependentBackups,
+	}
+}
+
+// dryRunRemoveBackupRemote - report what `delete remote` would remove, requires connected b.dst,
+// the full BackupList is needed because `required_backup` links live in the metadata of the other backups
+func (b *Backuper) dryRunRemoveBackupRemote(ctx context.Context, backupName string) error {
+	backupList, err := b.dst.BackupList(ctx, true, "", b.cfg.CAS.SkipPrefixes())
+	if err != nil {
+		return errors.Wrap(err, "bd.BackupList")
+	}
+	for i := range backupList {
+		if backupList[i].BackupName != backupName {
+			continue
+		}
+		b.setDryRunResult(newDeleteDryRunReport(&backupList[i].BackupMetadata, findDependentBackups(backupName, remoteBackupsChainLinks(backupList))))
+		return nil
+	}
+	return errors.Errorf("'%s' is not found on remote storage", backupName)
 }
 
 func (b *Backuper) cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx context.Context, backup storage.Backup) error {
@@ -762,12 +825,15 @@ func (b *Backuper) CleanBrokenRetention(commandId int, includeGlobs, excludeGlob
 		return errors.Wrap(err, "bd.BackupList")
 	}
 	keepNames := make(map[string]struct{}, len(backupList))
-	liveCount := 0
+	liveCount, brokenCount := 0, 0
 	for _, backup := range backupList {
 		keepNames[backup.BackupName] = struct{}{}
 		if backup.Broken == "" {
 			liveCount++
+			continue
 		}
+		brokenCount++
+		log.Info().Str("backup", backup.BackupName).Str("reason", backup.Broken).Msg("clean_broken_retention: broken backup is listed in remote metadata, kept (not an orphan); remove it explicitly with `delete remote`")
 	}
 	// CAS keeps its blobs and metadata under a dedicated top-level prefix
 	// (e.g. "cas/"). Those entries are never v1 backups and must never be
@@ -813,7 +879,7 @@ func (b *Backuper) CleanBrokenRetention(commandId int, includeGlobs, excludeGlob
 	if commit {
 		mode = "commit"
 	}
-	log.Info().Msgf("clean_broken_retention: mode=%s, %d live backups (of %d in remote list), %d include-globs, %d exclude-globs", mode, liveCount, len(backupList), len(includeGlobs), len(excludeGlobs))
+	log.Info().Msgf("clean_broken_retention: mode=%s, remote list has %d backups (%d live + %d broken, all kept), %d include-globs, %d exclude-globs", mode, len(backupList), liveCount, brokenCount, len(includeGlobs), len(excludeGlobs))
 
 	objectDiskPath, err := b.getObjectDiskPath()
 	if err != nil {
