@@ -145,7 +145,7 @@ func TestKillUpload(t *testing.T) {
 			t.Errorf("TestKillUpload teardown: drop database %s, error=%+v", dbName, err)
 		}
 	}()
-	time.Sleep(3 * time.Second)
+	waitForAPIServerReady(r, env, 30*time.Second)
 
 	pidPath := fmt.Sprintf("/tmp/clickhouse-backup.%s.pid", backupName)
 
@@ -266,7 +266,7 @@ func TestKillDownload(t *testing.T) {
 			t.Errorf("TestKillDownload teardown: drop database %s, error=%+v", dbName, err)
 		}
 	}()
-	time.Sleep(3 * time.Second)
+	waitForAPIServerReady(r, env, 30*time.Second)
 
 	// 1. create local backup, push it remote, then drop local so download works.
 	runActionWait(r, env, fmt.Sprintf("create --tables=%s.* %s", dbName, backupName), "create", backupName, 60*time.Second)
@@ -317,7 +317,7 @@ func TestKillCreate(t *testing.T) {
 			t.Errorf("TestKillCreate teardown: drop database %s, error=%+v", dbName, err)
 		}
 	}()
-	time.Sleep(3 * time.Second)
+	waitForAPIServerReady(r, env, 30*time.Second)
 
 	// start happens inside observeInProgressAndKill so a fast create cannot
 	// finish before the kill is issued.
@@ -354,7 +354,7 @@ func TestKillRestore(t *testing.T) {
 			t.Errorf("TestKillRestore teardown: drop database %s, error=%+v", dbName, err)
 		}
 	}()
-	time.Sleep(3 * time.Second)
+	waitForAPIServerReady(r, env, 30*time.Second)
 
 	// create a local backup, drop the table so restore has to recreate+attach.
 	var fullRows uint64
@@ -437,7 +437,7 @@ func postAction(r *require.Assertions, env *TestEnvironment, command string) str
 	body := fmt.Sprintf(`{"command":%q}`, command)
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
 		execCurlWithFailBody("-XPOST 'http://127.0.0.1:7171/backup/actions' -d '"+body+"'"))
-	r.NoError(err, "%s\nPOST /backup/actions %q error: %v", out, command, err)
+	r.NoError(err, "%s\nPOST /backup/actions %q error: %v\n%s", out, command, err, apiServerLogTailOnError(env, err))
 	return out
 }
 
