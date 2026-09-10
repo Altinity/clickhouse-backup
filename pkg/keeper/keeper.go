@@ -22,6 +22,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/go-zookeeper/zk"
 )
 
@@ -262,21 +263,35 @@ func verifyKeeperCertificateChain(certificates []*x509.Certificate, roots *x509.
 	return nil
 }
 
+// selectKeeperNodeElements returns the <zookeeper> children which describe an endpoint.
+// ClickHouse treats every child whose name starts with "node" as one
+// (src/Common/ZooKeeper/ZooKeeperArgs.cpp: `key.starts_with("node")`), so <nodes>,
+// <node1>/<node2> and plain <node> are all valid for the server and must be for us too.
+func selectKeeperNodeElements(zookeeperNode *xmlquery.Node) []*xmlquery.Node {
+	var nodeList []*xmlquery.Node
+	for child := zookeeperNode.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == xmlquery.ElementNode && strings.HasPrefix(child.Data, "node") {
+			nodeList = append(nodeList, child)
+		}
+	}
+	return nodeList
+}
+
 func parseKeeperNodes(zookeeperNode *xmlquery.Node, configFile string) ([]keeperNode, error) {
-	nodeList := zookeeperNode.SelectElements("node")
+	nodeList := selectKeeperNodeElements(zookeeperNode)
 	if len(nodeList) == 0 {
-		return nil, errors.WithStack(fmt.Errorf("/zookeeper/node not exists in %s", configFile))
+		return nil, errors.WithStack(fmt.Errorf("/zookeeper/node* not exists in %s", configFile))
 	}
 
 	nodes := make([]keeperNode, 0, len(nodeList))
 	for i, node := range nodeList {
 		hostNode := node.SelectElement("host")
 		if hostNode == nil {
-			return nil, errors.WithStack(fmt.Errorf("/zookeeper/node[%d]/host not exists in %s", i, configFile))
+			return nil, errors.WithStack(fmt.Errorf("/zookeeper/%s[%d]/host not exists in %s", node.Data, i, configFile))
 		}
 		host := strings.TrimSpace(hostNode.InnerText())
 		if host == "" {
-			return nil, errors.WithStack(fmt.Errorf("/zookeeper/node[%d]/host is empty in %s", i, configFile))
+			return nil, errors.WithStack(fmt.Errorf("/zookeeper/%s[%d]/host is empty in %s", node.Data, i, configFile))
 		}
 
 		port := "2181"
@@ -284,7 +299,7 @@ func parseKeeperNodes(zookeeperNode *xmlquery.Node, configFile string) ([]keeper
 			port = strings.TrimSpace(portNode.InnerText())
 		}
 		if port == "" {
-			return nil, errors.WithStack(fmt.Errorf("/zookeeper/node[%d]/port is empty in %s", i, configFile))
+			return nil, errors.WithStack(fmt.Errorf("/zookeeper/%s[%d]/port is empty in %s", node.Data, i, configFile))
 		}
 
 		secure := false
@@ -293,7 +308,7 @@ func parseKeeperNodes(zookeeperNode *xmlquery.Node, configFile string) ([]keeper
 			if secureText != "" {
 				secureValue, err := strconv.ParseBool(secureText)
 				if err != nil {
-					return nil, errors.Wrapf(err, "invalid /zookeeper/node[%d]/secure=%s in %s", i, secureText, configFile)
+					return nil, errors.Wrapf(err, "invalid /zookeeper/%s[%d]/secure=%s in %s", node.Data, i, secureText, configFile)
 				}
 				secure = secureValue
 			}
@@ -342,6 +357,24 @@ func newKeeperDialer(tlsConfig *tls.Config, nodesByAddress map[string]keeperNode
 		}
 		return tlsConn, nil
 	}
+}
+
+// keeperIdentity returns the `user:password` for Keeper digest auth and where it came from.
+// ClickHouse reads it from <zookeeper><identity> (ZooKeeperArgs.cpp: key == "identity" sets
+// auth_scheme = "digest"); <zookeeper><digest> is the element this tool looked for before and
+// stays supported. Neither reaches preprocessed_configs when the server config hides the value
+// (`hide_in_preprocessed`, `from_env`), so clickhouse.keeper_identity can supply it and wins.
+// No trimming, to send exactly what the server sends.
+func keeperIdentity(cfg *config.ClickHouseConfig, zookeeperNode *xmlquery.Node) (string, string) {
+	if cfg != nil && cfg.KeeperIdentity != "" {
+		return cfg.KeeperIdentity, "clickhouse.keeper_identity"
+	}
+	for _, name := range []string{"identity", "digest"} {
+		if node := zookeeperNode.SelectElement(name); node != nil && node.InnerText() != "" {
+			return node.InnerText(), "/zookeeper/" + name
+		}
+	}
+	return "", ""
 }
 
 // Connect - connect to any zookeeper server from /var/lib/clickhouse/preprocessed_configs/config.xml
@@ -407,8 +440,9 @@ func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 			return errors.Wrap(err, "zk.Connect")
 		}
 	}
-	if digestNode := zookeeperNode.SelectElement("digest"); digestNode != nil {
-		if err = conn.AddAuth("digest", []byte(digestNode.InnerText())); err != nil {
+	if identity, source := keeperIdentity(ch.Config, zookeeperNode); identity != "" {
+		log.Info().Msgf("keeper digest auth from %s", source)
+		if err = conn.AddAuth("digest", []byte(identity)); err != nil {
 			return errors.Wrap(err, "keeper digest authorization error")
 		}
 	}
