@@ -217,7 +217,10 @@ func (b *Backuper) createPrologue(ctx context.Context, tablePattern string, part
 		diskMap[disk.Name] = disk.Path
 		diskTypes[disk.Name] = disk.Type
 	}
-	partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, tables, nil, partitions)
+	partitionsIdMap, partitionsNameList, err := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, tables, nil, partitions)
+	if err != nil {
+		return nil, err
+	}
 	doBackupData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
 	if doBackupData {
 		if err = b.checkDisksConsistency(disks); err != nil {

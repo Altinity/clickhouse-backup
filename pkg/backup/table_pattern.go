@@ -110,7 +110,10 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 					return prepareErr
 				}
 				// .sql file will enrich Query
-				partitionsIdMap, _ := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&t}, partitions)
+				partitionsIdMap, _, partitionsErr := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&t}, partitions)
+				if partitionsErr != nil {
+					return partitionsErr
+				}
 				filterPartsAndFilesByPartitionsFilter(t, partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}])
 				result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, tableIndex, t)
 				return nil
@@ -119,7 +122,10 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 			if err := json.Unmarshal(data, &t); err != nil {
 				return errors.Wrap(err, "getTableListByPatternLocal json.Unmarshal")
 			}
-			partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&t}, partitions)
+			partitionsIdMap, partitionsNameList, partitionsErr := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&t}, partitions)
+			if partitionsErr != nil {
+				return partitionsErr
+			}
 			filterPartsAndFilesByPartitionsFilter(t, partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}])
 			result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, tableIndex, t)
 			for tt := range partitionsNameList {

@@ -627,7 +627,10 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 				if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
 					return nil, 0, errors.Wrap(err, "Unmarshal tableMetadata")
 				}
-				partitionsIdMap, _ = partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&tableMetadata}, partitions)
+				partitionsIdMap, _, err = partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&tableMetadata}, partitions)
+				if err != nil {
+					return nil, 0, err
+				}
 				filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsIdMap[metadata.TableTitle{Database: tableMetadata.Database, Table: tableMetadata.Table}])
 				tableMetadata.LocalFile = localMetadataFile
 			}
@@ -699,7 +702,10 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			if b.shouldSkipByTableEngine(tableMetadata) || b.shouldSkipByTableName(fmt.Sprintf("%s.%s", tableMetadata.Database, tableMetadata.Table)) {
 				return nil, 0, nil
 			}
-			partitionsIdMap, _ = partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&tableMetadata}, partitions)
+			partitionsIdMap, _, err = partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&tableMetadata}, partitions)
+			if err != nil {
+				return nil, 0, err
+			}
 			filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsIdMap[metadata.TableTitle{Database: tableMetadata.Database, Table: tableMetadata.Table}])
 			// save metadata
 			jsonSize := uint64(0)

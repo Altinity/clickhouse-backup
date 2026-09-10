@@ -21,7 +21,8 @@ func TestConvertPartitionsToIdsMapAndNamesListSkipTables(t *testing.T) {
 			CreateTableQuery: "CREATE TABLE system.metric_log (`event_date` Date, `event_time` DateTime) ENGINE = MergeTree PARTITION BY toYYYYMM(event_date) ORDER BY (event_date, event_time)",
 		},
 	}
-	idMap, nameList := ConvertPartitionsToIdsMapAndNamesList(context.Background(), nil, tables, nil, []string{"(202504,'2025-04-16')"})
+	idMap, nameList, err := ConvertPartitionsToIdsMapAndNamesList(context.Background(), nil, tables, nil, []string{"(202504,'2025-04-16')"})
+	require.NoError(t, err)
 	title := metadata.TableTitle{Database: "system", Table: "metric_log"}
 	require.Empty(t, idMap[title])
 	require.Empty(t, nameList[title])
