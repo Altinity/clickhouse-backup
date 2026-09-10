@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -56,6 +57,7 @@ type Config struct {
 	SFTP       SFTPConfig       `yaml:"sftp" envconfig:"_"`
 	AzureBlob  AzureBlobConfig  `yaml:"azblob" envconfig:"_"`
 	Custom     CustomConfig     `yaml:"custom" envconfig:"_"`
+	CAS        cas.Config       `yaml:"cas" envconfig:"_"`
 	// Mutex to protect concurrent access when applying macros
 	mu sync.Mutex `yaml:"-"`
 }
@@ -830,6 +832,9 @@ func ValidateConfig(cfg *Config) error {
 	} else {
 		cfg.API.CancelOperationTimeoutDuration = 1800 * time.Second
 	}
+	if err := cfg.CAS.Validate(); err != nil {
+		return errors.WithMessage(err, "ValidateConfig CAS")
+	}
 	return nil
 }
 
@@ -1033,6 +1038,7 @@ func DefaultConfig() *Config {
 			CommandTimeout:         "4h",
 			CommandTimeoutDuration: 4 * time.Hour,
 		},
+		CAS: cas.DefaultConfig(),
 	}
 }
 

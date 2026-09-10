@@ -15,6 +15,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/custom"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
@@ -432,12 +433,19 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string, fo
 		return err
 	}
 
-	backupList, err := bd.BackupList(ctx, true, backupName)
+	backupList, err := bd.BackupList(ctx, true, backupName, b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return errors.Wrap(err, "bd.BackupList")
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
+			// CAS backups are deleted via the cas-delete CLI
+			// (Task 15) which runs the §6.6 cold-list/blob-prune
+			// ordering. The v1 prefix-blast path here would orphan
+			// CAS blobs and leave the warm-list inconsistent.
+			if backup.CAS != nil {
+				return cas.ErrCASBackup
+			}
 			err = b.cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx, backup)
 			if err != nil {
 				return errors.Wrap(err, "cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent")
@@ -456,6 +464,9 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string, fo
 			return nil
 		}
 	}
+	if isCASBackupRemote(ctx, bd, b.cfg.CAS, backupName) {
+		return cas.ErrCASBackup
+	}
 	return errors.Errorf("'%s' is not found on remote storage", backupName)
 }
 
@@ -467,7 +478,7 @@ func (b *Backuper) processDependentRemoteBackups(ctx context.Context, backupName
 	}
 	// RemoveBackupRemote reads metadata only for backupName via the BackupList fast path,
 	// while `required_backup` links which reference it live in the metadata of the other backups
-	backupList, err := b.dst.BackupList(ctx, true, "")
+	backupList, err := b.dst.BackupList(ctx, true, "", b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return errors.Wrap(err, "bd.BackupList")
 	}
@@ -515,7 +526,7 @@ func newDeleteDryRunReport(backupMetadata *metadata.BackupMetadata, dependentBac
 // dryRunRemoveBackupRemote - report what `delete remote` would remove, requires connected b.dst,
 // the full BackupList is needed because `required_backup` links live in the metadata of the other backups
 func (b *Backuper) dryRunRemoveBackupRemote(ctx context.Context, backupName string) error {
-	backupList, err := b.dst.BackupList(ctx, true, "")
+	backupList, err := b.dst.BackupList(ctx, true, "", b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return errors.Wrap(err, "bd.BackupList")
 	}
@@ -809,7 +820,7 @@ func (b *Backuper) CleanBrokenRetention(commandId int, includeGlobs, excludeGlob
 	// parseMetadata=true forces a metadata.json stat for every top-level entry.
 	// Broken backups (e.g. upload still in progress) are still kept — they are
 	// known backups and not orphans.
-	backupList, err := bd.BackupList(ctx, true, "")
+	backupList, err := bd.BackupList(ctx, true, "", b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return errors.Wrap(err, "bd.BackupList")
 	}
@@ -824,9 +835,22 @@ func (b *Backuper) CleanBrokenRetention(commandId int, includeGlobs, excludeGlob
 		brokenCount++
 		log.Info().Str("backup", backup.BackupName).Str("reason", backup.Broken).Msg("clean_broken_retention: broken backup is listed in remote metadata, kept (not an orphan); remove it explicitly with `delete remote`")
 	}
+	// CAS keeps its blobs and metadata under a dedicated top-level prefix
+	// (e.g. "cas/"). Those entries are never v1 backups and must never be
+	// treated as orphans, otherwise clean_broken_retention would wipe the
+	// whole CAS namespace. SkipPrefixes() returns the protected prefix even
+	// when CAS is disabled (rollback/downgrade), so this holds regardless.
+	casSkipNames := make(map[string]struct{})
+	for _, p := range b.cfg.CAS.SkipPrefixes() {
+		casSkipNames[strings.Trim(p, "/")] = struct{}{}
+	}
 	isKept := func(name string) bool {
 		// Live backups are always preserved.
 		if _, ok := keepNames[name]; ok {
+			return true
+		}
+		// Never delete the CAS namespace.
+		if _, ok := casSkipNames[name]; ok {
 			return true
 		}
 		// If --include is specified, only consider names matching at least one includeGlob.

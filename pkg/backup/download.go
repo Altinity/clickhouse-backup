@@ -18,6 +18,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -227,7 +228,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 // downloadRemoteBackupInfo looks up the backup on remote storage, downloads its file manifest, checks emptiness
 // and disk usage and resolves the table list matching tablePattern, the caller is responsible for closing the manifest
 func (b *Backuper) downloadRemoteBackupInfo(ctx context.Context, backupName, tablePattern string, disks []clickhouse.Disk, isResumeExists, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, hardlinkExistsFiles bool) (storage.Backup, *storage.ManifestReader, []metadata.TableTitle, error) {
-	remoteBackups, err := b.dst.BackupList(ctx, true, backupName)
+	remoteBackups, err := b.dst.BackupList(ctx, true, backupName, b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return storage.Backup{}, nil, nil, errors.Wrap(err, "BackupList")
 	}
@@ -241,7 +242,22 @@ func (b *Backuper) downloadRemoteBackupInfo(ctx context.Context, backupName, tab
 		}
 	}
 	if !found {
+		// Before reporting "not found", check whether the named backup
+		// exists in the CAS namespace. v1 BackupList walks the root level
+		// only and skips the CAS prefix; CAS backups live at
+		// cas/<cluster>/metadata/<name>/, so a name typo from CAS to v1
+		// would hit this branch with a misleading error. Surface the
+		// proper cross-mode refusal instead.
+		if isCASBackupRemote(ctx, b.dst, b.cfg.CAS, backupName) {
+			return storage.Backup{}, nil, nil, cas.ErrCASBackup
+		}
 		return storage.Backup{}, nil, nil, errors.Errorf("'%s' is not found on remote storage", backupName)
+	}
+	// CAS backups must be downloaded via the cas-download CLI
+	// (pkg/cas.Download); the v1 path expects per-part archives + per-disk
+	// metadata trees that the CAS layout does not produce.
+	if remoteBackup.CAS != nil {
+		return storage.Backup{}, nil, nil, cas.ErrCASBackup
 	}
 	// Download file manifest for Walk-free restore (falls back gracefully if not present)
 	backupManifest := b.dst.DownloadManifest(ctx, backupName)
@@ -2188,7 +2204,7 @@ func (b *Backuper) findDiffFileExist(ctx context.Context, requiredBackup *metada
 }
 
 func (b *Backuper) ReadBackupMetadataRemote(ctx context.Context, backupName string) (*metadata.BackupMetadata, error) {
-	backupList, err := b.dst.BackupList(ctx, true, backupName)
+	backupList, err := b.dst.BackupList(ctx, true, backupName, b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return nil, errors.Wrap(err, "BackupList")
 	}

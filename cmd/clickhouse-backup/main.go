@@ -15,6 +15,7 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/acvpwrapper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/fips"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
@@ -69,6 +70,9 @@ func newRootCommand() *cli.Command {
 	cliapp.UsageText = "clickhouse-backup <command> [-t, --tables=<db>.<table>] <backup_name>"
 	cliapp.Description = "Run as 'root' or 'clickhouse' user"
 	cliapp.Version = version
+	// Wire the build version into CAS marker JSON (inprogress / prune
+	// markers carry this for forensic context — see pkg/cas/markers.go).
+	cas.SetMarkerTool(fmt.Sprintf("clickhouse-backup/%s", version))
 	cliapp.Flags = []cli.Flag{
 		&cli.StringFlag{
 			Name:     "config",
@@ -358,9 +362,10 @@ func newRootCommand() *cli.Command {
 			},
 		},
 		{
-			Name:      "upload",
-			Usage:     "Upload backup to remote storage",
-			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
+			Name:        "upload",
+			Usage:       "Upload backup to remote storage",
+			UsageText:   "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
+			Description: "Upload a local backup to remote storage using the v1 layout (per-part archives + RequiredBackup chain for incrementals).\n\nIf you back up frequently or run mutations, consider `cas-upload` instead: it deduplicates content across backups, every backup is independent (no incremental chain), and only changed data is uploaded.",
 			Action: func(ctx context.Context, c *cli.Command) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				b.DryRun = c.Bool("dry-run")
@@ -1259,6 +1264,7 @@ func newRootCommand() *cli.Command {
 			},
 		},
 	}
+	cliapp.Commands = append(cliapp.Commands, casCommands()...)
 	// app-level only flag, Local keeps it out of every sub-command
 	cliapp.Flags = append(cliapp.Flags, &cli.BoolFlag{
 		Name:  "fips-info",
