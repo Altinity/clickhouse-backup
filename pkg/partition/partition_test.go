@@ -26,3 +26,9 @@ func TestConvertPartitionsToIdsMapAndNamesListSkipTables(t *testing.T) {
 	require.Empty(t, idMap[title])
 	require.Empty(t, nameList[title])
 }
+
+func TestExtractPartitionByExpr(t *testing.T) {
+	require.Equal(t, "(year_month, toString(event_date))", ExtractPartitionByExpr("CREATE TABLE vs.t (`a` Int64) ENGINE = MergeTree PARTITION BY (year_month, toString(event_date)) ORDER BY (a, b, c) SETTINGS index_granularity = 8192"))
+	require.Equal(t, "toYYYYMM(event_date)", ExtractPartitionByExpr("CREATE TABLE vs.t (`a` Int64) ENGINE = MergeTree PARTITION BY toYYYYMM(event_date) ORDER BY a"))
+	require.Equal(t, "", ExtractPartitionByExpr("CREATE TABLE vs.t (`a` Int64) ENGINE = MergeTree ORDER BY a"))
+}
