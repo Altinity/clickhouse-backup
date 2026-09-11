@@ -26,11 +26,11 @@ func splitAndParsePartition(partition string) []interface{} {
 	parsedValues := make([]interface{}, len(values))
 	for i, v := range values {
 		v = strings.TrimSpace(v)
-		if strings.HasPrefix(v, "(") {
-			v = strings.TrimPrefix(v, "(")
+		if after, ok := strings.CutPrefix(v, "("); ok {
+			v = after
 		}
-		if strings.HasSuffix(v, ")") {
-			v = strings.TrimSuffix(v, ")")
+		if before, ok := strings.CutSuffix(v, ")"); ok {
+			v = before
 		}
 		v = strings.TrimSpace(v)
 		if strings.HasPrefix(v, "'") && strings.HasSuffix(v, "'") {
@@ -139,11 +139,7 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 	if len(partitionByMatches) < 2 || partitionByMatches[1] == "" {
 		return "", "", nil
 	}
-	partitionExpr := strings.TrimSpace(partitionByMatches[1])
-	s := partitionExpr
-	s = SettingsRE.ReplaceAllString(s, "")
-	s = OrderByRE.ReplaceAllString(s, "")
-	partitionExpr = s
+	partitionExpr := ExtractPartitionByExpr(createQuery)
 
 	version, err := ch.GetVersion(ctx)
 	if err != nil {
@@ -160,6 +156,18 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 	}
 
 	return getPartitionIdWithTempTable(ctx, ch, database, table, createQuery, partition, partitionByMatches)
+}
+
+// ExtractPartitionByExpr returns PARTITION BY expression from CREATE TABLE query without trailing ORDER BY / SETTINGS, empty string if not found
+func ExtractPartitionByExpr(createQuery string) string {
+	partitionByMatches := PartitionByRE.FindStringSubmatch(createQuery)
+	if len(partitionByMatches) < 2 {
+		return ""
+	}
+	s := partitionByMatches[1]
+	s = SettingsRE.ReplaceAllString(s, "")
+	s = OrderByRE.ReplaceAllString(s, "")
+	return strings.TrimSpace(s)
 }
 
 func getPartitionIdWithFunction(ctx context.Context, ch *clickhouse.ClickHouse, createQuery, partitionExpr, partition string) (string, string, error) {
@@ -456,7 +464,7 @@ func dropPartitionIdTable(ch *clickhouse.ClickHouse, database string, partitionI
 var partitionTupleRE = regexp.MustCompile(`\)\s*,\s*\(`)
 
 // ConvertPartitionsToIdsMapAndNamesList - get partitions from CLI/API params and convert it for NameList and IdMap for each table
-func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.ClickHouse, tablesFromClickHouse []clickhouse.Table, tablesFromMetadata []*metadata.TableMetadata, partitions []string) (map[metadata.TableTitle]common.EmptyMap, map[metadata.TableTitle][]string) {
+func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.ClickHouse, tablesFromClickHouse []clickhouse.Table, tablesFromMetadata []*metadata.TableMetadata, partitions []string) (map[metadata.TableTitle]common.EmptyMap, map[metadata.TableTitle][]string, error) {
 	partitionsIdMap := map[metadata.TableTitle]common.EmptyMap{}
 	partitionsNameList := map[metadata.TableTitle][]string{}
 	if len(partitions) == 0 {
@@ -466,7 +474,7 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 		for _, t := range tablesFromMetadata {
 			createIdMapAndNameListIfNotExists(t.Database, t.Table, partitionsIdMap, partitionsNameList)
 		}
-		return partitionsIdMap, partitionsNameList
+		return partitionsIdMap, partitionsNameList, nil
 	}
 
 	// to allow use --partitions val1 --partitions val2, https://github.com/Altinity/clickhouse-backup/issues/425#issuecomment-1149855063
@@ -479,13 +487,17 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 			partitionArg = partitionArg[tablePatternDelimiterIndex+1:]
 		}
 		// when PARTITION BY clause return partition_id field as hash, https://github.com/Altinity/clickhouse-backup/issues/602
-		if strings.HasPrefix(partitionArg, "(") {
-			partitionArg = strings.TrimSuffix(strings.TrimPrefix(partitionArg, "("), ")")
+		if after, ok := strings.CutPrefix(partitionArg, "("); ok {
+			partitionArg = strings.TrimSuffix(after, ")")
 			for _, partitionTuple := range partitionTupleRE.Split(partitionArg, -1) {
 				for _, t := range tablesFromClickHouse {
 					createIdMapAndNameListIfNotExists(t.Database, t.Name, partitionsIdMap, partitionsNameList)
+					// skipped tables (skip_tables, e.g. system.*) are not backed up, don't resolve partition_id for them, https://github.com/Altinity/clickhouse-backup/issues/1547
+					if t.Skip {
+						continue
+					}
 					if partitionId, partitionName, err := GetPartitionIdAndName(ctx, ch, t.Database, t.Name, t.CreateTableQuery, partitionTuple); err != nil {
-						log.Fatal().Stack().Msgf("partition.GetPartitionIdAndName error: %v", err)
+						return nil, nil, partitionIdError(t.Database, t.Name, t.CreateTableQuery, partitionTuple, err)
 					} else if partitionId != "" {
 						addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, t.Database, t.Name, partitionsIdMap, partitionsNameList, tablePattern)
 					}
@@ -493,7 +505,7 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 				for _, t := range tablesFromMetadata {
 					createIdMapAndNameListIfNotExists(t.Database, t.Table, partitionsIdMap, partitionsNameList)
 					if partitionId, partitionName, err := GetPartitionIdAndName(ctx, ch, t.Database, t.Table, t.Query, partitionTuple); err != nil {
-						log.Fatal().Stack().Msgf("partition.GetPartitionIdAndName error: %v", err)
+						return nil, nil, partitionIdError(t.Database, t.Table, t.Query, partitionTuple, err)
 					} else if partitionId != "" {
 						addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, t.Database, t.Table, partitionsIdMap, partitionsNameList, tablePattern)
 					}
@@ -501,7 +513,7 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 			}
 		} else {
 			// when partitionId == partitionName
-			for _, item := range strings.Split(partitionArg, ",") {
+			for item := range strings.SplitSeq(partitionArg, ",") {
 				item = strings.Trim(item, " \t")
 				for _, t := range tablesFromClickHouse {
 					createIdMapAndNameListIfNotExists(t.Database, t.Name, partitionsIdMap, partitionsNameList)
@@ -514,7 +526,13 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 			}
 		}
 	}
-	return partitionsIdMap, partitionsNameList
+	return partitionsIdMap, partitionsNameList, nil
+}
+
+// partitionIdError - https://github.com/Altinity/clickhouse-backup/issues/1547
+// --partitions value which can't be resolved for a table shall fail the operation with a clear error instead of log.Fatal() which kills the API server
+func partitionIdError(database, table, createQuery, partitionTuple string, err error) error {
+	return errors.Wrapf(err, "can't resolve partition_id for table `%s`.`%s` with PARTITION BY %s from --partitions value (%s), values count and types shall match the PARTITION BY expression, use --partitions=db.table:(...) syntax to apply the value only to the intended tables", database, table, ExtractPartitionByExpr(createQuery), partitionTuple)
 }
 
 func addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, database, table string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, partitionsNameList map[metadata.TableTitle][]string, tablePattern string) {

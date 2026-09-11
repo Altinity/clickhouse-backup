@@ -534,7 +534,10 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 				continue
 			}
 			rewrittenDDL := rewriteCloudSchema(ddl, "table", opts.ReplicatedZkPath, opts.ReplicatedReplica)
-			partitionsSQL, partitionsMatched := b.cloudRestorePartitionsSQL(ctx, database, table, rewrittenDDL, opts.Partitions)
+			partitionsSQL, partitionsMatched, partitionsErr := b.cloudRestorePartitionsSQL(ctx, database, table, rewrittenDDL, opts.Partitions)
+			if partitionsErr != nil {
+				return partitionsErr
+			}
 			if !partitionsMatched {
 				log.Info().Msgf("skip %s.%s (no matching --partitions)", database, table)
 				continue
@@ -666,24 +669,27 @@ func injectCloudOnCluster(sql, onClusterSQL string) string {
 // cloudRestorePartitionsSQL builds the ` PARTITIONS ...` clause of RESTORE TABLE from --partitions,
 // same formats and semantics as the regular restore (see restoreEmbedded);
 // the second result is false when the table has no matching partitions and must be skipped
-func (b *Backuper) cloudRestorePartitionsSQL(ctx context.Context, database, table, createSQL string, partitions []string) (string, bool) {
+func (b *Backuper) cloudRestorePartitionsSQL(ctx context.Context, database, table, createSQL string, partitions []string) (string, bool, error) {
 	if len(partitions) == 0 {
-		return "", true
+		return "", true, nil
 	}
-	_, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&metadata.TableMetadata{Database: database, Table: table, Query: createSQL}}, partitions)
+	_, partitionsNameList, err := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&metadata.TableMetadata{Database: database, Table: table, Query: createSQL}}, partitions)
+	if err != nil {
+		return "", false, err
+	}
 	tablePartitions := partitionsNameList[metadata.TableTitle{Database: database, Table: table}]
 	if len(tablePartitions) == 0 {
-		return "", false
+		return "", false, nil
 	}
 	// `*` restores all partitions, views and dictionaries don't accept a PARTITIONS clause
 	if tablePartitions[0] == "*" || cloudViewOrDictRE.MatchString(createSQL) {
-		return "", true
+		return "", true, nil
 	}
 	partitionsSQL := fmt.Sprintf("ID '%s'", strings.Join(tablePartitions, "',ID '"))
 	if strings.HasPrefix(partitionsSQL, "ID '(") {
 		partitionsSQL = strings.Join(tablePartitions, ",")
 	}
-	return " PARTITIONS " + partitionsSQL, true
+	return " PARTITIONS " + partitionsSQL, true, nil
 }
 
 // fetchCloudBlob downloads a manifest entry, resolving its blob key and falling back between the

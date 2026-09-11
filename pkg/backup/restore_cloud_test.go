@@ -173,35 +173,42 @@ func TestCloudRestorePartitionsSQL(t *testing.T) {
 	tableSQL := "CREATE TABLE default.hits (id UInt64, d Date) ENGINE = ReplicatedMergeTree PARTITION BY toYYYYMM(d) ORDER BY id"
 
 	// no --partitions - no clause, table kept
-	sql, matched := b.cloudRestorePartitionsSQL(ctx, "default", "hits", tableSQL, nil)
+	sql, matched, err := b.cloudRestorePartitionsSQL(ctx, "default", "hits", tableSQL, nil)
+	require.NoError(t, err)
 	assert.True(t, matched)
 	assert.Equal(t, "", sql)
 
 	// plain partition ids
-	sql, matched = b.cloudRestorePartitionsSQL(ctx, "default", "hits", tableSQL, []string{"202408,202409"})
+	sql, matched, err = b.cloudRestorePartitionsSQL(ctx, "default", "hits", tableSQL, []string{"202408,202409"})
+	require.NoError(t, err)
 	assert.True(t, matched)
 	assert.Equal(t, " PARTITIONS ID '202408',ID '202409'", sql)
 
 	// per-table pattern matches
-	sql, matched = b.cloudRestorePartitionsSQL(ctx, "default", "hits", tableSQL, []string{"default.h?ts:202408"})
+	sql, matched, err = b.cloudRestorePartitionsSQL(ctx, "default", "hits", tableSQL, []string{"default.h?ts:202408"})
+	require.NoError(t, err)
 	assert.True(t, matched)
 	assert.Equal(t, " PARTITIONS ID '202408'", sql)
 
 	// per-table pattern does not match - table skipped
-	_, matched = b.cloudRestorePartitionsSQL(ctx, "default", "hits", tableSQL, []string{"other.*:202408"})
+	_, matched, err = b.cloudRestorePartitionsSQL(ctx, "default", "hits", tableSQL, []string{"other.*:202408"})
+	require.NoError(t, err)
 	assert.False(t, matched)
 
 	// `*` restores everything without a clause
-	sql, matched = b.cloudRestorePartitionsSQL(ctx, "default", "hits", tableSQL, []string{"default.hits:*"})
+	sql, matched, err = b.cloudRestorePartitionsSQL(ctx, "default", "hits", tableSQL, []string{"default.hits:*"})
+	require.NoError(t, err)
 	assert.True(t, matched)
 	assert.Equal(t, "", sql)
 
 	// views never get a PARTITIONS clause but are still filtered by per-table patterns
 	viewSQL := "CREATE MATERIALIZED VIEW default.mv TO default.hits AS SELECT * FROM default.src"
-	sql, matched = b.cloudRestorePartitionsSQL(ctx, "default", "mv", viewSQL, []string{"202408"})
+	sql, matched, err = b.cloudRestorePartitionsSQL(ctx, "default", "mv", viewSQL, []string{"202408"})
+	require.NoError(t, err)
 	assert.True(t, matched)
 	assert.Equal(t, "", sql)
-	_, matched = b.cloudRestorePartitionsSQL(ctx, "default", "mv", viewSQL, []string{"default.hits:202408"})
+	_, matched, err = b.cloudRestorePartitionsSQL(ctx, "default", "mv", viewSQL, []string{"default.hits:202408"})
+	require.NoError(t, err)
 	assert.False(t, matched)
 }
 
