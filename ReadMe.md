@@ -514,17 +514,6 @@ All custom commands use the go-template language. For example, you can use `{{ .
 A custom `list_command` returns JSON which is compatible with the `metadata.BackupMetadata` type with [JSONEachRow](https://clickhouse.com/docs/en/interfaces/formats/#jsoneachrow) format.
 For examples, see [restic](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/restic/), [rsync](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/rsync/) and [kopia](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/kopia/). Feel free to add yours custom storage.
 
-## RBAC backup and restore between different user_directories
-
-RBAC objects live either in a `local_directory` user directory (`<access_control_path>/<uuid>.sql` files) or in a `replicated` one (znodes under `<zookeeper_path>`), see [ClickHouse user_directories](https://clickhouse.com/docs/operations/external-authenticators/#user_directories). `create --rbac` backs up both shapes, `*.sql` files and a `*.jsonl` Keeper dump per replicated user directory.
-
-`restore --rbac` restores each shape into the matching user directory of the target server. When the target server has only one of the two, the backup content is converted automatically:
-
-- backup contains a Keeper dump but the target has no `replicated` user directory, every RBAC object is written as `<access_control_path>/<uuid>.sql`, a `clickhouse-server` restart (or `SYSTEM RELOAD USERS`) is required to apply it;
-- backup contains `*.sql` files but the target has no `local_directory` user directory, every RBAC object is written to Keeper, `ReplicatedAccessStorage` watches apply it without a restart.
-
-When the target server has neither a `local_directory` nor a `replicated` user directory (for example only `users_xml`), restoring a backup which contains RBAC objects fails instead of silently doing nothing.
-
 ## ATTENTION!
 
 **Never change file permissions in `/var/lib/clickhouse/backup`.**
@@ -829,6 +818,7 @@ Display a list of all operations from start of API server: `curl -s localhost:71
 - [How incremental backups work with remote storage](Examples.md#how-incremental-backups-work-with-remote-storage)
 - [How to watch backups work](Examples.md#how-to-watch-backups-work)
 - [How to track operation status with operation_id](Examples.md#How-to-track-operation-status-with-operation_id)
+- [How to restore RBAC objects between different user_directories types](Examples.md#how-to-restore-rbac-objects-between-different-user_directories-types)
 
 ## Original Author
 Altinity wants to thank [@AlexAkulov](https://github.com/AlexAkulov) for creating this tool and for his valuable contributions.
