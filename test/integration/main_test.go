@@ -139,7 +139,10 @@ func prePullImages() {
 
 	for _, img := range images {
 		log.Info().Msgf("pre-pulling image %s", img)
-		tc.pullImageIfNeeded(ctx, img)
+		if err = tc.pullImageIfNeeded(ctx, img); err != nil {
+			// not fatal here, startContainer will fail with the same error when the image is really needed
+			log.Warn().Err(err).Msgf("prePullImages: can't pull %s", img)
+		}
 	}
 
 	curDir := os.Getenv("CUR_DIR")

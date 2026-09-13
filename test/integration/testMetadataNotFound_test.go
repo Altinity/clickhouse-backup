@@ -280,7 +280,7 @@ func azblobMetadataNotFoundCase() metadataNotFoundCase {
 		skip:       func() bool { return isTestShouldSkip("AZURE_TESTS") },
 		skipReason: "Skipping AZBLOB integration tests (AZURE_TESTS not set)",
 		setup: func(env *TestEnvironment, r *require.Assertions) {
-			env.tc.pullImageIfNeeded(context.Background(), azureCliImage)
+			r.NoError(env.tc.pullImageIfNeeded(context.Background(), azureCliImage))
 		},
 		assertExists: func(env *TestEnvironment, r *require.Assertions, root, file string) {
 			out, err := azRun(env, "storage", "blob", "show", "--container-name", container, "--name", blobName(root, file))
@@ -314,7 +314,7 @@ func gcsRealMetadataNotFoundCase() metadataNotFoundCase {
 		skip:       func() bool { return isTestShouldSkip("GCS_TESTS") },
 		skipReason: "Skipping GCS integration tests (GCS_TESTS not set)",
 		setup: func(env *TestEnvironment, r *require.Assertions) {
-			env.tc.pullImageIfNeeded(context.Background(), image)
+			r.NoError(env.tc.pullImageIfNeeded(context.Background(), image))
 		},
 		assertExists: func(env *TestEnvironment, r *require.Assertions, root, file string) {
 			out := gsutil(env, r, fmt.Sprintf("gsutil ls gs://%s/%s/%s", bucket, root, file))
@@ -351,7 +351,7 @@ func cosMetadataNotFoundCase() metadataNotFoundCase {
 		},
 		skipReason: "Skipping COS integration tests (QA_TENCENT_SECRET_ID / QA_TENCENT_SECRET_KEY not set)",
 		setup: func(env *TestEnvironment, r *require.Assertions) {
-			env.tc.pullImageIfNeeded(context.Background(), image)
+			r.NoError(env.tc.pullImageIfNeeded(context.Background(), image))
 			env.InstallDebIfNotExists(r, "clickhouse-backup", "gettext-base")
 			// config.yml was copied raw and still has ${QA_TENCENT_SECRET_*} placeholders.
 			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec",

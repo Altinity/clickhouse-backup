@@ -651,7 +651,9 @@ func (tc *TestContainers) startContainer(ctx context.Context, name string, cfg *
 	}
 	cfg.Hostname = hostname
 
-	tc.pullImageIfNeeded(ctx, cfg.Image)
+	if err := tc.pullImageIfNeeded(ctx, cfg.Image); err != nil {
+		return fmt.Errorf("pull %s for %s: %w", cfg.Image, name, err)
+	}
 
 	resp, err := tc.client.ContainerCreate(ctx, dockerClient.ContainerCreateOptions{
 		Config:           cfg,
@@ -671,17 +673,16 @@ func (tc *TestContainers) startContainer(ctx context.Context, name string, cfg *
 	return nil
 }
 
-func (tc *TestContainers) pullImageIfNeeded(ctx context.Context, imageName string) {
+func (tc *TestContainers) pullImageIfNeeded(ctx context.Context, imageName string) error {
 	// Check if image already exists locally to avoid unnecessary pull overhead
 	_, inspectErr := tc.client.ImageInspect(ctx, imageName)
 	if inspectErr == nil {
 		log.Debug().Msgf("image %s already exists locally, skipping pull", imageName)
-		return
+		return nil
 	}
 	reader, err := tc.client.ImagePull(ctx, imageName, dockerClient.ImagePullOptions{})
 	if err != nil {
-		log.Debug().Err(err).Msgf("pull %s (may already exist)", imageName)
-		return
+		return fmt.Errorf("pull %s: %w", imageName, err)
 	}
 	if reader != nil {
 		defer func() {
@@ -689,8 +690,15 @@ func (tc *TestContainers) pullImageIfNeeded(ctx context.Context, imageName strin
 				log.Warn().Err(closeErr).Msg("can't close ImagePull reader")
 			}
 		}()
-		_, _ = io.Copy(io.Discard, reader)
+		// the pull is finished only when the whole progress stream is consumed
+		if _, err = io.Copy(io.Discard, reader); err != nil {
+			return fmt.Errorf("pull %s: read progress: %w", imageName, err)
+		}
 	}
+	if _, inspectErr = tc.client.ImageInspect(ctx, imageName); inspectErr != nil {
+		return fmt.Errorf("pull %s: image is still missing after pull: %w", imageName, inspectErr)
+	}
+	return nil
 }
 
 func envMap(m map[string]string) []string {
