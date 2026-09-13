@@ -857,7 +857,11 @@ func (tc *TestContainers) startFTP(ctx context.Context, curDir string) error {
 func (tc *TestContainers) startMinio(ctx context.Context, configsDir string) error {
 	return tc.startContainer(ctx, "minio",
 		&container.Config{
-			Image:      fmt.Sprintf("docker.io/minio/minio:%s", getEnvDefault("MINIO_VERSION", "latest")),
+			// docker.io/minio/minio was removed from Docker Hub, https://github.com/Altinity/clickhouse-backup/issues/1394
+			// chainguard/minio ships minio, mc and bash but no curl; it runs as nonroot by default,
+			// run it as root to keep /minio/data, /root/.minio and /root/.mc paths used by the tests
+			Image:      fmt.Sprintf("docker.io/chainguard/minio:%s", getEnvDefault("MINIO_VERSION", "latest")),
+			User:       "0:0",
 			Entrypoint: []string{"/bin/bash"},
 			Cmd:        []string{"-c", "mkdir -p /minio/data/clickhouse && minio server /minio/data"},
 			Env: envMap(map[string]string{
@@ -866,12 +870,16 @@ func (tc *TestContainers) startMinio(ctx context.Context, configsDir string) err
 				"MC_CONFIG_DIR":       "/root/.mc",
 			}),
 			Healthcheck: &container.HealthConfig{
-				Test:     []string{"CMD-SHELL", "ls -lah /minio/data/clickhouse/ && curl -skL https://localhost:9000/"},
+				Test:     []string{"CMD-SHELL", "ls -lah /minio/data/clickhouse/ && bash -c 'exec 3<>/dev/tcp/127.0.0.1/9000'"},
 				Interval: 1 * time.Second,
 				Retries:  60,
 			},
+			ExposedPorts: network.PortSet{network.MustParsePort("9000/tcp"): {}},
 		},
 		&container.HostConfig{
+			PortBindings: network.PortMap{
+				network.MustParsePort("9000/tcp"): {network.PortBinding{HostIP: netip.IPv4Unspecified()}},
+			},
 			Binds: []string{
 				filepath.Join(configsDir, "minio_nodelete.sh") + ":/bin/minio_nodelete.sh",
 				filepath.Join(configsDir, "minio.crt") + ":/root/.minio/certs/CAs/public.crt",
