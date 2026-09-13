@@ -489,7 +489,6 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 	envUsage.acquire(env.ProjectName, t.Name())
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") <= 0 {
-		r := require.New(&testing.T{})
 		env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
 		env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
 	}
@@ -614,7 +613,7 @@ func (env *TestEnvironment) InstallDebIfNotExists(r *require.Assertions, contain
 			len(pkgs), "^ii\\s+"+strings.Join(pkgs, "|^ii\\s+"), strings.Join(pkgs, " "),
 		),
 	)
-	r.NoError(err, out)
+	r.NoError(err, "InstallDebIfNotExists(%s, %v) failed:\n%s", container, pkgs, out)
 }
 
 // Connection methods

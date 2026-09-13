@@ -279,7 +279,7 @@ func maxBrokenPartRatioGCSCase() maxBrokenPartRatioCase {
 		},
 		skipReason: "Skipping GCS integration tests (GCS_TESTS / QA_GCS_OVER_S3_BUCKET not set)",
 		setup: func(env *TestEnvironment, r *require.Assertions) {
-			env.tc.pullImageIfNeeded(context.Background(), image)
+			r.NoError(env.tc.pullImageIfNeeded(context.Background(), image))
 		},
 		deleteObjects: func(env *TestEnvironment, r *require.Assertions, objectPaths []string) {
 			// disk_gcs endpoint is
@@ -331,7 +331,7 @@ func maxBrokenPartRatioAzureCase() maxBrokenPartRatioCase {
 		skip:         func() bool { return isTestShouldSkip("AZURE_TESTS") },
 		skipReason:   "Skipping AZBLOB integration tests (AZURE_TESTS not set)",
 		setup: func(env *TestEnvironment, r *require.Assertions) {
-			env.tc.pullImageIfNeeded(context.Background(), azureCliImage)
+			r.NoError(env.tc.pullImageIfNeeded(context.Background(), azureCliImage))
 		},
 		deleteObjects: func(env *TestEnvironment, r *require.Assertions, objectPaths []string) {
 			cmds := make([]string, 0, len(objectPaths))

@@ -1484,3 +1484,14 @@ GRANT CREATE DATABASE ON *.* TO backup_role;
 CREATE USER IF NOT EXISTS backup_user IDENTIFIED WITH sha256_password BY 'YourStrongP@ssw0rd!';             
 CREATE GRANT backup_role TO backup_user;
 ```
+
+## How to restore RBAC objects between different user_directories types
+
+RBAC objects live either in a `local_directory` user directory (`<access_control_path>/<uuid>.sql` files) or in a `replicated` one (znodes under `<zookeeper_path>`), see [ClickHouse user_directories](https://clickhouse.com/docs/operations/external-authenticators/#user_directories). `create --rbac` backs up both shapes, `*.sql` files and a `*.jsonl` Keeper dump per replicated user directory.
+
+`restore --rbac` restores each shape into the matching user directory of the target server. When the target server has only one of the two, the backup content is converted automatically:
+
+- backup contains a Keeper dump but the target has no `replicated` user directory, every RBAC object is written as `<access_control_path>/<uuid>.sql`, a `clickhouse-server` restart (or `SYSTEM RELOAD USERS`) is required to apply it;
+- backup contains `*.sql` files but the target has no `local_directory` user directory, every RBAC object is written to Keeper, `ReplicatedAccessStorage` watches apply it without a restart.
+
+When the target server has neither a `local_directory` nor a `replicated` user directory (for example only `users_xml`), restoring a backup which contains RBAC objects fails instead of silently doing nothing.

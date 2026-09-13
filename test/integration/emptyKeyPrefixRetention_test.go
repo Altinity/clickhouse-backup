@@ -3,14 +3,36 @@
 package main
 
 import (
+	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/rs/zerolog/log"
 )
+
+// minioS3Client - S3 client to the test minio container via its mapped host port,
+// chainguard/minio has no curl and `mc` refuses trailing-slash object names, https://github.com/Altinity/clickhouse-backup/issues/1394
+func (env *TestEnvironment) minioS3Client(ctx context.Context) (*s3.Client, error) {
+	host, port, err := env.tc.GetMappedPort(ctx, "minio", "9000")
+	if err != nil {
+		return nil, err
+	}
+	return s3.New(s3.Options{
+		BaseEndpoint: aws.String(fmt.Sprintf("https://%s:%d", host, port)),
+		Region:       "us-east-1",
+		UsePathStyle: true,
+		Credentials:  credentials.NewStaticCredentialsProvider("access_key", "it_is_my_super_secret_key", ""),
+		HTTPClient:   &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}},
+	}), nil
+}
 
 // https://github.com/Altinity/clickhouse-backup/issues/1524
 // A zero-byte "folder placeholder" object whose key is exactly `<s3.path>/` (created by
@@ -25,19 +47,12 @@ func TestEmptyKeyPrefixRetention(t *testing.T) {
 	const configFile = "config-s3.yml"
 	r.NoError(env.DockerCP("configs/"+configFile, "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 	cfgPath, _ := env.resolveConfigPaths(r, configFile)
-	// minio image has no aws cli and `mc` refuses trailing-slash object names, curl --aws-sigv4 does the raw PutObject
-	markerURL := fmt.Sprintf("https://localhost:9000/clickhouse/%s/", cfgPath)
-	curlSigV4 := func(method string) string {
-		methodFlag := "-X " + method
-		if method == "HEAD" {
-			methodFlag = "-I"
-		}
-		return fmt.Sprintf(`curl -sk -o /dev/null -w "%%{http_code}" --aws-sigv4 "aws:amz:us-east-1:s3" --user access_key:it_is_my_super_secret_key %s -H "Content-Length: 0" %s`, methodFlag, markerURL)
-	}
+	markerKey := cfgPath + "/"
+	s3Client, err := env.minioS3Client(t.Context())
+	r.NoError(err, "minio s3 client")
 	defer func() {
-		out, err := env.DockerExecOut("minio", "sh", "-c", curlSigV4("DELETE"))
-		r.NoError(err, "curl DELETE marker: %s", out)
-		r.Equal("204", strings.TrimSpace(out), "DeleteObject %s", markerURL)
+		_, err := s3Client.DeleteObject(t.Context(), &s3.DeleteObjectInput{Bucket: aws.String("clickhouse"), Key: aws.String(markerKey)})
+		r.NoError(err, "DeleteObject %s", markerKey)
 		env.checkObjectStorageIsEmpty(t, r, "S3", configFile)
 	}()
 
@@ -66,12 +81,11 @@ func TestEmptyKeyPrefixRetention(t *testing.T) {
 	}()
 
 	log.Debug().Msg("Plant zero-byte object with key == s3.path + '/' (cloud console 'Create folder' emulation)")
-	out, err := env.DockerExecOut("minio", "sh", "-c", curlSigV4("PUT"))
-	r.NoError(err, "curl PUT marker: %s", out)
-	r.Equal("200", strings.TrimSpace(out), "PutObject %s", markerURL)
+	_, err = s3Client.PutObject(t.Context(), &s3.PutObjectInput{Bucket: aws.String("clickhouse"), Key: aws.String(markerKey), Body: strings.NewReader("")})
+	r.NoError(err, "PutObject %s", markerKey)
 
 	log.Debug().Msg("list remote must not report the placeholder as a nameless broken backup")
-	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "remote")
+	out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "remote")
 	r.NoError(err, "list remote: %s", out)
 	r.NotContains(out, "broken", "placeholder object leaked into backup list as broken entry:\n%s", out)
 
@@ -101,7 +115,6 @@ func TestEmptyKeyPrefixRetention(t *testing.T) {
 	checkBackupsAlive("clean_remote_broken")
 
 	log.Debug().Msg("placeholder object itself is untouched by clickhouse-backup")
-	out, err = env.DockerExecOut("minio", "sh", "-c", curlSigV4("HEAD"))
-	r.NoError(err, "curl HEAD marker: %s", out)
-	r.Equal("200", strings.TrimSpace(out), "HeadObject %s", markerURL)
+	_, err = s3Client.HeadObject(t.Context(), &s3.HeadObjectInput{Bucket: aws.String("clickhouse"), Key: aws.String(markerKey)})
+	r.NoError(err, "HeadObject %s", markerKey)
 }
