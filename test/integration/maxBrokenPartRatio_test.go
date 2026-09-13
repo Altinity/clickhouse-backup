@@ -138,6 +138,9 @@ func runMaxBrokenPartRatioCase(t *testing.T, tc maxBrokenPartRatioCase) {
 		if out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "remote", partialBackup); err != nil {
 			log.Debug().Err(err).Msgf("maxBrokenPartRatio teardown: %s", out)
 		}
+		// aborted creates must not leak object disk copies to the shared remote storage, otherwise the
+		// next test on the same env fails in its own checkObjectStorageIsEmpty far away from the real cause
+		env.checkObjectStorageIsEmpty(t, r, tc.name, tc.configFile)
 	}()
 
 	createCmd := func(ratio, backupName string) (string, error) {
