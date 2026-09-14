@@ -782,6 +782,9 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 							return nil
 						}
 					}
+					if b.cfg.General.UploadByPart {
+						partFiles = b.walkPartFiles(backupPath, partSuffix, table.Database, table.Table, skipProjections)
+					}
 					log.Debug().Msgf("start upload %d files to %s", len(partFiles), remotePath)
 					var uploadPathBytes int64
 					var err error
@@ -822,6 +825,9 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 							atomic.AddInt64(&uploadedBytes, processedSize)
 							return nil
 						}
+					}
+					if b.cfg.General.UploadByPart {
+						localFiles = b.walkPartFiles(backupPath, partSuffix, table.Database, table.Table, skipProjections)
 					}
 					log.Debug().Msgf("start upload %d files to %s", len(localFiles), remoteDataFile)
 					retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
@@ -1060,44 +1066,50 @@ bodyRead:
 
 func (b *Backuper) splitPartFiles(basePath string, parts []metadata.Part, database, table string, skipProjections []string) ([]metadata.SplitPartFiles, error) {
 	if b.cfg.General.UploadByPart {
-		return b.splitFilesByName(basePath, parts, database, table, skipProjections)
+		return b.splitFilesByName(parts), nil
 	}
 	return b.splitFilesBySize(basePath, parts, database, table, skipProjections)
 }
 
-func (b *Backuper) splitFilesByName(basePath string, parts []metadata.Part, database, table string, skipProjections []string) ([]metadata.SplitPartFiles, error) {
-	result := make([]metadata.SplitPartFiles, 0)
-
+// splitFilesByName returns one SplitPartFiles per non-required part with an empty Files list,
+// the part files are listed lazily by walkPartFiles inside the upload goroutine,
+// so only upload_concurrency part file lists are alive at the same time instead of the whole table,
+// https://github.com/Altinity/clickhouse-backup/issues/1550
+func (b *Backuper) splitFilesByName(parts []metadata.Part) []metadata.SplitPartFiles {
+	result := make([]metadata.SplitPartFiles, 0, len(parts))
 	for i := range parts {
 		if parts[i].Required {
 			continue
 		}
-		var files []string
-		partPath := path.Join(basePath, parts[i].Name)
-		err := filepath.Walk(partPath, func(filePath string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			if !info.Mode().IsRegular() {
-				return nil
-			}
-			relativePath := strings.TrimPrefix(filePath, basePath)
-			// https://github.com/Altinity/clickhouse-backup/issues/861
-			if filesystemhelper.IsSkipProjections(skipProjections, path.Join(database, table, relativePath)) {
-				return nil
-			}
-			files = append(files, relativePath)
-			return nil
-		})
-		if err != nil {
-			log.Warn().Msgf("filepath.Walk return error: %v", err)
-		}
-		result = append(result, metadata.SplitPartFiles{
-			Prefix: parts[i].Name,
-			Files:  files,
-		})
+		result = append(result, metadata.SplitPartFiles{Prefix: parts[i].Name})
 	}
-	return result, nil
+	return result
+}
+
+// walkPartFiles lists regular files of one part relative to basePath
+func (b *Backuper) walkPartFiles(basePath, partName, database, table string, skipProjections []string) []string {
+	var files []string
+	partPath := path.Join(basePath, partName)
+	err := filepath.Walk(partPath, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		relativePath := strings.TrimPrefix(filePath, basePath)
+		// https://github.com/Altinity/clickhouse-backup/issues/861
+		if filesystemhelper.IsSkipProjections(skipProjections, path.Join(database, table, relativePath)) {
+			return nil
+		}
+		// Clone detaches relativePath from the full path allocated by filepath.Walk, otherwise the basePath prefix stays alive for every file
+		files = append(files, strings.Clone(relativePath))
+		return nil
+	})
+	if err != nil {
+		log.Warn().Msgf("filepath.Walk return error: %v", err)
+	}
+	return files
 }
 
 func (b *Backuper) splitFilesBySize(basePath string, parts []metadata.Part, database, table string, skipProjections []string) ([]metadata.SplitPartFiles, error) {
@@ -1132,7 +1144,7 @@ func (b *Backuper) splitFilesBySize(basePath string, parts []metadata.Part, data
 				size = 0
 				partSuffix += 1
 			}
-			files = append(files, relativePath)
+			files = append(files, strings.Clone(relativePath))
 			size += info.Size()
 			return nil
 		})
