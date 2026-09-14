@@ -63,8 +63,18 @@ func TestRBACCrossUserDirectories(t *testing.T) {
 		if err := env.tc.RestartContainer(t, "clickhouse"); err != nil {
 			log.Warn().Msgf("TestRBACCrossUserDirectories cleanup restart error: %v", err)
 		}
-		if err := env.connect(t, "60s"); err != nil {
-			log.Warn().Msgf("TestRBACCrossUserDirectories cleanup connect error: %v", err)
+		// clickhouse-server accepts TCP before it is ready right after RestartContainer, poll instead of a single connect,
+		// a failed cleanup returns a polluted env (test_rbac database, RBAC objects, local backups) to the shared pool
+		var connectErr error
+		for attempt := 1; attempt <= 30; attempt++ {
+			if connectErr = env.connect(t, "60s"); connectErr == nil {
+				break
+			}
+			log.Warn().Msgf("TestRBACCrossUserDirectories cleanup connect attempt %d error: %v", attempt, connectErr)
+			time.Sleep(2 * time.Second)
+		}
+		if connectErr != nil {
+			log.Warn().Msgf("TestRBACCrossUserDirectories cleanup connect error: %v", connectErr)
 			return
 		}
 		for _, q := range append(dropRBACQueries, "DROP TABLE IF EXISTS test_rbac.test_rbac SYNC", "DROP DATABASE IF EXISTS test_rbac SYNC") {
