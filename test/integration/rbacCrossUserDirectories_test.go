@@ -73,10 +73,8 @@ func TestRBACCrossUserDirectories(t *testing.T) {
 			log.Warn().Msgf("TestRBACCrossUserDirectories cleanup connect attempt %d error: %v", attempt, connectErr)
 			time.Sleep(2 * time.Second)
 		}
-		if connectErr != nil {
-			log.Warn().Msgf("TestRBACCrossUserDirectories cleanup connect error: %v", connectErr)
-			return
-		}
+		// infrastructure failure, fail the test instead of returning a polluted env to the pool
+		r.NoError(connectErr, "TestRBACCrossUserDirectories cleanup connect error")
 		for _, q := range append(dropRBACQueries, "DROP TABLE IF EXISTS test_rbac.test_rbac SYNC", "DROP DATABASE IF EXISTS test_rbac SYNC") {
 			if err := env.ch.Query(q); err != nil {
 				log.Warn().Msgf("TestRBACCrossUserDirectories cleanup query %q error: %v", q, err)
