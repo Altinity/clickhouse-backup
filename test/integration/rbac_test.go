@@ -66,7 +66,7 @@ func TestRBAC(t *testing.T) {
 		// ClickHouse `<replicated>` access storage (RBAC in Keeper) has a race:
 		// a freshly created role/profile can be transiently evicted from the
 		// in-memory cache by the background refresh, so resolving it in a TO /
-		// DEFAULT ROLE / SETTINGS PROFILE clause fails with UNKNOWN_ROLE (code 511).
+		// DEFAULT ROLE / SETTINGS PROFILE clause fails with UNKNOWN_ROLE (code 511) or THERE_IS_NO_PROFILE (code 180).
 		// The entity reappears on the next refresh, so retry the DDL until it settles.
 		createRBACQuery := func(query string) {
 			var err error
@@ -74,7 +74,7 @@ func TestRBAC(t *testing.T) {
 				if err = env.ch.Query(query); err == nil {
 					return
 				}
-				if !strings.Contains(err.Error(), "code: 511") {
+				if !strings.Contains(err.Error(), "code: 511") && !strings.Contains(err.Error(), "code: 180") {
 					break
 				}
 				log.Warn().Msgf("createRBACQuery(%s) attempt %d failed: %v, retrying", query, attempt, err)
@@ -249,7 +249,7 @@ func TestRBACIgnore(t *testing.T) {
 			if err = env.ch.Query(query); err == nil {
 				return
 			}
-			if !strings.Contains(err.Error(), "code: 511") {
+			if !strings.Contains(err.Error(), "code: 511") && !strings.Contains(err.Error(), "code: 180") {
 				break
 			}
 			log.Warn().Msgf("createRBACQuery(%s) attempt %d failed: %v, retrying", query, attempt, err)

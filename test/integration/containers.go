@@ -863,7 +863,7 @@ func (tc *TestContainers) startMinio(ctx context.Context, configsDir string) err
 			Image:      fmt.Sprintf("docker.io/chainguard/minio:%s", getEnvDefault("MINIO_VERSION", "latest")),
 			User:       "0:0",
 			Entrypoint: []string{"/bin/bash"},
-			Cmd:        []string{"-c", "mkdir -p /minio/data/clickhouse && minio server /minio/data"},
+			Cmd:        []string{"-c", "mkdir -p /minio/data/clickhouse && minio server /minio/data --console-address :9001"},
 			Env: envMap(map[string]string{
 				"MINIO_ROOT_USER":     "access_key",
 				"MINIO_ROOT_PASSWORD": "it_is_my_super_secret_key",
