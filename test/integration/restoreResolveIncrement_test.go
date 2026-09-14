@@ -272,7 +272,7 @@ func azblobRestoreResolveIncrementCase() restoreResolveIncrementCase {
 		skip:       func() bool { return isTestShouldSkip("AZURE_TESTS") },
 		skipReason: "Skipping AZBLOB integration tests (AZURE_TESTS not set)",
 		setup: func(env *TestEnvironment, r *require.Assertions) {
-			env.tc.pullImageIfNeeded(context.Background(), image)
+			r.NoError(env.tc.pullImageIfNeeded(context.Background(), image))
 		},
 		copyRemote: func(t *testing.T, r *require.Assertions, env *TestEnvironment, configFile, backupName string) {
 			cfgPath, _ := env.resolveConfigPaths(r, configFile)

@@ -1026,7 +1026,7 @@ class Cluster(object):
 
     def _start_container(self, name, image, hostname=None, env=None, volumes=None,
                          ports=None, entrypoint=None, command=None, cap_add=None,
-                         healthcheck=None, volumes_from_name=None):
+                         healthcheck=None, volumes_from_name=None, user=None):
         """Start a single container via Docker SDK and connect to network."""
         hostname = hostname or name
         docker_volumes = {}
@@ -1084,6 +1084,8 @@ class Cluster(object):
             container_config["command"] = command
         if healthcheck is not None:
             container_config["healthcheck"] = healthcheck
+        if user is not None:
+            container_config["user"] = user
 
         # Pull image if not present locally
         try:
@@ -1539,7 +1541,10 @@ class Cluster(object):
         with And("starting minio"):
             self._start_container(
                 name="minio",
-                image=f"minio/minio:{minio_version}",
+                # docker.io/minio/minio was removed from Docker Hub, https://github.com/Altinity/clickhouse-backup/issues/1394
+                # chainguard/minio runs as nonroot by default, run as root so `mkdir` in the rootfs works
+                image=f"chainguard/minio:{minio_version}",
+                user="0:0",
                 hostname="minio",
                 env={
                     "MINIO_ACCESS_KEY": "access_key",

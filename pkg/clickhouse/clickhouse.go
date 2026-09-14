@@ -1436,6 +1436,16 @@ func (ch *ClickHouse) GetAccessManagementPath(ctx context.Context, disks []Disk)
 	return accessPath, nil
 }
 
+// GetUserDirectories returns all rows from system.user_directories with their type,
+// look https://github.com/Altinity/clickhouse-backup/issues/881
+func (ch *ClickHouse) GetUserDirectories(ctx context.Context) ([]UserDirectory, error) {
+	userDirectories := make([]UserDirectory, 0)
+	if err := ch.SelectContext(ctx, &userDirectories, "SELECT name, type FROM system.user_directories"); err != nil {
+		return nil, errors.Wrap(err, "GetUserDirectories")
+	}
+	return userDirectories, nil
+}
+
 func (ch *ClickHouse) GetUserDefinedFunctions(ctx context.Context) ([]Function, error) {
 	allFunctions := make([]Function, 0)
 	allFunctionsSQL := "SELECT name, create_query FROM system.functions WHERE create_query!=''"

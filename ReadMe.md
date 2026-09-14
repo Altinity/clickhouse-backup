@@ -822,6 +822,7 @@ Display a list of all operations from start of API server: `curl -s localhost:71
 - [How incremental backups work with remote storage](Examples.md#how-incremental-backups-work-with-remote-storage)
 - [How to watch backups work](Examples.md#how-to-watch-backups-work)
 - [How to track operation status with operation_id](Examples.md#How-to-track-operation-status-with-operation_id)
+- [How to restore RBAC objects between different user_directories types](Examples.md#how-to-restore-rbac-objects-between-different-user_directories-types)
 
 ## Original Author
 Altinity wants to thank [@AlexAkulov](https://github.com/AlexAkulov) for creating this tool and for his valuable contributions.

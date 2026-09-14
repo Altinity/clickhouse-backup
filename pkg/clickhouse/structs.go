@@ -113,6 +113,7 @@ type BackupDataSize struct {
 
 type UserDirectory struct {
 	Name string `ch:"name"`
+	Type string `ch:"type"`
 }
 
 type RBACObject struct {

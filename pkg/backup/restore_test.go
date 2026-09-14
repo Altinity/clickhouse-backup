@@ -255,7 +255,7 @@ func TestChangeTablePatternFromRestoreMapping(t *testing.T) {
 func TestRestoreRBACResolveAllConflictsMissingAccessDir(t *testing.T) {
 	b := &Backuper{DefaultDataPath: t.TempDir()}
 
-	ignoredSQLFiles, ignoredKeeperUuids, err := b.restoreRBACResolveAllConflicts(context.Background(), "missing-backup", t.TempDir(), 0, nil, nil, false)
+	ignoredSQLFiles, ignoredKeeperUuids, err := b.restoreRBACResolveAllConflicts(context.Background(), "missing-backup", t.TempDir(), 0, nil, true, nil, false)
 
 	assert.NoError(t, err)
 	assert.Empty(t, ignoredSQLFiles)
