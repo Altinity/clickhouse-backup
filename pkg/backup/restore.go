@@ -308,6 +308,16 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 				break
 			}
 		}
+		// a `SETTINGS disk = disk(...)` object disk appears in system.disks only after the schema is restored,
+		// the backup metadata is the only source of truth at this point,
+		// https://github.com/Altinity/clickhouse-backup/issues/943
+		if !isObjectDiskPresents {
+			for _, diskType := range backupMetadata.DiskTypes {
+				if isObjectDiskPresents = b.isDiskTypeObject(diskType); isObjectDiskPresents {
+					break
+				}
+			}
+		}
 	}
 	if b.cfg.General.RemoteStorage != "custom" && (backupMetadata.RequiredBackup != "" || (b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.cfg.ClickHouse.EmbeddedBackupDisk == "") || isObjectDiskPresents) {
 		if b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName); err != nil {
@@ -2226,6 +2236,12 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMet
 	if b.isEmbedded {
 		err = b.restoreDataEmbedded(ctx, backupName, dataOnly, version, tablesForRestore, partitionsNameList)
 	} else {
+		// tables declared with `SETTINGS disk = disk(...)` bring their own disk, which exists only after the
+		// schema is restored and usually under another generated name,
+		// https://github.com/Altinity/clickhouse-backup/issues/943
+		if disks, err = b.resolveCustomDiskAliases(ctx, tablesForRestore, backupMetadata.Disks, disks, diskMap, diskTypes); err != nil {
+			return errors.Wrap(err, "resolveCustomDiskAliases")
+		}
 		err = b.restoreDataRegular(ctx, backupName, backupMetadata, tablePattern, tablesForRestore, diskMap, diskTypes, disks, skipProjections, replicatedCopyToDetached, existingTablesSnapshot)
 	}
 	if err != nil {
@@ -2925,6 +2941,11 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					}
 				}
 			} else {
+				// a `disk = disk(...)` alias keeps the local shadow path in diskMap, the live path is in disks,
+				// https://github.com/Altinity/clickhouse-backup/issues/943
+				if aliasDisk := b.findDiskByName(disks, diskName); aliasDisk != nil {
+					diskPath = aliasDisk.Path
+				}
 				isObjectDiskEncrypted = b.isDiskTypeEncryptedObject(clickhouse.Disk{Type: diskType, Name: diskName, Path: diskPath}, disks)
 			}
 		}

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -282,7 +283,7 @@ func InitCredentialsAndConnections(ctx context.Context, ch *clickhouse.ClickHous
 	InitCredentialsAndConnectionsMutex.Lock()
 	defer InitCredentialsAndConnectionsMutex.Unlock()
 	if _, exists := DisksCredentials.Load(diskName); !exists {
-		if err = getObjectDisksCredentials(ctx, ch); err != nil {
+		if err = getObjectDisksCredentials(ctx, ch, diskName); err != nil {
 			return errors.Wrap(err, "InitCredentialsAndConnections getObjectDisksCredentials")
 		}
 	}
@@ -332,7 +333,232 @@ func WriteMetadataToFile(metadata *Metadata, path string) error {
 	return metadata.writeToFile(metadataFile)
 }
 
-func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) error {
+// credentialsFromDiskArgs - build object storage credentials from per disk settings, `get` abstracts the source:
+// `storage_configuration/disks/<name>` XML elements or `disk(...)` arguments of a table DDL
+// https://github.com/Altinity/clickhouse-backup/issues/943
+// ok=false means the disk is not an object storage disk and carries no credentials, `source` is used in messages only
+func credentialsFromDiskArgs(ctx context.Context, ch *clickhouse.ClickHouse, version int, source string, get func(key string) (string, bool)) (ObjectStorageCredentials, bool, error) {
+	var creds ObjectStorageCredentials
+	diskType, exists := get("type")
+	if !exists {
+		return creds, false, nil
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/1112
+	if diskType == "object_storage" {
+		objectStorageType, objectStorageTypeExists := get("object_storage_type")
+		if !objectStorageTypeExists {
+			return creds, false, errors.Errorf("%s, contains <type>object_storage</type>, but doesn't contains <object_storage_type> tag", source)
+		}
+		diskType = objectStorageType
+		if metadataType, metadataTypeExists := get("metadata_type"); metadataTypeExists {
+			if metadataType != "local" && metadataType != "plain" && metadataType != "plain_rewritable" {
+				return creds, false, errors.Errorf("%s, unsupported <metadata_type>%s</metadata_type>", source, metadataType)
+			}
+		}
+	}
+	switch diskType {
+	case "s3", "s3_plain", "s3_plain_rewritable":
+		creds.Type = "s3"
+		if supportBatchDelete, supportBatchDeleteExists := get("support_batch_delete"); supportBatchDeleteExists && supportBatchDelete == "false" {
+			creds.Type = "gcs"
+		}
+		endPoint, endPointExists := get("endpoint")
+		if !endPointExists {
+			return creds, false, errors.Errorf("%s doesn't contains <endpoint>", source)
+		}
+		creds.EndPoint = endPoint
+		// macros works only after 23.3+ https://github.com/Altinity/clickhouse-backup/issues/750
+		if version > 23003000 {
+			var err error
+			if creds.EndPoint, err = ch.ApplyMacros(ctx, creds.EndPoint); err != nil {
+				return creds, false, errors.Wrapf(err, "%s apply macros to <endpoint> error", source)
+			}
+		}
+		if region, regionExists := get("region"); regionExists {
+			creds.S3Region = region
+		}
+		creds.S3StorageClass = "STANDARD"
+		if storageClass, storageClassExists := get("s3_storage_class"); storageClassExists {
+			creds.S3StorageClass = storageClass
+		}
+		accessKey, accessKeyExists := get("access_key_id")
+		secretKey, secretKeyExists := get("secret_access_key")
+		if accessKeyExists && secretKeyExists {
+			creds.S3AccessKey = accessKey
+			creds.S3SecretKey = secretKey
+		} else {
+			log.Warn().Msgf("%s doesn't contains <access_key_id> and <secret_access_key> environment variables will use", source)
+			creds.S3AssumeRole = os.Getenv("AWS_ROLE_ARN")
+			if _, useEnvironmentCredentials := get("use_environment_credentials"); useEnvironmentCredentials {
+				creds.S3AccessKey = os.Getenv("AWS_ACCESS_KEY_ID")
+				creds.S3SecretKey = os.Getenv("AWS_SECRET_ACCESS_KEY")
+			}
+		}
+		if S3SSECustomerKey, S3SSECustomerKeyExists := get("server_side_encryption_customer_key_base64"); S3SSECustomerKeyExists {
+			creds.S3SSECustomerKey = S3SSECustomerKey
+		}
+		if S3SSEKMSKeyId, S3SSEKMSKeyIdExists := get("server_side_encryption_kms_key_id"); S3SSEKMSKeyIdExists {
+			creds.S3SSEKMSKeyId = S3SSEKMSKeyId
+		}
+		if S3SSEKMSEncryptionContext, S3SSEKMSEncryptionContextExists := get("server_side_encryption_kms_encryption_context"); S3SSEKMSEncryptionContextExists {
+			creds.S3SSEKMSEncryptionContext = S3SSEKMSEncryptionContext
+		}
+		return creds, true, nil
+	case "azure", "azure_blob_storage", "azure_plain", "azure_plain_rewritable":
+		creds.Type = "azblob"
+		accountUrl, accountUrlExists := get("storage_account_url")
+		if !accountUrlExists {
+			return creds, false, errors.Errorf("%s doesn't contains <storage_account_url>", source)
+		}
+		creds.EndPoint = accountUrl
+		containerName, containerNameExists := get("container_name")
+		if !containerNameExists {
+			return creds, false, errors.Errorf("%s doesn't contains <container_name>", source)
+		}
+		creds.AzureContainerName = containerName
+		accountName, accountNameExists := get("account_name")
+		if !accountNameExists {
+			return creds, false, errors.Errorf("%s doesn't contains <account_name>", source)
+		}
+		creds.AzureAccountName = accountName
+		accountKey, accountKeyExists := get("account_key")
+		if !accountKeyExists {
+			return creds, false, errors.Errorf("%s doesn't contains <account_key>", source)
+		}
+		creds.AzureAccountKey = accountKey
+		return creds, true, nil
+	}
+	return creds, false, nil
+}
+
+// systemDiskPath - raw `system.disks` name and path, without the grouping which clickhouse.GetDisks applies
+type systemDiskPath struct {
+	Name string `ch:"name"`
+	Path string `ch:"path"`
+}
+
+// getCustomDisksCredentials - credentials of `SETTINGS disk = disk(...)` disks exist only in the table DDL
+// https://github.com/Altinity/clickhouse-backup/issues/943
+// Failures are logged, not returned: this pass runs for every backup over all tables, so an unreadable or
+// unparsable DDL of one table must not break backups of unrelated tables. When credentials of a disk which is
+// really needed stay missing, makeObjectDiskConnection still fails with
+// `<disk> is not present in object_disk.DisksCredentials`.
+func getCustomDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse, version int) {
+	tables, err := ch.GetCustomDiskTables(ctx)
+	if err != nil {
+		log.Warn().Msgf("getCustomDisksCredentials: %v", err)
+	}
+	if len(tables) == 0 {
+		return
+	}
+	systemDisks := make([]systemDiskPath, 0)
+	if err = ch.SelectContext(ctx, &systemDisks, "SELECT name, path FROM system.disks"); err != nil {
+		log.Warn().Msgf("getCustomDisksCredentials: can't select system.disks: %v", err)
+		return
+	}
+	// diskReferences - `disk = '<name>'` references to another disk, resolved after all tables are parsed
+	diskReferences := map[string]string{}
+	for _, t := range tables {
+		if strings.Contains(t.CreateTableQuery, "'[HIDDEN]'") {
+			continue
+		}
+		def, parseErr := clickhouse.ParseCustomDisk(t.CreateTableQuery)
+		if parseErr != nil {
+			log.Warn().Msgf("getCustomDisksCredentials: can't parse `disk = disk(...)` of %s.%s: %v", t.Database, t.Name, parseErr)
+			continue
+		}
+		if def == nil {
+			continue
+		}
+		diskNames := customDiskNames(ctx, ch, t, def, systemDisks)
+		if len(diskNames) == 0 {
+			log.Warn().Msgf("getCustomDisksCredentials: can't resolve system.disks names of `disk = disk(...)` table %s.%s", t.Database, t.Name)
+			continue
+		}
+		leaf := def.Leaf()
+		if reference, isReference := leaf.Args["disk"]; isReference {
+			for _, diskName := range diskNames {
+				diskReferences[diskName] = reference
+			}
+			continue
+		}
+		source := fmt.Sprintf("%s.%s -> SETTINGS disk = disk(...)", t.Database, t.Name)
+		creds, ok, credsErr := credentialsFromDiskArgs(ctx, ch, version, source, func(key string) (string, bool) {
+			value, valueExists := leaf.Args[key]
+			return value, valueExists
+		})
+		if credsErr != nil {
+			log.Warn().Msgf("getCustomDisksCredentials: %v", credsErr)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		for _, diskName := range diskNames {
+			DisksCredentials.Store(diskName, creds)
+		}
+		log.Debug().Msgf("getCustomDisksCredentials: %s.%s provides %s credentials for disks %v", t.Database, t.Name, creds.Type, diskNames)
+	}
+	for diskName, reference := range diskReferences {
+		if referenceCreds, referenceExists := DisksCredentials.Load(reference); referenceExists {
+			DisksCredentials.Store(diskName, referenceCreds)
+			log.Debug().Msgf("getCustomDisksCredentials: disk %s reuse credentials of disk %s", diskName, reference)
+		} else {
+			log.Warn().Msgf("getCustomDisksCredentials: disk %s reference to disk %s which not contains DiskCredentials", diskName, reference)
+		}
+	}
+}
+
+// customDiskNames - every `system.disks` name a `SETTINGS disk = disk(...)` table can report in `system.parts`.
+// ClickHouse names an anonymous inline disk `__tmp_internal_<hash of the canonical AST>`, the hash can't be
+// reproduced outside of clickhouse-server, so names are resolved through system tables: the outer disk from
+// `system.tables.storage_policy` = `__<disk name>`, every `system.disks` row which shares the outer disk path
+// (a `cache` wrapper has the same path as the disk it wraps), the disks of already existing parts, and every
+// `name =` argument of the declaration.
+func customDiskNames(ctx context.Context, ch *clickhouse.ClickHouse, t clickhouse.Table, def *clickhouse.CustomDisk, systemDisks []systemDiskPath) []string {
+	names := map[string]bool{}
+	for d := def; d != nil; d = d.Nested {
+		if name, nameExists := d.Args["name"]; nameExists && name != "" {
+			names[name] = true
+		}
+	}
+	if strings.HasPrefix(t.StoragePolicy, clickhouse.TmpStoragePolicyPrefix) {
+		outer := strings.TrimPrefix(t.StoragePolicy, clickhouse.TmpStoragePolicyPrefix)
+		names[outer] = true
+		outerPath := ""
+		for _, d := range systemDisks {
+			if d.Name == outer {
+				outerPath = d.Path
+				break
+			}
+		}
+		if outerPath != "" {
+			for _, d := range systemDisks {
+				if d.Path == outerPath {
+					names[d.Name] = true
+				}
+			}
+		}
+	}
+	partDisks := make([]struct {
+		DiskName string `ch:"disk_name"`
+	}, 0)
+	partDisksSQL := "SELECT DISTINCT disk_name FROM system.parts WHERE database=? AND table=?"
+	if err := ch.SelectContext(ctx, &partDisks, partDisksSQL, t.Database, t.Name); err != nil {
+		log.Warn().Msgf("customDiskNames: can't select system.parts disks of %s.%s: %v", t.Database, t.Name, err)
+	}
+	for _, p := range partDisks {
+		names[p.DiskName] = true
+	}
+	diskNames := make([]string, 0, len(names))
+	for name := range names {
+		diskNames = append(diskNames, name)
+	}
+	sort.Strings(diskNames)
+	return diskNames
+}
+
+func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse, diskName string) error {
 	var version int
 	var err error
 	if version, err = ch.GetVersion(ctx); err != nil {
@@ -351,102 +577,19 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 	disks := xmlquery.Find(doc, fmt.Sprintf("/%s/storage_configuration/disks/*", root.Data))
 	for _, d := range disks {
 		diskName := d.Data
-		if diskTypeNode := d.SelectElement("type"); diskTypeNode != nil {
-			diskType := strings.Trim(diskTypeNode.InnerText(), "\r\n \t")
-			// https://github.com/Altinity/clickhouse-backup/issues/1112
-			if diskType == "object_storage" {
-				diskTypeNode = d.SelectElement("object_storage_type")
-				if diskTypeNode == nil {
-					return errors.Errorf("/%s/storage_configuration/disks/%s, contains <type>object_storage</type>, but doesn't contains <object_storage_type> tag", root.Data, diskName)
-				}
-				diskType = strings.Trim(diskTypeNode.InnerText(), "\r\n \t")
-				if metadataTypeNode := d.SelectElement("metadata_type"); metadataTypeNode != nil {
-					metadataType := strings.Trim(metadataTypeNode.InnerText(), "\r\n \t")
-					if metadataType != "local" && metadataType != "plain" && metadataType != "plain_rewritable" {
-						return errors.Errorf("/%s/storage_configuration/disks/%s, unsupported <metadata_type>%s</metadata_type>", root.Data, diskName, metadataType)
-					}
-				}
+		source := fmt.Sprintf("%s -> /%s/storage_configuration/disks/%s", configFile, root.Data, diskName)
+		creds, ok, credsErr := credentialsFromDiskArgs(ctx, ch, version, source, func(key string) (string, bool) {
+			node := d.SelectElement(key)
+			if node == nil {
+				return "", false
 			}
-			switch diskType {
-			case "s3", "s3_plain", "s3_plain_rewritable":
-				creds := ObjectStorageCredentials{
-					Type: "s3",
-				}
-				if batchDeleteNode := d.SelectElement("support_batch_delete"); batchDeleteNode != nil {
-					if strings.Trim(batchDeleteNode.InnerText(), "\r\n \t") == "false" {
-						creds.Type = "gcs"
-					}
-				}
-				if endPointNode := d.SelectElement("endpoint"); endPointNode != nil {
-					creds.EndPoint = strings.Trim(endPointNode.InnerText(), "\r\n \t")
-					// macros works only after 23.3+ https://github.com/Altinity/clickhouse-backup/issues/750
-					if version > 23003000 {
-						if creds.EndPoint, err = ch.ApplyMacros(ctx, creds.EndPoint); err != nil {
-							return errors.Wrapf(err, "%s -> /%s/storage_configuration/disks/%s apply macros to <endpoint> error", configFile, root.Data, diskName)
-						}
-					}
-				} else {
-					return errors.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <endpoint>", configFile, root.Data, diskName)
-				}
-				if regionNode := d.SelectElement("region"); regionNode != nil {
-					creds.S3Region = strings.Trim(regionNode.InnerText(), "\r\n \t")
-				}
-				creds.S3StorageClass = "STANDARD"
-				if storageClassNode := d.SelectElement("s3_storage_class"); storageClassNode != nil {
-					creds.S3StorageClass = strings.Trim(storageClassNode.InnerText(), "\r\n \t")
-				}
-				accessKeyNode := d.SelectElement("access_key_id")
-				secretKeyNode := d.SelectElement("secret_access_key")
-				useEnvironmentCredentials := d.SelectElement("use_environment_credentials")
-				if accessKeyNode != nil && secretKeyNode != nil {
-					creds.S3AccessKey = strings.Trim(accessKeyNode.InnerText(), "\r\n \t")
-					creds.S3SecretKey = strings.Trim(secretKeyNode.InnerText(), "\r\n \t")
-				} else {
-					log.Warn().Msgf("%s -> /%s/storage_configuration/disks/%s doesn't contains <access_key_id> and <secret_access_key> environment variables will use", configFile, root.Data, diskName)
-					creds.S3AssumeRole = os.Getenv("AWS_ROLE_ARN")
-					if useEnvironmentCredentials != nil {
-						creds.S3AccessKey = os.Getenv("AWS_ACCESS_KEY_ID")
-						creds.S3SecretKey = os.Getenv("AWS_SECRET_ACCESS_KEY")
-					}
-				}
-				if S3SSECustomerKey := d.SelectElement("server_side_encryption_customer_key_base64"); S3SSECustomerKey != nil {
-					creds.S3SSECustomerKey = strings.Trim(S3SSECustomerKey.InnerText(), "\r\n \t")
-				}
-				if S3SSEKMSKeyId := d.SelectElement("server_side_encryption_kms_key_id"); S3SSEKMSKeyId != nil {
-					creds.S3SSEKMSKeyId = strings.Trim(S3SSEKMSKeyId.InnerText(), "\r\n \t")
-				}
-				if S3SSEKMSEncryptionContext := d.SelectElement("server_side_encryption_kms_encryption_context"); S3SSEKMSEncryptionContext != nil {
-					creds.S3SSEKMSEncryptionContext = strings.Trim(S3SSEKMSEncryptionContext.InnerText(), "\r\n \t")
-				}
-				DisksCredentials.Store(diskName, creds)
-				break
-			case "azure", "azure_blob_storage", "azure_plain", "azure_plain_rewritable":
-				creds := ObjectStorageCredentials{
-					Type: "azblob",
-				}
-				accountUrlNode := d.SelectElement("storage_account_url")
-				if accountUrlNode == nil {
-					return errors.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <storage_account_url>", configFile, root.Data, diskName)
-				}
-				creds.EndPoint = strings.Trim(accountUrlNode.InnerText(), "\r\n \t")
-				containerNameNode := d.SelectElement("container_name")
-				if containerNameNode == nil {
-					return errors.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <container_name>", configFile, root.Data, diskName)
-				}
-				creds.AzureContainerName = strings.Trim(containerNameNode.InnerText(), "\r\n \t")
-				accountNameNode := d.SelectElement("account_name")
-				if accountNameNode == nil {
-					return errors.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <account_name>", configFile, root.Data, diskName)
-				}
-				creds.AzureAccountName = strings.Trim(accountNameNode.InnerText(), "\r\n \t")
-				accountKeyNode := d.SelectElement("account_key")
-				if accountKeyNode == nil {
-					return errors.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <account_key>", configFile, root.Data, diskName)
-				}
-				creds.AzureAccountKey = strings.Trim(accountKeyNode.InnerText(), "\r\n \t")
-				DisksCredentials.Store(diskName, creds)
-				break
-			}
+			return strings.Trim(node.InnerText(), "\r\n \t"), true
+		})
+		if credsErr != nil {
+			return credsErr
+		}
+		if ok {
+			DisksCredentials.Store(diskName, creds)
 		}
 	}
 	for _, d := range disks {
@@ -468,6 +611,12 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 				}
 			}
 		}
+	}
+	// `SETTINGS disk = disk(...)` custom disks exist since 23.2, their credentials live only in the table DDL,
+	// the pass scans system.tables.create_table_query, so it runs only when the config didn't provide the disk
+	// https://github.com/Altinity/clickhouse-backup/issues/943
+	if _, exists := DisksCredentials.Load(diskName); !exists && version >= 23002000 {
+		getCustomDisksCredentials(ctx, ch, version)
 	}
 	return nil
 }
@@ -508,7 +657,18 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 	}
 	disk, exists := SystemDisks.Load(diskName)
 	if !exists {
-		return nil, errors.Errorf("%s is not presnet in object_disk.SystemDisks", diskName)
+		// `SETTINGS disk = disk(...)` disks appear in system.disks only after the table is created,
+		// refresh the cache once, https://github.com/Altinity/clickhouse-backup/issues/943
+		disks, err := ch.GetDisks(ctx, false)
+		if err != nil {
+			return nil, errors.Wrap(err, "makeObjectDiskConnection GetDisks refresh")
+		}
+		for _, d := range disks {
+			SystemDisks.Store(d.Name, d)
+		}
+		if disk, exists = SystemDisks.Load(diskName); !exists {
+			return nil, errors.Errorf("%s is not presnet in object_disk.SystemDisks", diskName)
+		}
 	}
 	if disk.Type != "s3" && disk.Type != "s3_plain" && disk.Type != "s3_plain_rewritable" && disk.Type != "azure_blob_storage" && disk.Type != "azure" && disk.Type != "encrypted" {
 		return nil, errors.Errorf("%s have unsupported type %s", diskName, disk.Type)

@@ -24,8 +24,10 @@ type Table struct {
 	UUID             string   `ch:"uuid"`
 	CreateTableQuery string   `ch:"create_table_query"`
 	TotalBytes       uint64   `ch:"total_bytes"`
-	Skip             bool
-	BackupType       ShardBackupType
+	// StoragePolicy - only filled by GetCustomDiskTables, `__<disk name>` for `SETTINGS disk = ...` tables
+	StoragePolicy string `ch:"storage_policy"`
+	Skip          bool
+	BackupType    ShardBackupType
 }
 
 // IsSystemTablesFieldPresent - ClickHouse `system.tables` varius field flags

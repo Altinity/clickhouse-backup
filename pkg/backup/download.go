@@ -503,6 +503,16 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 		if t == nil || t.TotalBytes == 0 {
 			continue
 		}
+		// a `SETTINGS disk = disk(...)` disk is registered by clickhouse-server together with the table during
+		// schema restore, it can't exist locally yet and it can't be replaced by another disk, so parts are
+		// downloaded to the path recorded in the backup, https://github.com/Altinity/clickhouse-backup/issues/943
+		if clickhouse.HasCustomDisk(t.Query) {
+			log.Debug().Msgf("table `%s`.`%s` declares `disk = disk(...)`, skip re-balance", t.Database, t.Table)
+			if err := b.registerCustomDiskPaths(t, disks, remoteBackup); err != nil {
+				return err
+			}
+			continue
+		}
 		isRebalanced := false
 		totalFiles := 0
 		for disk := range t.Files {

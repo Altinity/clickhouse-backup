@@ -29,6 +29,7 @@ For that reason, it's required to run `clickhouse-backup` on the same host or sa
 - **Support for multi disks installations**
 - **Support for custom remote storage types via `rclone`, `kopia`, `restic`, `rsync` etc**
 - **Support for incremental backups on remote storage**
+- **Support for custom SQL disks declared as `SETTINGS disk = disk(...)`** (ClickHouse 23.2+, tested from 24.8)
 
 ## Limitations
 
@@ -511,6 +512,27 @@ The regular free space check during restore is unchanged, because attached parts
 Streaming uses dedicated resumable state files `create_upload_streaming.state2` and `download_restore_streaming.state2` (`--resume` continues an interrupted run, `restore_remote` also remembers already attached tables), which can be resumed after an API server restart by adding these names to `api.complete_resumable_after_restart_commands`.
 Streaming is not available with `use_embedded_backup_restore: true` (`BACKUP` SQL produces the whole backup at once) or with `remote_storage: custom`, and `--dry-run` reports the same estimate as without `--streaming`.
 See [#780](https://github.com/Altinity/clickhouse-backup/issues/780) for details.
+
+## Custom SQL disks (`SETTINGS disk = disk(...)`)
+
+ClickHouse allows a `MergeTree` table to declare its storage inline in the DDL instead of referencing a storage policy from the server configuration:
+
+```sql
+CREATE TABLE default.t (id UInt64) ENGINE=MergeTree() ORDER BY id
+SETTINGS disk = disk(type = s3, endpoint = 'https://s3.amazonaws.com/bucket/prefix/', access_key_id = '...', secret_access_key = '...');
+```
+
+ClickHouse registers such a disk under a generated name `__tmp_internal_<hash>` (or under the value of `name = '...'` when the definition provides one) and it never appears in `preprocessed_configs/config.xml`.
+Backup and restore of these tables is supported for ClickHouse 23.2+ (where `disk(...)` appeared) and tested from 24.8+ (the `__tmp_internal_` disk registry rework), including nested `cache` and `encrypted` wrappers over an object storage disk.
+
+- Object storage credentials are taken from the table DDL, because the disk is not present in the server configuration.
+- The DDL is stored verbatim in the backup metadata, so the backup contains the `secret_access_key` (or the `encrypted` disk `key`) in plain text, the same way it already happens for `S3`/`MySQL` engine tables, see [#640](https://github.com/Altinity/clickhouse-backup/issues/640). Protect your backup destination accordingly.
+- `SHOW CREATE TABLE` masks every `disk(...)` argument as `'[HIDDEN]'`. `clickhouse-backup` falls back to reading `/var/lib/clickhouse/metadata/<db>/<table>.sql`, so it has to run on the ClickHouse host, otherwise set `display_secrets_in_show_and_select=1` in the server configuration and grant `displaySecretsInShowAndSelect` to the backup user.
+- The generated `__tmp_internal_<hash>` name is not portable, it changes with any change of the disk declaration and may change between ClickHouse versions. On restore the disk is resolved again from the restored DDL, so the name recorded in the backup doesn't have to exist on the target server.
+- `--restore-database-mapping` and `--restore-table-mapping` replay the DDL unchanged, so the mapped table reuses the same custom disk definition.
+- Custom disks of type `s3_plain_rewritable` follow the same rules as `plain_rewritable` disks from the server configuration, `restore` of their data requires ClickHouse 25.11+.
+
+See [#943](https://github.com/Altinity/clickhouse-backup/issues/943) for details.
 
 ## remote_storage: custom
 
