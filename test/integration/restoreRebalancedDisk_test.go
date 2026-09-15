@@ -292,5 +292,7 @@ func TestDownloadIncrementRebalanceRequiredParts(t *testing.T) {
 		"CLICKHOUSE_FORCE_REBALANCE=true "+backupCmd+" restore --tables="+dbName+"."+tableName+" "+incBackup)
 	env.checkCount(r, 1, 2000, fmt.Sprintf("SELECT count() FROM %s.%s", dbName, tableName))
 
-	fullCleanup(t, r, env, []string{incBackup, baseBackup}, []string{"remote", "local"}, []string{"test_inc_rebalance"}, true, true, true, "config-s3.yml")
+	// fullCleanup reverses the list via childrenFirst, so the base goes first here to have the dependent
+	// increment deleted first, https://github.com/Altinity/clickhouse-backup/issues/1493
+	fullCleanup(t, r, env, []string{baseBackup, incBackup}, []string{"remote", "local"}, []string{"test_inc_rebalance"}, true, true, true, "config-s3.yml")
 }
