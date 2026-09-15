@@ -241,10 +241,13 @@ func (f *FTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 	}
 	err = f.MkdirAll(path.Dir(key), client)
 	if err != nil {
-		return errors.Wrap(err, "FTP PutFileAbsolute MkdirAll")
+		return fmt.Errorf("FTP PutFileAbsolute MkdirAll: %w: %w", ErrDestinationWrite, err)
 	}
 	if err := client.Stor(key, r); err != nil {
-		return errors.Wrap(err, "FTP PutFileAbsolute Stor")
+		// the parent directory was just created or taken from dirCache, a failed store proves the
+		// cached state can be stale, forget it so the next attempt re-creates the whole directory tree
+		f.forgetDirCache(path.Dir(key))
+		return fmt.Errorf("FTP PutFileAbsolute Stor: %w: %w", ErrDestinationWrite, err)
 	}
 	return nil
 }
@@ -601,26 +604,52 @@ func (f *FTP) MkdirAll(key string, client *ftp.ServerConn) error {
 
 	for i := range dirs {
 		d := path.Join(dirs[:i+1]...)
-		if d != "" {
-			f.dirCacheMutex.RLock()
-			if _, exists := f.dirCache[d]; exists {
-				f.dirCacheMutex.RUnlock()
-				log.Debug().Msgf("MkdirAll %s exists in dirCache", d)
-				continue
-			}
-			f.dirCacheMutex.RUnlock()
-
-			f.dirCacheMutex.Lock()
-			err = client.MakeDir(d)
-			if err != nil {
-				log.Warn().Msgf("MkdirAll MakeDir(%s) return error: %v", d, err)
-			} else {
-				f.dirCache[d] = true
-			}
-			f.dirCacheMutex.Unlock()
+		if d == "" {
+			continue
 		}
+		f.dirCacheMutex.RLock()
+		_, exists := f.dirCache[d]
+		f.dirCacheMutex.RUnlock()
+		if exists {
+			log.Debug().Msgf("MkdirAll %s exists in dirCache", d)
+			continue
+		}
+
+		f.dirCacheMutex.Lock()
+		// re-check under the write lock, otherwise every concurrent upload which passed the
+		// read lock issues its own MakeDir for the same directory
+		if _, exists = f.dirCache[d]; exists {
+			f.dirCacheMutex.Unlock()
+			continue
+		}
+		err = client.MakeDir(d)
+		if err != nil && !isFTPDirAlreadyExists(err) {
+			f.dirCacheMutex.Unlock()
+			return errors.Wrapf(err, "FTP MkdirAll MakeDir(%s)", d)
+		}
+		// an already existing directory is a success for MkdirAll and must be remembered too,
+		// otherwise MKD is re-issued for it by every single uploaded object
+		f.dirCache[d] = true
+		f.dirCacheMutex.Unlock()
 	}
 	return nil
+}
+
+// isFTPDirAlreadyExists reports whether a MakeDir reply means the directory is already there,
+// servers phrase it differently: proftpd/vsftpd answer 550 `<dir>: File exists`,
+// others 521 `directory already exists`
+func isFTPDirAlreadyExists(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "exists") && !strings.Contains(message, "not exist")
+}
+
+// forgetDirCache drops dir and all its parents from dirCache, so the next MkdirAll re-creates them
+func (f *FTP) forgetDirCache(dir string) {
+	f.dirCacheMutex.Lock()
+	defer f.dirCacheMutex.Unlock()
+	for d := strings.TrimPrefix(dir, "/"); d != "" && d != "."; d = path.Dir(d) {
+		delete(f.dirCache, d)
+	}
 }
 
 type FTPFileReader struct {

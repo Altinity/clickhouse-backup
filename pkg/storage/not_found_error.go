@@ -14,11 +14,19 @@ import (
 	"google.golang.org/api/googleapi"
 )
 
+// ErrDestinationWrite marks a failed write to the destination storage. A "no such file or directory"
+// reply to a write means the destination state is stale (a directory has to be re-created), not that
+// the source object is permanently gone, so such an error must stay retryable.
+var ErrDestinationWrite = errors.New("destination write failed")
+
 // IsNotFoundErr reports whether err means the remote object is permanently missing
 // (S3 NoSuchKey/404, GCS ErrObjectNotExist/404, Azure BlobNotFound/404, FTP 550, SFTP/local fs.ErrNotExist),
 // so retrying can never succeed, see https://github.com/Altinity/clickhouse-backup/issues/1456
 func IsNotFoundErr(err error) bool {
 	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrDestinationWrite) {
 		return false
 	}
 	if errors.Is(err, ErrNotFound) || errors.Is(err, fs.ErrNotExist) || errors.Is(err, storage.ErrObjectNotExist) {
