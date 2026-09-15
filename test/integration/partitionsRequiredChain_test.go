@@ -3,11 +3,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 )
 
 // This test reproduces https://github.com/Altinity/clickhouse-backup/issues/1045:
@@ -63,8 +66,16 @@ func TestDownloadPartitionsRequiredChainS3(t *testing.T) {
 	incr1TableMeta := "/var/lib/clickhouse/backup/" + incr1Backup + "/metadata/" + dbName + "/" + tableName + ".json"
 	staleMeta, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "cat "+incr1TableMeta)
 	r.NoError(err, staleMeta)
-	r.Contains(staleMeta, "2_2_2_0")
-	r.NotContains(staleMeta, "1_1_1_0", "local inc1 metadata must stay filtered to reproduce the issue")
+	// only `parts` and `files` are narrowed by the partitions filter, `hash_of_all_files` keeps every
+	// part of the backup, so assert on the parsed structure instead of on the raw json
+	var staleTM metadata.TableMetadata
+	r.NoError(json.Unmarshal([]byte(staleMeta), &staleTM), staleMeta)
+	stalePartNames := make([]string, 0, len(staleTM.Parts["default"]))
+	for _, part := range staleTM.Parts["default"] {
+		stalePartNames = append(stalePartNames, part.Name)
+	}
+	r.Equal([]string{"2_2_2_0"}, stalePartNames, "local inc1 metadata must stay filtered to reproduce the issue")
+	r.Equal([]string{"default_2_2_2_0.tar"}, staleTM.Files["default"], "local inc1 metadata must stay filtered to reproduce the issue")
 
 	inc2ShadowDir := "/var/lib/clickhouse/backup/" + incr2Backup + "/shadow/" + dbName + "/" + tableName + "/default/"
 	// the reproducer: resolving required part 1_1_1_0 has to skip the filtered inc1 and reach full
