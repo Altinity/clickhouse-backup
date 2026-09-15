@@ -309,10 +309,14 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 			}
 		}
 		// a `SETTINGS disk = disk(...)` object disk appears in system.disks only after the schema is restored,
-		// the backup metadata is the only source of truth at this point,
+		// so it is object disk typed in the backup metadata and missing from the local disks,
+		// only such a disk widens the check, a backup whose object disks all exist locally is already covered above
 		// https://github.com/Altinity/clickhouse-backup/issues/943
 		if !isObjectDiskPresents {
-			for _, diskType := range backupMetadata.DiskTypes {
+			for diskName, diskType := range backupMetadata.DiskTypes {
+				if b.findDiskByName(disks, diskName) != nil {
+					continue
+				}
 				if isObjectDiskPresents = b.isDiskTypeObject(diskType); isObjectDiskPresents {
 					break
 				}

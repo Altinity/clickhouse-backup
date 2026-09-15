@@ -495,13 +495,14 @@ func getCustomDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse, v
 			continue
 		}
 		for _, diskName := range diskNames {
-			DisksCredentials.Store(diskName, creds)
+			// config.xml is authoritative, a `name =` argument may collide with a disk declared there
+			DisksCredentials.LoadOrStore(diskName, creds)
 		}
 		log.Debug().Msgf("getCustomDisksCredentials: %s.%s provides %s credentials for disks %v", t.Database, t.Name, creds.Type, diskNames)
 	}
 	for diskName, reference := range diskReferences {
 		if referenceCreds, referenceExists := DisksCredentials.Load(reference); referenceExists {
-			DisksCredentials.Store(diskName, referenceCreds)
+			DisksCredentials.LoadOrStore(diskName, referenceCreds)
 			log.Debug().Msgf("getCustomDisksCredentials: disk %s reuse credentials of disk %s", diskName, reference)
 		} else {
 			log.Warn().Msgf("getCustomDisksCredentials: disk %s reference to disk %s which not contains DiskCredentials", diskName, reference)
@@ -558,7 +559,7 @@ func customDiskNames(ctx context.Context, ch *clickhouse.ClickHouse, t clickhous
 	return diskNames
 }
 
-func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse, diskName string) error {
+func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse, requestedDiskName string) error {
 	var version int
 	var err error
 	if version, err = ch.GetVersion(ctx); err != nil {
@@ -615,7 +616,7 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse, d
 	// `SETTINGS disk = disk(...)` custom disks exist since 23.2, their credentials live only in the table DDL,
 	// the pass scans system.tables.create_table_query, so it runs only when the config didn't provide the disk
 	// https://github.com/Altinity/clickhouse-backup/issues/943
-	if _, exists := DisksCredentials.Load(diskName); !exists && version >= 23002000 {
+	if _, exists := DisksCredentials.Load(requestedDiskName); !exists && version >= 23002000 {
 		getCustomDisksCredentials(ctx, ch, version)
 	}
 	return nil

@@ -531,6 +531,7 @@ Backup and restore of these tables is supported for ClickHouse 23.2+ (where `dis
 - The generated `__tmp_internal_<hash>` name is not portable, it changes with any change of the disk declaration and may change between ClickHouse versions. On restore the disk is resolved again from the restored DDL, so the name recorded in the backup doesn't have to exist on the target server.
 - `--restore-database-mapping` and `--restore-table-mapping` replay the DDL unchanged, so the mapped table reuses the same custom disk definition.
 - Custom disks of type `s3_plain_rewritable` follow the same rules as `plain_rewritable` disks from the server configuration, `restore` of their data requires ClickHouse 25.11+.
+- The `CREATE TABLE` executed by `restore` registers the disk on the target server, so ClickHouse runs its disk access check (write, read back, remove a probe object) against the object storage before the table exists. On a slow or loaded target this check can make `restore` fail with a client read timeout. Add `skip_access_check = true` to the `disk(...)` declaration if you hit it.
 
 See [#943](https://github.com/Altinity/clickhouse-backup/issues/943) for details.
 
