@@ -2571,9 +2571,9 @@ func (b *Backuper) restoreRequiredPart(ctx context.Context, backupMetadata metad
 	if err != nil {
 		return errors.Wrap(err, "ReadBackupMetadataRemote")
 	}
-	requiredTable, err := b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: backupTable.Database, Table: backupTable.Table})
+	requiredTable, err := b.readRequiredTableMetadata(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: backupTable.Database, Table: backupTable.Table})
 	if err != nil {
-		return errors.Wrap(err, "downloadTableMetadataIfNotExists")
+		return errors.Wrap(err, "readRequiredTableMetadata")
 	}
 	for requiredDisk, requiredParts := range requiredTable.Parts {
 		for _, requiredPart := range requiredParts {
@@ -3196,9 +3196,9 @@ func (b *Backuper) findObjectDiskPartRecursive(ctx context.Context, backup metad
 		return "", "", errors.Wrap(err, "ReadBackupMetadataRemote")
 	}
 	var requiredTable *metadata.TableMetadata
-	requiredTable, err = b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: table.Database, Table: table.Table})
+	requiredTable, err = b.readRequiredTableMetadata(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: table.Database, Table: table.Table})
 	if err != nil {
-		return "", "", errors.Wrap(err, "downloadTableMetadataIfNotExists")
+		return "", "", errors.Wrap(err, "readRequiredTableMetadata")
 	}
 	// @todo think about add check what if disk type could changed (should already restricted, cause upload seek part in the same disk name)
 	for requiredDiskName, parts := range requiredTable.Parts {

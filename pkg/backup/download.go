@@ -588,12 +588,12 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 	return nil
 }
 
-// downloadTableMetadataIfNotExists returns the table metadata of a required backup exactly as it is stored
+// readRequiredTableMetadata returns the table metadata of a required backup exactly as it is stored
 // on remote storage, without any filter by partitions. A local copy under backup/<name>/metadata could be
 // narrowed by an earlier `download --partitions`, by allow_missing_files_on_download or by disk rebalancing,
 // so it describes what is present locally and can't be used to resolve which backup of the required sequence
 // physically holds a part, see https://github.com/Altinity/clickhouse-backup/issues/1045
-func (b *Backuper) downloadTableMetadataIfNotExists(ctx context.Context, backupName string, tableTitle metadata.TableTitle) (*metadata.TableMetadata, error) {
+func (b *Backuper) readRequiredTableMetadata(ctx context.Context, backupName string, tableTitle metadata.TableTitle) (*metadata.TableMetadata, error) {
 	var tm *metadata.TableMetadata
 	metadataNotFound := false
 	retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
@@ -608,7 +608,8 @@ func (b *Backuper) downloadTableMetadataIfNotExists(ctx context.Context, backupN
 		return readErr
 	})
 	if metadataNotFound {
-		return nil, errors.Errorf("remote metadata file for `%s`.`%s` not found in backup %s, backup is broken", tableTitle.Database, tableTitle.Table, backupName)
+		remoteMetadataFile := path.Join(backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
+		return nil, errors.Errorf("remote metadata file %s not found on remote storage, backup is broken", remoteMetadataFile)
 	}
 	if err != nil {
 		return nil, err
@@ -1363,7 +1364,8 @@ func (b *Backuper) computeDownloadSizeEstimate(ctx context.Context, remoteBackup
 	}
 	// required parts have size=0 in the current backup metadata, their size lives in the backup
 	// of the required chain where the part is not required, resolve it the same way as
-	// downloadDiffParts does, metadata downloaded here is cached on local disk and reused later
+	// downloadDiffParts does, the required table metadata is read from remote storage and kept
+	// in requiredTableMetadataCache only for the duration of this estimate
 	requiredBackupMetadataCache := make(map[string]*metadata.BackupMetadata)
 	requiredTableMetadataCache := make(map[string]*metadata.TableMetadata)
 	resolveRequiredPartSize := func(requiredBackupName string, title metadata.TableTitle, partName string) (uint64, bool) {
@@ -1381,7 +1383,7 @@ func (b *Backuper) computeDownloadSizeEstimate(ctx context.Context, remoteBackup
 			tableMetadataCacheKey := path.Join(requiredBackupName, title.Database, title.Table)
 			requiredTableMetadata, exists := requiredTableMetadataCache[tableMetadataCacheKey]
 			if !exists {
-				m, err := b.downloadTableMetadataIfNotExists(ctx, requiredBackupName, title)
+				m, err := b.readRequiredTableMetadata(ctx, requiredBackupName, title)
 				if err != nil {
 					log.Warn().Err(err).Msgf("can't download %s table metadata to resolve required part %s size", tableMetadataCacheKey, partName)
 					return 0, false
@@ -1812,10 +1814,10 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 	}
 	var requiredTable *metadata.TableMetadata
 	if hasRequiredParts {
-		requiredTable, err = b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: table.Database, Table: table.Table})
+		requiredTable, err = b.readRequiredTableMetadata(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: table.Database, Table: table.Table})
 		if err != nil {
-			log.Warn().Msgf("downloadTableMetadataIfNotExists %s / %s.%s return error", requiredBackup.BackupName, table.Database, table.Table)
-			return 0, errors.Wrap(err, "downloadTableMetadataIfNotExists")
+			log.Warn().Msgf("readRequiredTableMetadata %s / %s.%s return error", requiredBackup.BackupName, table.Database, table.Table)
+			return 0, errors.Wrap(err, "readRequiredTableMetadata")
 		}
 	}
 
@@ -2062,10 +2064,10 @@ func (b *Backuper) findDiffBackupFilesRemote(ctx context.Context, backup metadat
 		}
 	}
 	if requiredTable == nil {
-		requiredTable, err = b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: table.Database, Table: table.Table})
+		requiredTable, err = b.readRequiredTableMetadata(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: table.Database, Table: table.Table})
 		if err != nil {
-			log.Warn().Msgf("downloadTableMetadataIfNotExists %s / %s.%s return error", requiredBackup.BackupName, table.Database, table.Table)
-			return nil, errors.Wrap(err, "downloadTableMetadataIfNotExists")
+			log.Warn().Msgf("readRequiredTableMetadata %s / %s.%s return error", requiredBackup.BackupName, table.Database, table.Table)
+			return nil, errors.Wrap(err, "readRequiredTableMetadata")
 		}
 	}
 

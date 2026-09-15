@@ -70,6 +70,9 @@ func TestDownloadPartitionsRequiredChainS3(t *testing.T) {
 	// the reproducer: resolving required part 1_1_1_0 has to skip the filtered inc1 and reach full
 	downloadOut, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("DOWNLOAD_BY_PART=true LOG_LEVEL=debug clickhouse-backup -c /etc/clickhouse-backup/%s download --partitions=%s.%s:1 %s 2>&1", configFile, dbName, tableName, incr2Backup))
 	r.NoError(err, downloadOut)
+	// guard against passing trivially: the part must be resolved by walking the required chain,
+	// not by the big-files fallback or a hardlink from another local backup
+	r.Contains(downloadOut, "findDiffRecursive", "the 2-hop required-chain resolution did not run")
 	shadowOut, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "ls -1 "+inc2ShadowDir)
 	r.NoError(err, shadowOut)
 	r.Equal("1_1_1_0", strings.TrimSpace(shadowOut))
@@ -89,10 +92,13 @@ func TestDownloadPartitionsRequiredChainS3(t *testing.T) {
 	env.checkCount(r, 1, 100, "SELECT count() FROM "+dbName+"."+tableName)
 	env.checkCount(r, 1, 100, "SELECT count() FROM "+dbName+"."+tableName+" WHERE p=1 SETTINGS empty_result_for_aggregation_by_empty_set=0")
 
-	// the same stale inc1, but the recursive (not per-part) required backup download
+	// the same stale inc1 with download_by_part disabled, so `Download` first recurses into inc1.
+	// The recursion short-circuits with ErrBackupIsAlreadyExists because the stale local inc1 is
+	// there, so the per-part resolution still has to skip its filtered metadata and reach full.
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+configFile, "delete", "--force", "local", incr2Backup)
 	downloadOut, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("DOWNLOAD_BY_PART=false LOG_LEVEL=debug clickhouse-backup -c /etc/clickhouse-backup/%s download --partitions=%s.%s:1 %s 2>&1", configFile, dbName, tableName, incr2Backup))
 	r.NoError(err, downloadOut)
+	r.Contains(downloadOut, "findDiffRecursive", "the 2-hop required-chain resolution did not run")
 	shadowOut, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "ls -1 "+inc2ShadowDir)
 	r.NoError(err, shadowOut)
 	r.Equal("1_1_1_0", strings.TrimSpace(shadowOut))
