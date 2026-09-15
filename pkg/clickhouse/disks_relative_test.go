@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"testing"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -288,6 +289,103 @@ func TestGetDisksByPaths(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tc.expected, actual)
+		})
+	}
+}
+
+// TestMetadataPathFromRaw - a clickhouse-server started with a relative `<path>` reports a relative
+// `system.databases.data_path`; forcing a leading `/` on it pointed GetPreprocessedConfigPath at
+// `/preprocessed_configs` and broke the RBAC backup, see
+// https://github.com/Altinity/clickhouse-backup/issues/1121
+func TestMetadataPathFromRaw(t *testing.T) {
+	testcases := []struct {
+		name       string
+		rawPath    string
+		serverRoot string
+		expected   string
+	}{
+		{
+			name:     "absolute system database data_path (Atomic)",
+			rawPath:  "/var/lib/clickhouse/store/",
+			expected: "/var/lib/clickhouse/metadata",
+		},
+		{
+			name:     "absolute system table metadata_path",
+			rawPath:  "/var/lib/clickhouse/store/d31/d31f9b1e-0000-0000-0000-000000000000/system.sql",
+			expected: "/var/lib/clickhouse/metadata",
+		},
+		{
+			name:     "absolute Ordinary metadata_path",
+			rawPath:  "/var/lib/clickhouse/metadata/system/",
+			expected: "/var/lib/clickhouse/metadata",
+		},
+		{
+			name:       "relative system database data_path with a known server root",
+			rawPath:    "./store/",
+			serverRoot: "/var/lib/clickhouse",
+			expected:   "/var/lib/clickhouse/metadata",
+		},
+		{
+			name:       "relative system table metadata_path with a known server root",
+			rawPath:    "./store/d31/d31f9b1e-0000-0000-0000-000000000000/system.sql",
+			serverRoot: "/var/lib/clickhouse",
+			expected:   "/var/lib/clickhouse/metadata",
+		},
+		{
+			name:     "relative data_path without a server root keeps the old leading slash",
+			rawPath:  "./store/",
+			expected: "/metadata",
+		},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, metadataPathFromRaw(tc.rawPath, tc.serverRoot))
+		})
+	}
+}
+
+// TestResolveServerRoot - `disk_mapping["default"]` is the only source for the clickhouse-server working
+// directory, and it must never rewrite a path the server already reported as absolute
+func TestResolveServerRoot(t *testing.T) {
+	testcases := []struct {
+		name        string
+		rawPath     string
+		diskMapping map[string]string
+		expected    string
+	}{
+		{
+			name:        "relative path with a mapped default",
+			rawPath:     "./store/",
+			diskMapping: map[string]string{"default": "/var/lib/clickhouse"},
+			expected:    "/var/lib/clickhouse",
+		},
+		{
+			name:        "absolute path is never rewritten",
+			rawPath:     "/var/lib/clickhouse/store/",
+			diskMapping: map[string]string{"default": "/mnt/ch"},
+			expected:    "",
+		},
+		{
+			name:     "relative path without disk_mapping",
+			rawPath:  "./store/",
+			expected: "",
+		},
+		{
+			name:        "relative path with a mapping for another disk only",
+			rawPath:     "./store/",
+			diskMapping: map[string]string{"cold": "/mnt/cold"},
+			expected:    "",
+		},
+		{
+			name:     "empty path",
+			rawPath:  "",
+			expected: "",
+		},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			ch := &ClickHouse{Config: &config.ClickHouseConfig{DiskMapping: tc.diskMapping}}
+			assert.Equal(t, tc.expected, ch.resolveServerRoot(tc.rawPath))
 		})
 	}
 }

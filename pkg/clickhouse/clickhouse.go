@@ -315,6 +315,21 @@ func (ch *ClickHouse) getDisksFromSystemSettings(ctx context.Context) ([]Disk, e
 	}
 }
 
+// resolveServerRoot - the absolute directory a relative clickhouse-server path must be joined to, "" when
+// rawPath is already absolute or the root is unknown. A server started with a relative `<path>` reports
+// relative paths everywhere: `system.disks.path`, `system.tables.data_paths`, `system.databases.data_path`
+// and `system.user_directories`. There is no SQL way to learn the server working directory, so
+// `clickhouse.disk_mapping["default"]` is the only source for it, the same root resolveDiskPaths uses for the
+// disks themselves. When it is unknown the caller keeps its previous behaviour and checkDisksConsistency
+// reports the missing mapping, fix https://github.com/Altinity/clickhouse-backup/issues/1121
+func (ch *ClickHouse) resolveServerRoot(rawPath string) string {
+	serverRoot := ch.Config.DiskMapping["default"]
+	if rawPath == "" || strings.HasPrefix(rawPath, "/") || !strings.HasPrefix(serverRoot, "/") {
+		return ""
+	}
+	return serverRoot
+}
+
 func (ch *ClickHouse) getMetadataPath(ctx context.Context) (string, error) {
 	var result []struct {
 		MetadataPath string `ch:"metadata_path"`
@@ -348,18 +363,30 @@ func (ch *ClickHouse) getMetadataPath(ctx context.Context) (string, error) {
 			return "", errors.New("can't get data_path from system.databases")
 		}
 	}
-	metadataPath := strings.Split(result[0].MetadataPath, "/")
-	// https://github.com/ClickHouse/ClickHouse/issues/76546
-	if strings.HasSuffix(result[0].MetadataPath, "/store/") {
-		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-2]...)
-		result[0].MetadataPath = path.Join(result[0].MetadataPath, "metadata")
-	} else if strings.Contains(result[0].MetadataPath, "/store/") {
-		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-4]...)
-		result[0].MetadataPath = path.Join(result[0].MetadataPath, "metadata")
-	} else {
-		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-2]...)
+	return metadataPathFromRaw(result[0].MetadataPath, ch.resolveServerRoot(result[0].MetadataPath)), nil
+}
+
+// metadataPathFromRaw - derive the clickhouse-server metadata directory from a raw
+// `system.tables.metadata_path` / `system.databases.data_path` value,
+// https://github.com/ClickHouse/ClickHouse/issues/76546. serverRoot is "" unless the raw value is relative
+// and the root is known, see resolveServerRoot
+func metadataPathFromRaw(rawMetadataPath, serverRoot string) string {
+	parts := strings.Split(rawMetadataPath, "/")
+	var metadataPath string
+	switch {
+	case strings.HasSuffix(rawMetadataPath, "/store/"):
+		metadataPath = path.Join(path.Join(parts[:len(parts)-2]...), "metadata")
+	case strings.Contains(rawMetadataPath, "/store/"):
+		metadataPath = path.Join(path.Join(parts[:len(parts)-4]...), "metadata")
+	default:
+		metadataPath = path.Join(parts[:len(parts)-2]...)
 	}
-	return path.Join("/", result[0].MetadataPath), nil
+	// forcing a leading `/` on a relative path would point every path derived from it at the filesystem
+	// root (`/preprocessed_configs`, `/access`, `/flags/force_drop_table`)
+	if serverRoot != "" {
+		return path.Join(serverRoot, metadataPath)
+	}
+	return path.Join("/", metadataPath)
 }
 
 // normalizeDiskMetadataType - `system.disks.metadata_type` contains enum names (`Local`, `Plain`, `PlainRewritable`),
@@ -1461,7 +1488,11 @@ func (ch *ClickHouse) GetAccessManagementPath(ctx context.Context, disks []Disk)
 		if err == nil {
 			accessControlPathNode := doc.SelectElement("access_control_path")
 			if accessControlPathNode != nil {
-				return accessControlPathNode.InnerText(), nil
+				configAccessPath := accessControlPathNode.InnerText()
+				if serverRoot := ch.resolveServerRoot(configAccessPath); serverRoot != "" {
+					configAccessPath = path.Join(serverRoot, configAccessPath)
+				}
+				return configAccessPath, nil
 			}
 		}
 
@@ -1479,6 +1510,9 @@ func (ch *ClickHouse) GetAccessManagementPath(ctx context.Context, disks []Disk)
 		}
 	} else {
 		accessPath = rows[0].AccessPath
+		if serverRoot := ch.resolveServerRoot(accessPath); serverRoot != "" {
+			accessPath = path.Join(serverRoot, accessPath)
+		}
 	}
 	return accessPath, nil
 }
