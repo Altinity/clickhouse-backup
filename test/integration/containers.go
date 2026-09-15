@@ -1200,8 +1200,11 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 	}
 
 	cfg := &container.Config{
-		Image:        chImage,
-		User:         "root",
+		Image: chImage,
+		User:  "root",
+		// the clickhouse-server image has no WORKDIR, so a relative `<path>` would resolve against `/`,
+		// outside the shared data volume, see TestRelativeDataPathTieredS3
+		WorkingDir:   "/var/lib/clickhouse",
 		Env:          envMap(env),
 		ExposedPorts: network.PortSet{network.MustParsePort("8123/tcp"): {}, network.MustParsePort("9000/tcp"): {}},
 		Healthcheck: &container.HealthConfig{

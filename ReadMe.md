@@ -230,6 +230,8 @@ clickhouse:
   # `disk_destination`  needs to be referenced in backup (source config), and all names from this map (`disk:path`) shall exist in `system.disks` on destination server.
   # During download of the backup from remote location (s3), if `name` is not present in `disk_mapping` (on the destination server config too) then `default` disk path will used for download.
   # `disk_mapping` is used to understand during download where downloaded parts shall be unpacked (which disk) on destination server and where to search for data parts directories during restore.
+  # `disk_mapping` is also required when clickhouse-server is started with a relative `<path>./</path>` (ClickHouse 25.x and older then report relative paths in `system.disks`):
+  # set `default` to the absolute clickhouse-server data path, it is used as the root to resolve the relative paths of all other disks, otherwise clickhouse-backup fails with an explicit error.
   disk_mapping: {}
   # CLICKHOUSE_SKIP_TABLES, the list of tables (pattern are allowed) which are ignored during backup and restore process
   # The format for this env variable is "pattern1,pattern2,pattern3". For YAML please continue using list syntax
