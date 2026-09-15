@@ -891,15 +891,24 @@ func (ch *ClickHouse) fixVariousVersions(ctx context.Context, t Table, metadataP
 	}
 	// 23.3+ masked secrets https://github.com/Altinity/clickhouse-backup/issues/640
 	if strings.Contains(t.CreateTableQuery, "'[HIDDEN]'") {
-		tableSQLPath := path.Join(metadataPath, common.TablePathEncode(t.Database), common.TablePathEncode(t.Name)+".sql")
-		if attachSQL, err := os.ReadFile(tableSQLPath); err != nil {
-			log.Warn().Msgf("can't read %s: %v", tableSQLPath, err)
-		} else {
-			t.CreateTableQuery = strings.Replace(string(attachSQL), "ATTACH", "CREATE", 1)
-			t.CreateTableQuery = strings.Replace(t.CreateTableQuery, " _ ", " `"+t.Database+"`.`"+t.Name+"` ", 1)
-		}
+		t.CreateTableQuery = ch.unmaskCreateTableQueryFromMetadata(t, metadataPath)
 	}
 	return t
+}
+
+// unmaskCreateTableQueryFromMetadata - 23.3+ renders secrets in `system.tables.create_table_query` as `'[HIDDEN]'`,
+// the on-disk `metadata/<db>/<table>.sql` is never masked, so read the DDL from there
+// https://github.com/Altinity/clickhouse-backup/issues/640, https://github.com/Altinity/clickhouse-backup/issues/943
+// returns the original query when the file is not readable, chb may run outside the clickhouse-server host
+func (ch *ClickHouse) unmaskCreateTableQueryFromMetadata(t Table, metadataPath string) string {
+	tableSQLPath := path.Join(metadataPath, common.TablePathEncode(t.Database), common.TablePathEncode(t.Name)+".sql")
+	attachSQL, err := os.ReadFile(tableSQLPath)
+	if err != nil {
+		log.Warn().Msgf("can't read %s: %v", tableSQLPath, err)
+		return t.CreateTableQuery
+	}
+	createTableQuery := strings.Replace(string(attachSQL), "ATTACH", "CREATE", 1)
+	return strings.Replace(createTableQuery, " _ ", " `"+t.Database+"`.`"+t.Name+"` ", 1)
 }
 
 // GetVersion - returned ClickHouse version in number format
