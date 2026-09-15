@@ -689,6 +689,14 @@ func ValidateConfig(cfg *Config) error {
 	if cfg.GetCompressionFormat() == "lz4" {
 		return errors.New("clickhouse already compressed data by lz4")
 	}
+	// a relative disk_mapping path silently breaks the relative `system.disks.path` resolution in GetDisks
+	// and points hardlinks at the clickhouse-backup working directory,
+	// fix https://github.com/Altinity/clickhouse-backup/issues/1121
+	for diskName, diskPath := range cfg.ClickHouse.DiskMapping {
+		if !strings.HasPrefix(diskPath, "/") {
+			return errors.Errorf("clickhouse->disk_mapping[%q]=%q is invalid, it must be an absolute path", diskName, diskPath)
+		}
+	}
 	if cfg.General.DeleteBatchSize < 1 {
 		return errors.Errorf("delete_batch_size=%d is invalid, it must be greater than 0", cfg.General.DeleteBatchSize)
 	}

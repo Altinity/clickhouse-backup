@@ -109,6 +109,16 @@ func TestCheckDisksConsistency(t *testing.T) {
 			},
 		},
 		{
+			name: "relative disk path needs disk_mapping (issue #1121)",
+			disks: func(t *testing.T) []clickhouse.Disk {
+				return []clickhouse.Disk{
+					{Name: "default", Type: "local", Path: "./", RawPath: "./"},
+					{Name: "miniocached", Type: "s3", Path: "./disks/miniocached/", RawPath: "./disks/miniocached/"},
+				}
+			},
+			wantErr: `set clickhouse.disk_mapping["default"]`,
+		},
+		{
 			name: "disk path is a file not a directory",
 			disks: func(t *testing.T) []clickhouse.Disk {
 				root := t.TempDir()
