@@ -222,6 +222,9 @@ func resolveDiskPaths(disks []Disk, diskMapping map[string]string, enrich bool) 
 	maps.Copy(dm, diskMapping)
 	// `default` is resolved first, its final path is the root for every other relative disk path
 	defaultPath := "/var/lib/clickhouse"
+	if p, ok := dm["default"]; ok {
+		defaultPath = p
+	}
 	for i := range disks {
 		if disks[i].Name == "default" {
 			if p, ok := dm["default"]; ok {

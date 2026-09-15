@@ -1202,8 +1202,11 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 	cfg := &container.Config{
 		Image: chImage,
 		User:  "root",
-		// the clickhouse-server image has no WORKDIR, so a relative `<path>` would resolve against `/`,
-		// outside the shared data volume, see TestRelativeDataPathTieredS3
+		// the clickhouse-server image declares no WORKDIR and neither /entrypoint.sh nor custom_entrypoint.sh
+		// changes the directory, so clickhouse-server would run with cwd `/` and a relative `<path>./</path>`
+		// would put the data outside the shared volume, where the clickhouse-backup container can't see it.
+		// Every DockerExec* against this container uses absolute paths, so pinning the cwd is inert for the
+		// rest of the suite. Needed by TestRelativeDataPathTieredS3
 		WorkingDir:   "/var/lib/clickhouse",
 		Env:          envMap(env),
 		ExposedPorts: network.PortSet{network.MustParsePort("8123/tcp"): {}, network.MustParsePort("9000/tcp"): {}},

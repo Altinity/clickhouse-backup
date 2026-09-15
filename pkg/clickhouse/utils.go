@@ -50,7 +50,8 @@ func GetDisksByPaths(disks []Disk, dataPaths []string) (map[string]string, error
 				continue
 			}
 			if exists && matched && !fallback[disk] && prev != dataPath {
-				return nil, errors.Errorf("data paths `%s` and `%s` both resolve to disk `%s`, disks=%v", prev, dataPath, disk, disks)
+				log.Debug().Msgf("GetDisksByPaths: disks=%v dataPaths=%v", disks, dataPaths)
+				return nil, errors.Errorf("table data paths %q and %q both resolve to disk %q, a disk of this table is missing from system.disks or its clickhouse.disk_mapping entry points outside the real disk path", prev, dataPath, disk)
 			}
 			if !matched {
 				log.Warn().Msgf("data path `%s` is not under any disk path, assume disk `default`", dataPath)

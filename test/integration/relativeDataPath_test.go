@@ -76,6 +76,16 @@ cat > /etc/clickhouse-server/config.d/zz_relative_path_test.xml <<'XML'
 </clickhouse>
 XML
 `)
+	// the relative `<path>` is server wide, a leftover would break every test which later acquires this
+	// pooled environment, so restore the container even when an assertion below calls t.FailNow.
+	// `defer env.Cleanup` above was registered first, so this runs before the env returns to the pool
+	defer func() {
+		env.DockerExecNoError(r, "clickhouse", "rm", "-f", "/etc/clickhouse-server/config.d/zz_relative_path_test.xml")
+		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/relative_path_test")
+		env.ch.Close()
+		r.NoError(env.tc.RestartContainer(t, "clickhouse"))
+		env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
+	}()
 	env.ch.Close()
 	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
 	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
@@ -136,12 +146,13 @@ XML
 	r.NotContains(restoreOut, "-> disks/")
 	env.checkCount(r, 1, 1000, fmt.Sprintf("SELECT count() FROM %s.%s", dbName, tableName))
 
-	// Step 5: cleanup
+	// Step 5: cleanup, the config.d override and the minio prefix are removed by the defer above.
+	// the negative run must not leave a backup behind, drop it best effort in case a version
+	// unexpectedly gets past checkDisksConsistency
+	if _, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
+		"clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local "+backupName+"_negative 2>&1 || true"); err != nil {
+		log.Warn().Msgf("delete local %s_negative: %v", backupName, err)
+	}
 	fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"},
 		[]string{"test_relative_path"}, true, true, true, "config-s3.yml")
-	env.DockerExecNoError(r, "clickhouse", "rm", "-f", "/etc/clickhouse-server/config.d/zz_relative_path_test.xml")
-	env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/relative_path_test")
-	env.ch.Close()
-	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
-	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 }

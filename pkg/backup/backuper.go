@@ -335,7 +335,7 @@ func (b *Backuper) checkDisksConsistency(disks []clickhouse.Disk) error {
 		// clickhouse-server started with a relative `<path>`: without disk_mapping we can't know the server
 		// working directory, resolving it against our own cwd would hardlink parts into the wrong tree,
 		// fix https://github.com/Altinity/clickhouse-backup/issues/1121
-		if !strings.HasPrefix(disk.Path, "/") {
+		if disk.Path != "" && !strings.HasPrefix(disk.Path, "/") {
 			problems = append(problems, fmt.Sprintf("disk %q (type %q) reports relative path %q, set clickhouse.disk_mapping[\"default\"] to the absolute clickhouse-server data path", disk.Name, disk.Type, disk.RawPath))
 			continue
 		}

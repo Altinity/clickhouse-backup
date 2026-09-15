@@ -111,6 +111,15 @@ func TestResolveDiskPaths(t *testing.T) {
 			expected: map[string]string{"default": "/var/lib/clickhouse/", "web": ""},
 		},
 		{
+			name: "mapped default without a system.disks row is still the root",
+			disks: []Disk{
+				{Name: "relative_s3", Type: "s3", Path: "./disks/relative_s3/"},
+			},
+			diskMapping: map[string]string{"default": "/mnt/ch"},
+			enrich:      true,
+			expected:    map[string]string{"default": "/mnt/ch", "relative_s3": "/mnt/ch/disks/relative_s3/"},
+		},
+		{
 			name: "enrich appends a mapped disk which is absent in system.disks",
 			disks: []Disk{
 				{Name: "default", Type: "local", Path: "/var/lib/clickhouse/"},
@@ -254,7 +263,7 @@ func TestGetDisksByPaths(t *testing.T) {
 			name:      "two different data paths really matching one disk are a misconfiguration",
 			disks:     []Disk{{Name: "default", Path: "/var/lib/clickhouse/"}},
 			dataPaths: []string{"/var/lib/clickhouse/store/abc/abcdef/", "/var/lib/clickhouse/store/abc/fedcba/"},
-			expectErr: "both resolve to disk `default`",
+			expectErr: `both resolve to disk "default"`,
 		},
 		{
 			name: "two disk names sharing one path (issue #676 enrich)",

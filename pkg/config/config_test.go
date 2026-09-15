@@ -395,6 +395,12 @@ func TestValidateConfigErrors(t *testing.T) {
 		wantErr string
 	}{
 		{"valid default config", func(cfg *Config) {}, ""},
+		{"absolute disk_mapping", func(cfg *Config) {
+			cfg.ClickHouse.DiskMapping = map[string]string{"default": "/var/lib/clickhouse"}
+		}, ""},
+		{"relative disk_mapping", func(cfg *Config) {
+			cfg.ClickHouse.DiskMapping = map[string]string{"default": "var/lib/clickhouse"}
+		}, `clickhouse->disk_mapping["default"]="var/lib/clickhouse" is invalid, it must be an absolute path`},
 		{"bad s3 retry_mode", func(cfg *Config) {
 			cfg.General.RemoteStorage = "s3"
 			cfg.S3.RetryMode = "aggressive"
