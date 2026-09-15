@@ -46,7 +46,10 @@ func TestCustomSQLDisk(t *testing.T) {
 	const (
 		// skip_access_check mirrors the s3 disks of cacheDiskBackup_test.go and serverAPI_test.go,
 		// the disk access-check probe can block CREATE TABLE for minutes when the background schedule pool is
-		// saturated right after a container restart, the probe removal waits for blob removal without a timeout
+		// saturated right after a container restart, the probe removal waits for blob removal without a timeout.
+		// The cache and encrypted wrappers read their own skip_access_check (RegisterDiskCache.cpp), so it must be
+		// repeated on the wrapper: a hung wrapper probe holds the Context disk registry lock and every later
+		// CREATE TABLE with a storage_policy on the same server blocks behind it
 		s3Creds     = "access_key_id = 'access_key', secret_access_key = 'it_is_my_super_secret_key', skip_access_check = true"
 		s3EndPrefix = "https://minio:9000/clickhouse/custom_sql_disk/"
 	)
@@ -87,7 +90,7 @@ XML
 	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE %s.t_cache_s3 (id UInt64, s String) ENGINE=MergeTree() ORDER BY id "+
 			"SETTINGS disk = disk(type = cache, max_size = 1073741824, path = '/var/lib/clickhouse/caches/custom_sql_cache/', "+
-			"disk = disk(type = s3, endpoint = '%st_cache_s3/', %s))",
+			"skip_access_check = true, disk = disk(type = s3, endpoint = '%st_cache_s3/', %s))",
 		dbName, s3EndPrefix, s3Creds))
 
 	// (c) explicitly named s3 custom disk, storage_policy becomes '__custom_named_s3'
@@ -100,7 +103,7 @@ XML
 	env.queryWithNoError(t, r, fmt.Sprintf(
 		"CREATE TABLE %s.t_encrypted_s3 (id UInt64, s String) ENGINE=MergeTree() ORDER BY id "+
 			"SETTINGS disk = disk(type = encrypted, key = '1234567812345678', path = 'enc/', "+
-			"disk = disk(type = s3, endpoint = '%st_encrypted_s3/', %s))",
+			"skip_access_check = true, disk = disk(type = s3, endpoint = '%st_encrypted_s3/', %s))",
 		dbName, s3EndPrefix, s3Creds))
 
 	for tableName, rows := range tables {
