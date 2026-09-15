@@ -80,6 +80,27 @@ XML
 	// pooled environment, so restore the container even when an assertion below calls t.FailNow.
 	// `defer env.Cleanup` above was registered first, so this runs before the env returns to the pool
 	defer func() {
+		// order matters: the test table references storage policy `relative_tiered`, which only this
+		// override defines. Removing the override while the table metadata still exists makes
+		// clickhouse-server refuse to start with `Unknown storage policy relative_tiered (UNKNOWN_POLICY)`,
+		// so drop the database first, while the definitions are still in place
+		dropped := false
+		for attempt := 0; attempt < 3 && !dropped; attempt++ {
+			if out, err := env.DockerExecOut("clickhouse", "clickhouse", "client", "-q", "DROP DATABASE IF EXISTS "+dbName+" SYNC"); err == nil {
+				dropped = true
+			} else {
+				log.Warn().Msgf("teardown DROP DATABASE %s attempt %d: %v, output: %s", dbName, attempt+1, err, out)
+				time.Sleep(5 * time.Second)
+			}
+		}
+		if !dropped {
+			// clickhouse-server is not answering, remove the database metadata directly instead, otherwise
+			// it would still reference the policy on the next start. `./` is the container working
+			// directory /var/lib/clickhouse, the store/ leftovers are never loaded without these files
+			out, err := env.DockerExecOut("clickhouse", "bash", "-ce",
+				"rm -rfv /var/lib/clickhouse/metadata/"+dbName+" /var/lib/clickhouse/metadata/"+dbName+".sql")
+			log.Warn().Msgf("teardown removed metadata of %s directly: %v, output: %s", dbName, err, out)
+		}
 		env.DockerExecNoError(r, "clickhouse", "rm", "-f", "/etc/clickhouse-server/config.d/zz_relative_path_test.xml")
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/relative_path_test")
 		env.ch.Close()
