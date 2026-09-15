@@ -40,6 +40,8 @@ func TestRelativeDataPathTieredS3(t *testing.T) {
 
 	// Step 1: relative server `<path>` (zz_ prefix, so it merges after configs/storage_configuration.xml)
 	// plus the reporter's tiered policy: a cache disk wrapping an s3 disk, both with relative metadata paths.
+	// The cache `<path>` itself must be absolute: ClickHouse 25.8 resolves a relative one against the (relative)
+	// server `<path>` and then rejects it in FileCacheSettings::validate() ("`path` was not normalized to absolute").
 	env.DockerExecNoError(r, "clickhouse", "bash", "-xc", `
 cat > /etc/clickhouse-server/config.d/zz_relative_path_test.xml <<'XML'
 <clickhouse>
@@ -56,7 +58,7 @@ cat > /etc/clickhouse-server/config.d/zz_relative_path_test.xml <<'XML'
       <relative_cache>
         <type>cache</type>
         <disk>relative_s3</disk>
-        <path>./disks/relative_cache/</path>
+        <path>/var/lib/clickhouse/filesystem_caches/relative_cache/</path>
         <max_size>1073741824</max_size>
       </relative_cache>
     </disks>
