@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,8 +17,8 @@ import (
 // TestRestoreStaleDetachedPart covers item 2/3 of https://github.com/Altinity/clickhouse-backup/issues/1034:
 // a same-named directory left in `detached/` (possibly on another disk of the storage policy) used to be
 // silently merged into, and ClickHouse `ATTACH PART` then picked the stale copy on the first policy disk.
-// Restore now removes `detached/<part>` from every data path of the table, hardlinks into a temporary
-// directory and renames it into place.
+// Restore now renames such a directory to `ignored_<part>` in every data path of the table, hardlinks into a
+// temporary directory and renames it into place.
 func TestRestoreStaleDetachedPart(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.1") < 0 {
 		t.Skipf("Test requires ClickHouse >= 20.1 for storage policies and MOVE PARTITION, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
@@ -95,7 +96,7 @@ func TestRestoreStaleDetachedPart(t *testing.T) {
 	restoreOut, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", backupCmd+" restore --data --tables="+dbName+"."+tableName+" "+backupName)
 	log.Debug().Msg(restoreOut)
 	r.NoError(err, restoreOut)
-	r.Contains(restoreOut, "remove stale detached part")
+	r.Contains(restoreOut, "rename stale detached part")
 
 	// Step 6: all rows are back, the rebalanced partition sits on hdd1, nothing is left in any `detached/`
 	env.checkCount(r, 1, 2000, fmt.Sprintf("SELECT count() FROM %s.%s", dbName, tableName))
@@ -104,24 +105,51 @@ func TestRestoreStaleDetachedPart(t *testing.T) {
 		dbName, tableName,
 	))
 	env.checkCount(r, 1, 0, fmt.Sprintf(
-		"SELECT count() FROM system.detached_parts WHERE database='%s' AND `table`='%s' SETTINGS empty_result_for_aggregation_by_empty_set=0",
-		dbName, tableName,
+		"SELECT count() FROM system.detached_parts WHERE database='%s' AND `table`='%s' AND name='%s' SETTINGS empty_result_for_aggregation_by_empty_set=0",
+		dbName, tableName, movedPart,
 	))
 	detachedDirs := make([]string, 0, len(dataPaths))
 	for _, dataPath := range dataPaths {
 		detachedDirs = append(detachedDirs, dataPath+"/detached")
 	}
+	// no bare `detached/<part>` shadows the restore anymore and no temporary directory survived
 	leftOvers, err := env.DockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf(
-		"find %s -mindepth 1 2>/dev/null | wc -l", strings.Join(detachedDirs, " "),
+		"find %s -mindepth 1 -maxdepth 1 \\( -name '%s' -o -name 'clickhouse_backup_tmp_*' \\) 2>/dev/null | wc -l",
+		strings.Join(detachedDirs, " "), movedPart,
 	))
 	r.NoError(err, leftOvers)
-	r.Equal("0", strings.TrimSpace(leftOvers), "detached dirs must be empty, found:\n%s", leftOvers)
+	r.Equal("0", strings.TrimSpace(leftOvers), "stale and temporary part dirs must be gone, found:\n%s", leftOvers)
+	// the stale copies are kept as `ignored_<part>`, so a manually detached part is recoverable
+	ignoredDirs, err := env.DockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf(
+		"find %s -mindepth 1 -maxdepth 1 -name 'ignored_%s' 2>/dev/null | wc -l",
+		strings.Join(detachedDirs, " "), movedPart,
+	))
+	r.NoError(err, ignoredDirs)
+	r.Equal(strconv.Itoa(len(dataPaths)), strings.TrimSpace(ignoredDirs), "every stale dir must be renamed, found:\n%s", ignoredDirs)
 
-	// Step 7: the same temporary directory + rename logic on the `restore_as_attach` path (toDetached=false)
+	// Step 7: the same temporary directory + rename logic on the `restore_as_attach` path (toDetached=false),
+	// where the temporary directory lives in the table data dir and a leftover must not trip the "contains exists data" guard
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") >= 0 {
 		env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE %s.%s%s", dbName, tableName, dropSuffix))
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce",
-			"CLICKHOUSE_RESTORE_AS_ATTACH=true "+backupCmd+" restore --tables="+dbName+"."+tableName+" "+backupName)
+			backupCmd+" restore --schema --tables="+dbName+"."+tableName+" "+backupName)
+
+		r.NoError(env.ch.SelectSingleRowNoCtx(&dataPathsRaw,
+			"SELECT arrayStringConcat(data_paths, ' ') FROM system.tables WHERE database=? AND name=?", dbName, tableName))
+		attachHdd1Path := ""
+		for _, dataPath := range strings.Fields(dataPathsRaw) {
+			if strings.HasPrefix(dataPath, "/hdd1_data/") {
+				attachHdd1Path = strings.TrimRight(dataPath, "/")
+			}
+		}
+		r.NotEmpty(attachHdd1Path, "no hdd1 data path in %s", dataPathsRaw)
+		env.DockerExecNoError(r, "clickhouse", "bash", "-ce", fmt.Sprintf(
+			"mkdir -p %s/clickhouse_backup_tmp_%s && echo leftover > %s/clickhouse_backup_tmp_%s/leftover.bin && chown -R clickhouse:clickhouse %s",
+			attachHdd1Path, movedPart, attachHdd1Path, movedPart, attachHdd1Path,
+		))
+
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce",
+			"CLICKHOUSE_RESTORE_AS_ATTACH=true "+backupCmd+" restore --data --tables="+dbName+"."+tableName+" "+backupName)
 		env.checkCount(r, 1, 2000, fmt.Sprintf("SELECT count() FROM %s.%s", dbName, tableName))
 	}
 
@@ -233,7 +261,9 @@ func TestDownloadIncrementRebalanceRequiredParts(t *testing.T) {
 		"CLICKHOUSE_FORCE_REBALANCE=true "+backupCmd+" download "+incBackup)
 	log.Debug().Msg(downloadOut)
 	r.NoError(err, downloadOut)
-	r.Contains(downloadOut, "require disk 'default' that not found in system.disks", downloadOut)
+	// the rebalance branch ran; the warn text itself says "not found in system.disks" which is inaccurate
+	// under force_rebalance (the disk does exist), so assert on the part that is always true
+	r.Contains(downloadOut, "data will download to", downloadOut)
 	r.NotContains(downloadOut, "can't find disk:", downloadOut)
 
 	tableJSON, err := env.DockerExecOut("clickhouse-backup", "cat",

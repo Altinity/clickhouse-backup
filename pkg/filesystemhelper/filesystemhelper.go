@@ -28,8 +28,10 @@ var (
 )
 
 // restoreTmpPartPrefix is the prefix of the temporary directory parts are hardlinked into before the atomic rename.
-// The remainder after the first `_` must not parse as a part name, otherwise a concurrent `ATTACH PARTITION`
-// could pick up a half-built directory, https://github.com/Altinity/clickhouse-backup/issues/1034
+// ClickHouse `parseDetachedPartName` (src/Storages/MergeTree/MergeTreePartInfo.cpp) splits an unknown prefix at the
+// first `_` only, so the remainder must not parse as a part name, otherwise a concurrent `ATTACH PARTITION` could
+// pick up a half-built directory: here the remainder is `backup_tmp_<part>`, whose `tmp` is not a block number,
+// https://github.com/Altinity/clickhouse-backup/issues/1034
 const restoreTmpPartPrefix = "clickhouse_backup_tmp_"
 
 // Chown - set permission on path to clickhouse user
@@ -128,8 +130,18 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
 	dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
 	if !toDetached {
+		// rebalanced parts land on another disk than the backup one, so its destination directory needs the same check
+		checkDisks := common.EmptyMap{}
 		for backupDiskName := range backupTable.Parts {
-			dstParentDir, dstParentDirExists := dstDataPaths[backupDiskName]
+			checkDisks[backupDiskName] = struct{}{}
+			for _, part := range backupTable.Parts[backupDiskName] {
+				if part.RebalancedDisk != "" {
+					checkDisks[part.RebalancedDisk] = struct{}{}
+				}
+			}
+		}
+		for checkDisk := range checkDisks {
+			dstParentDir, dstParentDirExists := dstDataPaths[checkDisk]
 			if dstParentDirExists {
 				// avoid to restore to non-empty to avoid attach in already dropped partitions, corner case
 				existsFiles, err := os.ReadDir(dstParentDir)
@@ -137,10 +149,39 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 					return errors.Wrap(err, "HardlinkBackupPartsToStorage ReadDir")
 				}
 				for _, f := range existsFiles {
-					if f.Name() != "detached" && !strings.HasSuffix(f.Name(), ".txt") {
+					// a temporary directory is a leftover of an interrupted restore and is removed below, don't refuse the retry
+					if f.Name() != "detached" && !strings.HasSuffix(f.Name(), ".txt") && !strings.HasPrefix(f.Name(), restoreTmpPartPrefix) {
 						return errors.Errorf("%s contains exists data %v, we can't restore directly via ATTACH TABLE, use `clickhouse->restore_as_attach=false` in your config", dstParentDir, existsFiles)
 					}
 				}
+			}
+		}
+	}
+	// `detached` directories of the destination table, indexed by their entry names. ClickHouse `ATTACH PART` takes
+	// the first disk of the storage policy which owns `detached/<part>`, so a stale same-named directory on any disk
+	// of the table shadows the freshly restored one and has to be moved out of the way. Each directory is listed once,
+	// so the per-part lookup costs a map lookup instead of a `stat` per part and disk,
+	// https://github.com/Altinity/clickhouse-backup/issues/1034
+	detachedEntries := map[string]common.EmptyMap{}
+	scanDetachedDir := func(detachedDir string) error {
+		if _, scanned := detachedEntries[detachedDir]; scanned {
+			return nil
+		}
+		dirEntries, err := os.ReadDir(detachedDir)
+		if err != nil && !os.IsNotExist(err) {
+			return errors.Wrapf(err, "HardlinkBackupPartsToStorage ReadDir '%s'", detachedDir)
+		}
+		names := common.EmptyMap{}
+		for _, dirEntry := range dirEntries {
+			names[dirEntry.Name()] = struct{}{}
+		}
+		detachedEntries[detachedDir] = names
+		return nil
+	}
+	if toDetached {
+		for _, dataPath := range dstDataPaths {
+			if err := scanDetachedDir(filepath.Join(dataPath, "detached")); err != nil {
+				return err
 			}
 		}
 	}
@@ -151,7 +192,7 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			activeDisk := backupDiskName
 			dstParentDir, dstParentDirExists := dstDataPaths[activeDisk]
 			if !dstParentDirExists && part.RebalancedDisk == "" {
-				return errors.Errorf("disk '%s' required by part '%s' of '%s.%s' is not present in the destination table data_paths (disks: %v), check that the destination table storage policy contains this disk via `SELECT * FROM system.storage_policies`, recreate the table from the backup schema (restore without --data), or map the disk via `clickhouse->disk_mapping` in your config", activeDisk, part.Name, backupTable.Database, backupTable.Table, slices.Sorted(maps.Keys(dstDataPaths)))
+				return errors.Errorf("disk '%s' required by part '%s' of '%s.%s' is not present in the destination table data_paths (disks: %v), check `SELECT * FROM system.storage_policies` on the destination server", activeDisk, part.Name, backupTable.Database, backupTable.Table, slices.Sorted(maps.Keys(dstDataPaths)))
 			}
 			if part.RebalancedDisk != "" {
 				activeDisk = part.RebalancedDisk
@@ -183,7 +224,11 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 				return errors.Wrapf(err, "remove leftover temporary part directory '%s'", dstPartPath)
 			}
 			if toDetached {
-				if err := removeStaleDetachedPart(part.Name, dstDataPaths, dstParentDir); err != nil {
+				// the rebalanced disk may be absent from tableDataPaths, so its `detached` dir is listed lazily
+				if err := scanDetachedDir(dstParentDir); err != nil {
+					return err
+				}
+				if err := ignoreStaleDetachedParts(part.Name, detachedEntries); err != nil {
 					return err
 				}
 			}
@@ -228,9 +273,12 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 				}
 				return Chown(dstFilePath, ch, disks, false)
 			}); err != nil {
+				// don't leave a half-built temporary directory behind, ClickHouse never reaps it
+				_ = os.RemoveAll(dstPartPath)
 				return errors.Wrapf(err, "error during filepath.Walk for part '%s'", part.Name)
 			}
 			if err := os.Rename(dstPartPath, finalPartPath); err != nil {
+				_ = os.RemoveAll(dstPartPath)
 				return errors.Wrapf(err, "rename '%s' -> '%s'", dstPartPath, finalPartPath)
 			}
 		}
@@ -239,31 +287,39 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 	return nil
 }
 
-// removeStaleDetachedPart removes `detached/<partName>` from every data path of the destination table
-// (all disks of its storage policy) plus dstDetachedDir (the rebalanced disk, which may be absent from
-// tableDataPaths). ClickHouse `ATTACH PART` takes the first storage policy disk which has such a directory,
-// so a stale copy on another disk shadows the freshly restored one,
-// https://github.com/Altinity/clickhouse-backup/issues/1034
-func removeStaleDetachedPart(partName string, dstDataPaths map[string]string, dstDetachedDir string) error {
-	candidates := map[string]struct{}{filepath.Join(dstDetachedDir, partName): {}}
-	for _, dataPath := range dstDataPaths {
-		candidates[filepath.Join(dataPath, "detached", partName)] = struct{}{}
-	}
-	for candidate := range candidates {
-		info, err := os.Stat(candidate)
+// ignoreStaleDetachedParts moves a same-named `detached/<partName>` directory out of the way in every listed
+// `detached` directory of the destination table, because ClickHouse `ATTACH PART` takes the first disk of the storage
+// policy which owns such a directory and a stale copy there shadows the freshly restored one. The directory is renamed
+// to `ignored_<partName>` rather than deleted: `ignored` is a ClickHouse detach reason, so a part detached manually by
+// the user stays visible in `system.detached_parts` and re-attachable, while `tryLoadPartsToAttach` skips every
+// prefixed directory, https://github.com/Altinity/clickhouse-backup/issues/1034
+func ignoreStaleDetachedParts(partName string, detachedEntries map[string]common.EmptyMap) error {
+	ignoredName := "ignored_" + partName
+	for detachedDir, names := range detachedEntries {
+		if _, isStale := names[partName]; !isStale {
+			continue
+		}
+		stalePath := filepath.Join(detachedDir, partName)
+		info, err := os.Stat(stalePath)
 		if os.IsNotExist(err) {
 			continue
 		}
 		if err != nil {
-			return errors.Wrapf(err, "stat '%s'", candidate)
+			return errors.Wrapf(err, "stat '%s'", stalePath)
 		}
 		if !info.IsDir() {
-			return errors.Errorf("'%s' should be directory or absent", candidate)
+			return errors.Errorf("'%s' should be directory or absent", stalePath)
 		}
-		log.Warn().Msgf("remove stale detached part %s before restore", candidate)
-		if err := os.RemoveAll(candidate); err != nil {
-			return errors.Wrapf(err, "remove stale detached part '%s'", candidate)
+		ignoredPath := filepath.Join(detachedDir, ignoredName)
+		if err := os.RemoveAll(ignoredPath); err != nil {
+			return errors.Wrapf(err, "remove previous '%s'", ignoredPath)
 		}
+		log.Warn().Msgf("rename stale detached part %s to %s before restore", stalePath, ignoredPath)
+		if err := os.Rename(stalePath, ignoredPath); err != nil {
+			return errors.Wrapf(err, "rename stale detached part '%s' -> '%s'", stalePath, ignoredPath)
+		}
+		delete(names, partName)
+		names[ignoredName] = struct{}{}
 	}
 	return nil
 }
