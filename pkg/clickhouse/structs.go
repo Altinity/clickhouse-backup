@@ -48,9 +48,10 @@ type Disk struct {
 	TotalSpace      uint64   `ch:"total_space"`
 	StoragePolicies []string `ch:"storage_policies"`
 	IsBackup        bool
-	// RawPath - `system.disks.path` as reported by clickhouse-server, before GetDisks rewrites the
-	// bucket key prefix of plain/plain_rewritable disks to a pseudo local path. Empty for a plain disk
-	// which lives in the bucket root (azure disk without `common_key_prefix` on ClickHouse 24.8/25.3)
+	// RawPath - `system.disks.path` as reported by clickhouse-server, before GetDisks rewrites it: the
+	// bucket key prefix of plain/plain_rewritable disks becomes a pseudo local path, a relative local path
+	// (clickhouse-server started with a relative `<path>`) becomes absolute via disk_mapping. Empty for a
+	// plain disk which lives in the bucket root (azure disk without `common_key_prefix` on ClickHouse 24.8/25.3)
 	RawPath string
 }
 

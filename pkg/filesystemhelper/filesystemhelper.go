@@ -127,7 +127,10 @@ func MkdirAll(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) e
 // HardlinkBackupPartsToStorage - copy partitions for specific table to detached folder
 func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, diskMap map[string]string, tableDataPaths, skipProjections []string, ch *clickhouse.ClickHouse, toDetached bool) error {
 	start := time.Now()
-	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
+	dstDataPaths, err := clickhouse.GetDisksByPaths(disks, tableDataPaths)
+	if err != nil {
+		return errors.Wrap(err, "HardlinkBackupPartsToStorage")
+	}
 	dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
 	if !toDetached {
 		// rebalanced parts land on another disk than the backup one, so its destination directory needs the same check

@@ -1200,8 +1200,15 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 	}
 
 	cfg := &container.Config{
-		Image:        chImage,
-		User:         "root",
+		Image: chImage,
+		User:  "root",
+		// the clickhouse-server ubuntu/alpine images declare no WORKDIR, and the `cd "$DATA_DIR"` of
+		// /entrypoint.sh is a no-op when DATA_DIR is the config `path` itself, so with `<path>./</path>`
+		// clickhouse-server would keep cwd `/` (it canonicalises a relative path against the working
+		// directory captured at startup) and write the data outside the shared volume, where the
+		// clickhouse-backup container can't see it. Every DockerExec* against this container uses absolute
+		// paths, so pinning the cwd is inert for the rest of the suite. Needed by TestRelativeDataPathTieredS3
+		WorkingDir:   "/var/lib/clickhouse",
 		Env:          envMap(env),
 		ExposedPorts: network.PortSet{network.MustParsePort("8123/tcp"): {}, network.MustParsePort("9000/tcp"): {}},
 		Healthcheck: &container.HealthConfig{
