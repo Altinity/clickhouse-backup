@@ -2249,9 +2249,23 @@ func (b *Backuper) makePartHardlinks(exists, new string) error {
 		if err = os.Link(existsF, newF); err != nil {
 			existsFInfo, existsStatErr := os.Stat(existsF)
 			newFInfo, newStatErr := os.Stat(newF)
-			if existsStatErr != nil || newStatErr != nil || !os.SameFile(existsFInfo, newFInfo) {
+			if existsStatErr != nil || newStatErr != nil {
 				log.Warn().Msgf("Link %s -> %s error: %v, existsStatErr: %v newStatErr: %v", existsF, newF, err, existsStatErr, newStatErr)
 				return errors.Wrap(err, "Link in walk")
+			}
+			// the destination already holds another inode of the same part file: a leftover of an
+			// earlier download which hardlinked it from a required backup that has been removed
+			// (cleanPartialRequiredBackup) and downloaded again since, so the link points at the
+			// old inode. The freshly downloaded copy is authoritative, replace the leftover.
+			if !os.SameFile(existsFInfo, newFInfo) {
+				if removeErr := os.Remove(newF); removeErr != nil {
+					log.Warn().Msgf("remove stale %s error: %v", newF, removeErr)
+					return errors.Wrapf(removeErr, "remove stale hardlink %s", newF)
+				}
+				if err = os.Link(existsF, newF); err != nil {
+					log.Warn().Msgf("Link %s -> %s error: %v", existsF, newF, err)
+					return errors.Wrap(err, "Link in walk")
+				}
 			}
 		}
 		if err = os.Chmod(newF, 0640); err != nil {

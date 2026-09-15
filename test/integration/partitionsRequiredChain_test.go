@@ -104,8 +104,9 @@ func TestDownloadPartitionsRequiredChainS3(t *testing.T) {
 	env.checkCount(r, 1, 100, "SELECT count() FROM "+dbName+"."+tableName+" WHERE p=1 SETTINGS empty_result_for_aggregation_by_empty_set=0")
 
 	// the same stale inc1 with download_by_part disabled, so `Download` first recurses into inc1.
-	// The recursion short-circuits with ErrBackupIsAlreadyExists because the stale local inc1 is
-	// there, so the per-part resolution still has to skip its filtered metadata and reach full.
+	// use_resumable_state is on by default, so the recursion resumes the stale local inc1 instead of
+	// returning ErrBackupIsAlreadyExists, re-downloads full and hardlinks 1_1_1_0 into inc1 over the
+	// leftover copy which the preceding download materialised there.
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+configFile, "delete", "--force", "local", incr2Backup)
 	downloadOut, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("DOWNLOAD_BY_PART=false LOG_LEVEL=debug clickhouse-backup -c /etc/clickhouse-backup/%s download --partitions=%s.%s:1 %s 2>&1", configFile, dbName, tableName, incr2Backup))
 	r.NoError(err, downloadOut)
