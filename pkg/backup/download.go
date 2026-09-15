@@ -2258,13 +2258,18 @@ func (b *Backuper) makePartHardlinks(exists, new string) error {
 			// (cleanPartialRequiredBackup) and downloaded again since, so the link points at the
 			// old inode. The freshly downloaded copy is authoritative, replace the leftover.
 			if !os.SameFile(existsFInfo, newFInfo) {
-				if removeErr := os.Remove(newF); removeErr != nil {
-					log.Warn().Msgf("remove stale %s error: %v", newF, removeErr)
-					return errors.Wrapf(removeErr, "remove stale hardlink %s", newF)
+				// link under a temporary name and rename over the leftover, so another process reading
+				// this shadow tree never observes a missing file
+				tmpF := newF + ".tmp_relink"
+				_ = os.Remove(tmpF)
+				if err = os.Link(existsF, tmpF); err != nil {
+					log.Warn().Msgf("Link %s -> %s error: %v", existsF, tmpF, err)
+					return errors.Wrapf(err, "link stale replacement %s", tmpF)
 				}
-				if err = os.Link(existsF, newF); err != nil {
-					log.Warn().Msgf("Link %s -> %s error: %v", existsF, newF, err)
-					return errors.Wrap(err, "Link in walk")
+				if err = os.Rename(tmpF, newF); err != nil {
+					_ = os.Remove(tmpF)
+					log.Warn().Msgf("Rename %s -> %s error: %v", tmpF, newF, err)
+					return errors.Wrapf(err, "replace stale hardlink %s", newF)
 				}
 			}
 		}
