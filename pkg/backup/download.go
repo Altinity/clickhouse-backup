@@ -588,16 +588,32 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 	return nil
 }
 
+// downloadTableMetadataIfNotExists returns the table metadata of a required backup exactly as it is stored
+// on remote storage, without any filter by partitions. A local copy under backup/<name>/metadata could be
+// narrowed by an earlier `download --partitions`, by allow_missing_files_on_download or by disk rebalancing,
+// so it describes what is present locally and can't be used to resolve which backup of the required sequence
+// physically holds a part, see https://github.com/Altinity/clickhouse-backup/issues/1045
 func (b *Backuper) downloadTableMetadataIfNotExists(ctx context.Context, backupName string, tableTitle metadata.TableTitle) (*metadata.TableMetadata, error) {
-	metadataLocalFile := path.Join(b.DefaultDataPath, "backup", backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
-	tm := &metadata.TableMetadata{}
-	if _, err := tm.Load(metadataLocalFile); err == nil {
-		return tm, nil
+	var tm *metadata.TableMetadata
+	metadataNotFound := false
+	retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
+	err := retry.RunCtx(ctx, func(ctx context.Context) error {
+		var readErr error
+		tm, _, readErr = b.readRemoteTableMetadata(ctx, backupName, tableTitle)
+		// a missing metadata file is permanent, don't burn the exponential backoff on it
+		if readErr != nil && storage.IsNotFoundErr(readErr) {
+			metadataNotFound = true
+			return nil
+		}
+		return readErr
+	})
+	if metadataNotFound {
+		return nil, errors.Errorf("remote metadata file for `%s`.`%s` not found in backup %s, backup is broken", tableTitle.Database, tableTitle.Table, backupName)
 	}
-	// we always download full metadata in this case without filter by partitions
-	logger := log.With().Fields(map[string]interface{}{"operation": "downloadTableMetadataIfNotExists", "backupName": backupName, "table_metadata_diff": fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table)}).Logger()
-	tm, _, err := b.downloadTableMetadata(ctx, backupName, nil, tableTitle, false, nil, false, logger)
-	return tm, err
+	if err != nil {
+		return nil, err
+	}
+	return tm, nil
 }
 
 func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string, disks []clickhouse.Disk, tableTitle metadata.TableTitle, schemaOnly bool, partitions []string, resume bool, logger zerolog.Logger) (*metadata.TableMetadata, uint64, error) {
@@ -1365,15 +1381,7 @@ func (b *Backuper) computeDownloadSizeEstimate(ctx context.Context, remoteBackup
 			tableMetadataCacheKey := path.Join(requiredBackupName, title.Database, title.Table)
 			requiredTableMetadata, exists := requiredTableMetadataCache[tableMetadataCacheKey]
 			if !exists {
-				var m *metadata.TableMetadata
-				var err error
-				if b.DryRun {
-					// a dry-run must not write anything to the local disk, read the required table
-					// metadata into memory instead of caching it as a local file
-					m, _, err = b.readRemoteTableMetadata(ctx, requiredBackupName, title)
-				} else {
-					m, err = b.downloadTableMetadataIfNotExists(ctx, requiredBackupName, title)
-				}
+				m, err := b.downloadTableMetadataIfNotExists(ctx, requiredBackupName, title)
 				if err != nil {
 					log.Warn().Err(err).Msgf("can't download %s table metadata to resolve required part %s size", tableMetadataCacheKey, partName)
 					return 0, false
