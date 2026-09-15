@@ -198,27 +198,63 @@ func (ch *ClickHouse) GetDisks(ctx context.Context, enrich bool) ([]Disk, error)
 		if disks[i].Name == ch.Config.EmbeddedBackupDisk {
 			disks[i].IsBackup = true
 		}
-		disks[i].RawPath = disks[i].Path
-		// s3_plain disk could contain relative remote disks path, need transform it to `/var/lib/clickhouse/disks/disk_name`
-		// a plain disk in the bucket root reports an empty path, keeping it empty would make it a prefix of every table data path
-		if (disks[i].Path != "" && !strings.HasPrefix(disks[i].Path, "/")) || (disks[i].Path == "" && disks[i].IsPlain()) {
-			for _, d := range disks {
-				if d.Name == "default" {
-					disks[i].Path = path.Join(d.Path, "disks", disks[i].Name) + "/"
-					break
-				}
-			}
-		}
 	}
-	if len(ch.Config.DiskMapping) == 0 {
-		return disks, nil
+	return resolveDiskPaths(disks, ch.Config.DiskMapping, enrich), nil
+}
+
+// resolveDiskPaths - rewrite `system.disks.path` to the absolute local path clickhouse-backup works with:
+//   - an explicit `clickhouse.disk_mapping` entry always wins
+//   - the path of a plain/plain_rewritable disk is a bucket key prefix (empty for a disk in the bucket root),
+//     it is replaced by the pseudo local path `<default disk path>/disks/<disk name>/`
+//   - clickhouse-server started with a relative `<path>` reports every local disk path relative to its working
+//     directory, which is the `default` disk path, so `disk_mapping["default"]` resolves all of them,
+//     fix https://github.com/Altinity/clickhouse-backup/issues/1121
+//   - a relative path which can't be resolved is kept as is, `checkDisksConsistency` reports it with a hint;
+//     failing here would break `tables`, `list` and RBAC lookups on setups with exotic or skipped disks
+//
+// the raw value stays available in `Disk.RawPath`, `normalizeDataPathsByDisks` applies the same substitution
+// to `system.tables.data_paths`, so data paths and disk paths always agree
+func resolveDiskPaths(disks []Disk, diskMapping map[string]string, enrich bool) []Disk {
+	for i := range disks {
+		disks[i].RawPath = disks[i].Path
 	}
 	dm := map[string]string{}
-	maps.Copy(dm, ch.Config.DiskMapping)
+	maps.Copy(dm, diskMapping)
+	// `default` is resolved first, its final path is the root for every other relative disk path
+	defaultPath := "/var/lib/clickhouse"
+	if p, ok := dm["default"]; ok {
+		defaultPath = p
+	}
+	for i := range disks {
+		if disks[i].Name == "default" {
+			if p, ok := dm["default"]; ok {
+				disks[i].Path = p
+				delete(dm, "default")
+			}
+			defaultPath = disks[i].Path
+			break
+		}
+	}
+	serverRoot := ""
+	if strings.HasPrefix(defaultPath, "/") {
+		serverRoot = defaultPath
+	}
 	for i := range disks {
 		if p, ok := dm[disks[i].Name]; ok {
 			disks[i].Path = p
 			delete(dm, disks[i].Name)
+			continue
+		}
+		if strings.HasPrefix(disks[i].Path, "/") {
+			continue
+		}
+		switch {
+		case disks[i].Path == "" && !disks[i].IsPlain():
+			// nothing to resolve, keeping it empty would make it a prefix of every table data path
+		case disks[i].IsPlain():
+			disks[i].Path = path.Join(defaultPath, "disks", disks[i].Name) + "/"
+		case serverRoot != "":
+			disks[i].Path = path.Join(serverRoot, disks[i].RawPath) + "/"
 		}
 	}
 	// https://github.com/Altinity/clickhouse-backup/issues/676#issuecomment-1606547960
@@ -231,7 +267,7 @@ func (ch *ClickHouse) GetDisks(ctx context.Context, enrich bool) ([]Disk, error)
 			})
 		}
 	}
-	return disks, nil
+	return disks
 }
 
 func (ch *ClickHouse) GetEmbeddedBackupPath(disks []Disk) (string, error) {
@@ -279,6 +315,21 @@ func (ch *ClickHouse) getDisksFromSystemSettings(ctx context.Context) ([]Disk, e
 	}
 }
 
+// resolveServerRoot - the absolute directory a relative clickhouse-server path must be joined to, "" when
+// rawPath is already absolute or the root is unknown. A server started with a relative `<path>` reports
+// relative paths everywhere: `system.disks.path`, `system.tables.data_paths`, `system.databases.data_path`
+// and `system.user_directories`. There is no SQL way to learn the server working directory, so
+// `clickhouse.disk_mapping["default"]` is the only source for it, the same root resolveDiskPaths uses for the
+// disks themselves. When it is unknown the caller keeps its previous behaviour and checkDisksConsistency
+// reports the missing mapping, fix https://github.com/Altinity/clickhouse-backup/issues/1121
+func (ch *ClickHouse) resolveServerRoot(rawPath string) string {
+	serverRoot := ch.Config.DiskMapping["default"]
+	if rawPath == "" || strings.HasPrefix(rawPath, "/") || !strings.HasPrefix(serverRoot, "/") {
+		return ""
+	}
+	return serverRoot
+}
+
 func (ch *ClickHouse) getMetadataPath(ctx context.Context) (string, error) {
 	var result []struct {
 		MetadataPath string `ch:"metadata_path"`
@@ -312,18 +363,30 @@ func (ch *ClickHouse) getMetadataPath(ctx context.Context) (string, error) {
 			return "", errors.New("can't get data_path from system.databases")
 		}
 	}
-	metadataPath := strings.Split(result[0].MetadataPath, "/")
-	// https://github.com/ClickHouse/ClickHouse/issues/76546
-	if strings.HasSuffix(result[0].MetadataPath, "/store/") {
-		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-2]...)
-		result[0].MetadataPath = path.Join(result[0].MetadataPath, "metadata")
-	} else if strings.Contains(result[0].MetadataPath, "/store/") {
-		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-4]...)
-		result[0].MetadataPath = path.Join(result[0].MetadataPath, "metadata")
-	} else {
-		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-2]...)
+	return metadataPathFromRaw(result[0].MetadataPath, ch.resolveServerRoot(result[0].MetadataPath)), nil
+}
+
+// metadataPathFromRaw - derive the clickhouse-server metadata directory from a raw
+// `system.tables.metadata_path` / `system.databases.data_path` value,
+// https://github.com/ClickHouse/ClickHouse/issues/76546. serverRoot is "" unless the raw value is relative
+// and the root is known, see resolveServerRoot
+func metadataPathFromRaw(rawMetadataPath, serverRoot string) string {
+	parts := strings.Split(rawMetadataPath, "/")
+	var metadataPath string
+	switch {
+	case strings.HasSuffix(rawMetadataPath, "/store/"):
+		metadataPath = path.Join(path.Join(parts[:len(parts)-2]...), "metadata")
+	case strings.Contains(rawMetadataPath, "/store/"):
+		metadataPath = path.Join(path.Join(parts[:len(parts)-4]...), "metadata")
+	default:
+		metadataPath = path.Join(parts[:len(parts)-2]...)
 	}
-	return path.Join("/", result[0].MetadataPath), nil
+	// forcing a leading `/` on a relative path would point every path derived from it at the filesystem
+	// root (`/preprocessed_configs`, `/access`, `/flags/force_drop_table`)
+	if serverRoot != "" {
+		return path.Join(serverRoot, metadataPath)
+	}
+	return path.Join("/", metadataPath)
 }
 
 // normalizeDiskMetadataType - `system.disks.metadata_type` contains enum names (`Local`, `Plain`, `PlainRewritable`),
@@ -538,11 +601,12 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	return tables, nil
 }
 
-// normalizeRelativeDataPaths - plain/plain_rewritable disks report a relative `system.disks.path`
-// (the bucket key prefix) and `system.tables.data_paths` inherit it. Rewrite such data paths to the
-// same pseudo-absolute form GetDisks produces (`<default>/disks/<disk_name>/...`), so downstream code
-// can both match a data path to its disk by prefix and derive the disk-root-relative logical path
-// as TrimPrefix(dataPath, disk.Path)
+// normalizeRelativeDataPaths - `system.tables.data_paths` are relative when the disk they live on reports
+// a relative `system.disks.path`: the bucket key prefix of a plain/plain_rewritable disk, or any local disk
+// of a clickhouse-server started with a relative `<path>`. Rewrite such data paths with the same
+// RawPath -> Path substitution GetDisks applied to the disks themselves, so downstream code can both match
+// a data path to its disk by prefix and derive the disk-root-relative logical path as
+// TrimPrefix(dataPath, disk.Path)
 func (ch *ClickHouse) normalizeRelativeDataPaths(ctx context.Context, tables []Table) error {
 	hasRelative := false
 	for i := range tables {
@@ -559,35 +623,45 @@ func (ch *ClickHouse) normalizeRelativeDataPaths(ctx context.Context, tables []T
 	if !hasRelative {
 		return nil
 	}
-	var rawDisks []struct {
-		Name string `ch:"name"`
-		Path string `ch:"path"`
+	disks, err := ch.GetDisks(ctx, false)
+	if err != nil {
+		return errors.Wrap(err, "normalizeRelativeDataPaths: get disks")
 	}
-	if err := ch.SelectContext(ctx, &rawDisks, "SELECT name, path FROM system.disks"); err != nil {
-		return errors.Wrap(err, "normalizeRelativeDataPaths: select system.disks")
-	}
-	defaultPath := "/var/lib/clickhouse"
-	for _, d := range rawDisks {
-		if d.Name == "default" {
-			defaultPath = d.Path
+	normalizeDataPathsByDisks(tables, disks)
+	return nil
+}
+
+// normalizeDataPathsByDisks - replace the relative disk prefix of every relative data path with the
+// resolved `Disk.Path`, see normalizeRelativeDataPaths. Data paths of a disk whose relative path could
+// not be resolved stay relative
+func normalizeDataPathsByDisks(tables []Table, disks []Disk) {
+	relativeDisks := make([]Disk, 0, len(disks))
+	for _, d := range disks {
+		if d.RawPath != "" && !strings.HasPrefix(d.RawPath, "/") {
+			relativeDisks = append(relativeDisks, d)
 		}
 	}
+	if len(relativeDisks) == 0 {
+		return
+	}
 	// longest raw path first, so a data path resolves to the most specific disk prefix
-	sort.Slice(rawDisks, func(i, j int) bool { return len(rawDisks[i].Path) > len(rawDisks[j].Path) })
+	sort.Slice(relativeDisks, func(i, j int) bool { return len(relativeDisks[i].RawPath) > len(relativeDisks[j].RawPath) })
 	for i := range tables {
 		for j, dataPath := range tables[i].DataPaths {
 			if dataPath == "" || strings.HasPrefix(dataPath, "/") {
 				continue
 			}
-			for _, d := range rawDisks {
-				if d.Path != "" && !strings.HasPrefix(d.Path, "/") && strings.HasPrefix(dataPath, d.Path) {
-					tables[i].DataPaths[j] = path.Join(defaultPath, "disks", d.Name, strings.TrimPrefix(dataPath, d.Path)) + "/"
-					break
+			for _, d := range relativeDisks {
+				if !strings.HasPrefix(dataPath, d.RawPath) {
+					continue
 				}
+				if strings.HasPrefix(d.Path, "/") {
+					tables[i].DataPaths[j] = path.Join(d.Path, strings.TrimPrefix(dataPath, d.RawPath)) + "/"
+				}
+				break
 			}
 		}
 	}
-	return nil
 }
 
 // https://github.com/Altinity/clickhouse-backup/issues/613
@@ -817,15 +891,24 @@ func (ch *ClickHouse) fixVariousVersions(ctx context.Context, t Table, metadataP
 	}
 	// 23.3+ masked secrets https://github.com/Altinity/clickhouse-backup/issues/640
 	if strings.Contains(t.CreateTableQuery, "'[HIDDEN]'") {
-		tableSQLPath := path.Join(metadataPath, common.TablePathEncode(t.Database), common.TablePathEncode(t.Name)+".sql")
-		if attachSQL, err := os.ReadFile(tableSQLPath); err != nil {
-			log.Warn().Msgf("can't read %s: %v", tableSQLPath, err)
-		} else {
-			t.CreateTableQuery = strings.Replace(string(attachSQL), "ATTACH", "CREATE", 1)
-			t.CreateTableQuery = strings.Replace(t.CreateTableQuery, " _ ", " `"+t.Database+"`.`"+t.Name+"` ", 1)
-		}
+		t.CreateTableQuery = ch.unmaskCreateTableQueryFromMetadata(t, metadataPath)
 	}
 	return t
+}
+
+// unmaskCreateTableQueryFromMetadata - 23.3+ renders secrets in `system.tables.create_table_query` as `'[HIDDEN]'`,
+// the on-disk `metadata/<db>/<table>.sql` is never masked, so read the DDL from there
+// https://github.com/Altinity/clickhouse-backup/issues/640, https://github.com/Altinity/clickhouse-backup/issues/943
+// returns the original query when the file is not readable, chb may run outside the clickhouse-server host
+func (ch *ClickHouse) unmaskCreateTableQueryFromMetadata(t Table, metadataPath string) string {
+	tableSQLPath := path.Join(metadataPath, common.TablePathEncode(t.Database), common.TablePathEncode(t.Name)+".sql")
+	attachSQL, err := os.ReadFile(tableSQLPath)
+	if err != nil {
+		log.Warn().Msgf("can't read %s: %v", tableSQLPath, err)
+		return t.CreateTableQuery
+	}
+	createTableQuery := strings.Replace(string(attachSQL), "ATTACH", "CREATE", 1)
+	return strings.Replace(createTableQuery, " _ ", " `"+t.Database+"`.`"+t.Name+"` ", 1)
 }
 
 // GetVersion - returned ClickHouse version in number format
@@ -1416,7 +1499,11 @@ func (ch *ClickHouse) GetAccessManagementPath(ctx context.Context, disks []Disk)
 		if err == nil {
 			accessControlPathNode := doc.SelectElement("access_control_path")
 			if accessControlPathNode != nil {
-				return accessControlPathNode.InnerText(), nil
+				configAccessPath := accessControlPathNode.InnerText()
+				if serverRoot := ch.resolveServerRoot(configAccessPath); serverRoot != "" {
+					configAccessPath = path.Join(serverRoot, configAccessPath)
+				}
+				return configAccessPath, nil
 			}
 		}
 
@@ -1434,8 +1521,21 @@ func (ch *ClickHouse) GetAccessManagementPath(ctx context.Context, disks []Disk)
 		}
 	} else {
 		accessPath = rows[0].AccessPath
+		if serverRoot := ch.resolveServerRoot(accessPath); serverRoot != "" {
+			accessPath = path.Join(serverRoot, accessPath)
+		}
 	}
 	return accessPath, nil
+}
+
+// GetUserDirectories returns all rows from system.user_directories with their type,
+// look https://github.com/Altinity/clickhouse-backup/issues/881
+func (ch *ClickHouse) GetUserDirectories(ctx context.Context) ([]UserDirectory, error) {
+	userDirectories := make([]UserDirectory, 0)
+	if err := ch.SelectContext(ctx, &userDirectories, "SELECT name, type FROM system.user_directories"); err != nil {
+		return nil, errors.Wrap(err, "GetUserDirectories")
+	}
+	return userDirectories, nil
 }
 
 func (ch *ClickHouse) GetUserDefinedFunctions(ctx context.Context) ([]Function, error) {

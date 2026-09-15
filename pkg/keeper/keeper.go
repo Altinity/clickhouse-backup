@@ -22,6 +22,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/go-zookeeper/zk"
 )
 
@@ -262,21 +263,35 @@ func verifyKeeperCertificateChain(certificates []*x509.Certificate, roots *x509.
 	return nil
 }
 
+// selectKeeperNodeElements returns the <zookeeper> children which describe an endpoint.
+// ClickHouse treats every child whose name starts with "node" as one
+// (src/Common/ZooKeeper/ZooKeeperArgs.cpp: `key.starts_with("node")`), so <nodes>,
+// <node1>/<node2> and plain <node> are all valid for the server and must be for us too.
+func selectKeeperNodeElements(zookeeperNode *xmlquery.Node) []*xmlquery.Node {
+	var nodeList []*xmlquery.Node
+	for child := zookeeperNode.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == xmlquery.ElementNode && strings.HasPrefix(child.Data, "node") {
+			nodeList = append(nodeList, child)
+		}
+	}
+	return nodeList
+}
+
 func parseKeeperNodes(zookeeperNode *xmlquery.Node, configFile string) ([]keeperNode, error) {
-	nodeList := zookeeperNode.SelectElements("node")
+	nodeList := selectKeeperNodeElements(zookeeperNode)
 	if len(nodeList) == 0 {
-		return nil, errors.WithStack(fmt.Errorf("/zookeeper/node not exists in %s", configFile))
+		return nil, errors.WithStack(fmt.Errorf("/zookeeper/node* not exists in %s", configFile))
 	}
 
 	nodes := make([]keeperNode, 0, len(nodeList))
 	for i, node := range nodeList {
 		hostNode := node.SelectElement("host")
 		if hostNode == nil {
-			return nil, errors.WithStack(fmt.Errorf("/zookeeper/node[%d]/host not exists in %s", i, configFile))
+			return nil, errors.WithStack(fmt.Errorf("/zookeeper/%s[%d]/host not exists in %s", node.Data, i, configFile))
 		}
 		host := strings.TrimSpace(hostNode.InnerText())
 		if host == "" {
-			return nil, errors.WithStack(fmt.Errorf("/zookeeper/node[%d]/host is empty in %s", i, configFile))
+			return nil, errors.WithStack(fmt.Errorf("/zookeeper/%s[%d]/host is empty in %s", node.Data, i, configFile))
 		}
 
 		port := "2181"
@@ -284,7 +299,7 @@ func parseKeeperNodes(zookeeperNode *xmlquery.Node, configFile string) ([]keeper
 			port = strings.TrimSpace(portNode.InnerText())
 		}
 		if port == "" {
-			return nil, errors.WithStack(fmt.Errorf("/zookeeper/node[%d]/port is empty in %s", i, configFile))
+			return nil, errors.WithStack(fmt.Errorf("/zookeeper/%s[%d]/port is empty in %s", node.Data, i, configFile))
 		}
 
 		secure := false
@@ -293,7 +308,7 @@ func parseKeeperNodes(zookeeperNode *xmlquery.Node, configFile string) ([]keeper
 			if secureText != "" {
 				secureValue, err := strconv.ParseBool(secureText)
 				if err != nil {
-					return nil, errors.Wrapf(err, "invalid /zookeeper/node[%d]/secure=%s in %s", i, secureText, configFile)
+					return nil, errors.Wrapf(err, "invalid /zookeeper/%s[%d]/secure=%s in %s", node.Data, i, secureText, configFile)
 				}
 				secure = secureValue
 			}
@@ -342,6 +357,24 @@ func newKeeperDialer(tlsConfig *tls.Config, nodesByAddress map[string]keeperNode
 		}
 		return tlsConn, nil
 	}
+}
+
+// keeperIdentity returns the `user:password` for Keeper digest auth and where it came from.
+// ClickHouse reads it from <zookeeper><identity> (ZooKeeperArgs.cpp: key == "identity" sets
+// auth_scheme = "digest"); <zookeeper><digest> is the element this tool looked for before and
+// stays supported. Neither reaches preprocessed_configs when the server config hides the value
+// (`hide_in_preprocessed`, `from_env`), so clickhouse.keeper_identity can supply it and wins.
+// No trimming, to send exactly what the server sends.
+func keeperIdentity(cfg *config.ClickHouseConfig, zookeeperNode *xmlquery.Node) (string, string) {
+	if cfg != nil && cfg.KeeperIdentity != "" {
+		return cfg.KeeperIdentity, "clickhouse.keeper_identity"
+	}
+	for _, name := range []string{"identity", "digest"} {
+		if node := zookeeperNode.SelectElement(name); node != nil && node.InnerText() != "" {
+			return node.InnerText(), "/zookeeper/" + name
+		}
+	}
+	return "", ""
 }
 
 // Connect - connect to any zookeeper server from /var/lib/clickhouse/preprocessed_configs/config.xml
@@ -407,8 +440,9 @@ func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 			return errors.Wrap(err, "zk.Connect")
 		}
 	}
-	if digestNode := zookeeperNode.SelectElement("digest"); digestNode != nil {
-		if err = conn.AddAuth("digest", []byte(digestNode.InnerText())); err != nil {
+	if identity, source := keeperIdentity(ch.Config, zookeeperNode); identity != "" {
+		log.Info().Msgf("keeper digest auth from %s", source)
+		if err = conn.AddAuth("digest", []byte(identity)); err != nil {
 			return errors.Wrap(err, "keeper digest authorization error")
 		}
 	}
@@ -504,9 +538,10 @@ func (k *Keeper) writeJsonString(f *os.File, node DumpNode) (int, error) {
 	return bytes + lnBytes, nil
 }
 
-// Restore - restore keeper nodes from dumpFile under prefix,
-// skipNode allow skip node restore, receives node with relative path from the dump, could be nil
-func (k *Keeper) Restore(dumpFile, prefix string, skipNode func(node DumpNode) bool) error {
+// WalkDumpFile - read jsonl dump file line by line and call fn for each node,
+// node.Path is relative to the dumped prefix, supports both the current binary
+// and the legacy string value format
+func WalkDumpFile(dumpFile string, fn func(node DumpNode) error) error {
 	f, err := os.Open(dumpFile)
 	if err != nil {
 		return errors.Wrapf(err, "can't open %s", dumpFile)
@@ -516,9 +551,6 @@ func (k *Keeper) Restore(dumpFile, prefix string, skipNode func(node DumpNode) b
 			log.Warn().Msgf("can't close %s: %v", dumpFile, err)
 		}
 	}()
-	if k.root != "" && !strings.HasPrefix(prefix, k.root) {
-		prefix = path.Join(k.root, prefix)
-	}
 	reader := bufio.NewReader(f)
 	for {
 		line, readErr := reader.ReadString('\n')
@@ -538,36 +570,77 @@ func (k *Keeper) Restore(dumpFile, prefix string, skipNode func(node DumpNode) b
 			//convert from old format
 			nodeString := DumpNodeString{}
 			if stringUnmarshalErr := json.Unmarshal(binaryData, &nodeString); stringUnmarshalErr != nil {
-				return errors.WithStack(fmt.Errorf("k.Restore can't read data binaryErr=%v, stringErr=%v", binaryUnmarshalErr, stringUnmarshalErr))
+				return errors.WithStack(fmt.Errorf("WalkDumpFile can't read %s data binaryErr=%v, stringErr=%v", dumpFile, binaryUnmarshalErr, stringUnmarshalErr))
 			}
+			node.Path = nodeString.Path
+			node.Value = []byte(nodeString.Value)
 		}
-		if skipNode != nil && skipNode(node) {
-			log.Info().Msgf("skip restore keeper node %s", node.Path)
-			if readErr == io.EOF {
-				break
-			}
-			continue
-		}
-		node.Path = path.Join(prefix, node.Path)
-		version := int32(0)
-		_, stat, keeperErr := k.conn.Get(node.Path)
-		if keeperErr != nil {
-			_, keeperErr = k.conn.Create(node.Path, node.Value, 0, zk.WorldACL(zk.PermAll))
-			if keeperErr != nil {
-				return errors.Wrapf(keeperErr, "can't create znode %s, error", node.Path)
-			}
-		} else {
-			version = stat.Version
-			_, keeperErr = k.conn.Set(node.Path, node.Value, version)
-			if keeperErr != nil {
-				return errors.Wrapf(keeperErr, "can't set znode %s, error", node.Path)
-			}
+		if fnErr := fn(node); fnErr != nil {
+			return fnErr
 		}
 		if readErr == io.EOF {
 			break
 		}
 	}
 	return nil
+}
+
+// ResolvePath - apply <zookeeper><root> chroot to the passed znode path
+func (k *Keeper) ResolvePath(nodePath string) string {
+	if k.root != "" && !strings.HasPrefix(nodePath, k.root) {
+		return path.Join(k.root, nodePath)
+	}
+	return nodePath
+}
+
+// Upsert - create znode with value or set value when znode already exists,
+// nodePath shall be already resolved via ResolvePath
+func (k *Keeper) Upsert(nodePath string, value []byte) error {
+	_, stat, keeperErr := k.conn.Get(nodePath)
+	if keeperErr != nil {
+		if _, keeperErr = k.conn.Create(nodePath, value, 0, zk.WorldACL(zk.PermAll)); keeperErr != nil {
+			return errors.Wrapf(keeperErr, "can't create znode %s, error", nodePath)
+		}
+		return nil
+	}
+	if _, keeperErr = k.conn.Set(nodePath, value, stat.Version); keeperErr != nil {
+		return errors.Wrapf(keeperErr, "can't set znode %s, error", nodePath)
+	}
+	return nil
+}
+
+// EnsureNode - create znode with empty value when it doesn't exist yet,
+// nodePath shall be already resolved via ResolvePath
+func (k *Keeper) EnsureNode(nodePath string) error {
+	exists, _, keeperErr := k.conn.Exists(nodePath)
+	if keeperErr != nil {
+		return errors.Wrapf(keeperErr, "can't check znode %s, error", nodePath)
+	}
+	if exists {
+		return nil
+	}
+	if parent := path.Dir(nodePath); parent != "/" && parent != "." {
+		if parentErr := k.EnsureNode(parent); parentErr != nil {
+			return parentErr
+		}
+	}
+	if _, keeperErr = k.conn.Create(nodePath, nil, 0, zk.WorldACL(zk.PermAll)); keeperErr != nil {
+		return errors.Wrapf(keeperErr, "can't create znode %s, error", nodePath)
+	}
+	return nil
+}
+
+// Restore - restore keeper nodes from dumpFile under prefix,
+// skipNode allow skip node restore, receives node with relative path from the dump, could be nil
+func (k *Keeper) Restore(dumpFile, prefix string, skipNode func(node DumpNode) bool) error {
+	prefix = k.ResolvePath(prefix)
+	return WalkDumpFile(dumpFile, func(node DumpNode) error {
+		if skipNode != nil && skipNode(node) {
+			log.Info().Msgf("skip restore keeper node %s", node.Path)
+			return nil
+		}
+		return k.Upsert(path.Join(prefix, node.Path), node.Value)
+	})
 }
 
 type WalkCallBack = func(node DumpNode) (bool, error)

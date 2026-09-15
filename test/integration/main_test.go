@@ -107,7 +107,7 @@ func prePullImages() {
 	}
 	images := []string{
 		sshdImage,
-		fmt.Sprintf("docker.io/minio/minio:%s", getEnvDefault("MINIO_VERSION", "latest")),
+		fmt.Sprintf("docker.io/chainguard/minio:%s", getEnvDefault("MINIO_VERSION", "latest")),
 		"fsouza/fake-gcs-server:latest",
 		"mcr.microsoft.com/azure-storage/azurite:latest",
 		"mcr.microsoft.com/azure-cli:latest",
@@ -139,7 +139,10 @@ func prePullImages() {
 
 	for _, img := range images {
 		log.Info().Msgf("pre-pulling image %s", img)
-		tc.pullImageIfNeeded(ctx, img)
+		if err = tc.pullImageIfNeeded(ctx, img); err != nil {
+			// not fatal here, startContainer will fail with the same error when the image is really needed
+			log.Warn().Err(err).Msgf("prePullImages: can't pull %s", img)
+		}
 	}
 
 	curDir := os.Getenv("CUR_DIR")

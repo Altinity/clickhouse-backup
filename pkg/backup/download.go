@@ -498,11 +498,11 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 			disksByStoragePolicyAndType = b.splitDisksByTypeAndStoragePolicy(disks)
 		}
 		if _, isTypeExists := disksByStoragePolicyAndType[diskType]; !isTypeExists {
-			return "", nil, errors.Errorf("disk: %s, diskType: %s not found in system.disks", disk, diskType)
+			return "", nil, errors.Errorf("disk: %s, diskType: %s not found in system.disks, check `SELECT * FROM system.disks` and `SELECT * FROM system.storage_policies` on the destination server", disk, diskType)
 		}
 		filteredDisks, isPolicyExists := disksByStoragePolicyAndType[diskType][storagePolicy]
 		if !isPolicyExists || len(filteredDisks) == 0 {
-			return "", nil, errors.Errorf("storagePolicy: %s with diskType: %s not found in system.disks", storagePolicy, diskType)
+			return "", nil, errors.Errorf("storagePolicy: %s with diskType: %s not found in system.disks, check `SELECT * FROM system.storage_policies` and `SELECT * FROM system.disks` on the destination server", storagePolicy, diskType)
 		}
 		return storagePolicy, filteredDisks, nil
 	}
@@ -517,6 +517,16 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 
 	for i, t := range tableMetadataAfterDownload {
 		if t == nil || t.TotalBytes == 0 {
+			continue
+		}
+		// a `SETTINGS disk = disk(...)` disk is registered by clickhouse-server together with the table during
+		// schema restore, it can't exist locally yet and it can't be replaced by another disk, so parts are
+		// downloaded to the path recorded in the backup, https://github.com/Altinity/clickhouse-backup/issues/943
+		if clickhouse.HasCustomDisk(t.Query) {
+			log.Debug().Msgf("table `%s`.`%s` declares `disk = disk(...)`, skip re-balance", t.Database, t.Table)
+			if err := b.registerCustomDiskPaths(t, disks, remoteBackup); err != nil {
+				return err
+			}
 			continue
 		}
 		isRebalanced := false
@@ -574,9 +584,12 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 						updateDiskFreeSize(downloadDisk, diskType, storagePolicy, newFreeSpace)
 					}
 					//re-balance file depend on part
-					if t.Files != nil && len(t.Files) > 0 {
-						if len(t.Files[disk]) == 0 {
-							return errors.Errorf("table: `%s`.`%s` part.Name: %s, part.RebalancedDisk: %s, non empty `files` can't find disk: %s", t.Table, t.Database, t.Parts[disk][j].Name, t.Parts[disk][j].RebalancedDisk, disk)
+					if len(t.Files) > 0 {
+						// `required` parts were uploaded with the base backup, so in an incremental backup
+						// a disk which carries only such parts legitimately has no `files` entry,
+						// https://github.com/Altinity/clickhouse-backup/issues/1034
+						if len(t.Files[disk]) == 0 && !t.Parts[disk][j].Required {
+							return errors.Errorf("table: `%s`.`%s` part.Name: %s, part.RebalancedDisk: %s, non empty `files` can't find disk: %s", t.Database, t.Table, t.Parts[disk][j].Name, t.Parts[disk][j].RebalancedDisk, disk)
 						}
 						for _, fileName := range t.Files[disk] {
 							if strings.HasPrefix(fileName, disk+"_"+t.Parts[disk][j].Name+".") {
@@ -643,7 +656,10 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 				if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
 					return nil, 0, errors.Wrap(err, "Unmarshal tableMetadata")
 				}
-				partitionsIdMap, _ = partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&tableMetadata}, partitions)
+				partitionsIdMap, _, err = partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&tableMetadata}, partitions)
+				if err != nil {
+					return nil, 0, err
+				}
 				filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsIdMap[metadata.TableTitle{Database: tableMetadata.Database, Table: tableMetadata.Table}])
 				tableMetadata.LocalFile = localMetadataFile
 			}
@@ -715,7 +731,10 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			if b.shouldSkipByTableEngine(tableMetadata) || b.shouldSkipByTableName(fmt.Sprintf("%s.%s", tableMetadata.Database, tableMetadata.Table)) {
 				return nil, 0, nil
 			}
-			partitionsIdMap, _ = partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&tableMetadata}, partitions)
+			partitionsIdMap, _, err = partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&tableMetadata}, partitions)
+			if err != nil {
+				return nil, 0, err
+			}
 			filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsIdMap[metadata.TableTitle{Database: tableMetadata.Database, Table: tableMetadata.Table}])
 			// save metadata
 			jsonSize := uint64(0)

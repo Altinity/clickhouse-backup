@@ -351,7 +351,7 @@ func gcsRealCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 		skip:       func() bool { return isTestShouldSkip("GCS_TESTS") },
 		skipReason: "Skipping GCS integration tests (GCS_TESTS not set)",
 		setup: func(env *TestEnvironment, r *require.Assertions) {
-			env.tc.pullImageIfNeeded(context.Background(), image)
+			r.NoError(env.tc.pullImageIfNeeded(context.Background(), image))
 		},
 		plant: func(env *TestEnvironment, r *require.Assertions, root, name string) {
 			obj := root + "/" + name
@@ -398,7 +398,7 @@ func cosCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 		},
 		skipReason: "Skipping COS integration tests (QA_TENCENT_SECRET_ID / QA_TENCENT_SECRET_KEY not set)",
 		setup: func(env *TestEnvironment, r *require.Assertions) {
-			env.tc.pullImageIfNeeded(context.Background(), image)
+			r.NoError(env.tc.pullImageIfNeeded(context.Background(), image))
 			env.InstallDebIfNotExists(r, "clickhouse-backup", "gettext-base")
 			// config.yml was copied raw and still has ${QA_TENCENT_SECRET_*} placeholders.
 			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec",
@@ -447,7 +447,7 @@ func azblobCleanBrokenRetentionCase() cleanBrokenRetentionCase {
 	}
 
 	setup := func(env *TestEnvironment, r *require.Assertions) {
-		env.tc.pullImageIfNeeded(context.Background(), azureCliImage)
+		r.NoError(env.tc.pullImageIfNeeded(context.Background(), azureCliImage))
 	}
 
 	plant := func(env *TestEnvironment, r *require.Assertions, root, name string) {

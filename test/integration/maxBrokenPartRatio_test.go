@@ -138,6 +138,9 @@ func runMaxBrokenPartRatioCase(t *testing.T, tc maxBrokenPartRatioCase) {
 		if out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "remote", partialBackup); err != nil {
 			log.Debug().Err(err).Msgf("maxBrokenPartRatio teardown: %s", out)
 		}
+		// aborted creates must not leak object disk copies to the shared remote storage, otherwise the
+		// next test on the same env fails in its own checkObjectStorageIsEmpty far away from the real cause
+		env.checkObjectStorageIsEmpty(t, r, tc.name, tc.configFile)
 	}()
 
 	createCmd := func(ratio, backupName string) (string, error) {
@@ -279,7 +282,7 @@ func maxBrokenPartRatioGCSCase() maxBrokenPartRatioCase {
 		},
 		skipReason: "Skipping GCS integration tests (GCS_TESTS / QA_GCS_OVER_S3_BUCKET not set)",
 		setup: func(env *TestEnvironment, r *require.Assertions) {
-			env.tc.pullImageIfNeeded(context.Background(), image)
+			r.NoError(env.tc.pullImageIfNeeded(context.Background(), image))
 		},
 		deleteObjects: func(env *TestEnvironment, r *require.Assertions, objectPaths []string) {
 			// disk_gcs endpoint is
@@ -331,7 +334,7 @@ func maxBrokenPartRatioAzureCase() maxBrokenPartRatioCase {
 		skip:         func() bool { return isTestShouldSkip("AZURE_TESTS") },
 		skipReason:   "Skipping AZBLOB integration tests (AZURE_TESTS not set)",
 		setup: func(env *TestEnvironment, r *require.Assertions) {
-			env.tc.pullImageIfNeeded(context.Background(), azureCliImage)
+			r.NoError(env.tc.pullImageIfNeeded(context.Background(), azureCliImage))
 		},
 		deleteObjects: func(env *TestEnvironment, r *require.Assertions, objectPaths []string) {
 			cmds := make([]string, 0, len(objectPaths))

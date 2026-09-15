@@ -833,7 +833,11 @@ func (b *Backuper) collectTablesFromLive(ctx context.Context, tablePattern strin
 	rows := make([]TableRow, 0, len(allTables))
 	for _, table := range allTables {
 		var tableDisks []string
-		for disk := range clickhouse.GetDisksByPaths(disks, table.DataPaths) {
+		disksByPaths, err := clickhouse.GetDisksByPaths(disks, table.DataPaths)
+		if err != nil {
+			return nil, errors.Wrap(err, "collectTablesFromLive GetDisksByPaths")
+		}
+		for disk := range disksByPaths {
 			tableDisks = append(tableDisks, disk)
 		}
 		sort.Strings(tableDisks)

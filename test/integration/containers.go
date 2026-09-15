@@ -651,7 +651,9 @@ func (tc *TestContainers) startContainer(ctx context.Context, name string, cfg *
 	}
 	cfg.Hostname = hostname
 
-	tc.pullImageIfNeeded(ctx, cfg.Image)
+	if err := tc.pullImageIfNeeded(ctx, cfg.Image); err != nil {
+		return fmt.Errorf("pull %s for %s: %w", cfg.Image, name, err)
+	}
 
 	resp, err := tc.client.ContainerCreate(ctx, dockerClient.ContainerCreateOptions{
 		Config:           cfg,
@@ -671,17 +673,16 @@ func (tc *TestContainers) startContainer(ctx context.Context, name string, cfg *
 	return nil
 }
 
-func (tc *TestContainers) pullImageIfNeeded(ctx context.Context, imageName string) {
+func (tc *TestContainers) pullImageIfNeeded(ctx context.Context, imageName string) error {
 	// Check if image already exists locally to avoid unnecessary pull overhead
 	_, inspectErr := tc.client.ImageInspect(ctx, imageName)
 	if inspectErr == nil {
 		log.Debug().Msgf("image %s already exists locally, skipping pull", imageName)
-		return
+		return nil
 	}
 	reader, err := tc.client.ImagePull(ctx, imageName, dockerClient.ImagePullOptions{})
 	if err != nil {
-		log.Debug().Err(err).Msgf("pull %s (may already exist)", imageName)
-		return
+		return fmt.Errorf("pull %s: %w", imageName, err)
 	}
 	if reader != nil {
 		defer func() {
@@ -689,8 +690,15 @@ func (tc *TestContainers) pullImageIfNeeded(ctx context.Context, imageName strin
 				log.Warn().Err(closeErr).Msg("can't close ImagePull reader")
 			}
 		}()
-		_, _ = io.Copy(io.Discard, reader)
+		// the pull is finished only when the whole progress stream is consumed
+		if _, err = io.Copy(io.Discard, reader); err != nil {
+			return fmt.Errorf("pull %s: read progress: %w", imageName, err)
+		}
 	}
+	if _, inspectErr = tc.client.ImageInspect(ctx, imageName); inspectErr != nil {
+		return fmt.Errorf("pull %s: image is still missing after pull: %w", imageName, inspectErr)
+	}
+	return nil
 }
 
 func envMap(m map[string]string) []string {
@@ -849,21 +857,29 @@ func (tc *TestContainers) startFTP(ctx context.Context, curDir string) error {
 func (tc *TestContainers) startMinio(ctx context.Context, configsDir string) error {
 	return tc.startContainer(ctx, "minio",
 		&container.Config{
-			Image:      fmt.Sprintf("docker.io/minio/minio:%s", getEnvDefault("MINIO_VERSION", "latest")),
+			// docker.io/minio/minio was removed from Docker Hub, https://github.com/Altinity/clickhouse-backup/issues/1394
+			// chainguard/minio ships minio, mc and bash but no curl; it runs as nonroot by default,
+			// run it as root to keep /minio/data, /root/.minio and /root/.mc paths used by the tests
+			Image:      fmt.Sprintf("docker.io/chainguard/minio:%s", getEnvDefault("MINIO_VERSION", "latest")),
+			User:       "0:0",
 			Entrypoint: []string{"/bin/bash"},
-			Cmd:        []string{"-c", "mkdir -p /minio/data/clickhouse && minio server /minio/data"},
+			Cmd:        []string{"-c", "mkdir -p /minio/data/clickhouse && minio server /minio/data --console-address :9001"},
 			Env: envMap(map[string]string{
 				"MINIO_ROOT_USER":     "access_key",
 				"MINIO_ROOT_PASSWORD": "it_is_my_super_secret_key",
 				"MC_CONFIG_DIR":       "/root/.mc",
 			}),
 			Healthcheck: &container.HealthConfig{
-				Test:     []string{"CMD-SHELL", "ls -lah /minio/data/clickhouse/ && curl -skL https://localhost:9000/"},
+				Test:     []string{"CMD-SHELL", "ls -lah /minio/data/clickhouse/ && bash -c 'exec 3<>/dev/tcp/127.0.0.1/9000'"},
 				Interval: 1 * time.Second,
 				Retries:  60,
 			},
+			ExposedPorts: network.PortSet{network.MustParsePort("9000/tcp"): {}},
 		},
 		&container.HostConfig{
+			PortBindings: network.PortMap{
+				network.MustParsePort("9000/tcp"): {network.PortBinding{HostIP: netip.IPv4Unspecified()}},
+			},
 			Binds: []string{
 				filepath.Join(configsDir, "minio_nodelete.sh") + ":/bin/minio_nodelete.sh",
 				filepath.Join(configsDir, "minio.crt") + ":/root/.minio/certs/CAs/public.crt",
@@ -1184,8 +1200,15 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 	}
 
 	cfg := &container.Config{
-		Image:        chImage,
-		User:         "root",
+		Image: chImage,
+		User:  "root",
+		// the clickhouse-server ubuntu/alpine images declare no WORKDIR, and the `cd "$DATA_DIR"` of
+		// /entrypoint.sh is a no-op when DATA_DIR is the config `path` itself, so with `<path>./</path>`
+		// clickhouse-server would keep cwd `/` (it canonicalises a relative path against the working
+		// directory captured at startup) and write the data outside the shared volume, where the
+		// clickhouse-backup container can't see it. Every DockerExec* against this container uses absolute
+		// paths, so pinning the cwd is inert for the rest of the suite. Needed by TestRelativeDataPathTieredS3
+		WorkingDir:   "/var/lib/clickhouse",
 		Env:          envMap(env),
 		ExposedPorts: network.PortSet{network.MustParsePort("8123/tcp"): {}, network.MustParsePort("9000/tcp"): {}},
 		Healthcheck: &container.HealthConfig{

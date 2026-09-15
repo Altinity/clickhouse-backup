@@ -388,6 +388,7 @@ type ClickHouseConfig struct {
 	PartsColumnsBatchSize            int               `yaml:"parts_columns_batch_size" envconfig:"CLICKHOUSE_PARTS_COLUMNS_BATCH_SIZE"`
 	Secure                           bool              `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
 	SkipVerify                       bool              `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`
+	KeeperIdentity                   string            `yaml:"keeper_identity" envconfig:"CLICKHOUSE_KEEPER_IDENTITY"`
 	SyncReplicatedTables             bool              `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES"`
 	LogSQLQueries                    bool              `yaml:"log_sql_queries" envconfig:"CLICKHOUSE_LOG_SQL_QUERIES"`
 	ConfigDir                        string            `yaml:"config_dir" envconfig:"CLICKHOUSE_CONFIG_DIR"`
@@ -689,6 +690,14 @@ func ValidateConfig(cfg *Config) error {
 	}
 	if cfg.GetCompressionFormat() == "lz4" {
 		return errors.New("clickhouse already compressed data by lz4")
+	}
+	// a relative disk_mapping path silently breaks the relative `system.disks.path` resolution in GetDisks
+	// and points hardlinks at the clickhouse-backup working directory,
+	// fix https://github.com/Altinity/clickhouse-backup/issues/1121
+	for diskName, diskPath := range cfg.ClickHouse.DiskMapping {
+		if !strings.HasPrefix(diskPath, "/") {
+			return errors.Errorf("clickhouse->disk_mapping[%q]=%q is invalid, it must be an absolute path", diskName, diskPath)
+		}
 	}
 	if cfg.General.DeleteBatchSize < 1 {
 		return errors.Errorf("delete_batch_size=%d is invalid, it must be greater than 0", cfg.General.DeleteBatchSize)

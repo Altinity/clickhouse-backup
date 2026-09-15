@@ -32,7 +32,10 @@ func (b *Backuper) collectRemoteTablesForDryRun(ctx context.Context, backupName 
 		if b.shouldSkipByTableEngine(*tableMetadata) || b.shouldSkipByTableName(fmt.Sprintf("%s.%s", tableMetadata.Database, tableMetadata.Table)) {
 			continue
 		}
-		partitionsIdMap, _ := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{tableMetadata}, partitions)
+		partitionsIdMap, _, err := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{tableMetadata}, partitions)
+		if err != nil {
+			return nil, 0, err
+		}
 		filterPartsAndFilesByPartitionsFilter(*tableMetadata, partitionsIdMap[metadata.TableTitle{Database: tableMetadata.Database, Table: tableMetadata.Table}])
 		// the remote json is what travels over the network, the locally saved copy could be smaller
 		// with --schema, so this is an upper bound of the real metadata download size
@@ -63,7 +66,10 @@ func (b *Backuper) collectRemoteTablesForDryRun(ctx context.Context, backupName 
 		if err != nil {
 			return nil, 0, errors.Wrapf(err, "readRemoteTableMetadata %s.%s", innerTableTitle.Database, innerTableTitle.Table)
 		}
-		partitionsIdMap, _ := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{innerTableMetadata}, partitions)
+		partitionsIdMap, _, err := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{innerTableMetadata}, partitions)
+		if err != nil {
+			return nil, 0, err
+		}
 		filterPartsAndFilesByPartitionsFilter(*innerTableMetadata, partitionsIdMap[innerTableTitle])
 		metadataSize += uint64(remoteSize)
 		downloaded[innerTableTitle] = struct{}{}
