@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 
 	"github.com/rs/zerolog/log"
 )
@@ -269,8 +272,18 @@ func TestDownloadIncrementRebalanceRequiredParts(t *testing.T) {
 	tableJSON, err := env.DockerExecOut("clickhouse-backup", "cat",
 		fmt.Sprintf("/var/lib/clickhouse/backup/%s/metadata/%s/%s.json", incBackup, dbName, tableName))
 	r.NoError(err, tableJSON)
-	r.Contains(tableJSON, `"required":true`, tableJSON)
-	r.Contains(tableJSON, "rebalanced_disk", tableJSON)
+	var incMetadata metadata.TableMetadata
+	r.NoError(json.Unmarshal([]byte(tableJSON), &incMetadata), tableJSON)
+	requiredRebalanced := 0
+	for disk := range incMetadata.Parts {
+		for _, part := range incMetadata.Parts[disk] {
+			r.NotEmpty(part.RebalancedDisk, "force_rebalance must rebalance part %s of disk %s: %s", part.Name, disk, tableJSON)
+			if part.Required {
+				requiredRebalanced++
+			}
+		}
+	}
+	r.Equal(1, requiredRebalanced, "the partition inherited from the base backup must stay a rebalanced required part: %s", tableJSON)
 	env.DockerExecNoError(r, "clickhouse-backup", "test", "-f", fmt.Sprintf("/var/lib/clickhouse/backup/%s/metadata.json", incBackup))
 
 	// Step 5: end to end restore of a rebalanced `required` part
