@@ -6,7 +6,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -271,4 +273,104 @@ func TestRestoreBackupRelatedDirMissingDirIsNotExist(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.True(t, os.IsNotExist(err), "expected os.IsNotExist to match the returned error, got: %v", err)
+}
+
+// objectDiskRestoreReason decides whether restoring data opens a remote destination, and reports every reason
+// so the log names both a local object disk and a backup disk missing from system.disks. Restores which need
+// neither must stay offline, a target without remote credentials has to keep working (issue #943).
+func TestObjectDiskRestoreReason(t *testing.T) {
+	localDisks := []clickhouse.Disk{
+		{Name: "default", Type: "local", Path: "/var/lib/clickhouse/"},
+		{Name: "hdd1", Type: "local", Path: "/hdd1_data/"},
+	}
+	withS3 := append(append([]clickhouse.Disk{}, localDisks...), clickhouse.Disk{Name: "disk_s3", Type: "s3"})
+	testCases := []struct {
+		name           string
+		disks          []clickhouse.Disk
+		backupMetadata metadata.BackupMetadata
+		expected       string
+	}{
+		{
+			name:           "no object disk anywhere",
+			disks:          localDisks,
+			backupMetadata: metadata.BackupMetadata{DiskTypes: map[string]string{"default": "local", "hdd1": "local"}},
+			expected:       "",
+		},
+		{
+			name:           "backup without recorded disk types",
+			disks:          localDisks,
+			backupMetadata: metadata.BackupMetadata{},
+			expected:       "",
+		},
+		{
+			name:           "missing backup disk is not an object disk",
+			disks:          localDisks,
+			backupMetadata: metadata.BackupMetadata{DiskTypes: map[string]string{"default": "local", "hdd_gone": "local"}},
+			expected:       "",
+		},
+		{
+			name:           "every object disk of the backup exists locally",
+			disks:          withS3,
+			backupMetadata: metadata.BackupMetadata{DiskTypes: map[string]string{"default": "local", "disk_s3": "s3"}},
+			expected:       "local object disks in system.disks [disk_s3(s3)]",
+		},
+		{
+			name:  "custom SQL disk of the backup is not registered yet",
+			disks: localDisks,
+			backupMetadata: metadata.BackupMetadata{DiskTypes: map[string]string{
+				"default":               "local",
+				"__tmp_internal_123456": "s3",
+			}},
+			expected: "backup object disks missing in system.disks [__tmp_internal_123456(s3)]",
+		},
+		{
+			name:  "object disk of the backup is absent on this target",
+			disks: localDisks,
+			backupMetadata: metadata.BackupMetadata{DiskTypes: map[string]string{
+				"default":    "local",
+				"disk_azure": "azure_blob_storage",
+			}},
+			expected: "backup object disks missing in system.disks [disk_azure(azure_blob_storage)]",
+		},
+		{
+			// the integration environment always configures disk_s3, a local object disk must not hide the
+			// custom SQL disk of the backup, otherwise the missing disk branch is unobservable end to end
+			name:  "local object disk does not hide a missing backup disk",
+			disks: withS3,
+			backupMetadata: metadata.BackupMetadata{DiskTypes: map[string]string{
+				"default":               "local",
+				"disk_s3":               "s3",
+				"__tmp_internal_123456": "s3",
+			}},
+			expected: "local object disks in system.disks [disk_s3(s3)]; backup object disks missing in system.disks [__tmp_internal_123456(s3)]",
+		},
+	}
+
+	b := &Backuper{}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			reason := b.objectDiskRestoreReason(tc.disks, tc.backupMetadata)
+			if tc.expected == "" {
+				assert.Empty(t, reason, "restore must stay offline for %s", tc.name)
+				return
+			}
+			assert.Equal(t, tc.expected, reason)
+		})
+	}
+}
+
+// the reported disks must not depend on Go map iteration order
+func TestObjectDiskRestoreReasonIsDeterministic(t *testing.T) {
+	b := &Backuper{}
+	backupMetadata := metadata.BackupMetadata{DiskTypes: map[string]string{
+		"default":  "local",
+		"disk_s3b": "s3",
+		"disk_s3a": "s3",
+	}}
+	disks := []clickhouse.Disk{{Name: "default", Type: "local"}}
+
+	for i := 0; i < 20; i++ {
+		assert.Equal(t, "backup object disks missing in system.disks [disk_s3a(s3), disk_s3b(s3)]",
+			b.objectDiskRestoreReason(disks, backupMetadata))
+	}
 }

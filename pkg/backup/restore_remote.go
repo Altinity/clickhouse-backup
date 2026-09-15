@@ -288,11 +288,17 @@ func (b *Backuper) restoreFromRemoteStreaming(backupName, tablePattern string, d
 func (b *Backuper) streamTablesData(ctx context.Context, backupName string, remoteBackup metadata.BackupMetadata, backupManifest *storage.ManifestReader, downloadedTables ListOfTables, prologue *restorePrologueResult, skipProjections []string, replicatedCopyToDetached, hardlinkExistsFiles bool) (uint64, error) {
 	tablesForRestore := prologue.tablesForRestore
 	disks := prologue.disks
+	diskMap, diskTypes := buildDiskMaps(disks, prologue.backupMetadata)
+	// tables declared with `SETTINGS disk = disk(...)` bring their own disk, which exists only after the schema
+	// is restored and usually under another generated name, https://github.com/Altinity/clickhouse-backup/issues/943
+	disks, err := b.resolveCustomDiskAliases(ctx, tablesForRestore, prologue.backupMetadata.Disks, disks, diskMap, diskTypes)
+	if err != nil {
+		return 0, pkgerrors.Wrap(err, "resolveCustomDiskAliases")
+	}
 	tablesToRewriteKeys, dstTablesMap, err := b.restoreDataRegularPrepare(ctx, prologue.tablePattern, tablesForRestore, disks, prologue.existingTablesSnapshot)
 	if err != nil {
 		return 0, err
 	}
-	diskMap, diskTypes := buildDiskMaps(disks, prologue.backupMetadata)
 	// tablesForRestore carries mapped names, downloadedTables the original ones
 	restoreByOrigName := make(map[metadata.TableTitle]*metadata.TableMetadata, len(tablesForRestore))
 	for _, t := range tablesForRestore {
