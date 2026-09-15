@@ -44,7 +44,10 @@ func TestCustomSQLDisk(t *testing.T) {
 	mappedDBName := dbName + "_mapped"
 
 	const (
-		s3Creds     = "access_key_id = 'access_key', secret_access_key = 'it_is_my_super_secret_key'"
+		// skip_access_check mirrors the s3 disks of cacheDiskBackup_test.go and serverAPI_test.go,
+		// the disk access-check probe can block CREATE TABLE for minutes when the background schedule pool is
+		// saturated right after a container restart, the probe removal waits for blob removal without a timeout
+		s3Creds     = "access_key_id = 'access_key', secret_access_key = 'it_is_my_super_secret_key', skip_access_check = true"
 		s3EndPrefix = "https://minio:9000/clickhouse/custom_sql_disk/"
 	)
 
@@ -194,7 +197,11 @@ XML
 		}
 	}
 	const mcAliasCmd = "mc alias set local https://localhost:9000 access_key it_is_my_super_secret_key >/dev/null 2>&1"
-	leftoverObjects, _ := env.DockerExecOut("minio", "bash", "-c", mcAliasCmd+" && mc ls -r local/clickhouse/custom_sql_disk/ 2>&1 || true")
+	leftoverObjects, leftoverObjectsErr := env.DockerExecOut("minio", "bash", "-c", mcAliasCmd+" && mc ls -r local/clickhouse/custom_sql_disk/ 2>&1 || true")
+	// an exec failure yields empty output and would make the assertion below pass vacuously, so make it visible
+	if leftoverObjectsErr != nil {
+		t.Logf("leftover object check did not run, `mc` is not usable in the minio container: %v", leftoverObjectsErr)
+	}
 	r.Empty(strings.TrimSpace(leftoverObjects), "expected no objects under clickhouse/custom_sql_disk/ after cleanup, got:\n%s", leftoverObjects)
 	// `status` is the bookkeeping file of the filesystem cache itself, not cached data
 	leftoverFiles, _ := env.DockerExecOut("clickhouse", "bash", "-c", "find /var/lib/clickhouse/disks/custom_sql_plain_s3 /var/lib/clickhouse/caches/custom_sql_cache -type f ! -name status 2>/dev/null || true")
