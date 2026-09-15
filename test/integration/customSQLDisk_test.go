@@ -128,6 +128,18 @@ XML
 	}
 	r.Contains(partDiskPaths, "custom_named_s3", "expect the explicitly named custom disk in system.parts")
 
+	// the leak check at the end of the test is only trustworthy when this same command can see objects,
+	// the minio container has bash and mc but serves a self signed certificate, so mc needs --insecure
+	lsCustomSQLDiskObjects := func() string {
+		const mcAliasCmd = "mc --insecure alias set local https://localhost:9000 access_key it_is_my_super_secret_key >/dev/null"
+		out, execErr := env.DockerExecOut("minio", "bash", "-c", mcAliasCmd+" && mc --insecure ls -r local/clickhouse/custom_sql_disk/ 2>&1 || true")
+		if execErr != nil {
+			t.Logf("mc ls of clickhouse/custom_sql_disk/ failed: %v, output: %s", execErr, out)
+		}
+		return strings.TrimSpace(out)
+	}
+	r.NotEmpty(lsCustomSQLDiskObjects(), "the inserted rows must be visible as objects under clickhouse/custom_sql_disk/, otherwise the leftover check below is vacuous")
+
 	log.Debug().Msg("create_remote backup of custom SQL disk tables")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c",
 		"/etc/clickhouse-backup/config-s3.yml",
@@ -196,13 +208,8 @@ XML
 			}
 		}
 	}
-	const mcAliasCmd = "mc alias set local https://localhost:9000 access_key it_is_my_super_secret_key >/dev/null 2>&1"
-	leftoverObjects, leftoverObjectsErr := env.DockerExecOut("minio", "bash", "-c", mcAliasCmd+" && mc ls -r local/clickhouse/custom_sql_disk/ 2>&1 || true")
-	// an exec failure yields empty output and would make the assertion below pass vacuously, so make it visible
-	if leftoverObjectsErr != nil {
-		t.Logf("leftover object check did not run, `mc` is not usable in the minio container: %v", leftoverObjectsErr)
-	}
-	r.Empty(strings.TrimSpace(leftoverObjects), "expected no objects under clickhouse/custom_sql_disk/ after cleanup, got:\n%s", leftoverObjects)
+	leftoverObjects := lsCustomSQLDiskObjects()
+	r.Empty(leftoverObjects, "expected no objects under clickhouse/custom_sql_disk/ after cleanup, got:\n%s", leftoverObjects)
 	// `status` is the bookkeeping file of the filesystem cache itself, not cached data
 	leftoverFiles, _ := env.DockerExecOut("clickhouse", "bash", "-c", "find /var/lib/clickhouse/disks/custom_sql_plain_s3 /var/lib/clickhouse/caches/custom_sql_cache -type f ! -name status 2>/dev/null || true")
 	r.Empty(strings.TrimSpace(leftoverFiles), "expected no files under the custom disk metadata and cache directories after cleanup, got:\n%s", leftoverFiles)
