@@ -166,14 +166,33 @@ XML
 		r.NotEqual("local", backupMeta.DiskTypes[metaDiskName], "custom SQL disk %s must not be detected as `local`, metadata: %s", metaDiskName, metaOut)
 	}
 
+	// `restore --schema` never reads object disk data, so it must not open a remote destination even though the
+	// backup records custom SQL disks. REMOTE_STORAGE=none makes that observable, `storage type 'none' is not
+	// supported` is returned by storage.NewBackupDestination, so an unwanted connect fails the command outright
+	// instead of depending on credentials or on a network timeout.
+	log.Debug().Msg("restore --schema of custom SQL disk tables must not touch remote storage")
+	env.queryWithNoError(t, r, "DROP DATABASE "+dbName+" SYNC")
+	schemaOnlyOut, schemaOnlyErr := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf(
+		"REMOTE_STORAGE=none clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --schema --tables='%s.*' %s",
+		dbName, backupName))
+	r.NoError(schemaOnlyErr, "restore --schema must not need remote storage, output: %s", schemaOnlyOut)
+	r.NotContains(schemaOnlyOut, "restore opens the", "restore --schema must not open a remote destination, output: %s", schemaOnlyOut)
+	for tableName := range tables {
+		env.checkCount(r, 1, 0, fmt.Sprintf("SELECT count() FROM %s.%s", dbName, tableName))
+	}
+
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c",
 		"/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
 	env.queryWithNoError(t, r, "DROP DATABASE "+dbName+" SYNC")
 
 	log.Debug().Msg("restore_remote custom SQL disk tables into the original database")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c",
+	// a data restore does open the destination, and says why, object disk parts are copied from the backup prefix
+	restoreOut, restoreErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c",
 		"/etc/clickhouse-backup/config-s3.yml",
 		"restore_remote", "--tables="+dbName+".*", backupName)
+	r.NoError(restoreErr, "restore_remote failed, output: %s", restoreOut)
+	r.Contains(restoreOut, "restore opens the", "a data restore must report why it opens a remote destination, output: %s", restoreOut)
+	r.Contains(restoreOut, "system.disks", "the reported reason must name the object disk it found, output: %s", restoreOut)
 	for tableName, rows := range tables {
 		env.checkCount(r, 1, rows, fmt.Sprintf("SELECT count() FROM %s.%s", dbName, tableName))
 	}
@@ -181,11 +200,32 @@ XML
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c",
 		"/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
 
+	// restore onto a server which has never seen these disks, the real issue #943 case. A `disk = disk(...)` disk
+	// stays in system.disks for as long as a table declares it, so the database is dropped and clickhouse-server is
+	// restarted before the next restore. Only then is the disk recorded in the backup actually absent from
+	// system.disks at restore time, which is what the object disk fallback of restorePrologue looks for.
+	log.Debug().Msg("restart clickhouse so the custom SQL disks of the backup are unknown to the server")
+	env.queryWithNoError(t, r, "DROP DATABASE "+dbName+" SYNC")
+	env.ch.Close()
+	r.NoError(env.tc.RestartContainer(t, "clickhouse"))
+	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
+	var registeredCustomDisks uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&registeredCustomDisks,
+		"SELECT count() FROM system.disks WHERE name LIKE '__tmp_internal_%' OR name = 'custom_named_s3' "+
+			"SETTINGS empty_result_for_aggregation_by_empty_set=0"))
+	r.Equal(uint64(0), registeredCustomDisks, "no table declares the custom SQL disks any more, they must be gone from system.disks")
+
 	log.Debug().Msg("restore_remote custom SQL disk tables with --restore-database-mapping")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c",
+	mappedOut, mappedErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c",
 		"/etc/clickhouse-backup/config-s3.yml",
 		"restore_remote", "--restore-database-mapping", dbName+":"+mappedDBName,
 		"--tables="+dbName+".*", backupName)
+	r.NoError(mappedErr, "restore_remote with --restore-database-mapping failed, output: %s", mappedOut)
+	// the fallback branch: the destination is opened because the backup names object disks this server does not have
+	r.Contains(mappedOut, "backup object disks missing in system.disks",
+		"restore must report the custom SQL disks of the backup as missing, output: %s", mappedOut)
+	r.Contains(mappedOut, "__tmp_internal_",
+		"the missing disk reason must name the generated custom disk, output: %s", mappedOut)
 	for tableName, rows := range tables {
 		env.checkCount(r, 1, rows, fmt.Sprintf("SELECT count() FROM %s.%s", mappedDBName, tableName))
 	}

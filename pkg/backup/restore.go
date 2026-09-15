@@ -19,6 +19,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -147,10 +148,53 @@ type restorePrologueResult struct {
 	existingTablesSnapshot []clickhouse.Table
 }
 
+// objectDiskRestoreReason - why restoring the data of this backup needs a remote destination, "" when it doesn't.
+// Object disk parts are copied from the backup prefix of the remote storage, so the destination is required when
+// the data lands on an object disk. Both independent causes are reported, neither one hides the other:
+//   - the target server already has an object disk, the backup data can be restored onto it,
+//   - the backup records an object disk which is missing from `system.disks`. A `SETTINGS disk = disk(...)` disk
+//     is registered by clickhouse-server together with the table, so it cannot exist before the schema is restored
+//     and the backup metadata is the only way to see it in advance,
+//     https://github.com/Altinity/clickhouse-backup/issues/943. An object disk which simply no longer exists on
+//     the target is indistinguishable here and is treated the same way.
+//
+// A local-only restore of a backup without any object disk matches neither cause and never opens a connection.
+func (b *Backuper) objectDiskRestoreReason(disks []clickhouse.Disk, backupMetadata metadata.BackupMetadata) string {
+	localObjectDisks := make([]string, 0, len(disks))
+	for _, d := range disks {
+		if b.isDiskTypeObject(d.Type) {
+			localObjectDisks = append(localObjectDisks, fmt.Sprintf("%s(%s)", d.Name, d.Type))
+		}
+	}
+	// map iteration order is random, keep the reported disks stable for the same backup
+	backupDiskNames := make([]string, 0, len(backupMetadata.DiskTypes))
+	for diskName := range backupMetadata.DiskTypes {
+		backupDiskNames = append(backupDiskNames, diskName)
+	}
+	sort.Strings(backupDiskNames)
+	missingObjectDisks := make([]string, 0, len(backupDiskNames))
+	for _, diskName := range backupDiskNames {
+		diskType := backupMetadata.DiskTypes[diskName]
+		if b.findDiskByName(disks, diskName) == nil && b.isDiskTypeObject(diskType) {
+			missingObjectDisks = append(missingObjectDisks, fmt.Sprintf("%s(%s)", diskName, diskType))
+		}
+	}
+	reasons := make([]string, 0, 2)
+	if len(localObjectDisks) > 0 {
+		sort.Strings(localObjectDisks)
+		reasons = append(reasons, fmt.Sprintf("local object disks in system.disks [%s]", strings.Join(localObjectDisks, ", ")))
+	}
+	if len(missingObjectDisks) > 0 {
+		reasons = append(reasons, fmt.Sprintf("backup object disks missing in system.disks [%s]", strings.Join(missingObjectDisks, ", ")))
+	}
+	return strings.Join(reasons, "; ")
+}
+
 // restorePrologue performs everything Restore does before RestoreData: version and disks checks, backup metadata
 // read, rbac/configs/named collections restore, remote destination and resumable state init, table list resolution,
 // RestoreSchema, dropExistPartitions and waitForObjectStorageCleanup,
 // reuseResumableState=true (restore_remote --streaming) keeps the already open b.resumableState instead of opening `restore.state2`
+
 func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern string, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, skipEmptyTables, doRestoreData, reuseResumableState bool) (result *restorePrologueResult, err error) {
 	result = &restorePrologueResult{}
 	closeDst, closeResumableState := false, false
@@ -301,32 +345,24 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 		result.done = true
 		return result, nil
 	}
-	isObjectDiskPresents := false
+	// rbacOnly, configsOnly and namedCollectionsOnly already returned above, so `--schema` is the only way to
+	// reach this point without restoring data, and a schema restore never reads object disk data
+	dstReason := ""
 	if b.cfg.General.RemoteStorage != "custom" {
-		for _, d := range disks {
-			if isObjectDiskPresents = b.isDiskTypeObject(d.Type); isObjectDiskPresents {
-				break
-			}
-		}
-		// a `SETTINGS disk = disk(...)` object disk appears in system.disks only after the schema is restored,
-		// so it is object disk typed in the backup metadata and missing from the local disks,
-		// only such a disk widens the check, a backup whose object disks all exist locally is already covered above
-		// https://github.com/Altinity/clickhouse-backup/issues/943
-		if !isObjectDiskPresents {
-			for diskName, diskType := range backupMetadata.DiskTypes {
-				if b.findDiskByName(disks, diskName) != nil {
-					continue
-				}
-				if isObjectDiskPresents = b.isDiskTypeObject(diskType); isObjectDiskPresents {
-					break
-				}
-			}
+		switch {
+		case backupMetadata.RequiredBackup != "":
+			dstReason = fmt.Sprintf("backup requires %s", backupMetadata.RequiredBackup)
+		case b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.cfg.ClickHouse.EmbeddedBackupDisk == "":
+			dstReason = "embedded backup without `embedded_backup_disk`"
+		case doRestoreData:
+			dstReason = b.objectDiskRestoreReason(disks, backupMetadata)
 		}
 	}
-	if b.cfg.General.RemoteStorage != "custom" && (backupMetadata.RequiredBackup != "" || (b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.cfg.ClickHouse.EmbeddedBackupDisk == "") || isObjectDiskPresents) {
+	if dstReason != "" {
 		if b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName); err != nil {
 			return nil, errors.Wrap(err, "storage.NewBackupDestination")
 		}
+		log.Info().Msgf("restore opens the %s remote destination, reason: %s", b.dst.Kind(), dstReason)
 		if err = b.dst.Connect(ctx); err != nil {
 			return nil, errors.Wrapf(err, "BackupDestination for embedded or object disk: can't connect to %s", b.dst.Kind())
 		}
