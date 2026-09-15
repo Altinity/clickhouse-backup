@@ -2,10 +2,12 @@ package filesystemhelper
 
 import (
 	"io/fs"
+	"maps"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -24,6 +26,11 @@ var (
 	gid       *int
 	chownLock sync.Mutex
 )
+
+// restoreTmpPartPrefix is the prefix of the temporary directory parts are hardlinked into before the atomic rename.
+// The remainder after the first `_` must not parse as a part name, otherwise a concurrent `ATTACH PARTITION`
+// could pick up a half-built directory, https://github.com/Altinity/clickhouse-backup/issues/1034
+const restoreTmpPartPrefix = "clickhouse_backup_tmp_"
 
 // Chown - set permission on path to clickhouse user
 // This is necessary that the ClickHouse will be able to read parts files on restore
@@ -144,7 +151,7 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			activeDisk := backupDiskName
 			dstParentDir, dstParentDirExists := dstDataPaths[activeDisk]
 			if !dstParentDirExists && part.RebalancedDisk == "" {
-				return errors.Errorf("dstDataPaths=%#v, not contains %s", dstDataPaths, activeDisk)
+				return errors.Errorf("disk '%s' required by part '%s' of '%s.%s' is not present in the destination table data_paths (disks: %v), check that the destination table storage policy contains this disk via `SELECT * FROM system.storage_policies`, recreate the table from the backup schema (restore without --data), or map the disk via `clickhouse->disk_mapping` in your config", activeDisk, part.Name, backupTable.Database, backupTable.Table, slices.Sorted(maps.Keys(dstDataPaths)))
 			}
 			if part.RebalancedDisk != "" {
 				activeDisk = part.RebalancedDisk
@@ -168,19 +175,21 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			if toDetached {
 				dstParentDir = filepath.Join(dstParentDir, "detached")
 			}
-			dstPartPath := filepath.Join(dstParentDir, part.Name)
-			info, err := os.Stat(dstPartPath)
-			if err != nil {
-				if os.IsNotExist(err) {
-					log.Debug().Msgf("MkDirAll %s", dstPartPath)
-					if mkdirErr := MkdirAll(dstPartPath, ch, disks); mkdirErr != nil {
-						log.Warn().Msgf("error during Mkdir %+v", mkdirErr)
-					}
-				} else {
+			// hardlink into a temporary directory and rename it into place afterwards, so ClickHouse never observes
+			// a half-built part and a re-run never merges into leftovers, https://github.com/Altinity/clickhouse-backup/issues/1034
+			finalPartPath := filepath.Join(dstParentDir, part.Name)
+			dstPartPath := filepath.Join(dstParentDir, restoreTmpPartPrefix+part.Name)
+			if err := os.RemoveAll(dstPartPath); err != nil {
+				return errors.Wrapf(err, "remove leftover temporary part directory '%s'", dstPartPath)
+			}
+			if toDetached {
+				if err := removeStaleDetachedPart(part.Name, dstDataPaths, dstParentDir); err != nil {
 					return err
 				}
-			} else if !info.IsDir() {
-				return errors.Errorf("'%s' should be directory or absent", dstPartPath)
+			}
+			log.Debug().Msgf("MkDirAll %s", dstPartPath)
+			if mkdirErr := MkdirAll(dstPartPath, ch, disks); mkdirErr != nil {
+				log.Warn().Msgf("error during Mkdir %+v", mkdirErr)
 			}
 			// activeDisk is the rebalanced disk name when RebalancedDisk is set,
 			// matching the directory structure created by download
@@ -221,9 +230,41 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			}); err != nil {
 				return errors.Wrapf(err, "error during filepath.Walk for part '%s'", part.Name)
 			}
+			if err := os.Rename(dstPartPath, finalPartPath); err != nil {
+				return errors.Wrapf(err, "rename '%s' -> '%s'", dstPartPath, finalPartPath)
+			}
 		}
 	}
 	log.Debug().Str("operation", "HardlinkBackupPartsToStorage").Str("duration", utils.HumanizeDuration(time.Since(start))).Msg("done")
+	return nil
+}
+
+// removeStaleDetachedPart removes `detached/<partName>` from every data path of the destination table
+// (all disks of its storage policy) plus dstDetachedDir (the rebalanced disk, which may be absent from
+// tableDataPaths). ClickHouse `ATTACH PART` takes the first storage policy disk which has such a directory,
+// so a stale copy on another disk shadows the freshly restored one,
+// https://github.com/Altinity/clickhouse-backup/issues/1034
+func removeStaleDetachedPart(partName string, dstDataPaths map[string]string, dstDetachedDir string) error {
+	candidates := map[string]struct{}{filepath.Join(dstDetachedDir, partName): {}}
+	for _, dataPath := range dstDataPaths {
+		candidates[filepath.Join(dataPath, "detached", partName)] = struct{}{}
+	}
+	for candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return errors.Wrapf(err, "stat '%s'", candidate)
+		}
+		if !info.IsDir() {
+			return errors.Errorf("'%s' should be directory or absent", candidate)
+		}
+		log.Warn().Msgf("remove stale detached part %s before restore", candidate)
+		if err := os.RemoveAll(candidate); err != nil {
+			return errors.Wrapf(err, "remove stale detached part '%s'", candidate)
+		}
+	}
 	return nil
 }
 

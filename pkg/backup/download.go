@@ -482,11 +482,11 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 			disksByStoragePolicyAndType = b.splitDisksByTypeAndStoragePolicy(disks)
 		}
 		if _, isTypeExists := disksByStoragePolicyAndType[diskType]; !isTypeExists {
-			return "", nil, errors.Errorf("disk: %s, diskType: %s not found in system.disks", disk, diskType)
+			return "", nil, errors.Errorf("disk: %s, diskType: %s not found in system.disks, check `SELECT * FROM system.disks` and `SELECT * FROM system.storage_policies` on the destination server", disk, diskType)
 		}
 		filteredDisks, isPolicyExists := disksByStoragePolicyAndType[diskType][storagePolicy]
 		if !isPolicyExists || len(filteredDisks) == 0 {
-			return "", nil, errors.Errorf("storagePolicy: %s with diskType: %s not found in system.disks", storagePolicy, diskType)
+			return "", nil, errors.Errorf("storagePolicy: %s with diskType: %s not found in system.disks, check `SELECT * FROM system.storage_policies` and `SELECT * FROM system.disks` on the destination server", storagePolicy, diskType)
 		}
 		return storagePolicy, filteredDisks, nil
 	}
@@ -558,9 +558,12 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 						updateDiskFreeSize(downloadDisk, diskType, storagePolicy, newFreeSpace)
 					}
 					//re-balance file depend on part
-					if t.Files != nil && len(t.Files) > 0 {
-						if len(t.Files[disk]) == 0 {
-							return errors.Errorf("table: `%s`.`%s` part.Name: %s, part.RebalancedDisk: %s, non empty `files` can't find disk: %s", t.Table, t.Database, t.Parts[disk][j].Name, t.Parts[disk][j].RebalancedDisk, disk)
+					if len(t.Files) > 0 {
+						// `required` parts were uploaded with the base backup, so in an incremental backup
+						// a disk which carries only such parts legitimately has no `files` entry,
+						// https://github.com/Altinity/clickhouse-backup/issues/1034
+						if len(t.Files[disk]) == 0 && !t.Parts[disk][j].Required {
+							return errors.Errorf("table: `%s`.`%s` part.Name: %s, part.RebalancedDisk: %s, non empty `files` can't find disk: %s", t.Database, t.Table, t.Parts[disk][j].Name, t.Parts[disk][j].RebalancedDisk, disk)
 						}
 						for _, fileName := range t.Files[disk] {
 							if strings.HasPrefix(fileName, disk+"_"+t.Parts[disk][j].Name+".") {
