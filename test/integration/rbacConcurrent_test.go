@@ -15,6 +15,9 @@ import (
 
 const rbacConcurrentUsersCount = 100
 
+// system.zookeeper path is relative to the <zookeeper><root> chroot, so it works for both env shapes
+const uuidNodesCountQuery = "SELECT count() AS cnt FROM system.zookeeper WHERE path='/clickhouse/access/uuid' SETTINGS empty_result_for_aggregation_by_empty_set=0"
+
 // TestRBACConcurrentRestore - two `restore --rbac-only` of the same backup started at the same moment
 // against one keeper must both succeed, they write byte identical znodes,
 // https://github.com/Altinity/clickhouse-backup/issues/1048
@@ -49,10 +52,16 @@ func TestRBACConcurrentRestore(t *testing.T) {
 	// a polluted env breaks later tests which run in the same container
 	defer func() {
 		if !env.ch.IsOpen {
-			if err := env.connect(t, "60s"); err != nil {
-				log.Warn().Msgf("TestRBACConcurrentRestore cleanup connect error: %v", err)
-				return
+			var connectErr error
+			for attempt := 1; attempt <= 30; attempt++ {
+				if connectErr = env.connect(t, "60s"); connectErr == nil {
+					break
+				}
+				log.Warn().Msgf("TestRBACConcurrentRestore cleanup connect attempt %d error: %v", attempt, connectErr)
+				time.Sleep(2 * time.Second)
 			}
+			// infrastructure failure, fail the test instead of returning a polluted env to the pool
+			r.NoError(connectErr, "TestRBACConcurrentRestore cleanup connect error")
 		}
 		for _, q := range append(dropRBACQueries, "DROP TABLE IF EXISTS test_rbac.test_rbac SYNC", "DROP DATABASE IF EXISTS test_rbac SYNC") {
 			if err := env.ch.Query(q); err != nil {
@@ -98,8 +107,11 @@ func TestRBACConcurrentRestore(t *testing.T) {
 		createRBACQuery("CREATE ROW POLICY `test.rbac-name` ON test_rbac.test_rbac USING v>=0 AS RESTRICTIVE TO `test.rbac-name`")
 		createRBACQuery("CREATE USER " + concurrentUsers)
 	}
-	// total RBAC objects = 5 `test.rbac-name` objects + rbacConcurrentUsersCount users
+	// total RBAC objects created by this test = 5 `test.rbac-name` objects + rbacConcurrentUsersCount users
 	expectedObjects := uint64(5 + rbacConcurrentUsersCount)
+	// the count is for the whole container, take a baseline so leftovers of earlier tests in the pooled env don't fail the assert
+	var baselineUuidNodes uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&baselineUuidNodes, uuidNodesCountQuery))
 
 	createRBACObjects()
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "create", "--rbac", "--rbac-only", backupName)
@@ -165,10 +177,20 @@ func TestRBACConcurrentRestore(t *testing.T) {
 			r.Truef(found, "SHOW %s doesn't contain %#v after concurrent restore, RBAC objects were %s", rbacType, expectedValue, shape)
 		}
 
-		// system.zookeeper path is relative to the <zookeeper><root> chroot, so it works for both env shapes
+		// every restored user must be materialized by ClickHouse, not only present as a znode
+		var restoredUsers uint64
+		for attempt := 1; attempt <= 30; attempt++ {
+			r.NoError(env.ch.SelectSingleRowNoCtx(&restoredUsers, "SELECT count() AS cnt FROM system.users WHERE name LIKE 'test\\_rbac\\_concurrent\\_%' SETTINGS empty_result_for_aggregation_by_empty_set=0"))
+			if restoredUsers == uint64(rbacConcurrentUsersCount) {
+				break
+			}
+			time.Sleep(1 * time.Second)
+		}
+		r.Equalf(uint64(rbacConcurrentUsersCount), restoredUsers, "expect %d test_rbac_concurrent_* users after concurrent restore, RBAC objects were %s", rbacConcurrentUsersCount, shape)
+
 		var uuidNodes uint64
-		r.NoError(env.ch.SelectSingleRowNoCtx(&uuidNodes, "SELECT count() AS cnt FROM system.zookeeper WHERE path='/clickhouse/access/uuid' SETTINGS empty_result_for_aggregation_by_empty_set=0"))
-		r.Equalf(expectedObjects, uuidNodes, "expect %d /clickhouse/access/uuid znodes after concurrent restore, RBAC objects were %s", expectedObjects, shape)
+		r.NoError(env.ch.SelectSingleRowNoCtx(&uuidNodes, uuidNodesCountQuery))
+		r.Equalf(baselineUuidNodes+expectedObjects, uuidNodes, "expect %d /clickhouse/access/uuid znodes after concurrent restore, RBAC objects were %s", baselineUuidNodes+expectedObjects, shape)
 	}
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", backupName)
@@ -177,5 +199,4 @@ func TestRBACConcurrentRestore(t *testing.T) {
 	}
 	env.queryWithNoError(t, r, "DROP TABLE IF EXISTS test_rbac.test_rbac SYNC")
 	r.NoError(env.dropDatabase("test_rbac", true))
-	env.ch.Close()
 }

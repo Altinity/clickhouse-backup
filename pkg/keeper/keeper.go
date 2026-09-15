@@ -595,13 +595,16 @@ func (k *Keeper) ResolvePath(nodePath string) string {
 
 // Upsert - create znode with value or overwrite value when znode already exists,
 // several concurrent writers of the same znode are allowed,
+// parent znodes are not created, use EnsureNode for that,
 // nodePath shall be already resolved via ResolvePath,
 // look https://github.com/Altinity/clickhouse-backup/issues/1048
 func (k *Keeper) Upsert(nodePath string, value []byte) error {
+	const maxAttempts = 5
 	var keeperErr error
+	attempt := 1
 	// the loop spins only when a concurrent writer creates or deletes the same znode
 	// between our Set and Create, one bounce is the realistic maximum
-	for attempt := 0; attempt < 5; attempt++ {
+	for ; attempt <= maxAttempts; attempt++ {
 		if _, keeperErr = k.conn.Set(nodePath, value, -1); keeperErr == nil || !errors.Is(keeperErr, zk.ErrNoNode) {
 			break
 		}
@@ -610,6 +613,12 @@ func (k *Keeper) Upsert(nodePath string, value []byte) error {
 		}
 	}
 	if keeperErr != nil {
+		if attempt > maxAttempts {
+			return errors.Wrapf(keeperErr, "can't upsert znode %s, lost %d attempts to a concurrent writer, error", nodePath, maxAttempts)
+		}
+		if errors.Is(keeperErr, zk.ErrNoNode) {
+			return errors.Wrapf(keeperErr, "can't upsert znode %s, parent znode doesn't exist, error", nodePath)
+		}
 		return errors.Wrapf(keeperErr, "can't upsert znode %s, error", nodePath)
 	}
 	return nil
@@ -630,7 +639,9 @@ func (k *Keeper) EnsureNode(nodePath string) error {
 			return parentErr
 		}
 	}
-	// a concurrent writer could create the same znode after our Exists check, look https://github.com/Altinity/clickhouse-backup/issues/1048
+	// a concurrent writer could create the same znode after our Exists check, look https://github.com/Altinity/clickhouse-backup/issues/1048,
+	// the mirror case (a concurrent writer deleting the parent) needs no retry here,
+	// the only caller (convertLocalSQLToKeeper) ensures the stable <zookeeper_path>/<type char> parents, which nothing deletes
 	if _, keeperErr = k.conn.Create(nodePath, nil, 0, zk.WorldACL(zk.PermAll)); keeperErr != nil && !errors.Is(keeperErr, zk.ErrNodeExists) {
 		return errors.Wrapf(keeperErr, "can't create znode %s, error", nodePath)
 	}
