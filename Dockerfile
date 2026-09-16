@@ -148,12 +148,16 @@ LABEL "org.opencontainers.image.description"="A tool for easy ClickHouse backup 
 LABEL "org.opencontainers.image.source"="https://github.com/Altinity/clickhouse-backup"
 LABEL "org.opencontainers.image.documentation"="https://github.com/Altinity/clickhouse-backup/blob/master/Manual.md"
 
-RUN bash -xec "apt-get update && apt-get install --no-install-recommends -y xxd bsdmainutils parallel wget && apt-get install -y gpg curl && wget -qO- https://kopia.io/signing-key | gpg --dearmor --verbose -o /usr/share/keyrings/kopia-keyring.gpg && \
+# ports.ubuntu.com answers mid-sync either with a Packages.gz whose size does not match the Release
+# file, or with an index listing a .deb which is already gone (404), which fails the whole image build
+# for as long as the mirror is out of sync; refresh the lists and try again instead
+RUN bash -xec "apt_retry() { for _ in 1 2 3 4 5; do apt-get -o Acquire::Retries=5 \"\$@\" && return 0; rm -rf /var/lib/apt/lists/*; sleep 15; apt-get -o Acquire::Retries=5 update -y || true; done; return 1; }; \
+    apt_retry update -y && apt_retry install --no-install-recommends -y xxd bsdmainutils parallel wget && apt_retry install -y gpg curl && wget -qO- https://kopia.io/signing-key | gpg --dearmor --verbose -o /usr/share/keyrings/kopia-keyring.gpg && \
     echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list && \
     wget -qO- 'https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key' | gpg --dearmor --verbose -o /usr/share/keyrings/clickhouse-keyring.gpg && \
     echo 'deb [signed-by=/usr/share/keyrings/clickhouse-keyring.gpg arch=$(dpkg --print-architecture)] https://packages.clickhouse.com/deb stable main' > /etc/apt/sources.list.d/clickhouse.list && \
-    apt-get update -y && \
-    apt-get install --no-install-recommends -y ca-certificates tzdata bash curl restic rsync rclone jq gpg kopia libcap2-bin clickhouse-client && \
+    apt_retry update -y && \
+    apt_retry install --no-install-recommends -y ca-certificates tzdata bash curl restic rsync rclone jq gpg kopia libcap2-bin clickhouse-client && \
     update-ca-certificates && \
     wget -q 'https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)' -c -O /usr/bin/yq && chmod +x /usr/bin/yq && \
     rm -rf /var/lib/apt/lists/* && rm -rf /var/cache/apt/*"
