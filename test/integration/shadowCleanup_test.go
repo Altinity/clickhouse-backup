@@ -163,10 +163,12 @@ func shadowKillSetup(t *testing.T, r *require.Assertions, env *TestEnvironment) 
 	// the rows are inserted in chunks of 100 partitions to stay under the default max_partitions_per_insert_block,
 	// which is not overridable with a query setting on the oldest supported ClickHouse
 	env.queryWithNoError(t, r, "CREATE TABLE IF NOT EXISTS default.shadow_kill_test(id UInt64, v String) ENGINE=MergeTree() PARTITION BY (id % 500) ORDER BY id")
+	// the payload is built in Go, `repeat()` does not exist on the oldest supported ClickHouse
+	payload := strings.Repeat("x", 128)
 	for chunk := 0; chunk < 5; chunk++ {
 		env.queryWithNoError(t, r, fmt.Sprintf(
-			"INSERT INTO default.shadow_kill_test SELECT number, repeat('x', 128) FROM numbers(5000) WHERE (number %% 500) >= %d AND (number %% 500) < %d",
-			chunk*100, (chunk+1)*100))
+			"INSERT INTO default.shadow_kill_test SELECT number, '%s' FROM numbers(5000) WHERE (number %% 500) >= %d AND (number %% 500) < %d",
+			payload, chunk*100, (chunk+1)*100))
 	}
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean", "--all")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", "mkdir -p /var/lib/clickhouse/shadow/foreign_shadow_kill/store && chown -R clickhouse:clickhouse /var/lib/clickhouse/shadow/")
