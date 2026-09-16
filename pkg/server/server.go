@@ -2131,6 +2131,20 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// Handle drop-replica-if-exists parameter, overrides clickhouse.drop_replica_if_exists for this request only
+	// https://github.com/Altinity/clickhouse-backup/issues/1162
+	dropReplicaParamName := "drop_replica_if_exists"
+	dropReplicaParamNames := []string{
+		strings.Replace(dropReplicaParamName, "_", "-", -1),
+		strings.Replace(dropReplicaParamName, "-", "_", -1),
+	}
+	for _, paramName := range dropReplicaParamNames {
+		if _, exist := api.getQueryParameter(query, paramName); exist {
+			cfg.ClickHouse.DropReplicaIfExists = true
+			fullCommand += " --drop-replica-if-exists"
+		}
+	}
+
 	if dryRun {
 		fullCommand += " --dry-run"
 	}
@@ -2415,6 +2429,20 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		if _, exist := api.getQueryParameter(query, paramName); exist {
 			cfg.ClickHouse.RebindReplicaPathIfExists = true
 			fullCommand += " --rebind-replica-path-if-exists"
+		}
+	}
+
+	// Handle drop-replica-if-exists parameter, overrides clickhouse.drop_replica_if_exists for this request only
+	// https://github.com/Altinity/clickhouse-backup/issues/1162
+	dropReplicaParamName := "drop_replica_if_exists"
+	dropReplicaParamNames := []string{
+		strings.Replace(dropReplicaParamName, "_", "-", -1),
+		strings.Replace(dropReplicaParamName, "-", "_", -1),
+	}
+	for _, paramName := range dropReplicaParamNames {
+		if _, exist := api.getQueryParameter(query, paramName); exist {
+			cfg.ClickHouse.DropReplicaIfExists = true
+			fullCommand += " --drop-replica-if-exists"
 		}
 	}
 
