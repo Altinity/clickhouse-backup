@@ -624,8 +624,16 @@ func (f *FTP) MkdirAll(key string, client *ftp.ServerConn) error {
 		}
 		err = client.MakeDir(d)
 		if err != nil && !isFTPDirAlreadyExists(err) {
-			f.dirCacheMutex.Unlock()
-			return errors.Wrapf(err, "FTP MkdirAll MakeDir(%s)", d)
+			// vsftpd answers a generic 550 "Create directory operation failed." for an existing directory,
+			// indistinguishable by text from a real failure, so probe the directory itself before giving up
+			if cwdErr := client.ChangeDir(d); cwdErr != nil {
+				f.dirCacheMutex.Unlock()
+				return errors.Wrapf(err, "FTP MkdirAll MakeDir(%s)", d)
+			}
+			if err = client.ChangeDir("/"); err != nil {
+				f.dirCacheMutex.Unlock()
+				return errors.Wrap(err, "FTP MkdirAll ChangeDir")
+			}
 		}
 		// an already existing directory is a success for MkdirAll and must be remembered too,
 		// otherwise MKD is re-issued for it by every single uploaded object
@@ -636,8 +644,8 @@ func (f *FTP) MkdirAll(key string, client *ftp.ServerConn) error {
 }
 
 // isFTPDirAlreadyExists reports whether a MakeDir reply means the directory is already there,
-// servers phrase it differently: proftpd/vsftpd answer 550 `<dir>: File exists`,
-// others 521 `directory already exists`
+// servers phrase it differently: proftpd answers 550 `<dir>: File exists`, others 521 `directory already exists`,
+// vsftpd's generic 550 `Create directory operation failed.` is not recognizable here and is resolved by a CWD probe in MkdirAll
 func isFTPDirAlreadyExists(err error) bool {
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "exists") && !strings.Contains(message, "not exist")
