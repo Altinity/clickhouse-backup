@@ -87,6 +87,17 @@ During a backup operation, `clickhouse-backup` creates file system hard links to
 During the restore operation, `clickhouse-backup` copies the hard links to the `detached` folder and executes the `ALTER TABLE ... ATTACH PART` query for each data part and each table in the backup.
 A more detailed description is available here: https://www.youtube.com/watch?v=megsNh9Q-dw
 
+## Signal handling
+
+One-shot CLI commands (`create`, `upload`, `download`, `restore`, `delete`, `create_remote`, `restore_remote`, `watch`, ...):
+- the first `SIGINT` (Ctrl+C) or `SIGTERM` cancels the running command: it unwinds, removes the shadow directories it froze (`FREEZE ... WITH NAME <uuid>`) and exits with a non-zero code; a `create` interrupted this way keeps its incomplete local backup directory, `clean_local_broken` or `backups_to_keep_local` retention removes it
+- the second `SIGINT`/`SIGTERM` exits immediately without waiting for the cleanup to finish
+- `SIGKILL` (including OOM kill and pod eviction) can't be handled, the frozen shadow of the table processed at that moment stays behind; every `FREEZE` is recorded in `<backup_name>/freezes.tmp` before it is executed, so the next `clean`, `delete local`, `clean_local_broken` or retention run unfreezes it, see `clean` for details
+
+`server` mode:
+- `SIGTERM` cancels all running commands (same as `POST /backup/kill` for each of them), removes their pid files and stops the API server; in Kubernetes make sure `terminationGracePeriodSeconds` covers the shadow cleanup of a big table, otherwise the following `SIGKILL` leaves it for the next `clean`
+- `SIGHUP` reloads the config and restarts the API server, running commands are canceled the same way as via `POST /restart`
+
 ## Default Config File
 
 By default, the config file is located at `/etc/clickhouse-backup/config.yml`, but it can be redefined via the `CLICKHOUSE_BACKUP_CONFIG` environment variable or via `--config` command line parameter.
