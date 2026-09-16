@@ -593,18 +593,33 @@ func (k *Keeper) ResolvePath(nodePath string) string {
 	return nodePath
 }
 
-// Upsert - create znode with value or set value when znode already exists,
-// nodePath shall be already resolved via ResolvePath
+// Upsert - create znode with value or overwrite value when znode already exists,
+// several concurrent writers of the same znode are allowed,
+// parent znodes are not created, use EnsureNode for that,
+// nodePath shall be already resolved via ResolvePath,
+// look https://github.com/Altinity/clickhouse-backup/issues/1048
 func (k *Keeper) Upsert(nodePath string, value []byte) error {
-	_, stat, keeperErr := k.conn.Get(nodePath)
-	if keeperErr != nil {
-		if _, keeperErr = k.conn.Create(nodePath, value, 0, zk.WorldACL(zk.PermAll)); keeperErr != nil {
-			return errors.Wrapf(keeperErr, "can't create znode %s, error", nodePath)
+	const maxAttempts = 5
+	var keeperErr error
+	attempt := 1
+	// the loop spins only when a concurrent writer creates or deletes the same znode
+	// between our Set and Create, one bounce is the realistic maximum
+	for ; attempt <= maxAttempts; attempt++ {
+		if _, keeperErr = k.conn.Set(nodePath, value, -1); keeperErr == nil || !errors.Is(keeperErr, zk.ErrNoNode) {
+			break
 		}
-		return nil
+		if _, keeperErr = k.conn.Create(nodePath, value, 0, zk.WorldACL(zk.PermAll)); keeperErr == nil || !errors.Is(keeperErr, zk.ErrNodeExists) {
+			break
+		}
 	}
-	if _, keeperErr = k.conn.Set(nodePath, value, stat.Version); keeperErr != nil {
-		return errors.Wrapf(keeperErr, "can't set znode %s, error", nodePath)
+	if keeperErr != nil {
+		if attempt > maxAttempts {
+			return errors.Wrapf(keeperErr, "can't upsert znode %s, lost %d attempts to a concurrent writer, error", nodePath, maxAttempts)
+		}
+		if errors.Is(keeperErr, zk.ErrNoNode) {
+			return errors.Wrapf(keeperErr, "can't upsert znode %s, parent znode doesn't exist, error", nodePath)
+		}
+		return errors.Wrapf(keeperErr, "can't upsert znode %s, error", nodePath)
 	}
 	return nil
 }
@@ -624,7 +639,10 @@ func (k *Keeper) EnsureNode(nodePath string) error {
 			return parentErr
 		}
 	}
-	if _, keeperErr = k.conn.Create(nodePath, nil, 0, zk.WorldACL(zk.PermAll)); keeperErr != nil {
+	// a concurrent writer could create the same znode after our Exists check, look https://github.com/Altinity/clickhouse-backup/issues/1048,
+	// the mirror case (a concurrent writer deleting the parent) needs no retry here,
+	// the only caller (convertLocalSQLToKeeper) ensures the stable <zookeeper_path>/<type char> parents, which nothing deletes
+	if _, keeperErr = k.conn.Create(nodePath, nil, 0, zk.WorldACL(zk.PermAll)); keeperErr != nil && !errors.Is(keeperErr, zk.ErrNodeExists) {
 		return errors.Wrapf(keeperErr, "can't create znode %s, error", nodePath)
 	}
 	return nil
@@ -650,6 +668,10 @@ func (k *Keeper) Walk(prefix, relativePath string, recursive bool, callback Walk
 	value, stat, err := k.conn.Get(nodePath)
 	log.Debug().Msgf("k.Walk->get(%s) = %v, err = %v", nodePath, string(value), err)
 	if err != nil {
+		// znode removed by a concurrent writer after it was listed, look https://github.com/Altinity/clickhouse-backup/issues/1048
+		if errors.Is(err, zk.ErrNoNode) {
+			return nil
+		}
 		return errors.WithStack(fmt.Errorf("k.Walk->get(%s) = %v, err = %v", nodePath, string(value), err))
 	}
 	var isDone bool
@@ -664,6 +686,9 @@ func (k *Keeper) Walk(prefix, relativePath string, recursive bool, callback Walk
 		children, _, err := k.conn.Children(path.Join(prefix, relativePath))
 		log.Debug().Msgf("k.Walk->Children(%s) = %v, err = %v", path.Join(prefix, relativePath), children, err)
 		if err != nil {
+			if errors.Is(err, zk.ErrNoNode) {
+				return nil
+			}
 			return errors.WithStack(fmt.Errorf("k.Walk->Children(%s) = %v, err = %v", path.Join(prefix, relativePath), children, err))
 		}
 		for _, childPath := range children {
@@ -675,8 +700,13 @@ func (k *Keeper) Walk(prefix, relativePath string, recursive bool, callback Walk
 	return nil
 }
 
+// Delete - remove znode, already removed znode is not an error,
+// look https://github.com/Altinity/clickhouse-backup/issues/1048
 func (k *Keeper) Delete(nodePath string) error {
-	return errors.WithStack(k.conn.Delete(nodePath, -1))
+	if err := k.conn.Delete(nodePath, -1); err != nil && !errors.Is(err, zk.ErrNoNode) {
+		return errors.WithStack(err)
+	}
+	return nil
 }
 func (k *Keeper) Close() {
 	k.conn.Close()
