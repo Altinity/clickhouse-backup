@@ -262,22 +262,50 @@ func (b *Backuper) unfreezeShadow(ctx context.Context, uuid string, rec freezeRe
 			continue
 		}
 		shadowDir := path.Join(disk.Path, "shadow", uuid)
-		if _, statErr := os.Stat(shadowDir); statErr != nil && os.IsNotExist(statErr) {
-			continue
+		removed, removeErr := removeShadowDir(shadowDir)
+		if removeErr != nil {
+			return removeErr
 		}
-		if err = os.RemoveAll(shadowDir); err != nil {
-			return errors.Wrapf(err, "can't clean shadow '%s'", shadowDir)
+		if removed {
+			logger.Info().Msgf("cleaned shadow %s", shadowDir)
 		}
-		logger.Info().Msgf("cleaned shadow %s", shadowDir)
 	}
 	return nil
 }
 
-// waitFreezeQueriesDone waits until no query mentioning the shadow uuid is running on the server,
-// best effort: an unreadable system.processes or the timeout only produce a warning
+// removeShadowDir deletes shadowDir and makes sure it stays deleted: an interrupted FREEZE is still
+// creating hardlinks in it for a short while after its query left system.processes, so the directory
+// can reappear right after the first removal, see https://github.com/Altinity/clickhouse-backup/issues/1563
+func removeShadowDir(shadowDir string) (bool, error) {
+	const attempts = 10
+	const settleInterval = 200 * time.Millisecond
+	removed := false
+	for attempt := 0; attempt < attempts; attempt++ {
+		if _, statErr := os.Stat(shadowDir); statErr != nil {
+			if os.IsNotExist(statErr) {
+				return removed, nil
+			}
+			return removed, errors.Wrapf(statErr, "os.Stat %s", shadowDir)
+		}
+		if err := os.RemoveAll(shadowDir); err != nil {
+			return removed, errors.Wrapf(err, "can't clean shadow '%s'", shadowDir)
+		}
+		removed = true
+		// the directory can reappear while the interrupted FREEZE finishes its hardlinks,
+		// so check once more after a settle interval instead of trusting a single removal
+		time.Sleep(settleInterval)
+	}
+	return removed, errors.Errorf("shadow '%s' keeps reappearing after %d removals, a FREEZE query is probably still running", shadowDir, attempts)
+}
+
+// waitFreezeQueriesDone waits until no FREEZE query of the shadow uuid is running on the server,
+// best effort: an unreadable system.processes or the timeout only produce a warning.
+// The `ALTER TABLE%FREEZE%` prefix keeps this very query, which carries the uuid in its own text,
+// out of the result
 func (b *Backuper) waitFreezeQueriesDone(ctx context.Context, uuid string) {
 	const waitTimeout = 30 * time.Second
-	query := fmt.Sprintf("SELECT count() AS cnt FROM system.processes WHERE query LIKE '%%%s%%' SETTINGS empty_result_for_aggregation_by_empty_set=0", uuid)
+	const pollInterval = 200 * time.Millisecond
+	query := fmt.Sprintf("SELECT count() AS cnt FROM system.processes WHERE query LIKE 'ALTER TABLE%%FREEZE%%' AND query LIKE '%%%s%%' SETTINGS empty_result_for_aggregation_by_empty_set=0", uuid)
 	deadline := time.Now().Add(waitTimeout)
 	for {
 		var running uint64
@@ -292,6 +320,7 @@ func (b *Backuper) waitFreezeQueriesDone(ctx context.Context, uuid string) {
 			log.Warn().Msgf("%d FREEZE queries for shadow %s are still running after %s, remove it anyway", running, uuid, waitTimeout)
 			return
 		}
-		time.Sleep(100 * time.Millisecond)
+		log.Debug().Msgf("waiting for %d running FREEZE queries of shadow %s", running, uuid)
+		time.Sleep(pollInterval)
 	}
 }
