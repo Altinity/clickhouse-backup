@@ -317,9 +317,9 @@ func (tc *TestContainers) GetMappedPort(ctx context.Context, name string, contai
 
 // restartHealthTimeout bounds a single restart attempt and restartMaxAttempts caps how many
 // times RestartContainer retries. The old entrypoint.sh (ClickHouse 21.x/22.x) starts an
-// init-time clickhouse-server whenever /docker-entrypoint-initdb.d is non-empty (it always is,
-// dynamic_settings.sh lives there), SIGTERMs it and blocks in `wait "$pid"` before exec'ing the
-// real server. That init-time server sometimes hangs during shutdown - its log ends at
+// init-time clickhouse-server whenever /docker-entrypoint-initdb.d is non-empty, SIGTERMs it and
+// blocks in `wait "$pid"` before exec'ing the real server. That init-time server sometimes hangs
+// during shutdown - its log ends at
 // "BackgroundSchedulePool/BgSchPool: Waiting for threads to finish." and nothing follows - so the
 // entrypoint never reaches exec and the container stays running-but-unhealthy until the deadline.
 // A fresh restart kills the hung process and normally succeeds, so spend the budget on retries
@@ -1147,7 +1147,10 @@ func (tc *TestContainers) clickHouseBinds(curDir, configsDir string) []string {
 	if tc.isAdvanced {
 		binds = append(binds,
 			filepath.Join(configsDir, "custom_entrypoint.sh")+":/custom_entrypoint.sh",
-			filepath.Join(configsDir, "dynamic_settings.sh")+":/docker-entrypoint-initdb.d/dynamic_settings.sh",
+			// mounted outside /docker-entrypoint-initdb.d on purpose: custom_entrypoint.sh runs it
+			// itself, and an empty initdb directory keeps entrypoint.sh from starting the init-time
+			// clickhouse-server which hangs on shutdown for ClickHouse 21.x/22.x, see restartHealthTimeout
+			filepath.Join(configsDir, "dynamic_settings.sh")+":/dynamic_settings.sh",
 		)
 	}
 
