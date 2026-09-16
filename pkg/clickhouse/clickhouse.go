@@ -39,6 +39,9 @@ type ClickHouse struct {
 	version             int
 	IsOpen              bool
 	BreakConnectOnError bool
+	// ShutdownCtx stops the infinite reconnect loop when the process is asked to terminate,
+	// otherwise a SIGTERM can't stop a command waiting for an unreachable ClickHouse
+	ShutdownCtx context.Context
 }
 
 // zerologSlogHandler adapts slog.Handler interface to write through zerolog.
@@ -157,11 +160,11 @@ func (ch *ClickHouse) Connect() error {
 			if err == nil {
 				break
 			}
-			if ch.BreakConnectOnError || strings.Contains(err.Error(), "FIPS 140-only") {
+			if ch.BreakConnectOnError || ch.shutdownRequested() || strings.Contains(err.Error(), "FIPS 140-only") {
 				return errors.WithStack(err)
 			}
 			log.Warn().Msgf("clickhouse connection: %s, sql.Open return error: %v, will wait 5 second to reconnect", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
-			time.Sleep(5 * time.Second)
+			ch.sleepBeforeReconnect()
 		}
 		err = ch.conn.Ping(context.Background())
 		if err == nil {
@@ -169,14 +172,32 @@ func (ch *ClickHouse) Connect() error {
 			ch.IsOpen = true
 			break
 		}
-		if ch.BreakConnectOnError || strings.Contains(err.Error(), "FIPS 140-only") {
+		if ch.BreakConnectOnError || ch.shutdownRequested() || strings.Contains(err.Error(), "FIPS 140-only") {
 			return errors.WithStack(err)
 		}
 		log.Warn().Msgf("clickhouse connection ping: %s return error: %v, will wait 5 second to reconnect", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
-		time.Sleep(5 * time.Second)
+		ch.sleepBeforeReconnect()
 	}
 
 	return nil
+}
+
+// shutdownRequested reports whether the process was asked to terminate, the infinite reconnect
+// of https://github.com/Altinity/clickhouse-backup/issues/857 must not outlive a SIGTERM
+func (ch *ClickHouse) shutdownRequested() bool {
+	return ch.ShutdownCtx != nil && ch.ShutdownCtx.Err() != nil
+}
+
+// sleepBeforeReconnect waits 5 seconds, or returns earlier when the process is asked to terminate
+func (ch *ClickHouse) sleepBeforeReconnect() {
+	if ch.ShutdownCtx == nil {
+		time.Sleep(5 * time.Second)
+		return
+	}
+	select {
+	case <-ch.ShutdownCtx.Done():
+	case <-time.After(5 * time.Second):
+	}
 }
 
 // GetDisks - return data from system.disks table

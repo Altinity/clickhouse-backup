@@ -12,46 +12,72 @@ import (
 	"time"
 )
 
+func pidPath(backupName string) string {
+	return path.Join(os.TempDir(), fmt.Sprintf("clickhouse-backup.%s.pid", backupName))
+}
+
+// runningProcess returns the pid, command and start time recorded in the pid file of backupName
+// when that process is still alive, ok=false when there is no pid file or the process is gone
+func runningProcess(backupName string) (pid int, command string, since string, ok bool) {
+	pidFile := pidPath(backupName)
+	existingPidData, err := os.ReadFile(pidFile)
+	if err != nil {
+		return 0, "", "", false
+	}
+	parts := strings.SplitN(strings.TrimSpace(string(existingPidData)), "|", 3)
+	if len(parts) < 3 {
+		log.Warn().Msgf("Invalid PID file format in %s - will be overwritten", pidFile)
+		return 0, "", "", false
+	}
+	pid, err = strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, "", "", false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return 0, "", "", false
+	}
+	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		return 0, "", "", false
+	}
+	return pid, parts[1], parts[2], true
+}
+
+// IsRunning reports whether the pid file of backupName points to a live process,
+// used to skip cleanup of shadow freezes which belong to a parallel or the current operation
+func IsRunning(backupName string) bool {
+	_, _, _, ok := runningProcess(backupName)
+	return ok
+}
+
 func CheckAndCreatePidFile(backupName string, command string) error {
 	if backupName == "" {
 		return fmt.Errorf("backupName is required")
 	}
-	pidPath := path.Join(os.TempDir(), fmt.Sprintf("clickhouse-backup.%s.pid", backupName))
+	pidFile := pidPath(backupName)
 	// Check existing PID file
-	existingPidData, err := os.ReadFile(pidPath)
-	if err == nil {
-		// Parse existing PID data
-		parts := strings.SplitN(strings.TrimSpace(string(existingPidData)), "|", 3)
-		if len(parts) < 3 {
-			log.Warn().Msgf("Invalid PID file format in %s - will be overwritten", pidPath)
-		} else if pid, err := strconv.Atoi(parts[0]); err == nil {
-			if proc, err := os.FindProcess(pid); err == nil {
-				if err := proc.Signal(syscall.Signal(0)); err == nil {
-					if procInfo, infoErr := process.NewProcess(int32(pid)); infoErr == nil {
-						if cmdLine, cmdLineErr := procInfo.Cmdline(); cmdLineErr == nil {
-							return fmt.Errorf(
-								"another clickhouse-backup `%s` command is already running %s (pid=%d, pidPath=%s, cmdLine=%s)",
-								parts[1], parts[2], pid, pidPath, cmdLine,
-							)
-						} else {
-							log.Warn().Err(cmdLineErr).Str("pidPath", pidPath).Int("pid", pid).Msg("can't get cmdLine")
-						}
-					} else {
-						log.Warn().Err(infoErr).Str("pidPath", pidPath).Int("pid", pid).Msg("can't get process info")
-					}
-				}
+	if pid, runningCommand, since, ok := runningProcess(backupName); ok {
+		if procInfo, infoErr := process.NewProcess(int32(pid)); infoErr == nil {
+			if cmdLine, cmdLineErr := procInfo.Cmdline(); cmdLineErr == nil {
+				return fmt.Errorf(
+					"another clickhouse-backup `%s` command is already running %s (pid=%d, pidPath=%s, cmdLine=%s)",
+					runningCommand, since, pid, pidFile, cmdLine,
+				)
+			} else {
+				log.Warn().Err(cmdLineErr).Str("pidPath", pidFile).Int("pid", pid).Msg("can't get cmdLine")
 			}
+		} else {
+			log.Warn().Err(infoErr).Str("pidPath", pidFile).Int("pid", pid).Msg("can't get process info")
 		}
 	}
 
 	// Write new PID file
-	pid := fmt.Sprintf("%d|%s|%s", os.Getpid(), command, time.Now().Format(time.RFC3339))
-	return os.WriteFile(pidPath, []byte(pid), 0644)
+	pidData := fmt.Sprintf("%d|%s|%s", os.Getpid(), command, time.Now().Format(time.RFC3339))
+	return os.WriteFile(pidFile, []byte(pidData), 0644)
 }
 
 func RemovePidFile(backupName string) {
-	pidPath := path.Join(os.TempDir(), fmt.Sprintf("clickhouse-backup.%s.pid", backupName))
-	_ = os.Remove(pidPath)
+	_ = os.Remove(pidPath(backupName))
 }
 
 // ExtractBackupNameFromCommand parses a backup_actions command string (e.g.

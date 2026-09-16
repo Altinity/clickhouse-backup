@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"testing"
@@ -49,4 +50,14 @@ func TestIsNotFoundErr(t *testing.T) {
 	assert.False(t, IsNotFoundErr(&smithyhttp.ResponseError{Response: &smithyhttp.Response{Response: &http.Response{StatusCode: 503}}, Err: errors.New("x")}))
 	assert.False(t, IsNotFoundErr(&googleapi.Error{Code: 503}))
 	assert.False(t, IsNotFoundErr(&azcore.ResponseError{StatusCode: 500}))
+}
+
+// TestIsNotFoundErrDestinationWrite a missing path reported by a write to the destination must stay
+// retryable, otherwise a single transient FTP/SFTP store failure aborts the whole backup
+func TestIsNotFoundErrDestinationWrite(t *testing.T) {
+	storErr := fmt.Errorf("FTP PutFileAbsolute Stor: %w: %w", ErrDestinationWrite,
+		errors.New(`550 "/object_disk/backup/disk_s3/abc: No such file or directory"`))
+	assert.True(t, errors.Is(storErr, ErrDestinationWrite))
+	assert.False(t, IsNotFoundErr(storErr), "destination write failure must not be treated as permanent not found")
+	assert.False(t, IsNotFoundErr(pkgerrors.Wrap(storErr, "dstStorage.PutFileAbsolute error")))
 }

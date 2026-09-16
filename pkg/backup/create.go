@@ -133,21 +133,22 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	}
 	if err != nil {
 		log.Error().Msgf("backup failed error: %v", err)
+		// fix corner cases after https://github.com/Altinity/clickhouse-backup/issues/379
+		// fix https://github.com/Altinity/clickhouse-backup/issues/1345 only clean shadow UUIDs created by this backup, don't touch other shadows
+		// runs before RemoveBackupLocal, which deletes <backup_name>/freezes.tmp together with the backup directory
+		if cleanShadowErr := b.cleanOwnFreezes(disks); cleanShadowErr != nil {
+			log.Error().Msgf("creating failed -> b.cleanOwnFreezes error: %v", cleanShadowErr)
+		}
 		// delete local backup when creation failure
 		if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks, true); removeBackupErr != nil {
 			log.Error().Msgf("creating failed -> b.RemoveBackupLocal error: %v", removeBackupErr)
-		}
-		// fix corner cases after https://github.com/Altinity/clickhouse-backup/issues/379
-		// fix https://github.com/Altinity/clickhouse-backup/issues/1345 only clean shadow UUIDs created by this backup, don't touch other shadows
-		if cleanShadowErr := b.CleanShadowUUIDs(disks); cleanShadowErr != nil {
-			log.Error().Msgf("creating failed -> b.CleanShadowUUIDs error: %v", cleanShadowErr)
 		}
 		return errors.Wrap(err, "createBackup failed")
 	}
 
 	// fix https://github.com/Altinity/clickhouse-backup/issues/1345 clean only shadow UUIDs created by this backup
-	if cleanShadowErr := b.CleanShadowUUIDs(disks); cleanShadowErr != nil {
-		log.Warn().Msgf("b.CleanShadowUUIDs error: %v", cleanShadowErr)
+	if cleanShadowErr := b.cleanOwnFreezes(disks); cleanShadowErr != nil {
+		log.Warn().Msgf("b.cleanOwnFreezes error: %v", cleanShadowErr)
 	}
 	// Clean
 	if err := b.RemoveOldBackupsLocal(ctx, true, disks); err != nil {
@@ -518,11 +519,16 @@ func (b *Backuper) createOneTable(ctx context.Context, backupName, backupPath st
 	if doBackupData && table.BackupType == clickhouse.ShardBackupFull {
 		logger.Debug().Msg("begin data backup")
 		shadowBackupUUID := strings.ReplaceAll(uuid.New().String(), "-", "")
-		b.addShadowBackupUUID(shadowBackupUUID)
+		if addFreezeErr := b.addFreeze(backupName, shadowBackupUUID, table); addFreezeErr != nil {
+			return nil, size, errors.Wrap(addFreezeErr, "b.addFreeze")
+		}
 		disksToPartsMap, realSize, objectDiskSize, checksums, hashOfAllFiles, tableBrokenParts, addTableToBackupErr = b.AddTableToLocalBackup(ctx, backupName, tablesDiffFromRemote, shadowBackupUUID, disks, table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}], skipProjections, version)
 		if addTableToBackupErr != nil {
 			logger.Error().Msgf("b.AddTableToLocalBackup error: %v", addTableToBackupErr)
 			return nil, size, errors.Wrap(addTableToBackupErr, "b.AddTableToLocalBackup")
+		}
+		if removeFreezeErr := b.removeFreeze(shadowBackupUUID, disks); removeFreezeErr != nil {
+			return nil, size, errors.Wrap(removeFreezeErr, "b.removeFreeze")
 		}
 		// account broken and total data parts for the max_broken_part_ratio decision in createBackupLocal
 		tableBrokenCount := 0

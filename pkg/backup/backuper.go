@@ -23,6 +23,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/rs/zerolog/log"
 )
@@ -73,10 +74,11 @@ type Backuper struct {
 	// DryRunResult holds the report produced when DryRun is set, so REST API handlers can read it after the command returns
 	DryRunResult *DryRunReport
 	// DiskLimit - max allowed local disk usage in percent after download, 0 disables the check, see issues/1458
-	DiskLimit              int
-	shadowBackupUUIDs      []string
-	shadowBackupUUIDsMutex sync.Mutex
-	fileManifest           *storage.ManifestWriter
+	DiskLimit int
+	// freezes - shadow uuids of the running `create`, persisted in <backup_name>/freezes.tmp, see issues/1563
+	freezes      *freezesState
+	freezesMutex sync.Mutex
+	fileManifest *storage.ManifestWriter
 
 	// casProbeState is the shared (or per-instance) state for the CAS
 	// conditional-put probe and the unsafe-marker WARN banner. In daemon mode
@@ -93,6 +95,8 @@ type Backuper struct {
 
 func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {
 	ch := clickhouse.NewClickHouse(&cfg.ClickHouse)
+	// a SIGTERM must also stop a command stuck in the infinite reconnect loop, see issues/857
+	ch.ShutdownCtx = status.RootContext()
 	b := &Backuper{
 		cfg:           cfg,
 		ch:            ch,
@@ -708,12 +712,6 @@ func (b *Backuper) adjustResumeFlag(resume bool) {
 		resume = true
 	}
 	b.resume = resume
-}
-
-func (b *Backuper) addShadowBackupUUID(uuid string) {
-	b.shadowBackupUUIDsMutex.Lock()
-	b.shadowBackupUUIDs = append(b.shadowBackupUUIDs, uuid)
-	b.shadowBackupUUIDsMutex.Unlock()
 }
 
 // recordUploadedFile records a single file in the backup manifest (thread-safe).

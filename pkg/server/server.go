@@ -122,7 +122,7 @@ func Run(cliCtx *cli.Command, newCliApp func() *cli.Command, configPath string, 
 	sigterm := make(chan os.Signal, 1)
 	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
 	sighup := make(chan os.Signal, 1)
-	signal.Notify(sighup, os.Interrupt, syscall.SIGHUP)
+	signal.Notify(sighup, syscall.SIGHUP)
 	if err := api.Restart(); err != nil {
 		return err
 	}
@@ -392,7 +392,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case "clean":
-			actionsResults, err = api.actionsCleanHandler(w, row, command, actionsResults)
+			actionsResults, err = api.actionsCleanHandler(row, args, actionsResults)
 			if err != nil {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)
 				return
@@ -519,19 +519,14 @@ func (api *APIServer) actionsKillHandler(row status.ActionRow, args []string, ac
 	return actionsResults, nil
 }
 
-func (api *APIServer) actionsCleanHandler(w http.ResponseWriter, row status.ActionRow, command string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
+// actionsCleanHandler re-enters the CLI so `clean --older-than=24h --all --dry-run` flags are parsed the same way as in the console
+func (api *APIServer) actionsCleanHandler(row status.ActionRow, args []string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
 	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Msg(ErrAPILocked.Error())
 		return actionsResults, ErrAPILocked
 	}
-	commandId, ctx := status.Current.Start(command)
-	cfg, err := api.ReloadConfig(w, "clean")
-	if err != nil {
-		status.Current.Stop(commandId, err)
-		return actionsResults, err
-	}
-	b := backup.NewBackuper(cfg)
-	err = b.Clean(ctx)
+	commandId, _ := status.Current.Start(row.Command)
+	err := api.newCliApp().Run(context.Background(), append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
 	if err != nil {
 		log.Error().Msgf("actions Clean error: %v", err)
 		status.Current.Stop(commandId, err)
@@ -1513,17 +1508,38 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // httpCleanHandler - clean ./shadow directory
-func (api *APIServer) httpCleanHandler(w http.ResponseWriter, _ *http.Request) {
+// httpCleanHandler - unfreeze orphaned shadow data, query parameters `older_than`, `all` and `dry_run` match the CLI flags
+func (api *APIServer) httpCleanHandler(w http.ResponseWriter, r *http.Request) {
 	var err error
+	query := r.URL.Query()
+	all := boolQueryParameter(query, "all")
+	dryRun := boolQueryParameter(query, "dry_run", "dry-run")
+	var olderThan time.Duration
+	if olderThanValue := query.Get("older_than"); olderThanValue != "" {
+		if olderThan, err = time.ParseDuration(olderThanValue); err != nil {
+			api.writeError(w, http.StatusBadRequest, "clean", errors.Wrapf(err, "invalid older_than=%s", olderThanValue))
+			return
+		}
+	}
 	fullCommand := "clean"
-	commandId, ctx := status.Current.Start(fullCommand)
+	if olderThan > 0 {
+		fullCommand += " --older-than=" + olderThan.String()
+	}
+	if all {
+		fullCommand += " --all"
+	}
+	if dryRun {
+		fullCommand += " --dry-run"
+	}
+	commandId, _ := status.Current.Start(fullCommand)
 	defer func() { status.Current.Stop(commandId, err) }()
 	cfg, err := api.ReloadConfig(w, "clean")
 	if err != nil {
 		return
 	}
 	b := backup.NewBackuper(cfg)
-	err = b.Clean(ctx)
+	b.DryRun = dryRun
+	err = b.Clean(commandId, all, olderThan)
 	if err != nil {
 		log.Error().Msgf("Clean error: %v", err)
 		api.writeError(w, http.StatusInternalServerError, "clean", err)
