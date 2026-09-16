@@ -434,3 +434,59 @@ func TestCheckDiskLimitForDownload(t *testing.T) {
 	disks[1].TotalSpace = 0
 	require.NoError(t, backuper.checkFreeSpaceForDownload(ctx, remoteBackup, tables, disks, false, false))
 }
+
+// a leftover part directory in the destination backup can hold hardlinks to a required backup which was
+// cleaned and downloaded again since, so the files carry the old inode and os.Link returns EEXIST
+func TestMakePartHardlinksReplacesStaleLeftover(t *testing.T) {
+	backuper := &Backuper{}
+	root := t.TempDir()
+	exists := path.Join(root, "full", "shadow", "db", "t", "default", "1_1_1_0")
+	newPath := path.Join(root, "inc1", "shadow", "db", "t", "default", "1_1_1_0")
+	require.NoError(t, os.MkdirAll(exists, 0o750))
+	require.NoError(t, os.MkdirAll(path.Join(exists, "nested"), 0o750))
+	require.NoError(t, os.WriteFile(path.Join(exists, "checksums.txt"), []byte("fresh"), 0o640))
+	require.NoError(t, os.WriteFile(path.Join(exists, "nested", "data.bin"), []byte("fresh-nested"), 0o640))
+
+	// leftover of an earlier download: same names, different inodes
+	require.NoError(t, os.MkdirAll(path.Join(newPath, "nested"), 0o750))
+	require.NoError(t, os.WriteFile(path.Join(newPath, "checksums.txt"), []byte("stale"), 0o640))
+	require.NoError(t, os.WriteFile(path.Join(newPath, "nested", "data.bin"), []byte("stale-nested"), 0o640))
+
+	require.NoError(t, backuper.makePartHardlinks(exists, newPath))
+
+	for relPath, expectedContent := range map[string]string{"checksums.txt": "fresh", path.Join("nested", "data.bin"): "fresh-nested"} {
+		existsInfo, err := os.Stat(path.Join(exists, relPath))
+		require.NoError(t, err)
+		newInfo, err := os.Stat(path.Join(newPath, relPath))
+		require.NoError(t, err)
+		assert.True(t, os.SameFile(existsInfo, newInfo), "%s must be a hardlink of the required backup copy", relPath)
+		content, err := os.ReadFile(path.Join(newPath, relPath))
+		require.NoError(t, err)
+		assert.Equal(t, expectedContent, string(content), "the freshly downloaded copy of %s must win", relPath)
+	}
+	// no temporary name is left behind
+	leftovers, err := os.ReadDir(newPath)
+	require.NoError(t, err)
+	for _, leftover := range leftovers {
+		assert.NotContains(t, leftover.Name(), ".tmp_relink")
+	}
+
+	// an already correct hardlink stays untouched and is not an error
+	require.NoError(t, backuper.makePartHardlinks(exists, newPath))
+}
+
+// a destination entry which can't be replaced must fail the download instead of being silently kept
+func TestMakePartHardlinksReplaceFails(t *testing.T) {
+	backuper := &Backuper{}
+	root := t.TempDir()
+	exists := path.Join(root, "full", "1_1_1_0")
+	newPath := path.Join(root, "inc1", "1_1_1_0")
+	require.NoError(t, os.MkdirAll(exists, 0o750))
+	require.NoError(t, os.WriteFile(path.Join(exists, "checksums.txt"), []byte("fresh"), 0o640))
+	// a directory where a file is expected: os.Link fails with EEXIST and the rename can't replace it
+	require.NoError(t, os.MkdirAll(path.Join(newPath, "checksums.txt", "blocker"), 0o750))
+
+	err := backuper.makePartHardlinks(exists, newPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "replace stale hardlink")
+}

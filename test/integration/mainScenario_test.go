@@ -32,6 +32,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	incrementBackupName2 := fmt.Sprintf("%s_increment2_%d", t.Name(), rand.Int())
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameReplicated, dbNameMySQL, dbNamePostgreSQL, Issue331Issue1091Atomic, Issue331Issue1091Ordinary}
 	tablesPattern := fmt.Sprintf("*_%s.*", t.Name())
+	defer cleanupAfterFailedScenario(t, env, databaseList, backupConfig)
 	log.Debug().Msg("Clean before start")
 	fullCleanup(t, r, env, []string{fullBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, true, false, false, backupConfig)
 	createAllTypesOfObjectTables := !strings.Contains(remoteStorageType, "CUSTOM")
@@ -193,4 +194,39 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	testBackupSpecifiedPartitions(t, r, env, remoteStorageType, backupConfig)
 
 	env.checkObjectStorageIsEmpty(t, r, remoteStorageType, backupConfig)
+}
+
+// cleanupAfterFailedScenario drops the databases and the local and remote backups left behind when a
+// step of runMainIntegrationScenario fails and aborts the scenario before its own cleanup, otherwise
+// every later test which borrows the same pooled environment fails too (see the TestFTP cascade in
+// PR #1559 CI). It has to run as a defer inside the scenario, t.Cleanup is too late: env.Cleanup has
+// returned the environment to the pool by then. It never asserts, the original failure is the one to report.
+func cleanupAfterFailedScenario(t *testing.T, env *TestEnvironment, databaseList []string, backupConfig string) {
+	if !t.Failed() {
+		return
+	}
+	log.Warn().Msgf("%s failed, cleanup leftovers before the environment returns to the pool", t.Name())
+	for _, backupType := range []string{"local", "remote"} {
+		list, listErr := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
+			"clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" list "+backupType+" | grep -F "+t.Name()+" | cut -d ' ' -f 1")
+		if listErr != nil {
+			log.Warn().Msgf("can't list %s backups: %v\n%s", backupType, listErr, list)
+			continue
+		}
+		// newest first, an increment has to be deleted before the full backup it requires
+		for _, backupName := range childrenFirst(strings.Split(strings.TrimSpace(list), "\n")) {
+			if backupName == "" {
+				continue
+			}
+			if out, delErr := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
+				"clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" delete "+backupType+" "+backupName); delErr != nil {
+				log.Warn().Msgf("can't delete %s %s: %v\n%s", backupType, backupName, delErr, out)
+			}
+		}
+	}
+	for _, db := range databaseList {
+		if dropErr := env.dropDatabase(db+"_"+t.Name(), true); dropErr != nil {
+			log.Warn().Msgf("can't drop database %s_%s: %v", db, t.Name(), dropErr)
+		}
+	}
 }
