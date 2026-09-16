@@ -12,8 +12,9 @@ func TestListFormat(t *testing.T) {
 	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
-	// Create a test backup to have something to list
-	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "ALLOW_EMPTY_BACKUPS=true clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create test_list_format_backup")
+	// Create an empty test backup to have something to list. The pooled env may still hold databases leaked by an
+	// earlier failed test, so the backup is scoped to a pattern which never matches instead of assuming an empty server
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "ALLOW_EMPTY_BACKUPS=true clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create --tables='test_list_format_nonexistent.*' test_list_format_backup")
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "cat /var/lib/clickhouse/backup/test_list_format_backup/metadata.json")
 	r.NoError(err)
 	r.Contains(out, "\"tables\": null")
