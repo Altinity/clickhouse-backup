@@ -158,8 +158,16 @@ cat /tmp/shadow_kill_create.log
 
 func shadowKillSetup(t *testing.T, r *require.Assertions, env *TestEnvironment) {
 	r.NoError(env.DockerCP("configs/config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
-	env.queryWithNoError(t, r, "CREATE TABLE IF NOT EXISTS default.shadow_kill_test(id UInt64, v String) ENGINE=MergeTree() PARTITION BY id % 500 ORDER BY id")
-	env.queryWithNoError(t, r, "INSERT INTO default.shadow_kill_test SELECT number, repeat('x', 128) FROM numbers(5000) SETTINGS max_partitions_per_insert_block=500")
+	// 500 partitions make the FREEZE of that table with CLICKHOUSE_FREEZE_BY_PART=true 500 separate queries,
+	// which keeps the window between the first FREEZE and the final UNFREEZE wide enough to deliver a signal;
+	// the rows are inserted in chunks of 100 partitions to stay under the default max_partitions_per_insert_block,
+	// which is not overridable with a query setting on the oldest supported ClickHouse
+	env.queryWithNoError(t, r, "CREATE TABLE IF NOT EXISTS default.shadow_kill_test(id UInt64, v String) ENGINE=MergeTree() PARTITION BY (id % 500) ORDER BY id")
+	for chunk := 0; chunk < 5; chunk++ {
+		env.queryWithNoError(t, r, fmt.Sprintf(
+			"INSERT INTO default.shadow_kill_test SELECT number, repeat('x', 128) FROM numbers(5000) WHERE (number %% 500) >= %d AND (number %% 500) < %d",
+			chunk*100, (chunk+1)*100))
+	}
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean", "--all")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", "mkdir -p /var/lib/clickhouse/shadow/foreign_shadow_kill/store && chown -R clickhouse:clickhouse /var/lib/clickhouse/shadow/")
 }
