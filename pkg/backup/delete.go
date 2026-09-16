@@ -30,7 +30,18 @@ import (
 )
 
 // Clean - removed all data in shadow folder
-func (b *Backuper) Clean(ctx context.Context) error {
+// Clean unfreezes the shadow uuids recorded in <backup_name>/freezes.tmp of every local backup which is not
+// processed by a live clickhouse-backup process, `olderThan` > 0 additionally removes unrecorded shadow/*
+// directories (orphans of versions before freezes.tmp or manual FREEZE) not modified for that long,
+// `all` restores the historical behavior and wipes the whole shadow/ on every disk,
+// see https://github.com/Altinity/clickhouse-backup/issues/1563
+func (b *Backuper) Clean(commandId int, all bool, olderThan time.Duration) error {
+	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
+	if err != nil {
+		return errors.Wrap(err, "status.Current.GetContextWithCancel")
+	}
+	ctx, cancel = context.WithCancel(ctx)
+	defer cancel()
 	if err := b.ch.Connect(); err != nil {
 		return errors.Wrap(err, "can't connect to clickhouse")
 	}
@@ -40,43 +51,68 @@ func (b *Backuper) Clean(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "b.ch.GetDisks")
 	}
-	for _, disk := range disks {
-		if disk.IsBackup {
-			continue
+	if all {
+		for _, disk := range disks {
+			if disk.IsBackup {
+				continue
+			}
+			shadowDir := path.Join(disk.Path, "shadow")
+			if b.DryRun {
+				log.Info().Msgf("dry-run: would remove everything in '%s'", shadowDir)
+				continue
+			}
+			if err := b.cleanDir(shadowDir); err != nil {
+				return errors.Wrapf(err, "can't clean '%s'", shadowDir)
+			}
+			log.Info().Msg(shadowDir)
 		}
-		shadowDir := path.Join(disk.Path, "shadow")
-		if err := b.cleanDir(shadowDir); err != nil {
-			return errors.Wrapf(err, "can't clean '%s'", shadowDir)
-		}
-		log.Info().Msg(shadowDir)
+		return nil
 	}
-	return nil
-}
-
-// CleanShadowUUIDs - remove only specific shadow backup UUID directories, don't touch other shadows
-// https://github.com/Altinity/clickhouse-backup/issues/1345
-func (b *Backuper) CleanShadowUUIDs(disks []clickhouse.Disk) error {
-	b.shadowBackupUUIDsMutex.Lock()
-	uuids := make([]string, len(b.shadowBackupUUIDs))
-	copy(uuids, b.shadowBackupUUIDs)
-	b.shadowBackupUUIDsMutex.Unlock()
-
-	if len(uuids) == 0 {
+	localBackups, disks, err := b.GetLocalBackups(ctx, disks)
+	if err != nil {
+		return errors.Wrap(err, "b.GetLocalBackups")
+	}
+	inProgress := false
+	for _, backup := range localBackups {
+		inUse, freezesErr := b.cleanBackupFreezes(ctx, backup.BackupName, disks)
+		if freezesErr != nil {
+			return errors.Wrapf(freezesErr, "b.cleanBackupFreezes %s", backup.BackupName)
+		}
+		inProgress = inProgress || inUse
+	}
+	if olderThan <= 0 {
+		return nil
+	}
+	if inProgress {
+		log.Warn().Msg("skip --older-than cleanup, another clickhouse-backup process is in progress and its shadow directories can't be distinguished from orphans")
 		return nil
 	}
 	for _, disk := range disks {
 		if disk.IsBackup {
 			continue
 		}
-		for _, shadowUUID := range uuids {
-			shadowDir := path.Join(disk.Path, "shadow", shadowUUID)
-			if _, statErr := os.Stat(shadowDir); statErr != nil && os.IsNotExist(statErr) {
+		shadowDir := path.Join(disk.Path, "shadow")
+		entries, readErr := os.ReadDir(shadowDir)
+		if readErr != nil {
+			if os.IsNotExist(readErr) {
 				continue
 			}
-			if err := os.RemoveAll(shadowDir); err != nil {
-				return errors.Wrapf(err, "can't clean shadow '%s'", shadowDir)
+			return errors.Wrapf(readErr, "os.ReadDir %s", shadowDir)
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
 			}
-			log.Info().Msgf("cleaned shadow %s", shadowDir)
+			info, infoErr := entry.Info()
+			if infoErr != nil {
+				return errors.Wrapf(infoErr, "os.Stat %s", path.Join(shadowDir, entry.Name()))
+			}
+			if time.Since(info.ModTime()) < olderThan {
+				continue
+			}
+			if err = b.unfreezeShadow(ctx, entry.Name(), freezeRecord{}, disks); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -251,6 +287,10 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 	err = b.cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx, backupName, disks, *backup, hasObjectDisks)
 	if err != nil {
 		return errors.Wrap(err, "cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent")
+	}
+	// unfreeze the shadow of a `create` killed before UNFREEZE, see https://github.com/Altinity/clickhouse-backup/issues/1563
+	if _, freezesErr := b.cleanBackupFreezes(ctx, backupName, disks); freezesErr != nil {
+		log.Warn().Msgf("b.cleanBackupFreezes error: %v", freezesErr)
 	}
 	for _, disk := range disks {
 		backupPath := path.Join(disk.Path, "backup", backupName)

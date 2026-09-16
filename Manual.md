@@ -396,13 +396,20 @@ GLOBAL OPTIONS:
 ### CLI command - clean
 ```
 NAME:
-   clickhouse-backup clean - Remove data in 'shadow' folder from all 'path' folders available from 'system.disks'
+   clickhouse-backup clean - Remove orphaned 'shadow' data left by killed `create` commands from all 'path' folders available from 'system.disks'
 
 USAGE:
-   clickhouse-backup clean [options]
+   clickhouse-backup clean [--older-than=<duration>] [--all] [--dry-run]
+
+DESCRIPTION:
+   Unfreeze the shadow directories recorded in `<backup_name>/freezes.tmp` of local backups which are not processed by a running clickhouse-backup process
+   Use --older-than to also remove shadow directories without such record which were not modified for the given duration, use --all to remove everything in 'shadow'
 
 OPTIONS:
-   --help, -h  show help
+   --older-than duration  Also remove 'shadow' directories without freezes.tmp record (created by versions before 2.8.1 or by manual FREEZE) not modified for this duration, e.g. 24h (default: 0s)
+   --all                  Remove everything in 'shadow' folder on every disk, including data frozen by other running commands and manual FREEZE
+   --dry-run              Only log which 'shadow' directories would be removed
+   --help, -h             show help
 
 GLOBAL OPTIONS:
    --config string, -c string                                                                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]

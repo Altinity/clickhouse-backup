@@ -36,6 +36,15 @@ func SetAPIServerMode() {
 	apiServerMode.Store(true)
 }
 
+// rootCtx is the parent of every NotFromAPI command context, main() cancels it on SIGINT/SIGTERM
+// so one-shot CLI commands unwind and clean up their shadow, see issues/1563
+var rootCtx = context.Background()
+
+// SetRootContext sets the parent context of NotFromAPI commands, call it once before the CLI runs
+func SetRootContext(ctx context.Context) {
+	rootCtx = ctx
+}
+
 // APIServerMode reports whether this process runs the API server.
 func APIServerMode() bool {
 	return apiServerMode.Load()
@@ -242,7 +251,7 @@ func (status *AsyncStatus) GetContextWithCancel(commandId int) (context.Context,
 	status.RLock()
 	defer status.RUnlock()
 	if commandId == NotFromAPI {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(rootCtx)
 		return ctx, cancel, nil
 	}
 	row := status.rowLocked(commandId)
