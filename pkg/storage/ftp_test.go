@@ -15,6 +15,8 @@ func TestIsFTPDirAlreadyExists(t *testing.T) {
 	assert.False(t, isFTPDirAlreadyExists(errors.New(`550 "object_disk/22_3: Permission denied"`)))
 	assert.False(t, isFTPDirAlreadyExists(errors.New(`550 "object_disk/22_3: No such file or directory"`)))
 	assert.False(t, isFTPDirAlreadyExists(errors.New("550 parent directory does not exists")))
+	// vsftpd replies the same for an existing directory and for a real failure, MkdirAll resolves it with a CWD probe
+	assert.False(t, isFTPDirAlreadyExists(errors.New(`550 "Create directory operation failed."`)))
 }
 
 // TestForgetDirCache a failed store proves the cached directory tree is stale, all its levels
