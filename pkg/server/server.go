@@ -117,7 +117,7 @@ func Run(cliCtx *cli.Command, newCliApp func() *cli.Command, configPath string, 
 	sigterm := make(chan os.Signal, 1)
 	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
 	sighup := make(chan os.Signal, 1)
-	signal.Notify(sighup, os.Interrupt, syscall.SIGHUP)
+	signal.Notify(sighup, syscall.SIGHUP)
 	if err := api.Restart(); err != nil {
 		return err
 	}
