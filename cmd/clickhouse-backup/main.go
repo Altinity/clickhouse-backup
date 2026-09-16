@@ -6,9 +6,11 @@ import (
 	"fmt"
 	stdlog "log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli/v3"
@@ -1034,11 +1036,32 @@ func newRootCommand() *cli.Command {
 			},
 		},
 		{
-			Name:  "clean",
-			Usage: "Remove data in 'shadow' folder from all 'path' folders available from 'system.disks'",
+			Name:      "clean",
+			Usage:     "Remove orphaned 'shadow' data left by killed `create` commands from all 'path' folders available from 'system.disks'",
+			UsageText: "clickhouse-backup clean [--older-than=<duration>] [--all] [--dry-run]",
+			Description: "Unfreeze the shadow directories recorded in `<backup_name>/freezes.tmp` of local backups which are not processed by a running clickhouse-backup process\n" +
+				"Use --older-than to also remove shadow directories without such record which were not modified for the given duration, use --all to remove everything in 'shadow'",
 			Action: func(ctx context.Context, c *cli.Command) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Clean(context.Background())
+				b.DryRun = c.Bool("dry-run")
+				return b.Clean(commandIdFromCli(c), c.Bool("all"), c.Duration("older-than"))
+			},
+			Flags: []cli.Flag{
+				&cli.DurationFlag{
+					Name:   "older-than",
+					Hidden: false,
+					Usage:  "Also remove 'shadow' directories without freezes.tmp record (created by versions before 2.8.1 or by manual FREEZE) not modified for this duration, e.g. 24h",
+				},
+				&cli.BoolFlag{
+					Name:   "all",
+					Hidden: false,
+					Usage:  "Remove everything in 'shadow' folder on every disk, including data frozen by other running commands and manual FREEZE",
+				},
+				&cli.BoolFlag{
+					Name:   "dry-run",
+					Hidden: false,
+					Usage:  "Only log which 'shadow' directories would be removed",
+				},
 			},
 		},
 		{
@@ -1313,7 +1336,21 @@ func main() {
 		fmt.Println("Build Architecture:\t", buildArch)
 		fmt.Println("FIPS 140-3:\t", fips140.Enabled())
 	}
-	if err := newRootCommand().Run(context.Background(), os.Args); err != nil {
+	// the first SIGINT/SIGTERM cancels the running command so it unwinds and cleans up its shadow,
+	// the second one exits immediately, see https://github.com/Altinity/clickhouse-backup/issues/1563
+	ctx, cancel := context.WithCancel(context.Background())
+	status.SetRootContext(ctx)
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-signals
+		log.Warn().Msgf("received %s, cancel the running command, send it again to exit immediately", sig)
+		cancel()
+		sig = <-signals
+		log.Error().Msgf("received second %s, exit immediately", sig)
+		os.Exit(1)
+	}()
+	if err := newRootCommand().Run(ctx, os.Args); err != nil {
 		log.Fatal().Stack().Err(err).Send()
 	}
 }

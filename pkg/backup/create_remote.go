@@ -122,15 +122,15 @@ func (b *Backuper) createToRemoteStreaming(ctx context.Context, backupName, diff
 		// the partial local backup and the tables already uploaded to remote are kept intentionally,
 		// `--resume` continues both, otherwise delete the backup locally and remotely before retry
 		// fix https://github.com/Altinity/clickhouse-backup/issues/1345 only clean shadow UUIDs created by this backup, don't touch other shadows
-		if cleanShadowErr := b.CleanShadowUUIDs(p.disks); cleanShadowErr != nil {
-			log.Error().Msgf("streaming backup failed -> b.CleanShadowUUIDs error: %v", cleanShadowErr)
+		if cleanShadowErr := b.cleanOwnFreezes(p.disks); cleanShadowErr != nil {
+			log.Error().Msgf("streaming backup failed -> b.cleanOwnFreezes error: %v", cleanShadowErr)
 		}
 		return errors.Wrapf(err, "create_remote --streaming failed, partial backup '%s' is kept locally and on remote storage, use --resume to continue or delete it from both", backupName)
 	}
 
 	// fix https://github.com/Altinity/clickhouse-backup/issues/1345 clean only shadow UUIDs created by this backup
-	if cleanShadowErr := b.CleanShadowUUIDs(p.disks); cleanShadowErr != nil {
-		log.Warn().Msgf("b.CleanShadowUUIDs error: %v", cleanShadowErr)
+	if cleanShadowErr := b.cleanOwnFreezes(p.disks); cleanShadowErr != nil {
+		log.Warn().Msgf("b.cleanOwnFreezes error: %v", cleanShadowErr)
 	}
 	if err := b.RemoveOldBackupsLocal(ctx, true, p.disks); err != nil {
 		return errors.Wrap(err, "b.RemoveOldBackupsLocal")
