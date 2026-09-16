@@ -1495,3 +1495,5 @@ RBAC objects live either in a `local_directory` user directory (`<access_control
 - backup contains `*.sql` files but the target has no `local_directory` user directory, every RBAC object is written to Keeper, `ReplicatedAccessStorage` watches apply it without a restart.
 
 When the target server has neither a `local_directory` nor a `replicated` user directory (for example only `users_xml`), restoring a backup which contains RBAC objects fails instead of silently doing nothing.
+
+Running `restore --rbac` on several replicas which share one `replicated` user directory at the same time is supported, every replica writes the same znodes and the result is the same on all of them; set `clickhouse: restart_command: "sql:SYSTEM RELOAD USERS"` for such clusters, so the concurrent restores don't restart every replica at once.

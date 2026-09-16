@@ -153,3 +153,20 @@ func TestSignalHandling(t *testing.T) {
 		RemovePidFile(backupName)
 	})
 }
+
+// https://github.com/Altinity/clickhouse-backup/issues/1563
+func TestIsRunning(t *testing.T) {
+	backupName := fmt.Sprintf("is_running_test_%d", time.Now().UnixNano())
+	defer RemovePidFile(backupName)
+
+	require.False(t, IsRunning(backupName), "no pid file")
+
+	require.NoError(t, CheckAndCreatePidFile(backupName, "create"))
+	require.True(t, IsRunning(backupName), "own process is alive")
+
+	require.NoError(t, os.WriteFile(pidPath(backupName), []byte("999999|create|2026-01-01T00:00:00Z"), 0644))
+	require.False(t, IsRunning(backupName), "dead process")
+
+	require.NoError(t, os.WriteFile(pidPath(backupName), []byte("garbage"), 0644))
+	require.False(t, IsRunning(backupName), "invalid pid file")
+}

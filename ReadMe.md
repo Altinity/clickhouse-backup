@@ -87,6 +87,17 @@ During a backup operation, `clickhouse-backup` creates file system hard links to
 During the restore operation, `clickhouse-backup` copies the hard links to the `detached` folder and executes the `ALTER TABLE ... ATTACH PART` query for each data part and each table in the backup.
 A more detailed description is available here: https://www.youtube.com/watch?v=megsNh9Q-dw
 
+## Signal handling
+
+One-shot CLI commands (`create`, `upload`, `download`, `restore`, `delete`, `create_remote`, `restore_remote`, `watch`, ...):
+- the first `SIGINT` (Ctrl+C) or `SIGTERM` cancels the running command: it unwinds, removes the shadow directories it froze (`FREEZE ... WITH NAME <uuid>`) and exits with a non-zero code; a `create` interrupted this way keeps its incomplete local backup directory, `clean_local_broken` or `backups_to_keep_local` retention removes it
+- the second `SIGINT`/`SIGTERM` exits immediately without waiting for the cleanup to finish
+- `SIGKILL` (including OOM kill and pod eviction) can't be handled, the frozen shadow of the table processed at that moment stays behind; every `FREEZE` is recorded in `<backup_name>/freezes.tmp` before it is executed, so the next `clean`, `delete local`, `clean_local_broken` or retention run unfreezes it, see `clean` for details
+
+`server` mode:
+- `SIGTERM` cancels all running commands (same as `POST /backup/kill` for each of them), removes their pid files and stops the API server; in Kubernetes make sure `terminationGracePeriodSeconds` covers the shadow cleanup of a big table, otherwise the following `SIGKILL` leaves it for the next `clean`
+- `SIGHUP` reloads the config and restarts the API server, running commands are canceled the same way as via `POST /restart`
+
 ## Default Config File
 
 By default, the config file is located at `/etc/clickhouse-backup/config.yml`, but it can be redefined via the `CLICKHOUSE_BACKUP_CONFIG` environment variable or via `--config` command line parameter.
@@ -658,7 +669,13 @@ Note: this operation is asynchronous and can only be stopped with `kill -s SIGHU
 
 ### POST /backup/clean
 
-Clean the `shadow` folders using all available paths from `system.disks`
+Unfreeze the orphaned `shadow` directories recorded in `<backup_name>/freezes.tmp` of local backups which are not processed by a running `clickhouse-backup` process (left by a `create` killed between `FREEZE` and `UNFREEZE`), using all available paths from `system.disks`.
+
+Optional query argument: `older_than` — also remove `shadow` directories without such a record which were not modified for the given duration, e.g. `24h` (orphans of versions before 2.8.1 or manual `FREEZE`).
+
+Optional query argument: `all` — remove everything in the `shadow` folders on every disk, including the data of concurrently running commands and manual `FREEZE` (behavior of versions before 2.8.1).
+
+Optional query argument: `dry_run` — only log which `shadow` directories would be removed.
 
 ### POST /backup/clean/remote_broken
 
@@ -1254,13 +1271,20 @@ GLOBAL OPTIONS:
 ### CLI command - clean
 ```
 NAME:
-   clickhouse-backup clean - Remove data in 'shadow' folder from all 'path' folders available from 'system.disks'
+   clickhouse-backup clean - Remove orphaned 'shadow' data left by killed `create` commands from all 'path' folders available from 'system.disks'
 
 USAGE:
-   clickhouse-backup clean [options]
+   clickhouse-backup clean [--older-than=<duration>] [--all] [--dry-run]
+
+DESCRIPTION:
+   Unfreeze the shadow directories recorded in `<backup_name>/freezes.tmp` of local backups which are not processed by a running clickhouse-backup process
+   Use --older-than to also remove shadow directories without such record which were not modified for the given duration, use --all to remove everything in 'shadow'
 
 OPTIONS:
-   --help, -h  show help
+   --older-than duration  Also remove 'shadow' directories without freezes.tmp record (created by versions before 2.8.1 or by manual FREEZE) not modified for this duration, e.g. 24h (default: 0s)
+   --all                  Remove everything in 'shadow' folder on every disk, including data frozen by other running commands and manual FREEZE
+   --dry-run              Only log which 'shadow' directories would be removed
+   --help, -h             show help
 
 GLOBAL OPTIONS:
    --config string, -c string                                                                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
