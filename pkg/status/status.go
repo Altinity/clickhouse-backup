@@ -45,6 +45,11 @@ func SetRootContext(ctx context.Context) {
 	rootCtx = ctx
 }
 
+// RootContext returns the context canceled when the process is asked to terminate
+func RootContext() context.Context {
+	return rootCtx
+}
+
 // APIServerMode reports whether this process runs the API server.
 func APIServerMode() bool {
 	return apiServerMode.Load()

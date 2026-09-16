@@ -23,6 +23,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/rs/zerolog/log"
 )
@@ -70,6 +71,8 @@ type Backuper struct {
 
 func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {
 	ch := clickhouse.NewClickHouse(&cfg.ClickHouse)
+	// a SIGTERM must also stop a command stuck in the infinite reconnect loop, see issues/857
+	ch.ShutdownCtx = status.RootContext()
 	b := &Backuper{
 		cfg:  cfg,
 		ch:   ch,
