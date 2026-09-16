@@ -242,6 +242,10 @@ func (b *Backuper) unfreezeShadow(ctx context.Context, uuid string, rec freezeRe
 	if err != nil {
 		return errors.Wrap(err, "b.ch.GetVersion")
 	}
+	// a canceled command aborts `ALTER TABLE ... FREEZE ... WITH NAME <uuid>` on the client side only,
+	// the server keeps executing it and recreates shadow/<uuid> right after we removed it,
+	// so wait for those queries to leave system.processes first
+	b.waitFreezeQueriesDone(ctx, uuid)
 	unfreezeQuery := ""
 	if version >= 22006000 {
 		unfreezeQuery = fmt.Sprintf("SYSTEM UNFREEZE WITH NAME '%s'", uuid)
@@ -267,4 +271,27 @@ func (b *Backuper) unfreezeShadow(ctx context.Context, uuid string, rec freezeRe
 		logger.Info().Msgf("cleaned shadow %s", shadowDir)
 	}
 	return nil
+}
+
+// waitFreezeQueriesDone waits until no query mentioning the shadow uuid is running on the server,
+// best effort: an unreadable system.processes or the timeout only produce a warning
+func (b *Backuper) waitFreezeQueriesDone(ctx context.Context, uuid string) {
+	const waitTimeout = 30 * time.Second
+	query := fmt.Sprintf("SELECT count() AS cnt FROM system.processes WHERE query LIKE '%%%s%%' SETTINGS empty_result_for_aggregation_by_empty_set=0", uuid)
+	deadline := time.Now().Add(waitTimeout)
+	for {
+		var running uint64
+		if err := b.ch.SelectSingleRow(ctx, &running, query); err != nil {
+			log.Warn().Msgf("can't check running FREEZE queries for shadow %s: %v", uuid, err)
+			return
+		}
+		if running == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			log.Warn().Msgf("%d FREEZE queries for shadow %s are still running after %s, remove it anyway", running, uuid, waitTimeout)
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
