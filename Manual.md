@@ -176,6 +176,7 @@ OPTIONS:
    --resume, --resumable                          Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --hardlink-exists-files                        Create hardlinks for existing files instead of downloading
    --disk-limit int                               Refuse download when usage of any local disk would exceed this percent (1-100) after download, overrides general->download_disk_limit, 0 means use config value, https://github.com/Altinity/clickhouse-backup/issues/1458 (default: 0)
+   --allow-missing-files                          Skip data part files which are missing on remote storage (404/NoSuchKey) with an error log and drop them from local table metadata instead of failing, salvage mode for partially corrupted backups, overrides general->allow_missing_files_on_download, https://github.com/Altinity/clickhouse-backup/issues/1456
    --dry-run                                      Show tables count and data size which would be downloaded, without downloading
    --help, -h                                     show help
 
@@ -250,6 +251,7 @@ OPTIONS:
    --replicated-copy-to-detached                                                                                                        Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step
    --skip-empty-tables                                                                                                                  Skip restoring tables that have no data (empty tables with only schema)
    --rebind-replica-path-if-exists                                                                                                      Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent
+   --drop-replica-if-exists                                                                                                             Override clickhouse.drop_replica_if_exists, execute SYSTEM DROP REPLICA ... FROM ZKPATH ... and keep the original replication path when our own replica entry still exists in ZooKeeper but no local table uses it
    --dry-run                                                                                                                            Show tables count and data size which would be restored, without restoring
    --help, -h                                                                                                                           show help
 
@@ -291,9 +293,11 @@ OPTIONS:
    --restore-schema-as-attach                                                                                                           Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --hardlink-exists-files                                                                                                              Create hardlinks for existing files instead of downloading
    --disk-limit int                                                                                                                     Refuse download when usage of any local disk would exceed this percent (1-100) after download, overrides general->download_disk_limit, 0 means use config value, https://github.com/Altinity/clickhouse-backup/issues/1458 (default: 0)
+   --allow-missing-files                                                                                                                Skip data part files which are missing on remote storage (404/NoSuchKey) with an error log and drop them from local table metadata instead of failing, salvage mode for partially corrupted backups, overrides general->allow_missing_files_on_download, https://github.com/Altinity/clickhouse-backup/issues/1456
    --skip-empty-tables                                                                                                                  Skip restoring tables that have no data (empty tables with only schema)
    --streaming                                                                                                                          Restore each table right after its download and delete its local copy, keeps only a small local footprint, https://github.com/Altinity/clickhouse-backup/issues/780
    --rebind-replica-path-if-exists                                                                                                      Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent
+   --drop-replica-if-exists                                                                                                             Override clickhouse.drop_replica_if_exists, execute SYSTEM DROP REPLICA ... FROM ZKPATH ... and keep the original replication path when our own replica entry still exists in ZooKeeper but no local table uses it
    --dry-run                                                                                                                            Show tables count and data size which would be downloaded and restored, without downloading and restoring
    --help, -h                                                                                                                           show help
 

@@ -707,6 +707,11 @@ func newRootCommand() *cli.Command {
 					Usage:  "Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent",
 				},
 				&cli.BoolFlag{
+					Name:   "drop-replica-if-exists",
+					Hidden: false,
+					Usage:  "Override clickhouse.drop_replica_if_exists, execute SYSTEM DROP REPLICA ... FROM ZKPATH ... and keep the original replication path when our own replica entry still exists in ZooKeeper but no local table uses it",
+				},
+				&cli.BoolFlag{
 					Name:  "dry-run",
 					Usage: "Show tables count and data size which would be restored, without restoring",
 				},
@@ -854,6 +859,11 @@ func newRootCommand() *cli.Command {
 					Name:   "rebind-replica-path-if-exists",
 					Hidden: false,
 					Usage:  "Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent",
+				},
+				&cli.BoolFlag{
+					Name:   "drop-replica-if-exists",
+					Hidden: false,
+					Usage:  "Override clickhouse.drop_replica_if_exists, execute SYSTEM DROP REPLICA ... FROM ZKPATH ... and keep the original replication path when our own replica entry still exists in ZooKeeper but no local table uses it",
 				},
 				&cli.BoolFlag{
 					Name:  "dry-run",

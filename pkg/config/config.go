@@ -402,12 +402,19 @@ type ClickHouseConfig struct {
 	// it — async-stale state after a DROP. That case is observationally identical to a temporarily-offline HA
 	// sibling, so it stays opt-in: MUST be false during a concurrent multi-replica restore or it causes
 	// split-brain (https://github.com/Altinity/clickhouse-backup/issues/1428).
-	RebindReplicaPathIfExists bool   `yaml:"rebind_replica_path_if_exists" envconfig:"CLICKHOUSE_REBIND_REPLICA_PATH_IF_EXISTS"`
-	TLSKey                    string `yaml:"tls_key" envconfig:"CLICKHOUSE_TLS_KEY"`
-	TLSCert                   string `yaml:"tls_cert" envconfig:"CLICKHOUSE_TLS_CERT"`
-	TLSCa                     string `yaml:"tls_ca" envconfig:"CLICKHOUSE_TLS_CA"`
-	MaxConnections            int    `yaml:"max_connections" envconfig:"CLICKHOUSE_MAX_CONNECTIONS"`
-	Debug                     bool   `yaml:"debug" envconfig:"CLICKHOUSE_DEBUG"`
+	RebindReplicaPathIfExists bool `yaml:"rebind_replica_path_if_exists" envconfig:"CLICKHOUSE_REBIND_REPLICA_PATH_IF_EXISTS"`
+	// DropReplicaIfExists is an alternative to the replica path rebind for restore: when our OWN replica entry
+	// (<zk_path>/replicas/<replica_name>) still exists in ZooKeeper but no local table uses that path, execute
+	// `SYSTEM DROP REPLICA ... FROM ZKPATH ...` and keep the original replication path from the backup DDL
+	// instead of silently switching the table to default_replica_path (https://github.com/Altinity/clickhouse-backup/issues/1162).
+	// Requires ClickHouse >= 20.4, restore fails when the drop is impossible.
+	// MUST stay false during a concurrent multi-replica restore, the leftover entry may belong to a live replica.
+	DropReplicaIfExists bool   `yaml:"drop_replica_if_exists" envconfig:"CLICKHOUSE_DROP_REPLICA_IF_EXISTS"`
+	TLSKey              string `yaml:"tls_key" envconfig:"CLICKHOUSE_TLS_KEY"`
+	TLSCert             string `yaml:"tls_cert" envconfig:"CLICKHOUSE_TLS_CERT"`
+	TLSCa               string `yaml:"tls_ca" envconfig:"CLICKHOUSE_TLS_CA"`
+	MaxConnections      int    `yaml:"max_connections" envconfig:"CLICKHOUSE_MAX_CONNECTIONS"`
+	Debug               bool   `yaml:"debug" envconfig:"CLICKHOUSE_DEBUG"`
 	// ForceRebalance triggers disk rebalancing during download even when the backup's disk
 	// name exists on the target, allowing distribution across JBOD disks under the same storage policy
 	ForceRebalance bool `yaml:"force_rebalance" envconfig:"CLICKHOUSE_FORCE_REBALANCE"`
@@ -1071,6 +1078,12 @@ func GetConfigFromCli(ctx *cli.Command) *Config {
 	// replica is observationally identical to stale leftovers, so rebinding there causes a split-brain replication group.
 	if ctx.Bool("rebind-replica-path-if-exists") {
 		cfg.ClickHouse.RebindReplicaPathIfExists = true
+	}
+	// `restore`/`restore_remote` expose --drop-replica-if-exists with the same only-override-when-true semantics,
+	// drop our own leftover replica entry from ZooKeeper instead of rebinding to default_replica_path, see issues/1162
+	// WARNING: never enable this during a concurrent HA multi-replica restore, the leftover entry can belong to a live replica.
+	if ctx.Bool("drop-replica-if-exists") {
+		cfg.ClickHouse.DropReplicaIfExists = true
 	}
 	// `download`/`restore_remote` expose --allow-missing-files, same only-override-when-true semantics, see issues/1456
 	if ctx.Bool("allow-missing-files") {

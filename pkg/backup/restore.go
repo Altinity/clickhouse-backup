@@ -1969,7 +1969,9 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 			//materialized and window views should restore via ATTACH
 			b.replaceCreateToAttachForView(schema)
 			// https://github.com/Altinity/clickhouse-backup/issues/849
-			b.checkReplicaAlreadyExistsAndChangeReplicationPath(ctx, schema, version)
+			if replicaErr := b.checkReplicaAlreadyExistsAndChangeReplicationPath(ctx, schema, version); replicaErr != nil {
+				return replicaErr
+			}
 
 			// https://github.com/Altinity/clickhouse-backup/issues/466
 			b.replaceUUIDMacroValue(schema)
@@ -2004,12 +2006,12 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 var replicatedParamsRE = regexp.MustCompile(`(Replicated[a-zA-Z]*MergeTree)\('([^']+)'(\s*,\s*)'([^']+)'\)|(Replicated[a-zA-Z]*MergeTree)\(\)`)
 var replicatedUuidRE = regexp.MustCompile(` UUID '([^']+)'`)
 
-func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context.Context, schema *metadata.TableMetadata, version int) {
+func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context.Context, schema *metadata.TableMetadata, version int) error {
 	if matches := replicatedParamsRE.FindAllStringSubmatch(schema.Query, -1); len(matches) > 0 {
 		var err error
 		if len(matches[0]) < 1 {
 			log.Warn().Msgf("can't find Replicated paramaters in %s", schema.Query)
-			return
+			return nil
 		}
 		shortSyntax := true
 		var engine, replicaPath, replicaName, delimiter string
@@ -2060,20 +2062,30 @@ func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context
 				// No local table here: a remote HA sibling (join, safe default) or async-stale leftovers after
 				// DROP. Indistinguishable in ZK, so rebind only when explicitly opted in.
 				if !b.cfg.ClickHouse.RebindReplicaPathIfExists {
-					return
+					return nil
 				}
 				isTablePathStale := uint64(0)
 				if err = b.ch.SelectSingleRow(ctx, &isTablePathStale, "SELECT count() FROM system.zookeeper WHERE path=?", resolvedReplicaPath); err != nil {
 					// path does not exist => clean state, nothing to do
-					return
+					return nil
 				}
 				if isTablePathStale == 0 {
-					return
+					return nil
 				}
 				log.Warn().Msgf("zookeeper path %s still has %d children but replica entry is absent, rebind_replica_path_if_exists=true => will rebind to fresh replica path", resolvedReplicaPath, isTablePathStale)
 			} else {
 				log.Warn().Msgf("zookeeper path %s is already used by other local table(s) %s in system.replicas, will rebind to fresh replica path", resolvedReplicaPath, otherTablesWithSameZKPath)
 			}
+		} else if b.cfg.ClickHouse.DropReplicaIfExists {
+			// Our own replica entry is still in ZooKeeper, drop it and keep the original replication path from the
+			// backup DDL instead of rebinding to default_replica_path, https://github.com/Altinity/clickhouse-backup/issues/1162
+			if dropErr := b.dropLeftoverReplica(ctx, schema, version, resolvedReplicaPath, resolvedReplicaName); dropErr != nil {
+				return dropErr
+			}
+			if version < 19017000 {
+				schema.Query = strings.NewReplacer("{database}", schema.Database, "{table}", schema.Table).Replace(schema.Query)
+			}
+			return nil
 		}
 		newReplicaPath := b.cfg.ClickHouse.DefaultReplicaPath
 		newReplicaName := b.cfg.ClickHouse.DefaultReplicaName
@@ -2087,6 +2099,33 @@ func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context
 			schema.Query = strings.NewReplacer("{database}", schema.Database, "{table}", schema.Table).Replace(schema.Query)
 		}
 	}
+	return nil
+}
+
+// dropLeftoverReplica removes our own leftover replica entry from ZooKeeper with
+// `SYSTEM DROP REPLICA ... FROM ZKPATH ...`, so the table can be restored with the original replication path
+// from the backup DDL, https://github.com/Altinity/clickhouse-backup/issues/1162
+// The statement is deliberately executed without ON CLUSTER, replica name and path are already resolved with
+// the macros of THIS node and would be wrong on any other node.
+func (b *Backuper) dropLeftoverReplica(ctx context.Context, schema *metadata.TableMetadata, version int, resolvedReplicaPath, resolvedReplicaName string) error {
+	fullReplicaPath := path.Join(resolvedReplicaPath, "replicas", resolvedReplicaName)
+	// SYSTEM DROP REPLICA ... FROM ZKPATH ... is available since ClickHouse 20.4
+	if version < 20004000 {
+		return fmt.Errorf("drop_replica_if_exists=true, but `SYSTEM DROP REPLICA ... FROM ZKPATH ...` requires ClickHouse >= 20.4, current version %d, replica %s already exists", version, fullReplicaPath)
+	}
+	// a local table still using this path can't be dropped from ZooKeeper, ClickHouse rejects such DROP REPLICA
+	localTablesWithSameZKPath := ""
+	if err := b.ch.SelectSingleRow(ctx, &localTablesWithSameZKPath, "SELECT arrayStringConcat(groupArray(concat(database,'.',table)),', ') FROM system.replicas WHERE zookeeper_path=?", resolvedReplicaPath); err != nil {
+		return errors.Wrapf(err, "drop_replica_if_exists=true, can't check system.replicas for %s", resolvedReplicaPath)
+	}
+	if localTablesWithSameZKPath != "" {
+		return fmt.Errorf("drop_replica_if_exists=true, but zookeeper path %s is still used by local table(s) %s, drop them first or use rebind_replica_path_if_exists", resolvedReplicaPath, localTablesWithSameZKPath)
+	}
+	log.Warn().Msgf("replica %s already exists in system.zookeeper, drop_replica_if_exists=true => will drop it and keep the original replica path for `%s`.`%s`", fullReplicaPath, schema.Database, schema.Table)
+	if err := b.ch.QueryContext(ctx, fmt.Sprintf("SYSTEM DROP REPLICA '%s' FROM ZKPATH '%s'", resolvedReplicaName, resolvedReplicaPath)); err != nil {
+		return errors.Wrapf(err, "drop_replica_if_exists=true, SYSTEM DROP REPLICA '%s' FROM ZKPATH '%s' error", resolvedReplicaName, resolvedReplicaPath)
+	}
+	return nil
 }
 
 func (b *Backuper) replaceUUIDMacroValue(schema *metadata.TableMetadata) {
