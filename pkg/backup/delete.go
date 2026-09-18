@@ -150,12 +150,47 @@ func (b *Backuper) Delete(backupType, backupName string, force bool, commandId i
 
 	switch backupType {
 	case "local":
-		return b.RemoveBackupLocal(ctx, backupName, nil, force)
+		return b.RemoveBackupLocalOnCluster(ctx, backupName, force)
 	case "remote":
 		return b.RemoveBackupRemote(ctx, backupName, force)
 	default:
 		return errors.New("unknown backup type")
 	}
+}
+
+// RemoveBackupLocalOnCluster removes the local backup and, on the initiator node of an embedded ON CLUSTER backup, the local
+// copies of the other nodes too. `delete remote` is not propagated because the remote destination is shared and one call
+// removes everything, https://github.com/Altinity/clickhouse-backup/issues/928
+func (b *Backuper) RemoveBackupLocalOnCluster(ctx context.Context, backupName string, force bool) error {
+	clusterName, err := b.localBackupEmbeddedCluster(ctx, backupName)
+	if err != nil {
+		return err
+	}
+	if err = b.RemoveBackupLocal(ctx, backupName, nil, force); err != nil {
+		return err
+	}
+	if clusterName != "" && b.embeddedClusterInitiator() {
+		return b.deleteLocalOnEmbeddedClusterWorkers(ctx, backupName)
+	}
+	return nil
+}
+
+// localBackupEmbeddedCluster returns the `cluster=<name>` tag of a local backup, "" when the backup is not found or not tagged
+func (b *Backuper) localBackupEmbeddedCluster(ctx context.Context, backupName string) (string, error) {
+	if err := b.ch.Connect(); err != nil {
+		return "", errors.Wrap(err, "can't connect to clickhouse")
+	}
+	defer b.ch.Close()
+	localBackups, _, err := b.GetLocalBackups(ctx, nil)
+	if err != nil {
+		return "", errors.Wrap(err, "b.GetLocalBackups")
+	}
+	for _, localBackup := range localBackups {
+		if localBackup.BackupName == utils.CleanBackupNameRE.ReplaceAllString(backupName, "") {
+			return localBackup.EmbeddedCluster(), nil
+		}
+	}
+	return "", nil
 }
 
 // backupChainLink - `required_backup` link of one backup, allows to check incremental chains
@@ -332,7 +367,8 @@ func (b *Backuper) cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx con
 	if err != nil {
 		return errors.Wrap(err, "b.skipIfTheSameRemoteBackupPresent")
 	}
-	if !skip && (hasObjectDisks || (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "")) {
+	// a worker node of an embedded ON CLUSTER backup never owns the shared remote destination, https://github.com/Altinity/clickhouse-backup/issues/928
+	if !skip && !b.EmbeddedOnClusterWorker && (hasObjectDisks || (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "")) {
 		startTime := time.Now()
 		if deletedKeys, deleteErr := b.cleanBackupObjectDisks(ctx, backupName); deleteErr != nil {
 			log.Warn().Msgf("b.cleanBackupObjectDisks return error: %v", deleteErr)

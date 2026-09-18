@@ -67,7 +67,7 @@ def regression(self, local, stress=False, fips=True, fips_godebug="only"):
     """
     nodes = {
         "clickhouse": ("clickhouse1", "clickhouse2"),
-        "clickhouse_backup": ("clickhouse_backup",),
+        "clickhouse_backup": ("clickhouse_backup", "clickhouse_backup2"),
         "clickhouse_backup_fips": ("clickhouse_backup_fips",),
         "kafka": ("kafka",),
         "mysql": ("mysql",),
@@ -117,6 +117,11 @@ def regression(self, local, stress=False, fips=True, fips_godebug="only"):
 
             self.context.backup_api_port = cluster.get_mapped_port("clickhouse_backup", 7171)
 
+            # Second backup server bound to clickhouse2, used by the embedded
+            # BACKUP/RESTORE ON CLUSTER suite (tests/embedded_on_cluster.py).
+            self.context.backup2 = self.context.cluster.node("clickhouse_backup2")
+            self.context.backup2_api_port = cluster.get_mapped_port("clickhouse_backup2", 7171)
+
             # FIPS backup container is optional: only present when the FIPS-compatible
             # binary was built (``make build-race-fips-docker``). FIPS scenarios skip
             # gracefully when this is None (see tests/fips_140_3.py).
@@ -145,6 +150,7 @@ def regression(self, local, stress=False, fips=True, fips_godebug="only"):
             Scenario(run=load("clickhouse_backup.tests.generic", "generic"))
             Scenario(run=load("clickhouse_backup.tests.views", "views"))
             Scenario(run=load("clickhouse_backup.tests.config_rbac", "config_rbac"))
+            Scenario(run=load("clickhouse_backup.tests.embedded_on_cluster", "embedded_on_cluster"))
     finally:
         shutil.rmtree(config_dir, ignore_errors=True)
 

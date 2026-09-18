@@ -27,6 +27,21 @@ import (
 func (b *Backuper) RestoreFromRemote(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, streaming bool, version string, commandId int) error {
 	// don't need to create pid separately because we combine Download+Restore
 	defer pidlock.RemovePidFile(backupName)
+	// the worker nodes run `restore_remote --embedded-on-cluster-worker` below, Restore must not start `restore` on them
+	b.skipEmbeddedClusterFanOut = true
+	// every node of RESTORE ... ON CLUSTER reads its own shards/N/replicas/M part, so the workers download and fix it
+	// before the initiator issues the RESTORE SQL, https://github.com/Altinity/clickhouse-backup/issues/928
+	if b.embeddedClusterInitiator() && !streaming && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+		ctx, cancel, ctxErr := status.Current.GetContextWithCancel(commandId)
+		if ctxErr != nil {
+			return pkgerrors.Wrap(ctxErr, "RestoreFromRemote GetContextWithCancel")
+		}
+		workerErr := b.runEmbeddedClusterWorkers(ctx, embeddedClusterRestoreWorkerCommand("restore_remote", backupName, tablePattern, databaseMapping, tableMapping, partitions, schemaOnly, dataOnly, dropExists, ignoreDependencies, schemaAsAttach, skipEmptyTables))
+		cancel()
+		if workerErr != nil {
+			return pkgerrors.Wrap(workerErr, "embedded ON CLUSTER workers")
+		}
+	}
 	// dry-run has no side effects, so the download report is re-labeled the same way as without --streaming
 	if streaming && !b.DryRun {
 		err := b.restoreFromRemoteStreaming(backupName, tablePattern, databaseMapping, tableMapping, partitions, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, version, commandId)

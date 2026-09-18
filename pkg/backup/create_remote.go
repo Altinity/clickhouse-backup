@@ -41,6 +41,8 @@ func (b *Backuper) CreateToRemote(backupName string, deleteSource bool, diffFrom
 			return b.createToRemoteStreaming(ctx, backupName, diffFrom, diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, namedCollections, namedCollectionsOnly, skipCheckPartsColumns, resume, version)
 		}
 	}
+	// the worker nodes run `create_remote --embedded-on-cluster-worker` below, CreateBackup must not start `create` on them
+	b.skipEmbeddedClusterFanOut = true
 	if createErr := b.CreateBackup(backupName, diffFromRemote, tablePattern, partitions, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, namedCollections, namedCollectionsOnly, skipCheckPartsColumns, skipProjections, resume, version, commandId); createErr != nil {
 		return createErr
 	}
@@ -52,8 +54,21 @@ func (b *Backuper) CreateToRemote(backupName string, deleteSource bool, diffFrom
 		}
 		return nil
 	}
+	// BACKUP ... ON CLUSTER already wrote the shards/N/replicas/M data of every node, each worker describes and uploads
+	// its own part in parallel with our upload, .backup and metadata.json are uploaded by this node only,
+	// https://github.com/Altinity/clickhouse-backup/issues/928
+	var workerHosts []embeddedClusterHost
+	workerCommand := embeddedClusterCreateWorkerCommand("create_remote", backupName, diffFromRemote, tablePattern, partitions, schemaOnly, skipCheckPartsColumns, deleteSource)
+	if b.embeddedClusterInitiator() && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+		if workerHosts, err = b.startEmbeddedClusterWorkers(ctx, workerCommand); err != nil {
+			return errors.Wrap(err, "embedded ON CLUSTER workers")
+		}
+	}
 	if uploadErr := b.Upload(backupName, deleteSource, diffFrom, diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, version, commandId); uploadErr != nil {
 		return uploadErr
+	}
+	if err = b.waitEmbeddedClusterWorkers(ctx, workerHosts, workerCommand); err != nil {
+		return errors.Wrap(err, "embedded ON CLUSTER workers")
 	}
 
 	return nil

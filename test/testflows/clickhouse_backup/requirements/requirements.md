@@ -92,6 +92,13 @@
     * 4.10.16 [RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.GetStatus](#rqsrs-013clickhousebackuputilityrestapiservergetstatus)
     * 4.10.17 [RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.GetActions](#rqsrs-013clickhousebackuputilityrestapiservergetactions)
     * 4.10.18 [RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.PostActions](#rqsrs-013clickhousebackuputilityrestapiserverpostactions)
+  * 4.11 [Embedded Backup](#embedded-backup)
+    * 4.11.1 [RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster](#rqsrs-013clickhousebackuputilityembeddedbackuponcluster)
+    * 4.11.2 [RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.Worker](#rqsrs-013clickhousebackuputilityembeddedbackuponclusterworker)
+    * 4.11.3 [RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.Requirements](#rqsrs-013clickhousebackuputilityembeddedbackuponclusterrequirements)
+    * 4.11.4 [RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.RestoreOrder](#rqsrs-013clickhousebackuputilityembeddedbackuponclusterrestoreorder)
+    * 4.11.5 [RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.MetadataLayout](#rqsrs-013clickhousebackuputilityembeddedbackuponclustermetadatalayout)
+    * 4.11.6 [RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.DeleteLocal](#rqsrs-013clickhousebackuputilityembeddedbackuponclusterdeletelocal)
 * 5 [References](#references)
 
 ## Revision History
@@ -1016,6 +1023,63 @@ POST /backup/actions
 
 to create a new action with parameters being the same as for the CLI commands.
 All CLI actions such as `create`, `upload` etc. SHALL be supported.
+
+### Embedded Backup
+
+The [clickhouse-backup] utility SHALL support the native [ClickHouse] `BACKUP` / `RESTORE` SQL commands
+(`clickhouse.use_embedded_backup_restore: true`) and SHALL be able to orchestrate them across a whole cluster.
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster
+version: 1.0
+
+The [clickhouse-backup] utility SHALL support `clickhouse.use_embedded_backup_restore_cluster: "<cluster>"`
+(macros such as `{cluster}` SHALL be allowed). When it is set together with `clickhouse.use_embedded_backup_restore: true`
+and `clickhouse.embedded_backup_disk: ""`, the node where `create_remote <name>` or `restore_remote <name>` is issued
+(the initiator) SHALL run `BACKUP ... ON CLUSTER <cluster> TO S3(...)` (resp. `RESTORE ... ON CLUSTER <cluster> FROM S3(...)`)
+so that the data of every shard and replica of the cluster is written to (resp. read from) the shared remote storage
+configured by `general.remote_storage` in a single operation.
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.Worker
+version: 1.0
+
+The [clickhouse-backup] utility SHALL support the `--embedded-on-cluster-worker` flag for the `create`, `upload`, `download`,
+`restore`, `create_remote` and `restore_remote` commands. For every non-local host of the cluster listed in `system.clusters`
+the initiator SHALL execute
+`INSERT INTO FUNCTION remote('<host>:<port>', 'system', 'backup_actions', '<user>', '<password>') (command) VALUES ('create_remote --embedded-on-cluster-worker <name>')`
+(resp. `restore_remote --embedded-on-cluster-worker <name>`), SHALL wait for those worker operations to finish by polling
+the same remote `system.backup_actions` table, and SHALL report the operation as failed when any worker fails or cannot be reached.
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.Requirements
+version: 1.0
+
+Every [ClickHouse] node of the cluster SHALL run its own `clickhouse-backup server` with `api.create_integration_tables: true`
+(which creates the `system.backup_actions`, `system.backup_list` and `system.backup_version` `ENGINE=URL` tables pointing at
+`api.integration_tables_host:<api port>`), and all servers SHALL point at the same remote storage destination
+(same bucket and same `path`).
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.RestoreOrder
+version: 1.0
+
+During `restore_remote` the initiator SHALL make the workers process the backup metadata (download and prepare the
+per-table metadata of their own shard and replica) before the `RESTORE ... ON CLUSTER` SQL command is executed,
+so that the data of every node of the cluster is restored and row counts on every node match the original ones.
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.MetadataLayout
+version: 1.0
+
+The [clickhouse-backup] utility SHALL store an embedded `ON CLUSTER` backup in the remote storage with the following layout:
+
+* `<path>/<backup>/.backup` - native [ClickHouse] backup descriptor
+* `<path>/<backup>/metadata.json` - [clickhouse-backup] backup metadata
+* `<path>/<backup>/shards/<N>/replicas/<M>/metadata/...` and `<path>/<backup>/shards/<N>/replicas/<M>/data/...` - native [ClickHouse] schema and data of each shard and replica
+* `<path>/<backup>/shards/<N>/replicas/<M>/metadata/<database>/<table>.json` - [clickhouse-backup] per-table metadata of each shard and replica
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.DeleteLocal
+version: 1.0
+
+The [clickhouse-backup] utility SHALL support `delete local <backup>` for an embedded `ON CLUSTER` backup: the node
+where the command is issued SHALL remove its own local copy of the backup and SHALL make every other node of the cluster
+remove its local copy as well, so that no node of the cluster keeps `/var/lib/clickhouse/backup/<backup>` afterwards.
 
 ## References
 

@@ -304,7 +304,7 @@ clickhouse:
   # WARNING: MUST be false during a concurrent multi-replica (HA) restore, a leftover replica entry is indistinguishable from an entry of a live sibling replica. Can be overridden per invocation with the `--drop-replica-if-exists` flag of `restore`/`restore_remote`.
   drop_replica_if_exists: false # CLICKHOUSE_DROP_REPLICA_IF_EXISTS
   use_embedded_backup_restore: false # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE, use BACKUP / RESTORE SQL statements instead of regular SQL queries to use features of modern ClickHouse server versions
-  use_embedded_backup_restore_cluster: "" # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE_CLUSTER, add ON CLUSTER clause to BACKUP / RESTORE SQL statements when `use_embedded_backup_restore: true`, value is cluster name from system.clusters, e.g. "{cluster}"
+  use_embedded_backup_restore_cluster: "" # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE_CLUSTER, add ON CLUSTER clause to BACKUP / RESTORE SQL statements when `use_embedded_backup_restore: true`, value is cluster name from system.clusters, e.g. "{cluster}", every node writes its own `shards/N/replicas/M/` part into the SAME shared destination (S3 / GCS / AzureBlob or a shared mount, node local disks don't work), `create`, `create_remote`, `restore`, `restore_remote` on one node drive the other nodes through their `system.backup_actions` tables, so every node needs a running `clickhouse-backup server` with `api.create_integration_tables: true` and the same `clickhouse.username` / `clickhouse.password` / `clickhouse.secure` (system.clusters has no secure column, the initiator connects to other nodes with remote() or remoteSecure() according to its own `clickhouse.secure`), the same `remote_storage` `path` on all nodes, the initiator writes `.backup`, `metadata.json` (tagged `embedded,cluster=<name>`), rbac, configs, named collections, each node writes `shards/N/replicas/M/metadata/<db>/<table>.json`, `delete local <name>` on one node is propagated to the other nodes, `delete remote` is not (shared destination)
   embedded_backup_disk: ""  # CLICKHOUSE_EMBEDDED_BACKUP_DISK - disk from system.disks which will use when `use_embedded_backup_restore: true`
   backup_mutations: true # CLICKHOUSE_BACKUP_MUTATIONS, allow backup mutations from system.mutations WHERE is_done=0 and apply it during restore
   restore_as_attach: false # CLICKHOUSE_RESTORE_AS_ATTACH, allow restore tables which have inconsistent data parts structure and mutations in progress
@@ -935,6 +935,7 @@ OPTIONS:
    --skip-check-parts-columns                                                                                                           Skip check system.parts_columns to allow backup inconsistent column types for data parts
    --skip-projections db_pattern.table_pattern:projections_pattern [ --skip-projections db_pattern.table_pattern:projections_pattern ]  Skip make hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --resume use_embedded_backup_restore: true, --resumable use_embedded_backup_restore: true                                            Will resume upload for object disk data, hard links on local disk still continue to recreate, not work when use_embedded_backup_restore: true
+   --embedded-on-cluster-worker                                                                                                         Run only this node's part of an embedded BACKUP/RESTORE ON CLUSTER (skip BACKUP/RESTORE SQL, handle own shards/N/replicas/M metadata), the initiator node passes it to other nodes through system.backup_actions, requires use_embedded_backup_restore: true and use_embedded_backup_restore_cluster
    --dry-run                                                                                                                            Show tables count and data size which would be created, without creating
    --help, -h                                                                                                                           show help
 
@@ -976,6 +977,7 @@ OPTIONS:
    --skip-projections db_pattern.table_pattern:projections_pattern [ --skip-projections db_pattern.table_pattern:projections_pattern ]  Skip make and upload hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --delete, --delete-source, --delete-local                                                                                            explicitly delete local backup during upload
    --streaming                                                                                                                          Upload each table right after its freeze and delete its local copy, keeps only a small local footprint, https://github.com/Altinity/clickhouse-backup/issues/780
+   --embedded-on-cluster-worker                                                                                                         Run only this node's part of an embedded BACKUP/RESTORE ON CLUSTER (skip BACKUP/RESTORE SQL, handle own shards/N/replicas/M metadata), the initiator node passes it to other nodes through system.backup_actions, requires use_embedded_backup_restore: true and use_embedded_backup_restore_cluster
    --dry-run                                                                                                                            Show tables count and data size which would be created and uploaded, without creating and uploading
    --help, -h                                                                                                                           show help
 
@@ -1009,6 +1011,7 @@ OPTIONS:
    --skip-projections db_pattern.table_pattern:projections_pattern [ --skip-projections db_pattern.table_pattern:projections_pattern ]  Skip make and upload hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --resume, --resumable                                                                                                                Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --delete, --delete-source, --delete-local                                                                                            explicitly delete local backup during upload
+   --embedded-on-cluster-worker                                                                                                         Run only this node's part of an embedded BACKUP/RESTORE ON CLUSTER (skip BACKUP/RESTORE SQL, handle own shards/N/replicas/M metadata), the initiator node passes it to other nodes through system.backup_actions, requires use_embedded_backup_restore: true and use_embedded_backup_restore_cluster
    --dry-run                                                                                                                            Show tables count and data size which would be uploaded, without uploading
    --help, -h                                                                                                                           show help
 
@@ -1057,6 +1060,7 @@ OPTIONS:
    --hardlink-exists-files                        Create hardlinks for existing files instead of downloading
    --disk-limit int                               Refuse download when usage of any local disk would exceed this percent (1-100) after download, overrides general->download_disk_limit, 0 means use config value, https://github.com/Altinity/clickhouse-backup/issues/1458 (default: 0)
    --allow-missing-files                          Skip data part files which are missing on remote storage (404/NoSuchKey) with an error log and drop them from local table metadata instead of failing, salvage mode for partially corrupted backups, overrides general->allow_missing_files_on_download, https://github.com/Altinity/clickhouse-backup/issues/1456
+   --embedded-on-cluster-worker                   Run only this node's part of an embedded BACKUP/RESTORE ON CLUSTER (skip BACKUP/RESTORE SQL, handle own shards/N/replicas/M metadata), the initiator node passes it to other nodes through system.backup_actions, requires use_embedded_backup_restore: true and use_embedded_backup_restore_cluster
    --dry-run                                      Show tables count and data size which would be downloaded, without downloading
    --help, -h                                     show help
 
@@ -1132,6 +1136,7 @@ OPTIONS:
    --skip-empty-tables                                                                                                                  Skip restoring tables that have no data (empty tables with only schema)
    --rebind-replica-path-if-exists                                                                                                      Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent
    --drop-replica-if-exists                                                                                                             Override clickhouse.drop_replica_if_exists, execute SYSTEM DROP REPLICA ... FROM ZKPATH ... and keep the original replication path when our own replica entry still exists in ZooKeeper but no local table uses it
+   --embedded-on-cluster-worker                                                                                                         Run only this node's part of an embedded BACKUP/RESTORE ON CLUSTER (skip BACKUP/RESTORE SQL, handle own shards/N/replicas/M metadata), the initiator node passes it to other nodes through system.backup_actions, requires use_embedded_backup_restore: true and use_embedded_backup_restore_cluster
    --dry-run                                                                                                                            Show tables count and data size which would be restored, without restoring
    --help, -h                                                                                                                           show help
 
@@ -1178,6 +1183,7 @@ OPTIONS:
    --streaming                                                                                                                          Restore each table right after its download and delete its local copy, keeps only a small local footprint, https://github.com/Altinity/clickhouse-backup/issues/780
    --rebind-replica-path-if-exists                                                                                                      Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent
    --drop-replica-if-exists                                                                                                             Override clickhouse.drop_replica_if_exists, execute SYSTEM DROP REPLICA ... FROM ZKPATH ... and keep the original replication path when our own replica entry still exists in ZooKeeper but no local table uses it
+   --embedded-on-cluster-worker                                                                                                         Run only this node's part of an embedded BACKUP/RESTORE ON CLUSTER (skip BACKUP/RESTORE SQL, handle own shards/N/replicas/M metadata), the initiator node passes it to other nodes through system.backup_actions, requires use_embedded_backup_restore: true and use_embedded_backup_restore_cluster
    --dry-run                                                                                                                            Show tables count and data size which would be downloaded and restored, without downloading and restoring
    --help, -h                                                                                                                           show help
 
@@ -1239,9 +1245,10 @@ USAGE:
    clickhouse-backup delete [--force] <local|remote> <backup_name>
 
 OPTIONS:
-   --force, -f  Delete the backup even when other backups depend on it via required_backup, breaks the incremental backups chain, also skips general.rebase_during_delete
-   --dry-run    Show tables count and data size which would be deleted, without deleting
-   --help, -h   show help
+   --force, -f                                Delete the backup even when other backups depend on it via required_backup, breaks the incremental backups chain, also skips general.rebase_during_delete
+   --embedded-on-cluster-worker delete local  Delete only the local copy of this node, don't propagate delete local to the other nodes of `use_embedded_backup_restore_cluster`, used by the initiator node
+   --dry-run                                  Show tables count and data size which would be deleted, without deleting
+   --help, -h                                 show help
 
 GLOBAL OPTIONS:
    --config string, -c string                                                                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
