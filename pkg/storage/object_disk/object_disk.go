@@ -11,11 +11,13 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
@@ -320,17 +322,42 @@ func ReadMetadataFromReader(metadataFile io.ReadCloser, path string) (*Metadata,
 	return &metadata, nil
 }
 
+// WriteMetadataToFile writes the metadata into a new file and renames it over `path`, owner and mode of the old file
+// are kept so clickhouse-server can still read it. The metadata files of a local backup are hardlinked into the
+// restored table, an in-place write would change the parts of the already restored table,
+// https://github.com/Altinity/clickhouse-backup/issues/1568
 func WriteMetadataToFile(metadata *Metadata, path string) error {
-	metadataFile, err := os.Create(path)
+	metadataFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
 	if err != nil {
-		return errors.Wrap(err, "WriteMetadataToFile os.Create")
+		return errors.Wrap(err, "WriteMetadataToFile os.CreateTemp")
 	}
-	defer func() {
-		if err = metadataFile.Close(); err != nil {
-			log.Warn().Msgf("can't close %s: %v", path, err)
+	tmpPath := metadataFile.Name()
+	if err = metadata.writeToFile(metadataFile); err != nil {
+		_ = metadataFile.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err = metadataFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return errors.Wrapf(err, "WriteMetadataToFile close %s", tmpPath)
+	}
+	if fInfo, statErr := os.Stat(path); statErr == nil {
+		if err = os.Chmod(tmpPath, fInfo.Mode().Perm()); err != nil {
+			_ = os.Remove(tmpPath)
+			return errors.Wrapf(err, "WriteMetadataToFile chmod %s", tmpPath)
 		}
-	}()
-	return metadata.writeToFile(metadataFile)
+		if stat, ok := fInfo.Sys().(*syscall.Stat_t); ok && os.Getuid() == 0 {
+			if err = os.Chown(tmpPath, int(stat.Uid), int(stat.Gid)); err != nil {
+				_ = os.Remove(tmpPath)
+				return errors.Wrapf(err, "WriteMetadataToFile chown %s", tmpPath)
+			}
+		}
+	}
+	if err = os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return errors.Wrapf(err, "WriteMetadataToFile rename %s -> %s", tmpPath, path)
+	}
+	return nil
 }
 
 // credentialsFromDiskArgs - build object storage credentials from per disk settings, `get` abstracts the source:
