@@ -40,7 +40,11 @@ func TestSplitRestoreObjectKeys(t *testing.T) {
 			expected: restoreObjectKeys{srcKey: "abc/xyz", dstKey: "abc/xyz", metaPath: "abc/xyz"},
 		},
 		{
-			name: "single component", objectPath: "xyz", keySuffix: suffix,
+			name: "single component (ClickHouse before 22.x) with mapping", objectPath: "xyz", keySuffix: suffix,
+			expected: restoreObjectKeys{srcKey: "xyz", dstKey: "xyz" + suffix, metaPath: "xyz" + suffix},
+		},
+		{
+			name: "single component already rewritten, restore without mapping", objectPath: "xyz_regression_deadbeef",
 			expected: restoreObjectKeys{srcKey: "xyz", dstKey: "xyz", metaPath: "xyz"},
 		},
 	}

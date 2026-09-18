@@ -3007,16 +3007,17 @@ func objectKeySuffix(backupName, dstDatabase, dstTable string) string {
 	return fmt.Sprintf("_%s_%08x", backupName, crc32.ChecksumIEEE([]byte(dstDatabase+"."+dstTable)))
 }
 
-// splitRestoreObjectKeys - object key is `<prefix>/<dir>/<name>`, a suffix produced by objectKeySuffix is appended
-// to `<dir>` for a mapped table. A suffix left in the local backup by a previous mapped restore is stripped first,
-// the source key is the key of the backup. Only `<dir>` is examined, a disk key prefix which contains the backup
-// name must not disable the rewrite, https://github.com/Altinity/clickhouse-backup/issues/1568
+// splitRestoreObjectKeys - object key is `<prefix>/<dir>/<name>` (or a bare `<name>` on ClickHouse before 22.x),
+// a suffix produced by objectKeySuffix is appended to `<dir>` (`<name>` when there is no `<dir>`) for a mapped table.
+// A suffix left in the local backup by a previous mapped restore is stripped first, the source key is the key of the
+// backup. Only that component is examined, a disk key prefix which contains the backup name must not disable the
+// rewrite, https://github.com/Altinity/clickhouse-backup/issues/1568
 func splitRestoreObjectKeys(objectPath string, isAbsolute bool, backupName, keySuffix string) restoreObjectKeys {
 	pathParts := strings.Split(objectPath, "/")
-	if len(pathParts) < 2 {
-		return restoreObjectKeys{srcKey: objectPath, dstKey: objectPath, metaPath: objectPath}
-	}
 	dirIdx := len(pathParts) - 2
+	if dirIdx < 0 {
+		dirIdx = 0
+	}
 	srcDir := pathParts[dirIdx]
 	if suffixIdx := strings.Index(srcDir, "_"+backupName); suffixIdx > 0 {
 		srcDir = srcDir[:suffixIdx]

@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
@@ -321,9 +322,10 @@ func ReadMetadataFromReader(metadataFile io.ReadCloser, path string) (*Metadata,
 	return &metadata, nil
 }
 
-// WriteMetadataToFile writes the metadata into a new file and renames it over `path`. The metadata files of a local
-// backup are hardlinked into the restored table, an in-place write would change the parts of the already restored
-// table, https://github.com/Altinity/clickhouse-backup/issues/1568
+// WriteMetadataToFile writes the metadata into a new file and renames it over `path`, owner and mode of the old file
+// are kept so clickhouse-server can still read it. The metadata files of a local backup are hardlinked into the
+// restored table, an in-place write would change the parts of the already restored table,
+// https://github.com/Altinity/clickhouse-backup/issues/1568
 func WriteMetadataToFile(metadata *Metadata, path string) error {
 	metadataFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
 	if err != nil {
@@ -343,6 +345,12 @@ func WriteMetadataToFile(metadata *Metadata, path string) error {
 		if err = os.Chmod(tmpPath, fInfo.Mode().Perm()); err != nil {
 			_ = os.Remove(tmpPath)
 			return errors.Wrapf(err, "WriteMetadataToFile chmod %s", tmpPath)
+		}
+		if stat, ok := fInfo.Sys().(*syscall.Stat_t); ok && os.Getuid() == 0 {
+			if err = os.Chown(tmpPath, int(stat.Uid), int(stat.Gid)); err != nil {
+				_ = os.Remove(tmpPath)
+				return errors.Wrapf(err, "WriteMetadataToFile chown %s", tmpPath)
+			}
 		}
 	}
 	if err = os.Rename(tmpPath, path); err != nil {
