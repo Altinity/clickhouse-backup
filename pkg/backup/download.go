@@ -85,6 +85,9 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if b.DiskLimit < 0 || b.DiskLimit > 100 {
 		return errors.Errorf("--disk-limit shall be between 1 and 100 percent, got %d", b.DiskLimit)
 	}
+	if err := b.validateEmbeddedOnClusterWorker(); err != nil {
+		return err
+	}
 	b.adjustResumeFlag(resume)
 
 	if backupName == "" {
@@ -282,6 +285,7 @@ func (b *Backuper) downloadTablesMetadata(ctx context.Context, backupName, comma
 		if err = b.resolveEmbeddedClusterShardReplica(ctx); err != nil {
 			return nil, errors.Wrap(err, "resolveEmbeddedClusterShardReplica")
 		}
+		b.applyEmbeddedClusterLayout(&remoteBackup.BackupMetadata)
 	}
 	localBackupDir := path.Join(b.DefaultDataPath, "backup", backupName)
 	if b.isEmbedded {
@@ -373,12 +377,18 @@ func (b *Backuper) downloadTablesMetadata(ctx context.Context, backupName, comma
 // downloadEpilogue downloads rbac/configs/named collections and the embedded .backup file, saves local
 // backup-level metadata.json, chowns backup disks and cleans partially downloaded required backup
 func (b *Backuper) downloadEpilogue(ctx context.Context, backupName string, remoteBackup storage.Backup, tablesForDownload []metadata.TableTitle, disks []clickhouse.Disk, dataSize, metadataSize uint64, doDownloadData, rbacOnly, configsOnly, namedCollectionsOnly bool, backupVersion string, startDownload time.Time) error {
-	rbacSize, configSize, namedCollectionsSize, err := b.downloadBackupRelatedData(ctx, remoteBackup, rbacOnly, configsOnly, namedCollectionsOnly)
-	if err != nil {
-		return err
+	var rbacSize, configSize, namedCollectionsSize uint64
+	var err error
+	// rbac, configs, named collections and .backup are downloaded by the initiator node of an embedded ON CLUSTER
+	// restore only, a worker downloads its own shards/N/replicas/M part, https://github.com/Altinity/clickhouse-backup/issues/928
+	if !b.EmbeddedOnClusterWorker {
+		rbacSize, configSize, namedCollectionsSize, err = b.downloadBackupRelatedData(ctx, remoteBackup, rbacOnly, configsOnly, namedCollectionsOnly)
+		if err != nil {
+			return err
+		}
 	}
 
-	if doDownloadData && b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" && tablesForDownload != nil && len(tablesForDownload) > 0 {
+	if doDownloadData && !b.EmbeddedOnClusterWorker && b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" && tablesForDownload != nil && len(tablesForDownload) > 0 {
 		localClickHouseBackupFile := path.Join(b.EmbeddedBackupDataPath, backupName, ".backup")
 		remoteClickHouseBackupFile := path.Join(backupName, ".backup")
 		localEmbeddedMetadataSize := int64(0)
@@ -634,14 +644,15 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 	start := time.Now()
 	size := uint64(0)
 	metadataFiles := map[string]string{}
-	remoteMedataPrefix := path.Join(backupName, "metadata", common.TablePathEncode(tableTitle.Database), common.TablePathEncode(tableTitle.Table))
-	metadataFiles[fmt.Sprintf("%s.json", remoteMedataPrefix)] = path.Join(b.DefaultDataPath, "backup", backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
+	localBackupDir := path.Join(b.DefaultDataPath, "backup", backupName)
 	partitionsIdMap := make(map[metadata.TableTitle]common.EmptyMap)
 	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+		localBackupDir = path.Join(b.EmbeddedBackupDataPath, backupName)
 		remoteSqlPrefix := path.Join(backupName, b.embeddedClusterPrefix, "metadata", common.TablePathEncode(tableTitle.Database), common.TablePathEncode(tableTitle.Table))
 		metadataFiles[fmt.Sprintf("%s.sql", remoteSqlPrefix)] = path.Join(b.EmbeddedBackupDataPath, backupName, b.embeddedClusterPrefix, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableTitle.Table)))
-		metadataFiles[fmt.Sprintf("%s.json", remoteMedataPrefix)] = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
 	}
+	// per table .json lives next to the .sql of this node for embedded ON CLUSTER backups, see issues/928
+	metadataFiles[remoteTableMetadataJSON(backupName, b.embeddedClusterFilesPrefix, tableTitle.Database, tableTitle.Table)] = path.Join(localBackupDir, b.embeddedClusterFilesPrefix, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
 	var tableMetadata metadata.TableMetadata
 	for remoteMetadataFile, localMetadataFile := range metadataFiles {
 		if resume {
@@ -995,7 +1006,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 				capturedParts := table.Parts[capturedDisk]
 				tableLocalDir := b.getLocalBackupDataPathForTable(remoteBackup.BackupName, capturedDisk, dbAndTableDir)
 				downloadOffset[disk] += 1
-				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table), archiveFile)
+				tableRemoteFile := path.Join(remoteBackup.BackupName, b.embeddedClusterFilesPrefix, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table), archiveFile)
 				dataGroup.Go(func() error {
 					log.Debug().Msgf("start download %s", tableRemoteFile)
 					if b.resume {
@@ -1096,7 +1107,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 			if remoteBackup.IsPlainDisk(disk) {
 				continue
 			}
-			tableRemotePath := path.Join(remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
+			tableRemotePath := path.Join(remoteBackup.BackupName, b.embeddedClusterFilesPrefix, "shadow", dbAndTableDir, disk)
 			diskPath, diskExists := b.DiskToPathMap[disk]
 			tableLocalPath := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
 			if b.isEmbedded {

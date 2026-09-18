@@ -1,6 +1,6 @@
 # These requirements were auto generated
 # from software requirements specification (SRS)
-# document by TestFlows v1.7.211116.1144005.
+# document by TestFlows v2.0.250110.1002922.
 # Do not edit by hand but re-generate instead
 # using 'tfs requirements generate' command.
 from testflows.core import Specification
@@ -18,10 +18,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_AllDataTypes = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support backing up and restoring tables containing any existing data type.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.1.1')
+    num='4.1.1'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_RestorePartiallyDropped = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.RestorePartiallyDropped',
@@ -33,10 +34,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_RestorePartiallyDropped = Requiremen
     description=(
         'The [clickhouse-backup] utility SHALL support restoring table that has lost some piece of data.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.1.2')
+    num='4.1.2'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_BackupDuringMutation = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.BackupDuringMutation',
@@ -48,10 +50,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_BackupDuringMutation = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL be able to create a backup if there is an ongoing mutation. Restoring from such backups SHALL also be possible.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.1.3')
+    num='4.1.3'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_AllTables = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.AllTables',
@@ -63,10 +66,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_AllTables = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support easy backup and restore of all [ClickHouse] tables that SHALL result in table having identical state as at the time of backup.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.1.4')
+    num='4.1.4'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_SpecificTables = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables',
@@ -79,10 +83,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_SpecificTables = Requirement(
         'The [clickhouse-backup] utility SHALL support easy backup and restore of specific [ClickHouse] tables that SHALL result in table having identical state as at the time of backup.\n'
         '\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.1.5')
+    num='4.1.5'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_SpecificTables_Performance = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables.Performance',
@@ -94,10 +99,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_SpecificTables_Performance = Require
     description=(
         'The [clickhouse-backup] utility SHALL create backups for a particular table with high performance due to avoiding scanning whole `system.tables` when set `table` query string parameter or `--tables` CLI parameter.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.1.6')
+    num='4.1.6'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_SpecificTables_ManyColumns = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables.ManyColumns',
@@ -110,10 +116,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_SpecificTables_ManyColumns = Require
         'The [clickhouse-backup] utility SHALL support creating backups and restoring from them for a table with high number of columns.\n'
         '\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.1.7')
+    num='4.1.7'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_ReplicatedTable = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.ReplicatedTable',
@@ -126,10 +133,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_ReplicatedTable = Requirement(
         'The [clickhouse-backup] utility SHALL support easy backup and restore of [ClickHouse] replicated tables from the backup\n'
         'that SHALL result in table having identical state as at the time of backup.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.1.8')
+    num='4.1.8'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_MultipleBackups_EfficientStorageByUsingHardLinks = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.MultipleBackups.EfficientStorageByUsingHardLinks',
@@ -142,10 +150,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_MultipleBackups_EfficientStorageByUs
         'The [clickhouse-backup] utility SHALL support efficient storage of multiple backups on the file system by\n'
         'manipulating hardlinks used by [ClickHouse] parts.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.1.9')
+    num='4.1.9'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_CompressionLevel = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.CompressionLevel',
@@ -157,10 +166,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_CompressionLevel = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support uploading to/downloading from remote storage with specified compression level.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.1.10')
+    num='4.1.10'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_ClickHouseVersions = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.ClickHouseVersions',
@@ -172,10 +182,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_ClickHouseVersions = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support [ClickHouse] versions above `1.1.54390`.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.1.11')
+    num='4.1.11'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_TieredStorage = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.TieredStorage',
@@ -187,10 +198,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_TieredStorage = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support `tiered storage` that was added in ClickHouse `19.15.2.2`.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.1.12')
+    num='4.1.12'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_EncryptedStorage = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.EncryptedStorage',
@@ -202,10 +214,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_EncryptedStorage = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support creating backups from [encrypted storages](https://clickhouse.tech/docs/en/operations/storing-data/#encrypted-virtual-file-system) and restoring them.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.1.13')
+    num='4.1.13'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Views_View = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Views.View',
@@ -217,10 +230,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Views_View = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support proper handling of `View` over `MergeTree` table engines.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.2.1')
+    num='4.2.1'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Views_MaterializedView = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Views.MaterializedView',
@@ -232,10 +246,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Views_MaterializedView = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support proper handling of `MaterializedView` over `MergeTree` table engines.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.2.2')
+    num='4.2.2'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Views_LiveView = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Views.LiveView',
@@ -247,10 +262,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Views_LiveView = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support proper handling of `LiveView` over `MergeTree` table engines.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.2.3')
+    num='4.2.3'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Views_WindowView = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Views.WindowView',
@@ -262,10 +278,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Views_WindowView = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support proper handling of `WindowView` over `MergeTree` table engines.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.2.4')
+    num='4.2.4'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Views_NestedViews = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Views.NestedViews',
@@ -277,10 +294,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Views_NestedViews = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support proper handling of nested views, e.g. `View` over `View`.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.2.5')
+    num='4.2.5'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_TableEngines_MergeTree = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.TableEngines.MergeTree',
@@ -292,10 +310,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_TableEngines_MergeTree = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support only `MergeTree` family table engines.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.3.1')
+    num='4.3.1'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_TableEngines_OtherEngines = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.TableEngines.OtherEngines',
@@ -307,10 +326,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_TableEngines_OtherEngines = Requirement(
     description=(
         'The [clickhouse-backup] utility workflow SHALL NOT be broken by presence of tables with engines other that listed above.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.3.2')
+    num='4.3.2'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_TableEngines_OtherEngines_Kafka = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.TableEngines.OtherEngines.Kafka',
@@ -322,10 +342,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_TableEngines_OtherEngines_Kafka = Requiremen
     description=(
         'The [clickhouse-backup] utility SHALL only support creating table schema backup and restore for `Kafka` table engine.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.3.3')
+    num='4.3.3'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_DatabaseEngines_Atomic = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.DatabaseEngines.Atomic',
@@ -337,10 +358,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_DatabaseEngines_Atomic = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support `MergeTree` family table engines with `Atomic` database engine.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.4.1')
+    num='4.4.1'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_DatabaseEngines_MaterializedMySQL = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.DatabaseEngines.MaterializedMySQL',
@@ -352,10 +374,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_DatabaseEngines_MaterializedMySQL = Requirem
     description=(
         'The [clickhouse-backup] utility SHALL support `MergeTree` family table engines with `MaterializedMySQL` database engine.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.4.2')
+    num='4.4.2'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_DatabaseEngines_MaterializedPostgreSQL = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.DatabaseEngines.MaterializedPostgreSQL',
@@ -367,10 +390,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_DatabaseEngines_MaterializedPostgreSQL = Req
     description=(
         'The [clickhouse-backup] utility SHALL support `MergeTree` family table engines with `MaterializedPostgreSQL` database engine.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.4.3')
+    num='4.4.3'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CloudStorage',
@@ -382,10 +406,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support creating and uploading backups on cloud storage.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.5.1')
+    num='4.5.1'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_IncrementalBackups = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CloudStorage.IncrementalBackups',
@@ -409,10 +434,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_IncrementalBackups = Requiremen
         '* `ALTER TABLE <table> CLEAR COLUMN`\n'
         '* `ALTER TABLE <table> DROP COLUMN`\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.5.2')
+    num='4.5.2'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_CompressionFormats = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CloudStorage.CompressionFormats',
@@ -424,10 +450,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_CompressionFormats = Requiremen
     description=(
         'The [clickhouse-backup] utility SHALL support storing backup on a cloud storage in following compression formats: `tar`, `bzip2`, `gzip`, `sz`, `xz`, `br/brotli`, `zstd`. In case of other value, error shall be thrown and no backup uploaded.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.5.3')
+    num='4.5.3'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_S3_Minio = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CloudStorage.S3.Minio',
@@ -439,10 +466,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_S3_Minio = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support storing backups on a Minio S3 storage. It also SHALL be possible to restore from such backups.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.5.4')
+    num='4.5.4'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_S3_AWS = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CloudStorage.S3.AWS',
@@ -454,10 +482,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_S3_AWS = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support storing backups on [AWS](https://aws.amazon.com/products/storage/) cloud servers. It also SHALL be possible to restore from such backups.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.5.5')
+    num='4.5.5'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_GCS = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CloudStorage.GCS',
@@ -469,10 +498,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_GCS = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support storing backups on [GCS](https://cloud.google.com/storage) cloud servers. It also SHALL be possible to restore from such backups.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.5.6')
+    num='4.5.6'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_Azure = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CloudStorage.Azure',
@@ -484,10 +514,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_Azure = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support storing backups on [Azure](https://docs.microsoft.com/en-us/azure/storage/common/storage-introduction) cloud servers. It also SHALL be possible to restore from such backups.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.5.7')
+    num='4.5.7'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_TencentCOS = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CloudStorage.TencentCOS',
@@ -499,10 +530,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_TencentCOS = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support storing backups on [Tencent COS](https://intl.cloud.tencent.com/product/cos) cloud servers. It also SHALL be possible to restore from such backups.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.5.8')
+    num='4.5.8'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_FTP = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CloudStorage.FTP',
@@ -514,10 +546,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_FTP = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support storing backups on a remote FTP server. It also SHALL be possible to restore from such backup.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.5.9')
+    num='4.5.9'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_SFTP = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CloudStorage.SFTP',
@@ -529,10 +562,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_SFTP = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support storing backups on a remote SFTP (also known as Secure FTP) server. It also SHALL be possible to restore from such backup.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.5.10')
+    num='4.5.10'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_GreaterThan5TB = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CloudStorage.GreaterThan5TB',
@@ -545,10 +579,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_GreaterThan5TB = Requirement(
         'The [clickhouse-backup] utility SHALL support uploading backups greater than `5TB` using partitioning by 5TB chunks.\n'
         'More info can be found [here](https://stackoverflow.com/questions/54012602/is-there-a-file-size-limit-for-amazon-s3#:~:text=While%20the%20maximum%20file%20size,any%20files%20larger%20than%20100MB)\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.5.11')
+    num='4.5.11'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Configs_Backup = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Configs.Backup',
@@ -560,7 +595,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_Configs_Backup = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support backing up ClickHouse configs.\n'
         '\n'
-        'By configs we mean the following files:\n'
+        'By configs, we mean the following files:\n'
         '    * `/etc/clickhouse-server/config.xml`\n'
         '    * `/etc/clickhouse-server/config.d/*.xml`\n'
         '    * `/etc/clickhouse-server/users.xml`\n'
@@ -568,10 +603,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Configs_Backup = Requirement(
         '\n'
         'Listed above are default config files. However, these values may be overriden on clickhouse-server launch.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.6.1')
+    num='4.6.1'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Configs_Restore = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Configs.Restore',
@@ -583,7 +619,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_Configs_Restore = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support restoring ClickHouse configs from backup. This should be done automatically in case configs backup is present. If configs are found in backup, ClickHouse server SHALL restart automatically.\n'
         '\n'
-        'By configs we mean the following files:\n'
+        'By configs, we mean the following files:\n'
         '    * `/etc/clickhouse-server/config.xml`\n'
         '    * `/etc/clickhouse-server/config.d/*.xml`\n'
         '    * `/etc/clickhouse-server/users.xml`\n'
@@ -591,10 +627,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Configs_Restore = Requirement(
         '\n'
         'Listed above are default config files. However, these values may be overriden on clickhouse-server launch.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.6.2')
+    num='4.6.2'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_RBAC_Backup = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.RBAC.Backup',
@@ -611,10 +648,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_RBAC_Backup = Requirement(
         '    * `SETTINGS PROFILE`\n'
         '    * `QUOTA`\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.7.1')
+    num='4.7.1'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_RBAC_Restore = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.RBAC.Restore',
@@ -631,10 +669,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_RBAC_Restore = Requirement(
         '    * `SETTINGS PROFILE`\n'
         '    * `QUOTA`\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.7.2')
+    num='4.7.2'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CLI_Usage = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CLI.Usage',
@@ -673,10 +712,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CLI_Usage = Requirement(
         '   --version, -v           print the version\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.8.1')
+    num='4.8.1'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CLI_Tables = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CLI.Tables',
@@ -697,10 +737,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CLI_Tables = Requirement(
         '\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.8.2')
+    num='4.8.2'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CLI_Create = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CLI.Create',
@@ -728,10 +769,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CLI_Create = Requirement(
         '   --table value, --tables value, -t value  \n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.8.3')
+    num='4.8.3'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CLI_CreateRemote = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CLI.CreateRemote',
@@ -762,10 +804,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CLI_CreateRemote = Requirement(
         '\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.8.4')
+    num='4.8.4'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CLI_MatchExpression = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CLI.MatchExpression',
@@ -797,10 +840,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CLI_MatchExpression = Requirement(
         "\tlo '-' hi   matches character c for lo <= c <= hi\n"
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.8.5')
+    num='4.8.5'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CLI_Upload = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CLI.Upload',
@@ -823,10 +867,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CLI_Upload = Requirement(
         '   --diff-from value   \n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.8.6')
+    num='4.8.6'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CLI_List = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CLI.List',
@@ -850,10 +895,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CLI_List = Requirement(
         '   --config FILE, -c FILE  Config FILE name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.8.7')
+    num='4.8.7'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CLI_Download = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CLI.Download',
@@ -875,10 +921,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CLI_Download = Requirement(
         '   --config FILE, -c FILE  Config FILE name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.8.8')
+    num='4.8.8'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CLI_Restore = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CLI.Restore',
@@ -907,10 +954,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CLI_Restore = Requirement(
         '   --rm, --drop                             Drop table before restore\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.8.9')
+    num='4.8.9'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CLI_RestoreRemote = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CLI.RestoreRemote',
@@ -941,10 +989,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CLI_RestoreRemote = Requirement(
         '   --schema, -s                             Schemas only\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.8.10')
+    num='4.8.10'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CLI_Delete = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CLI.Delete',
@@ -967,10 +1016,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CLI_Delete = Requirement(
         '   --config FILE, -c FILE  Config FILE name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.8.11')
+    num='4.8.11'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CLI_DefaultConfig = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CLI.DefaultConfig',
@@ -990,10 +1040,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CLI_DefaultConfig = Requirement(
         '   --config FILE, -c FILE  Config FILE name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.8.12')
+    num='4.8.12'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CLI_Server = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CLI.Server',
@@ -1013,10 +1064,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CLI_Server = Requirement(
         '   --config FILE, -c FILE  Config FILE name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.8.13')
+    num='4.8.13'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_CLI_Help = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.CLI.Help',
@@ -1028,10 +1080,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_CLI_Help = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL support `help` option to show the list of commands or help for one command.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.8.14')
+    num='4.8.14'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_Configuration = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Configuration',
@@ -1144,10 +1197,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_Configuration = Requirement(
         '  compression_level: 1         # SFTP_COMPRESSION_LEVEL\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.9.1')
+    num='4.9.1'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server',
@@ -1160,10 +1214,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server = Requirement(
         'The [clickhouse-backup] utility SHALL support `clickhouse-backup server`\n'
         'command to start REST API server.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.1')
+    num='4.10.1'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_AsyncPostQuery = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.AsyncPostQuery',
@@ -1175,10 +1230,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_AsyncPostQuery = Requirement(
     description=(
         'The [clickhouse-backup] utility SHALL return `code 423` if a POST request is received while previous operation is not finished yet. The request SHALL NOT be executed in such case.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.2')
+    num='4.10.2'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_OutputFormat_Default = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.OutputFormat.Default',
@@ -1190,12 +1246,13 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_OutputFormat_Default = Requi
     description=(
         'The [clickhouse-backup] utility REST API server SHALL return results\n'
         "in a format compatible with [ClickHouse]'s `JSONEachRow` format\n"
-        'for all the the endpoints.\n'
+        'for all the endpoints.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.3')
+    num='4.10.3'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_GetTables = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.GetTables',
@@ -1213,10 +1270,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_GetTables = Requirement(
         '\n'
         'to print the list of tables. For example, `curl -s localhost:7171/backup/tables | jq`.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.4')
+    num='4.10.4'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostCreate = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.PostCreate',
@@ -1250,10 +1308,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostCreate = Requirement(
         '{"status":"acknowledged","operation":"create","backup_name":"<backup_name>"}\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.5')
+    num='4.10.5'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostCreate_Remote = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.PostCreate.Remote',
@@ -1274,10 +1333,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostCreate_Remote = Requirem
         'This operation SHALL be async, so the API will return once the operation has been started.\n'
         '\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.6')
+    num='4.10.6'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostUpload = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.PostUpload',
@@ -1301,10 +1361,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostUpload = Requirement(
         '\n'
         'This operation SHALL be async, so the API will return once the operation has been started.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.7')
+    num='4.10.7'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_GetList = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.GetList',
@@ -1331,10 +1392,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_GetList = Requirement(
         '...\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.8')
+    num='4.10.8'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_GetList_Local = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.GetList.Local',
@@ -1361,10 +1423,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_GetList_Local = Requirement(
         '...\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.9')
+    num='4.10.9'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_GetList_Remote = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.GetList.Remote',
@@ -1389,10 +1452,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_GetList_Remote = Requirement
         '...\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.10')
+    num='4.10.10'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostDownload = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.PostDownload',
@@ -1414,10 +1478,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostDownload = Requirement(
         '\n'
         'This operation SHALL be async, so the API will return once the operation has been started.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.11')
+    num='4.10.11'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostRestore = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.PostRestore',
@@ -1443,10 +1508,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostRestore = Requirement(
         '* Optional query argument `rbac` SHALL work the same as the `--rbac` CLI argument (restore RBAC only).\n'
         '* Optional query argument `configs` SHALL work the same as the `--configs` CLI argument (restore configs only).\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.12')
+    num='4.10.12'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostRestore_Remote = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.PostRestore.Remote',
@@ -1464,10 +1530,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostRestore_Remote = Require
         '\n'
         'to restore from an existing remote backup.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.13')
+    num='4.10.13'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostDelete_Remote = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.PostDelete.Remote',
@@ -1493,10 +1560,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostDelete_Remote = Requirem
         '\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.14')
+    num='4.10.14'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostDelete_Local = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.PostDelete.Local',
@@ -1522,10 +1590,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostDelete_Local = Requireme
         '{"status":"success","operation":"delete","backup_name":"<backup_name>","location":"local"}\n'
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.15')
+    num='4.10.15'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_GetStatus = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.GetStatus',
@@ -1549,10 +1618,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_GetStatus = Requirement(
         "{'command': '<command name>', 'status': 'in progress', 'start': '2021-10-26 12:11:34'}\n"
         '```\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.16')
+    num='4.10.16'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_GetActions = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.GetActions',
@@ -1570,10 +1640,11 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_GetActions = Requirement(
         '\n'
         'to display a list of current async operations.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.17')
+    num='4.10.17'
+)
 
 RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostActions = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.PostActions',
@@ -1592,17 +1663,136 @@ RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostActions = Requirement(
         'to create a new action with parameters being the same as for the CLI commands.\n'
         'All CLI actions such as `create`, `upload` etc. SHALL be supported.\n'
         '\n'
-        ),
+    ),
     link=None,
     level=3,
-    num='4.10.18')
+    num='4.10.18'
+)
+
+RQ_SRS_013_ClickHouse_BackupUtility_EmbeddedBackup_OnCluster = Requirement(
+    name='RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        'The [clickhouse-backup] utility SHALL support `clickhouse.use_embedded_backup_restore_cluster: "<cluster>"`\n'
+        '(macros such as `{cluster}` SHALL be allowed). When it is set together with `clickhouse.use_embedded_backup_restore: true`\n'
+        'and `clickhouse.embedded_backup_disk: ""`, the node where `create_remote <name>` or `restore_remote <name>` is issued\n'
+        '(the initiator) SHALL run `BACKUP ... ON CLUSTER <cluster> TO S3(...)` (resp. `RESTORE ... ON CLUSTER <cluster> FROM S3(...)`)\n'
+        'so that the data of every shard and replica of the cluster is written to (resp. read from) the shared remote storage\n'
+        'configured by `general.remote_storage` in a single operation.\n'
+        '\n'
+    ),
+    link=None,
+    level=3,
+    num='4.11.1'
+)
+
+RQ_SRS_013_ClickHouse_BackupUtility_EmbeddedBackup_OnCluster_Worker = Requirement(
+    name='RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.Worker',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        'The [clickhouse-backup] utility SHALL support the `--embedded-on-cluster-worker` flag for the `create`, `upload`, `download`,\n'
+        '`restore`, `create_remote` and `restore_remote` commands. For every non-local host of the cluster listed in `system.clusters`\n'
+        'the initiator SHALL execute\n'
+        "`INSERT INTO FUNCTION remote('<host>:<port>', 'system', 'backup_actions', '<user>', '<password>') (command) VALUES ('create_remote --embedded-on-cluster-worker <name>')`\n"
+        '(resp. `restore_remote --embedded-on-cluster-worker <name>`), SHALL wait for those worker operations to finish by polling\n'
+        'the same remote `system.backup_actions` table, and SHALL report the operation as failed when any worker fails or cannot be reached.\n'
+        '\n'
+    ),
+    link=None,
+    level=3,
+    num='4.11.2'
+)
+
+RQ_SRS_013_ClickHouse_BackupUtility_EmbeddedBackup_OnCluster_Requirements = Requirement(
+    name='RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.Requirements',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        'Every [ClickHouse] node of the cluster SHALL run its own `clickhouse-backup server` with `api.create_integration_tables: true`\n'
+        '(which creates the `system.backup_actions`, `system.backup_list` and `system.backup_version` `ENGINE=URL` tables pointing at\n'
+        '`api.integration_tables_host:<api port>`), and all servers SHALL point at the same remote storage destination\n'
+        '(same bucket and same `path`).\n'
+        '\n'
+    ),
+    link=None,
+    level=3,
+    num='4.11.3'
+)
+
+RQ_SRS_013_ClickHouse_BackupUtility_EmbeddedBackup_OnCluster_RestoreOrder = Requirement(
+    name='RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.RestoreOrder',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        'During `restore_remote` the initiator SHALL make the workers process the backup metadata (download and prepare the\n'
+        'per-table metadata of their own shard and replica) before the `RESTORE ... ON CLUSTER` SQL command is executed,\n'
+        'so that the data of every node of the cluster is restored and row counts on every node match the original ones.\n'
+        '\n'
+    ),
+    link=None,
+    level=3,
+    num='4.11.4'
+)
+
+RQ_SRS_013_ClickHouse_BackupUtility_EmbeddedBackup_OnCluster_MetadataLayout = Requirement(
+    name='RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.MetadataLayout',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        'The [clickhouse-backup] utility SHALL store an embedded `ON CLUSTER` backup in the remote storage with the following layout:\n'
+        '\n'
+        '* `<path>/<backup>/.backup` - native [ClickHouse] backup descriptor\n'
+        '* `<path>/<backup>/metadata.json` - [clickhouse-backup] backup metadata\n'
+        '* `<path>/<backup>/shards/<N>/replicas/<M>/metadata/...` and `<path>/<backup>/shards/<N>/replicas/<M>/data/...` - native [ClickHouse] schema and data of each shard and replica\n'
+        '* `<path>/<backup>/shards/<N>/replicas/<M>/metadata/<database>/<table>.json` - [clickhouse-backup] per-table metadata of each shard and replica\n'
+        '\n'
+    ),
+    link=None,
+    level=3,
+    num='4.11.5'
+)
+
+RQ_SRS_013_ClickHouse_BackupUtility_EmbeddedBackup_OnCluster_DeleteLocal = Requirement(
+    name='RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.DeleteLocal',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        'The [clickhouse-backup] utility SHALL support `delete local <backup>` for an embedded `ON CLUSTER` backup: the node\n'
+        'where the command is issued SHALL remove its own local copy of the backup and SHALL make every other node of the cluster\n'
+        'remove its local copy as well, so that no node of the cluster keeps `/var/lib/clickhouse/backup/<backup>` afterwards.\n'
+        '\n'
+    ),
+    link=None,
+    level=3,
+    num='4.11.6'
+)
 
 QA_SRS013_ClickHouse_Backup_Utility = Specification(
-    name='QA-SRS013 ClickHouse Backup Utility', 
+    name='QA-SRS013 ClickHouse Backup Utility',
     description=None,
     author=None,
-    date=None, 
-    status=None, 
+    date=None,
+    status=None,
     approved_by=None,
     approved_date=None,
     approved_version=None,
@@ -1702,6 +1892,13 @@ QA_SRS013_ClickHouse_Backup_Utility = Specification(
         Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.GetStatus', level=3, num='4.10.16'),
         Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.GetActions', level=3, num='4.10.17'),
         Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.PostActions', level=3, num='4.10.18'),
+        Heading(name='Embedded Backup', level=2, num='4.11'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster', level=3, num='4.11.1'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.Worker', level=3, num='4.11.2'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.Requirements', level=3, num='4.11.3'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.RestoreOrder', level=3, num='4.11.4'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.MetadataLayout', level=3, num='4.11.5'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.DeleteLocal', level=3, num='4.11.6'),
         Heading(name='References', level=1, num='5'),
         ),
     requirements=(
@@ -1777,8 +1974,14 @@ QA_SRS013_ClickHouse_Backup_Utility = Specification(
         RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_GetStatus,
         RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_GetActions,
         RQ_SRS_013_ClickHouse_BackupUtility_REST_API_Server_PostActions,
+        RQ_SRS_013_ClickHouse_BackupUtility_EmbeddedBackup_OnCluster,
+        RQ_SRS_013_ClickHouse_BackupUtility_EmbeddedBackup_OnCluster_Worker,
+        RQ_SRS_013_ClickHouse_BackupUtility_EmbeddedBackup_OnCluster_Requirements,
+        RQ_SRS_013_ClickHouse_BackupUtility_EmbeddedBackup_OnCluster_RestoreOrder,
+        RQ_SRS_013_ClickHouse_BackupUtility_EmbeddedBackup_OnCluster_MetadataLayout,
+        RQ_SRS_013_ClickHouse_BackupUtility_EmbeddedBackup_OnCluster_DeleteLocal,
         ),
-    content='''
+    content=r'''
 # QA-SRS013 ClickHouse Backup Utility
 # Software Requirements Specification
 
@@ -1873,6 +2076,13 @@ QA_SRS013_ClickHouse_Backup_Utility = Specification(
     * 4.10.16 [RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.GetStatus](#rqsrs-013clickhousebackuputilityrestapiservergetstatus)
     * 4.10.17 [RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.GetActions](#rqsrs-013clickhousebackuputilityrestapiservergetactions)
     * 4.10.18 [RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.PostActions](#rqsrs-013clickhousebackuputilityrestapiserverpostactions)
+  * 4.11 [Embedded Backup](#embedded-backup)
+    * 4.11.1 [RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster](#rqsrs-013clickhousebackuputilityembeddedbackuponcluster)
+    * 4.11.2 [RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.Worker](#rqsrs-013clickhousebackuputilityembeddedbackuponclusterworker)
+    * 4.11.3 [RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.Requirements](#rqsrs-013clickhousebackuputilityembeddedbackuponclusterrequirements)
+    * 4.11.4 [RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.RestoreOrder](#rqsrs-013clickhousebackuputilityembeddedbackuponclusterrestoreorder)
+    * 4.11.5 [RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.MetadataLayout](#rqsrs-013clickhousebackuputilityembeddedbackuponclustermetadatalayout)
+    * 4.11.6 [RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.DeleteLocal](#rqsrs-013clickhousebackuputilityembeddedbackuponclusterdeletelocal)
 * 5 [References](#references)
 
 ## Revision History
@@ -1883,9 +2093,10 @@ All the updates are tracked using the [Revision History].
 
 ## Introduction
 
-[ClickHouse] does not support any convenient method to backup and restore databases or tables.
+[ClickHouse] does not support any convenient method to make backup and restore databases or tables. 
+BACKUP/RESTORE command in non production ready status.
 This [SRS] covers the requirements for the [clickhouse-backup] utility that supports
-easy [ClickHouse] backup and restore with cloud storages support.
+easy [ClickHouse] backup and restore tool with cloud storages support.
 
 ## Terminology
 
@@ -2117,7 +2328,7 @@ version: 1.0
 
 The [clickhouse-backup] utility SHALL support backing up ClickHouse configs.
 
-By configs we mean the following files:
+By configs, we mean the following files:
     * `/etc/clickhouse-server/config.xml`
     * `/etc/clickhouse-server/config.d/*.xml`
     * `/etc/clickhouse-server/users.xml`
@@ -2130,7 +2341,7 @@ version: 1.0
 
 The [clickhouse-backup] utility SHALL support restoring ClickHouse configs from backup. This should be done automatically in case configs backup is present. If configs are found in backup, ClickHouse server SHALL restart automatically.
 
-By configs we mean the following files:
+By configs, we mean the following files:
     * `/etc/clickhouse-server/config.xml`
     * `/etc/clickhouse-server/config.d/*.xml`
     * `/etc/clickhouse-server/users.xml`
@@ -2484,7 +2695,7 @@ s3:
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
   credentials_json: ""         # GCS_CREDENTIALS_JSON
-  credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED'
+  credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED
   bucket: ""                   # GCS_BUCKET
   path: ""                     # GCS_PATH
   compression_level: 1         # GCS_COMPRESSION_LEVEL
@@ -2545,7 +2756,7 @@ version: 1.0
 
 The [clickhouse-backup] utility REST API server SHALL return results
 in a format compatible with [ClickHouse]'s `JSONEachRow` format
-for all the the endpoints.
+for all the endpoints.
 
 #### RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.GetTables
 version: 1.0
@@ -2797,6 +3008,63 @@ POST /backup/actions
 to create a new action with parameters being the same as for the CLI commands.
 All CLI actions such as `create`, `upload` etc. SHALL be supported.
 
+### Embedded Backup
+
+The [clickhouse-backup] utility SHALL support the native [ClickHouse] `BACKUP` / `RESTORE` SQL commands
+(`clickhouse.use_embedded_backup_restore: true`) and SHALL be able to orchestrate them across a whole cluster.
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster
+version: 1.0
+
+The [clickhouse-backup] utility SHALL support `clickhouse.use_embedded_backup_restore_cluster: "<cluster>"`
+(macros such as `{cluster}` SHALL be allowed). When it is set together with `clickhouse.use_embedded_backup_restore: true`
+and `clickhouse.embedded_backup_disk: ""`, the node where `create_remote <name>` or `restore_remote <name>` is issued
+(the initiator) SHALL run `BACKUP ... ON CLUSTER <cluster> TO S3(...)` (resp. `RESTORE ... ON CLUSTER <cluster> FROM S3(...)`)
+so that the data of every shard and replica of the cluster is written to (resp. read from) the shared remote storage
+configured by `general.remote_storage` in a single operation.
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.Worker
+version: 1.0
+
+The [clickhouse-backup] utility SHALL support the `--embedded-on-cluster-worker` flag for the `create`, `upload`, `download`,
+`restore`, `create_remote` and `restore_remote` commands. For every non-local host of the cluster listed in `system.clusters`
+the initiator SHALL execute
+`INSERT INTO FUNCTION remote('<host>:<port>', 'system', 'backup_actions', '<user>', '<password>') (command) VALUES ('create_remote --embedded-on-cluster-worker <name>')`
+(resp. `restore_remote --embedded-on-cluster-worker <name>`), SHALL wait for those worker operations to finish by polling
+the same remote `system.backup_actions` table, and SHALL report the operation as failed when any worker fails or cannot be reached.
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.Requirements
+version: 1.0
+
+Every [ClickHouse] node of the cluster SHALL run its own `clickhouse-backup server` with `api.create_integration_tables: true`
+(which creates the `system.backup_actions`, `system.backup_list` and `system.backup_version` `ENGINE=URL` tables pointing at
+`api.integration_tables_host:<api port>`), and all servers SHALL point at the same remote storage destination
+(same bucket and same `path`).
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.RestoreOrder
+version: 1.0
+
+During `restore_remote` the initiator SHALL make the workers process the backup metadata (download and prepare the
+per-table metadata of their own shard and replica) before the `RESTORE ... ON CLUSTER` SQL command is executed,
+so that the data of every node of the cluster is restored and row counts on every node match the original ones.
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.MetadataLayout
+version: 1.0
+
+The [clickhouse-backup] utility SHALL store an embedded `ON CLUSTER` backup in the remote storage with the following layout:
+
+* `<path>/<backup>/.backup` - native [ClickHouse] backup descriptor
+* `<path>/<backup>/metadata.json` - [clickhouse-backup] backup metadata
+* `<path>/<backup>/shards/<N>/replicas/<M>/metadata/...` and `<path>/<backup>/shards/<N>/replicas/<M>/data/...` - native [ClickHouse] schema and data of each shard and replica
+* `<path>/<backup>/shards/<N>/replicas/<M>/metadata/<database>/<table>.json` - [clickhouse-backup] per-table metadata of each shard and replica
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.EmbeddedBackup.OnCluster.DeleteLocal
+version: 1.0
+
+The [clickhouse-backup] utility SHALL support `delete local <backup>` for an embedded `ON CLUSTER` backup: the node
+where the command is issued SHALL remove its own local copy of the backup and SHALL make every other node of the cluster
+remove its local copy as well, so that no node of the cluster keeps `/var/lib/clickhouse/backup/<backup>` afterwards.
+
 ## References
 
 * **clickhouse-backup**: https://github.com/Altinity/clickhouse-backup
@@ -2812,4 +3080,5 @@ All CLI actions such as `create`, `upload` etc. SHALL be supported.
 [Revision History]: https://github.com/Altinity/clickhouse-backup/commits/master/test/testflows/clickhouse_backup/requirements/requirements.md
 [Git]: https://git-scm.com/
 [GitHub]: https://github.com/
-''')
+'''
+)

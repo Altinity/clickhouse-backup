@@ -992,7 +992,7 @@ class Cluster(object):
         """Get object with node bound methods
         :param node_name: name of service name
         """
-        if node_name in ("clickhouse_backup", "clickhouse_backup_fips"):
+        if node_name in ("clickhouse_backup", "clickhouse_backup2", "clickhouse_backup_fips"):
             return BackupNode(self, node_name)
         if node_name.startswith("clickhouse"):
             return ClickHouseNode(self, node_name)
@@ -1712,6 +1712,12 @@ class Cluster(object):
                     "GCS_CREDENTIALS_JSON_ENCODED": gcs_cred_json_encoded,
                     "CLICKHOUSE_HOST": "clickhouse1",
                     "CLICKHOUSE_BACKUP_CONFIG": "/etc/clickhouse-backup/config.yml",
+                    # system.backup_actions / backup_list / backup_version ENGINE=URL tables on
+                    # clickhouse1 point at this container; the embedded ON CLUSTER orchestration
+                    # (#928) drives every node through them. Env overrides win over the shared
+                    # config.yml so each backup container can advertise its own hostname.
+                    "API_CREATE_INTEGRATION_TABLES": "true",
+                    "API_INTEGRATION_TABLES_HOST": "backup",
                     "TZ": "Europe/Moscow",
                     "GOCOVERDIR": "/tmp/_coverage_/",
                 },
@@ -1737,6 +1743,54 @@ class Cluster(object):
                 },
             )
             _wait_for_container_healthy(self._docker_client, self._container_ids["clickhouse_backup"], timeout=300)
+
+        # 5b. clickhouse_backup2 (shares volumes from clickhouse2)
+        # Second backup server for the embedded BACKUP/RESTORE ON CLUSTER orchestration
+        # (#928): the initiator drives clickhouse2 through its system.backup_actions
+        # URL table, which POSTs to this container. The container itself only sleeps;
+        # the server is started via BackupNode.start_server below so tests can stop
+        # and restart it (a server running as the container command would take the
+        # container down with it).
+        with And("starting clickhouse_backup2"):
+            self._start_container(
+                name="clickhouse_backup2",
+                image="ubuntu:latest",
+                hostname="backup2",
+                env={
+                    "DEBIAN_FRONTEND": "noninteractive",
+                    "LOG_LEVEL": log_level,
+                    "GCS_CREDENTIALS_JSON": gcs_cred_json,
+                    "GCS_CREDENTIALS_JSON_ENCODED": gcs_cred_json_encoded,
+                    "CLICKHOUSE_HOST": "clickhouse2",
+                    "CLICKHOUSE_BACKUP_CONFIG": "/etc/clickhouse-backup/config.yml",
+                    "API_CREATE_INTEGRATION_TABLES": "true",
+                    "API_INTEGRATION_TABLES_HOST": "backup2",
+                    "TZ": "Europe/Moscow",
+                    "GOCOVERDIR": "/tmp/_coverage_/",
+                },
+                volumes=backup_volumes,
+                volumes_from_name="clickhouse2",
+                ports=["7171"],
+                entrypoint=["/bin/bash"],
+                command=[
+                    "-c",
+                    "set -x && "
+                    "apt-get update && "
+                    "apt-get install -y ca-certificates tzdata bash curl && "
+                    "update-ca-certificates && "
+                    "exec sleep infinity"
+                ],
+                cap_add=["SYS_NICE"],
+                healthcheck={
+                    "Test": ["CMD-SHELL", "command -v curl >/dev/null && test -x /bin/clickhouse-backup"],
+                    "Interval": 5 * 1_000_000_000,
+                    "Timeout": 5 * 1_000_000_000,
+                    "Retries": 40,
+                    "StartPeriod": 10 * 1_000_000_000,
+                },
+            )
+            _wait_for_container_healthy(self._docker_client, self._container_ids["clickhouse_backup2"], timeout=300)
+            self.node("clickhouse_backup2").start_server(timeout=120)
 
         # 6. clickhouse_backup_fips (optional; same volumes view as clickhouse1)
         # This container hosts the FIPS-compatible binary built by ``make build-race-fips``.

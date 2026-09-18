@@ -1129,6 +1129,11 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		fullCommand += " --resume"
 	}
 
+	embeddedOnClusterWorker := false
+	if _, exist := api.getQueryParameter(query, "embedded-on-cluster-worker"); exist {
+		embeddedOnClusterWorker = true
+		fullCommand += " --embedded-on-cluster-worker"
+	}
 	if dryRun {
 		fullCommand += " --dry-run"
 	}
@@ -1149,6 +1154,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	if dryRun {
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
+		b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
 		b.DryRun = true
 		err = b.CreateBackup(backupName, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, createNamedCollections, namedCollectionsOnly, checkPartsColumns, skipProjections, resume, api.clickhouseBackupVersion, commandId)
 		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
@@ -1161,6 +1167,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create", 0, func() error {
 			b := backup.NewBackuper(cfg)
+			b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
 			return b.CreateBackup(backupName, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, createNamedCollections, namedCollectionsOnly, checkPartsColumns, skipProjections, resume, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
@@ -1287,6 +1294,11 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 		streaming = true
 		fullCommand += " --streaming"
 	}
+	embeddedOnClusterWorker := false
+	if _, exist := api.getQueryParameter(query, "embedded-on-cluster-worker"); exist {
+		embeddedOnClusterWorker = true
+		fullCommand += " --embedded-on-cluster-worker"
+	}
 	if dryRun {
 		fullCommand += " --dry-run"
 	}
@@ -1306,6 +1318,7 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 	if dryRun {
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
+		b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
 		b.DryRun = true
 		err = b.CreateToRemote(backupName, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, backupNamedCollections, namedCollectionsOnly, skipCheckPartsColumns, resume, streaming, api.clickhouseBackupVersion, commandId)
 		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
@@ -1318,6 +1331,7 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create_remote", 0, func() error {
 			b := backup.NewBackuper(cfg)
+			b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
 			return b.CreateToRemote(backupName, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, backupNamedCollections, namedCollectionsOnly, skipCheckPartsColumns, resume, streaming, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
@@ -1643,6 +1657,11 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	if resume {
 		fullCommand += " --resume"
 	}
+	embeddedOnClusterWorker := false
+	if _, exist := api.getQueryParameter(query, "embedded-on-cluster-worker"); exist {
+		embeddedOnClusterWorker = true
+		fullCommand += " --embedded-on-cluster-worker"
+	}
 	if dryRun {
 		fullCommand += " --dry-run"
 	}
@@ -1660,6 +1679,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	if dryRun {
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
+		b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
 		b.DryRun = true
 		err = b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, api.clickhouseBackupVersion, commandId)
 		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
@@ -1672,6 +1692,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
+			b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
 			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
@@ -2145,6 +2166,11 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	embeddedOnClusterWorker := false
+	if _, exist := api.getQueryParameter(query, "embedded-on-cluster-worker"); exist {
+		embeddedOnClusterWorker = true
+		fullCommand += " --embedded-on-cluster-worker"
+	}
 	if dryRun {
 		fullCommand += " --dry-run"
 	}
@@ -2163,6 +2189,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	if dryRun {
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
+		b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
 		b.DryRun = true
 		err = b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, api.clickhouseBackupVersion, commandId)
 		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
@@ -2175,6 +2202,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(cfg)
+			b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
 			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, api.clickhouseBackupVersion, commandId)
 		})
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
@@ -2446,6 +2474,11 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		}
 	}
 
+	embeddedOnClusterWorker := false
+	if _, exist := api.getQueryParameter(query, "embedded-on-cluster-worker"); exist {
+		embeddedOnClusterWorker = true
+		fullCommand += " --embedded-on-cluster-worker"
+	}
 	if dryRun {
 		fullCommand += " --dry-run"
 	}
@@ -2464,6 +2497,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 	if dryRun {
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
+		b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
 		b.DryRun = true
 		b.DiskLimit = diskLimit
 		err = b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, streaming, api.clickhouseBackupVersion, commandId)
@@ -2477,6 +2511,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore_remote", 0, func() error {
 			b := backup.NewBackuper(cfg)
+			b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
 			b.DiskLimit = diskLimit
 			return b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, streaming, api.clickhouseBackupVersion, commandId)
 		})
@@ -2585,6 +2620,11 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		diskLimit = parsedDiskLimit
 		fullCommand += fmt.Sprintf(" --disk-limit=%d", diskLimit)
 	}
+	embeddedOnClusterWorker := false
+	if _, exist := api.getQueryParameter(query, "embedded-on-cluster-worker"); exist {
+		embeddedOnClusterWorker = true
+		fullCommand += " --embedded-on-cluster-worker"
+	}
 	if dryRun {
 		fullCommand += " --dry-run"
 	}
@@ -2602,6 +2642,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	if dryRun {
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
+		b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
 		b.DryRun = true
 		b.DiskLimit = diskLimit
 		err = b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, hardlinkExistsFiles, api.clickhouseBackupVersion, commandId)
@@ -2615,6 +2656,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("download", 0, func() error {
 			b := backup.NewBackuper(cfg)
+			b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
 			b.DiskLimit = diskLimit
 			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, hardlinkExistsFiles, api.clickhouseBackupVersion, commandId)
 		})
@@ -2660,6 +2702,10 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 	if force {
 		fullCommand += " --force"
 	}
+	_, embeddedOnClusterWorker := api.getQueryParameter(r.URL.Query(), "embedded-on-cluster-worker")
+	if embeddedOnClusterWorker {
+		fullCommand += " --embedded-on-cluster-worker"
+	}
 	// dry-run returns the report in the response body, without metrics update
 	if dryRun {
 		fullCommand += " --dry-run"
@@ -2681,10 +2727,11 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	commandId, ctx := status.Current.Start(fullCommand)
 	b := backup.NewBackuper(cfg)
+	b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
 	switch vars["where"] {
 	case "local":
 		err, _ = api.metrics.ExecuteWithMetrics("delete", 0, func() error {
-			return b.RemoveBackupLocal(ctx, vars["name"], nil, force)
+			return b.RemoveBackupLocalOnCluster(ctx, vars["name"], force)
 		})
 	case "remote":
 		err, _ = api.metrics.ExecuteWithMetrics("delete", 0, func() error {

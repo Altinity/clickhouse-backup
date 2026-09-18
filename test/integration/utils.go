@@ -1484,9 +1484,10 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
 		fullBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + fullBackupName + "/shards/1/replicas/1/data/" + dbName + "/t?"
 	}
-	// embedded storage without embedded disks doesn't contain `shadow` and contain only `metadata`
+	// embedded storage without embedded disks doesn't contain `shadow` and contain only `metadata`,
+	// per table .json lives under the node's shards/{shard_num}/replicas/{replica_num}/ prefix, see issues/928
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
-		fullBackupDir = "/var/lib/clickhouse/backup/" + fullBackupName + "/metadata/" + dbName + "/t?.json"
+		fullBackupDir = "/var/lib/clickhouse/backup/" + fullBackupName + "/shards/1/replicas/1/metadata/" + dbName + "/t?.json"
 	}
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c", "ls -la "+fullBackupDir+" | wc -l")
 	r.NoError(err)
@@ -1555,7 +1556,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	}
 	// embedded storage without embedded disks doesn't contain `shadow` and contain only `metadata`
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
-		fullBackupDir = "/var/lib/clickhouse/backup/" + fullBackupName + "/metadata/" + dbName + "/t?.json"
+		fullBackupDir = "/var/lib/clickhouse/backup/" + fullBackupName + "/shards/1/replicas/1/metadata/" + dbName + "/t?.json"
 		expectedLines = "2"
 	}
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c", "ls -la "+fullBackupDir+"| wc -l")
@@ -1586,7 +1587,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	}
 	//embedded backup without a disk has only local metadata
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
-		partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/metadata/" + dbName + "/t?.json"
+		partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/shards/1/replicas/1/metadata/" + dbName + "/t?.json"
 		expectedLines = "1"
 	}
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c", "ls -la "+partitionBackupDir+"| wc -l")
@@ -1631,7 +1632,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	}
 	//embedded backup without a disk has only local metadata
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
-		partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/metadata/" + dbName + "/t?.json"
+		partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/shards/1/replicas/1/metadata/" + dbName + "/t?.json"
 		expectedLines = "1"
 	}
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c", "ls -la "+partitionBackupDir+" | wc -l")

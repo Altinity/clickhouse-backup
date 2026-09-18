@@ -76,10 +76,28 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 
 	doRestoreData := (!schemaOnly && !rbacOnly && !configsOnly) || dataOnly
 
+	if err := b.validateEmbeddedOnClusterWorker(); err != nil {
+		return err
+	}
+	if b.EmbeddedOnClusterWorker {
+		// rbac, configs and named collections are restored by the initiator node only, https://github.com/Altinity/clickhouse-backup/issues/928
+		if rbacOnly || configsOnly || namedCollectionsOnly {
+			return errors.Errorf("--%s restores tables only, --rbac-only, --configs-only and --named-collections-only are executed by the initiator node", embeddedOnClusterWorkerFlag)
+		}
+		restoreRBAC, restoreConfigs, restoreNamedCollections = false, false, false
+	}
 	if err := b.ch.Connect(); err != nil {
 		return errors.Wrap(err, "can't connect to clickhouse")
 	}
 	defer b.ch.Close()
+
+	// every node of RESTORE ... ON CLUSTER reads its own shards/N/replicas/M/metadata/*.sql, so the workers fix them
+	// before the initiator issues the RESTORE SQL, https://github.com/Altinity/clickhouse-backup/issues/928
+	if b.embeddedClusterInitiator() && !b.skipEmbeddedClusterFanOut && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+		if err := b.runEmbeddedClusterWorkers(ctx, embeddedClusterRestoreWorkerCommand("restore", backupName, tablePattern, databaseMapping, tableMapping, partitions, schemaOnly, dataOnly, dropExists, ignoreDependencies, schemaAsAttach, skipEmptyTables)); err != nil {
+			return errors.Wrap(err, "embedded ON CLUSTER workers")
+		}
+	}
 
 	prologue, err := b.restorePrologue(ctx, backupName, tablePattern, partitions, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, skipEmptyTables, doRestoreData, false)
 	if err != nil {
@@ -111,7 +129,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		}
 	}
 	// do not create UDF when use --data, --rbac-only, --configs-only flags, https://github.com/Altinity/clickhouse-backup/issues/697
-	if schemaOnly || (schemaOnly == dataOnly) {
+	if (schemaOnly || (schemaOnly == dataOnly)) && !b.embeddedClusterWorkerSkipsDDL() {
 		if funcErr := b.restoreFunctions(ctx, backupMetadata); funcErr != nil {
 			return errors.Wrap(funcErr, "restoreFunctions")
 		}
@@ -282,6 +300,7 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 		if err = b.resolveEmbeddedClusterShardReplica(ctx); err != nil {
 			return nil, errors.Wrap(err, "resolveEmbeddedClusterShardReplica")
 		}
+		b.applyEmbeddedClusterLayout(&backupMetadata)
 	}
 
 	// report what would be restored before the first side effect, no CREATE/DROP DATABASE, no RBAC,
@@ -292,7 +311,7 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 		return result, b.dryRunRestore(ctx, backupName, backupMetadata, disks, tablePattern, partitions, schemaOnly, dataOnly, dropExists, rbacOnly, configsOnly, namedCollectionsOnly, restoreRBAC, restoreConfigs, restoreNamedCollections, skipEmptyTables)
 	}
 
-	if schemaOnly || doRestoreData {
+	if (schemaOnly || doRestoreData) && !b.embeddedClusterWorkerSkipsDDL() {
 		for _, database := range backupMetadata.Databases {
 			targetDB := database.Name
 			if !IsInformationSchema(targetDB) {
@@ -389,9 +408,9 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 	if tablePattern == "" {
 		tablePattern = "*"
 	}
-	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
+	metadataPath := b.localMetadataDir(path.Join(b.DefaultDataPath, "backup", backupName))
 	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
-		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
+		metadataPath = b.localMetadataDir(path.Join(b.EmbeddedBackupDataPath, backupName))
 	}
 
 	tablesForRestore, partitionsNames, err = b.getTablesForRestoreLocal(ctx, backupName, metadataPath, tablePattern, dropExists, partitions)
@@ -441,7 +460,7 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 		// Safety check: prevent accidental data loss when restore_schema_on_cluster is set
 		// via config but RESTORE_SCHEMA_ON_CLUSTER env var is empty, and --rm/--drop is not provided.
 		// https://github.com/Altinity/clickhouse-backup/issues/1325
-		if !dropExists && !b.resume && b.cfg.General.RestoreSchemaOnCluster != "" && os.Getenv("RESTORE_SCHEMA_ON_CLUSTER") == "" {
+		if !dropExists && !b.resume && b.cfg.General.RestoreSchemaOnCluster != "" && os.Getenv("RESTORE_SCHEMA_ON_CLUSTER") == "" && !b.EmbeddedOnClusterWorker {
 			if err = b.checkClusterTablesHaveDataBeforeDrop(ctx, tablesForRestore, version); err != nil {
 				return nil, errors.Wrap(err, "checkClusterTablesHaveDataBeforeDrop")
 			}
@@ -1719,8 +1738,10 @@ func (b *Backuper) dropExistPartitions(ctx context.Context, tablesForRestore Lis
 func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, disks []clickhouse.Disk, tablesForRestore ListOfTables, ignoreDependencies bool, version int, schemaAsAttach bool) error {
 	startRestoreSchema := time.Now()
 	databaseEnginesForRestore := b.prepareDatabaseEnginesMap(backupMetadata.Databases)
-	if dropErr := b.dropExistsTables(tablesForRestore, databaseEnginesForRestore, ignoreDependencies, version, schemaAsAttach); dropErr != nil {
-		return errors.Wrap(dropErr, "dropExistsTables")
+	if !b.embeddedClusterWorkerSkipsDDL() {
+		if dropErr := b.dropExistsTables(tablesForRestore, databaseEnginesForRestore, ignoreDependencies, version, schemaAsAttach); dropErr != nil {
+			return errors.Wrap(dropErr, "dropExistsTables")
+		}
 	}
 	var restoreErr error
 	if b.isEmbedded {
@@ -1761,6 +1782,11 @@ func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string,
 	}
 	if err != nil {
 		return errors.Wrap(err, "fixEmbeddedMetadata")
+	}
+	if b.EmbeddedOnClusterWorker {
+		// the initiator issues RESTORE ... ON CLUSTER for every node once all workers fixed their metadata
+		log.Info().Msgf("--%s: %s metadata fixed, skip RESTORE SQL", embeddedOnClusterWorkerFlag, b.embeddedClusterPrefix)
+		return nil
 	}
 	return b.restoreEmbedded(ctx, backupName, true, false, version, tablesForRestore, nil)
 }
@@ -2356,6 +2382,10 @@ func (b *Backuper) waitForObjectStorageCleanup(ctx context.Context, disks []clic
 }
 
 func (b *Backuper) restoreDataEmbedded(ctx context.Context, backupName string, dataOnly bool, version int, tablesForRestore ListOfTables, partitionsNameList map[metadata.TableTitle][]string) error {
+	if b.EmbeddedOnClusterWorker {
+		log.Info().Msgf("--%s: skip RESTORE SQL, the initiator restores data ON CLUSTER", embeddedOnClusterWorkerFlag)
+		return nil
+	}
 	return b.restoreEmbedded(ctx, backupName, false, dataOnly, version, tablesForRestore, partitionsNameList)
 }
 
