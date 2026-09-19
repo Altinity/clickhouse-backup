@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -140,14 +141,23 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 		}
 		return nil
 	case "text", "":
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
+		// tabwriter.Flush writes every cell and padding as a separate Write, so render into a buffer
+		// and hand the whole table to os.Stdout at once, otherwise a stderr log line lands inside a row
+		var buf bytes.Buffer
+		w := tabwriter.NewWriter(&buf, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
 		for _, backup := range backupInfos {
 			creationDate := backup.CreationDate.In(time.Local).Format("2006-01-02 15:04:05")
-			if bytes, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, creationDate, backup.Type, backup.RequiredBackup, backup.Size, backup.Description); err != nil {
-				log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
+			if n, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, creationDate, backup.Type, backup.RequiredBackup, backup.Size, backup.Description); err != nil {
+				log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", n, err)
 			}
 		}
-		return w.Flush()
+		if err := w.Flush(); err != nil {
+			return errors.Wrap(err, "PrintBackup text Flush")
+		}
+		if _, err := os.Stdout.Write(buf.Bytes()); err != nil {
+			return errors.Wrap(err, "PrintBackup text Write")
+		}
+		return nil
 	}
 	return nil
 }
