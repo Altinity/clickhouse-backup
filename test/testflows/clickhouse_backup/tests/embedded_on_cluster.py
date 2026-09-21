@@ -1,4 +1,5 @@
 import json
+import os
 import time
 
 from clickhouse_backup.requirements.requirements import *
@@ -63,7 +64,8 @@ def remote_objects(self, node, backup_name):
     prefixes = ",".join(sorted({s3["path"], s3["object_disk_path"]}))
     r = node.query(
         f"SELECT DISTINCT _path FROM s3('{MINIO_URL}/{MINIO_BUCKET}/{{{prefixes}}}/{backup_name}/**', "
-        f"'{MINIO_ACCESS_KEY}', '{MINIO_SECRET_KEY}', 'One') ORDER BY _path FORMAT TSVRaw"
+        # LineAsString instead of One: format One exists only since 23.8, the backup is tiny
+        f"'{MINIO_ACCESS_KEY}', '{MINIO_SECRET_KEY}', 'LineAsString') ORDER BY _path FORMAT TSVRaw"
     ).output
     return [line for line in r.splitlines() if line], s3["path"], s3["object_disk_path"]
 
@@ -235,6 +237,10 @@ def worker_unavailable(self):
 )
 def embedded_on_cluster(self):
     """Embedded BACKUP/RESTORE ON CLUSTER orchestration between two clickhouse-backup servers (#928)."""
+    # BACKUP ... ON CLUSTER TO S3(...) needs the S3 backup engine and production ready BACKUP/RESTORE,
+    # same gate as TestEmbeddedS3 in test/integration, https://github.com/ClickHouse/ClickHouse/issues/39416
+    if os.environ.get("CLICKHOUSE_VERSION", "26.8") < "23.3":
+        skip("embedded BACKUP/RESTORE ON CLUSTER needs ClickHouse 23.3+")
     ch1, ch2 = self.context.nodes
     backup = self.context.backup
     backup2 = self.context.backup2
