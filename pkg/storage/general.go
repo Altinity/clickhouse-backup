@@ -602,6 +602,12 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		//log.Debug().Msgf("extract %s", extractFile)
 		return nil
 	}); extractErr != nil {
+		// cancellation force-closes the reader above, so Extract reports "file already closed"
+		// instead of the real cause; report the cancellation, otherwise Backuper.Classify()
+		// retries a download which can never succeed, see https://github.com/Altinity/clickhouse-backup/issues/1456
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return 0, errors.Wrap(ctxErr, "DownloadCompressedStream Extract")
+		}
 		return 0, errors.Wrap(extractErr, "DownloadCompressedStream Extract")
 	}
 	return downloadedBytes, nil

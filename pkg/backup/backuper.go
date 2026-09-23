@@ -66,13 +66,22 @@ type Backuper struct {
 	DefaultDataPath        string
 	EmbeddedBackupDataPath string
 	embeddedClusterPrefix  string // "shards/{shard_num}/replicas/{replica_num}" when UseEmbeddedBackupRestoreCluster is set, otherwise ""
-	isEmbedded             bool
-	resume                 bool
-	resumableState         *resumable.State
+	// embeddedClusterName - macros expanded use_embedded_backup_restore_cluster, stored as `cluster=<name>` tag of the backup
+	embeddedClusterName string
+	// embeddedClusterFilesPrefix - prefix of this node's own clickhouse-backup files on remote storage (per table .json, shadow data),
+	// equals embeddedClusterPrefix for backups tagged `cluster=<name>`, "" for older flat layout backups, see issues/928
+	embeddedClusterFilesPrefix string
+	isEmbedded                 bool
+	resume                     bool
+	resumableState             *resumable.State
 	// DryRun report what the command would do instead of doing it, see issues/1012
 	DryRun bool
 	// DryRunResult holds the report produced when DryRun is set, so REST API handlers can read it after the command returns
 	DryRunResult *DryRunReport
+	// EmbeddedOnClusterWorker - run only the node local part of an embedded BACKUP/RESTORE ON CLUSTER, see issues/928
+	EmbeddedOnClusterWorker bool
+	// skipEmbeddedClusterFanOut - create_remote/restore_remote drive the worker nodes themselves, the inner create/restore must not
+	skipEmbeddedClusterFanOut bool
 	// DiskLimit - max allowed local disk usage in percent after download, 0 disables the check, see issues/1458
 	DiskLimit int
 	// freezes - shadow uuids of the running `create`, persisted in <backup_name>/freezes.tmp, see issues/1563
@@ -237,6 +246,7 @@ func (b *Backuper) getLocalBackupDataPathForTable(backupName string, disk string
 func (b *Backuper) resolveEmbeddedClusterShardReplica(ctx context.Context) error {
 	if b.cfg.ClickHouse.UseEmbeddedBackupRestoreCluster == "" {
 		b.embeddedClusterPrefix = ""
+		b.embeddedClusterName = ""
 		return nil
 	}
 	clusterName, err := b.ch.ApplyMacros(ctx, b.cfg.ClickHouse.UseEmbeddedBackupRestoreCluster)
@@ -256,6 +266,7 @@ func (b *Backuper) resolveEmbeddedClusterShardReplica(ctx context.Context) error
 		return errors.Errorf("no local replica found in system.clusters for cluster '%s'", clusterName)
 	}
 	b.embeddedClusterPrefix = path.Join("shards", fmt.Sprintf("%d", result[0].ShardNum), "replicas", fmt.Sprintf("%d", result[0].ReplicaNum))
+	b.embeddedClusterName = clusterName
 	log.Debug().Msgf("resolved embedded cluster prefix: %s", b.embeddedClusterPrefix)
 	return nil
 }

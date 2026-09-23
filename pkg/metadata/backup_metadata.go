@@ -55,6 +55,17 @@ type CASBackupParams struct {
 
 // IsPlainDisk returns true when the disk had metadata_type=plain or plain_rewritable at backup time,
 // such disks have no local metadata files inside the backup, the data objects live only in object_disk_path
+// EmbeddedCluster returns the cluster name of an embedded BACKUP ... ON CLUSTER backup from the `cluster=<name>` tag,
+// "" for regular and single node embedded backups, https://github.com/Altinity/clickhouse-backup/issues/928
+func (b *BackupMetadata) EmbeddedCluster() string {
+	for _, tag := range strings.Split(b.Tags, ",") {
+		if strings.HasPrefix(tag, "cluster=") {
+			return strings.TrimPrefix(tag, "cluster=")
+		}
+	}
+	return ""
+}
+
 func (b *BackupMetadata) IsPlainDisk(diskName string) bool {
 	metadataType, exists := b.DiskMetadataTypes[diskName]
 	return exists && (metadataType == "plain" || metadataType == "plain_rewritable")

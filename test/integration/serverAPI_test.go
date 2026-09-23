@@ -64,6 +64,8 @@ func TestServerAPI(t *testing.T) {
 
 	testAPIRebindReplicaPath(t, r, env)
 
+	testAPIDropReplicaIfExists(t, r, env)
+
 	testAPIBackupStatus(t, r, env)
 
 	testAPIBackupList(t, r, env)
@@ -1197,6 +1199,76 @@ func testAPIRebindReplicaPath(t *testing.T, r *require.Assertions, env *TestEnvi
 	env.queryWithNoError(t, r, "DROP TABLE default.api_test_rebind_path"+dropSuffix)
 	env.queryWithNoError(t, r, "ATTACH TABLE default.api_rebind_occupant")
 	env.queryWithNoError(t, r, "DROP TABLE default.api_rebind_occupant"+dropSuffix)
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/local/%s'", backupName))
+	r.NoError(err, "%s\nunexpected POST /backup/delete/local error: %v", out, err)
+}
+
+// testAPIDropReplicaIfExists verifies the drop_replica_if_exists query parameter for the /backup/restore
+// endpoint (https://github.com/Altinity/clickhouse-backup/issues/1162).
+//
+// The leftover state (our own replica entry alive in ZooKeeper, no local table using it) is simulated by an
+// occupant table created with the same ZK path AND the same replica name and then DETACH-ed. Then:
+//
+//	flag off => restore REBINDS to clickhouse.default_replica_path
+//	flag on  => restore drops the leftover replica entry and KEEPS the original ZK path
+func testAPIDropReplicaIfExists(t *testing.T, r *require.Assertions, env *TestEnvironment) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") < 0 {
+		log.Info().Msgf("testAPIDropReplicaIfExists skipped, requires ClickHouse >= 20.8 for synchronous `DROP TABLE ... NO DELAY`, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
+		return
+	}
+	log.Debug().Msg("Check /backup/restore with drop_replica_if_exists parameter")
+
+	const dropSuffix = " NO DELAY"
+	const zkPath = "/clickhouse/tables/api_drop_replica_path"
+	const backupName = "api_drop_replica_backup"
+
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE default.api_test_drop_path (id UInt64) ENGINE=ReplicatedMergeTree('%s','{replica}') ORDER BY id", zkPath))
+	env.queryWithNoError(t, r, "INSERT INTO default.api_test_drop_path SELECT number FROM numbers(10)")
+
+	expectedDefaultPath := strings.NewReplacer("{database}", "default", "{table}", "api_test_drop_path").Replace("/clickhouse/tables/{cluster}/{shard}/{database}/{table}")
+	engineFull := func() string {
+		out := ""
+		r.NoError(env.ch.SelectSingleRowNoCtx(&out, "SELECT engine_full FROM system.tables WHERE database=? AND name=?", "default", "api_test_drop_path"))
+		return out
+	}
+
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/create?table=default.api_test_drop_path&name=%s'", backupName))
+	r.NoError(err, "%s\nunexpected POST /backup/create error: %v", out, err)
+	r.Contains(out, "acknowledged")
+	waitForAPIOperationStatus(r, env, parseAPIOperationID(r, out), "create", 60*time.Second)
+
+	// the occupant takes over the same ZK path AND replica name, DETACH-ing it keeps that replica entry in
+	// ZooKeeper while no local table uses it anymore - exactly the leftover state drop_replica_if_exists covers
+	env.queryWithNoError(t, r, "DROP TABLE default.api_test_drop_path"+dropSuffix)
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE default.api_drop_occupant (id UInt64) ENGINE=ReplicatedMergeTree('%s','{replica}') ORDER BY id", zkPath))
+	env.queryWithNoError(t, r, "DETACH TABLE default.api_drop_occupant")
+
+	restoreSchemaViaAPI := func(extraQuery string) {
+		url := fmt.Sprintf("http://localhost:7171/backup/restore/%s?schema=1&table=default.api_test_drop_path%s", backupName, extraQuery)
+		restoreOut, restoreErr := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST '%s'", url))
+		r.NoError(restoreErr, "%s\nunexpected POST /backup/restore error: %v", restoreOut, restoreErr)
+		r.Contains(restoreOut, "acknowledged")
+		waitForAPIOperationStatus(r, env, parseAPIOperationID(r, restoreOut), "restore", 60*time.Second)
+	}
+
+	// flag off => rebind to clickhouse.default_replica_path
+	restoreSchemaViaAPI("")
+	r.Contains(engineFull(), expectedDefaultPath, "without drop_replica_if_exists the table must rebind to default_replica_path")
+
+	// flag on => drop the leftover replica entry and keep the original ZK path
+	env.queryWithNoError(t, r, "DROP TABLE default.api_test_drop_path"+dropSuffix)
+	restoreSchemaViaAPI("&drop_replica_if_exists=true")
+	r.Contains(engineFull(), zkPath, "with drop_replica_if_exists=true the table must keep the original ZK path")
+	r.NotContains(engineFull(), expectedDefaultPath, "with drop_replica_if_exists=true the table must not rebind to default_replica_path")
+
+	var dropReplicaActions uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&dropReplicaActions, "SELECT count() FROM system.backup_actions WHERE command LIKE '%--drop-replica-if-exists%' AND status=?", status.SuccessStatus))
+	r.Greater(dropReplicaActions, uint64(0), "restore with drop_replica_if_exists must be recorded in system.backup_actions")
+
+	// cleanup: drop the restored table first, so the occupant can re-create its own ZooKeeper state on ATTACH
+	env.queryWithNoError(t, r, "DROP TABLE default.api_test_drop_path"+dropSuffix)
+	env.queryWithNoError(t, r, "ATTACH TABLE default.api_drop_occupant")
+	env.queryWithNoError(t, r, "DROP TABLE default.api_drop_occupant"+dropSuffix)
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/local/%s'", backupName))
 	r.NoError(err, "%s\nunexpected POST /backup/delete/local error: %v", out, err)
 }

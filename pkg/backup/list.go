@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -142,16 +143,33 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 		}
 		return nil
 	case "text", "":
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
+		w, flush := newStdoutTabWriter(3)
 		for _, backup := range backupInfos {
 			creationDate := backup.CreationDate.In(time.Local).Format("2006-01-02 15:04:05")
-			if bytes, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, creationDate, backup.Type, backup.RequiredBackup, backup.Size, backup.Description); err != nil {
-				log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
+			if n, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, creationDate, backup.Type, backup.RequiredBackup, backup.Size, backup.Description); err != nil {
+				log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", n, err)
 			}
 		}
-		return w.Flush()
+		return flush()
 	}
 	return nil
+}
+
+// newStdoutTabWriter returns a tabwriter rendering into a buffer and a flush func that hands the whole
+// table to os.Stdout in a single Write. tabwriter.Flush writes every cell and padding separately, so
+// a zerolog line on stderr lands inside a row when both streams are merged (`docker exec`, `2>&1`).
+func newStdoutTabWriter(padding int) (*tabwriter.Writer, func() error) {
+	var buf bytes.Buffer
+	w := tabwriter.NewWriter(&buf, 0, 0, padding, ' ', tabwriter.DiscardEmptyColumns)
+	return w, func() error {
+		if err := w.Flush(); err != nil {
+			return errors.Wrap(err, "tabwriter Flush")
+		}
+		if _, err := os.Stdout.Write(buf.Bytes()); err != nil {
+			return errors.Wrap(err, "os.Stdout Write")
+		}
+		return nil
+	}
 }
 
 func (b *Backuper) CollectAllBackups(ctx context.Context, ptype string) ([]BackupInfo, error) {
@@ -1185,7 +1203,7 @@ func printLiveTableRows(rows []TableRow, format string) error {
 		fmt.Print(s)
 		return nil
 	case "text", "":
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.DiscardEmptyColumns)
+		w, flush := newStdoutTabWriter(2)
 		for _, r := range rows {
 			marker := r.BackupType
 			if r.Skip {
@@ -1205,7 +1223,7 @@ func printLiveTableRows(rows []TableRow, format string) error {
 				}
 			}
 		}
-		return w.Flush()
+		return flush()
 	}
 	return errors.Errorf("unknown format '%s', use one of: text, json, yaml, csv, tsv", format)
 }
@@ -1317,7 +1335,7 @@ func printBackupSections(sections []tableSection, format string) error {
 }
 
 func renderTextSection(s tableSection) error {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
+	w, flush := newStdoutTabWriter(3)
 	if _, err := fmt.Fprintf(w, "Backup:\t%s (%s)\n", s.BackupName, s.BackupType); err != nil {
 		return err
 	}
@@ -1333,7 +1351,7 @@ func renderTextSection(s tableSection) error {
 		if _, err := fmt.Fprintln(w, "(no tables)"); err != nil {
 			return err
 		}
-		return w.Flush()
+		return flush()
 	}
 	if _, err := fmt.Fprintln(w, "TABLE\tSIZE\tPARTS\tDISKS\tFLAGS"); err != nil {
 		return err
@@ -1360,5 +1378,5 @@ func renderTextSection(s tableSection) error {
 	if _, err := fmt.Fprintf(w, "TOTAL (%d tables)\t%s\t%d\t\t\n", len(s.Rows), utils.FormatBytes(totalBytes), totalParts); err != nil {
 		return err
 	}
-	return w.Flush()
+	return flush()
 }

@@ -317,9 +317,9 @@ func (tc *TestContainers) GetMappedPort(ctx context.Context, name string, contai
 
 // restartHealthTimeout bounds a single restart attempt and restartMaxAttempts caps how many
 // times RestartContainer retries. The old entrypoint.sh (ClickHouse 21.x/22.x) starts an
-// init-time clickhouse-server whenever /docker-entrypoint-initdb.d is non-empty (it always is,
-// dynamic_settings.sh lives there), SIGTERMs it and blocks in `wait "$pid"` before exec'ing the
-// real server. That init-time server sometimes hangs during shutdown - its log ends at
+// init-time clickhouse-server whenever /docker-entrypoint-initdb.d is non-empty, SIGTERMs it and
+// blocks in `wait "$pid"` before exec'ing the real server. That init-time server sometimes hangs
+// during shutdown - its log ends at
 // "BackgroundSchedulePool/BgSchPool: Waiting for threads to finish." and nothing follows - so the
 // entrypoint never reaches exec and the container stays running-but-unhealthy until the deadline.
 // A fresh restart kills the hung process and normally succeeds, so spend the budget on retries
@@ -1043,42 +1043,44 @@ func (tc *TestContainers) startPgSQL(ctx context.Context) error {
 
 func (tc *TestContainers) commonClickHouseEnv() map[string]string {
 	return map[string]string{
-		"CLICKHOUSE_VERSION":                   getEnvDefault("CLICKHOUSE_VERSION", "26.8"),
-		"CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS": "true",
-		"CLICKHOUSE_SKIP_USER_SETUP":           "1",
-		"TZ":                                   "UTC",
-		"LOG_LEVEL":                            getEnvDefault("LOG_LEVEL", "info"),
-		"S3_DEBUG":                             getEnvDefault("S3_DEBUG", "false"),
-		"GCS_DEBUG":                            getEnvDefault("GCS_DEBUG", "false"),
-		"FTP_DEBUG":                            getEnvDefault("FTP_DEBUG", "false"),
-		"SFTP_DEBUG":                           getEnvDefault("SFTP_DEBUG", "false"),
-		"AZBLOB_DEBUG":                         getEnvDefault("AZBLOB_DEBUG", "false"),
-		"COS_DEBUG":                            getEnvDefault("COS_DEBUG", "false"),
-		"CLICKHOUSE_DEBUG":                     getEnvDefault("CLICKHOUSE_DEBUG", "false"),
-		"GOCOVERDIR":                           "/tmp/_coverage_/",
-		"QA_AWS_ACCESS_KEY":                    os.Getenv("QA_AWS_ACCESS_KEY"),
-		"QA_AWS_SECRET_KEY":                    os.Getenv("QA_AWS_SECRET_KEY"),
-		"QA_AWS_BUCKET":                        os.Getenv("QA_AWS_BUCKET"),
-		"QA_AWS_REGION":                        os.Getenv("QA_AWS_REGION"),
-		"QA_AWS_CLOUD_BUCKET":                  os.Getenv("QA_AWS_CLOUD_BUCKET"),
-		"QA_AWS_CLOUD_REGION":                  getEnvDefault("QA_AWS_CLOUD_REGION", "us-west-2"),
-		"QA_AWS_CLOUD_ROLE_ARN":                os.Getenv("QA_AWS_CLOUD_ROLE_ARN"),
-		"QA_AWS_CLOUD_ACCESS_KEY":              os.Getenv("QA_AWS_CLOUD_ACCESS_KEY"),
-		"QA_AWS_CLOUD_SECRET_KEY":              os.Getenv("QA_AWS_CLOUD_SECRET_KEY"),
-		"QA_AZBLOB_ACCOUNT_NAME":               os.Getenv("QA_AZBLOB_ACCOUNT_NAME"),
-		"QA_AZBLOB_ACCOUNT_KEY":                os.Getenv("QA_AZBLOB_ACCOUNT_KEY"),
-		"QA_AZBLOB_CONTAINER":                  os.Getenv("QA_AZBLOB_CONTAINER"),
-		"AWS_ACCESS_KEY_ID":                    "access_key",
-		"AWS_SECRET_ACCESS_KEY":                "it_is_my_super_secret_key",
-		"QA_GCS_OVER_S3_ACCESS_KEY":            os.Getenv("QA_GCS_OVER_S3_ACCESS_KEY"),
-		"QA_GCS_OVER_S3_SECRET_KEY":            os.Getenv("QA_GCS_OVER_S3_SECRET_KEY"),
-		"QA_GCS_OVER_S3_BUCKET":                os.Getenv("QA_GCS_OVER_S3_BUCKET"),
-		"QA_ALIBABA_ACCESS_KEY":                os.Getenv("QA_ALIBABA_ACCESS_KEY"),
-		"QA_ALIBABA_SECRET_KEY":                os.Getenv("QA_ALIBABA_SECRET_KEY"),
-		"QA_TENCENT_SECRET_ID":                 os.Getenv("QA_TENCENT_SECRET_ID"),
-		"QA_TENCENT_SECRET_KEY":                os.Getenv("QA_TENCENT_SECRET_KEY"),
-		"GCS_ENCRYPTION_KEY":                   os.Getenv("GCS_ENCRYPTION_KEY"),
-		"AWS_EC2_METADATA_DISABLED":            "true",
+		"CLICKHOUSE_VERSION": getEnvDefault("CLICKHOUSE_VERSION", "26.8"),
+		// inert since dynamic_settings.sh moved out of /docker-entrypoint-initdb.d: entrypoint.sh
+		// skips the whole init block while that directory is empty, whatever this flag says
+		// "CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS": "true",
+		"CLICKHOUSE_SKIP_USER_SETUP": "1",
+		"TZ":                         "UTC",
+		"LOG_LEVEL":                  getEnvDefault("LOG_LEVEL", "info"),
+		"S3_DEBUG":                   getEnvDefault("S3_DEBUG", "false"),
+		"GCS_DEBUG":                  getEnvDefault("GCS_DEBUG", "false"),
+		"FTP_DEBUG":                  getEnvDefault("FTP_DEBUG", "false"),
+		"SFTP_DEBUG":                 getEnvDefault("SFTP_DEBUG", "false"),
+		"AZBLOB_DEBUG":               getEnvDefault("AZBLOB_DEBUG", "false"),
+		"COS_DEBUG":                  getEnvDefault("COS_DEBUG", "false"),
+		"CLICKHOUSE_DEBUG":           getEnvDefault("CLICKHOUSE_DEBUG", "false"),
+		"GOCOVERDIR":                 "/tmp/_coverage_/",
+		"QA_AWS_ACCESS_KEY":          os.Getenv("QA_AWS_ACCESS_KEY"),
+		"QA_AWS_SECRET_KEY":          os.Getenv("QA_AWS_SECRET_KEY"),
+		"QA_AWS_BUCKET":              os.Getenv("QA_AWS_BUCKET"),
+		"QA_AWS_REGION":              os.Getenv("QA_AWS_REGION"),
+		"QA_AWS_CLOUD_BUCKET":        os.Getenv("QA_AWS_CLOUD_BUCKET"),
+		"QA_AWS_CLOUD_REGION":        getEnvDefault("QA_AWS_CLOUD_REGION", "us-west-2"),
+		"QA_AWS_CLOUD_ROLE_ARN":      os.Getenv("QA_AWS_CLOUD_ROLE_ARN"),
+		"QA_AWS_CLOUD_ACCESS_KEY":    os.Getenv("QA_AWS_CLOUD_ACCESS_KEY"),
+		"QA_AWS_CLOUD_SECRET_KEY":    os.Getenv("QA_AWS_CLOUD_SECRET_KEY"),
+		"QA_AZBLOB_ACCOUNT_NAME":     os.Getenv("QA_AZBLOB_ACCOUNT_NAME"),
+		"QA_AZBLOB_ACCOUNT_KEY":      os.Getenv("QA_AZBLOB_ACCOUNT_KEY"),
+		"QA_AZBLOB_CONTAINER":        os.Getenv("QA_AZBLOB_CONTAINER"),
+		"AWS_ACCESS_KEY_ID":          "access_key",
+		"AWS_SECRET_ACCESS_KEY":      "it_is_my_super_secret_key",
+		"QA_GCS_OVER_S3_ACCESS_KEY":  os.Getenv("QA_GCS_OVER_S3_ACCESS_KEY"),
+		"QA_GCS_OVER_S3_SECRET_KEY":  os.Getenv("QA_GCS_OVER_S3_SECRET_KEY"),
+		"QA_GCS_OVER_S3_BUCKET":      os.Getenv("QA_GCS_OVER_S3_BUCKET"),
+		"QA_ALIBABA_ACCESS_KEY":      os.Getenv("QA_ALIBABA_ACCESS_KEY"),
+		"QA_ALIBABA_SECRET_KEY":      os.Getenv("QA_ALIBABA_SECRET_KEY"),
+		"QA_TENCENT_SECRET_ID":       os.Getenv("QA_TENCENT_SECRET_ID"),
+		"QA_TENCENT_SECRET_KEY":      os.Getenv("QA_TENCENT_SECRET_KEY"),
+		"GCS_ENCRYPTION_KEY":         os.Getenv("GCS_ENCRYPTION_KEY"),
+		"AWS_EC2_METADATA_DISABLED":  "true",
 	}
 }
 
@@ -1147,7 +1149,10 @@ func (tc *TestContainers) clickHouseBinds(curDir, configsDir string) []string {
 	if tc.isAdvanced {
 		binds = append(binds,
 			filepath.Join(configsDir, "custom_entrypoint.sh")+":/custom_entrypoint.sh",
-			filepath.Join(configsDir, "dynamic_settings.sh")+":/docker-entrypoint-initdb.d/dynamic_settings.sh",
+			// mounted outside /docker-entrypoint-initdb.d on purpose: custom_entrypoint.sh runs it
+			// itself, and an empty initdb directory keeps entrypoint.sh from starting the init-time
+			// clickhouse-server which hangs on shutdown for ClickHouse 21.x/22.x, see restartHealthTimeout
+			filepath.Join(configsDir, "dynamic_settings.sh")+":/dynamic_settings.sh",
 		)
 	}
 

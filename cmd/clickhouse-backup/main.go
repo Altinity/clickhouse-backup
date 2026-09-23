@@ -167,6 +167,7 @@ func newRootCommand() *cli.Command {
 			Action: func(ctx context.Context, c *cli.Command) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				b.DryRun = c.Bool("dry-run")
+				b.EmbeddedOnClusterWorker = c.Bool("embedded-on-cluster-worker")
 				return withDryRunResult(c, b, b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("skip-check-parts-columns"), c.StringSlice("skip-projections"), c.Bool("resume"), version, commandIdFromCli(c)))
 			},
 			Flags: []cli.Flag{
@@ -248,6 +249,10 @@ func newRootCommand() *cli.Command {
 					Usage:   "Will resume upload for object disk data, hard links on local disk still continue to recreate, not work when `use_embedded_backup_restore: true`",
 				},
 				&cli.BoolFlag{
+					Name:  "embedded-on-cluster-worker",
+					Usage: "Run only this node's part of an embedded BACKUP/RESTORE ON CLUSTER (skip BACKUP/RESTORE SQL, handle own shards/N/replicas/M metadata), the initiator node passes it to other nodes through system.backup_actions, requires use_embedded_backup_restore: true and use_embedded_backup_restore_cluster",
+				},
+				&cli.BoolFlag{
 					Name:  "dry-run",
 					Usage: "Show tables count and data size which would be created, without creating",
 				},
@@ -261,6 +266,7 @@ func newRootCommand() *cli.Command {
 			Action: func(ctx context.Context, c *cli.Command) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				b.DryRun = c.Bool("dry-run")
+				b.EmbeddedOnClusterWorker = c.Bool("embedded-on-cluster-worker")
 				return withDryRunResult(c, b, b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("skip-check-parts-columns"), c.Bool("resume"), c.Bool("streaming"), version, commandIdFromCli(c)))
 			},
 			Flags: []cli.Flag{
@@ -358,6 +364,10 @@ func newRootCommand() *cli.Command {
 					Usage:  "Upload each table right after its freeze and delete its local copy, keeps only a small local footprint, https://github.com/Altinity/clickhouse-backup/issues/780",
 				},
 				&cli.BoolFlag{
+					Name:  "embedded-on-cluster-worker",
+					Usage: "Run only this node's part of an embedded BACKUP/RESTORE ON CLUSTER (skip BACKUP/RESTORE SQL, handle own shards/N/replicas/M metadata), the initiator node passes it to other nodes through system.backup_actions, requires use_embedded_backup_restore: true and use_embedded_backup_restore_cluster",
+				},
+				&cli.BoolFlag{
 					Name:  "dry-run",
 					Usage: "Show tables count and data size which would be created and uploaded, without creating and uploading",
 				},
@@ -371,6 +381,7 @@ func newRootCommand() *cli.Command {
 			Action: func(ctx context.Context, c *cli.Command) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				b.DryRun = c.Bool("dry-run")
+				b.EmbeddedOnClusterWorker = c.Bool("embedded-on-cluster-worker")
 				return withDryRunResult(c, b, b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("named-collections-only"), c.Bool("resume"), version, commandIdFromCli(c)))
 			},
 			Flags: []cli.Flag{
@@ -443,6 +454,10 @@ func newRootCommand() *cli.Command {
 					Usage:   "explicitly delete local backup during upload",
 				},
 				&cli.BoolFlag{
+					Name:  "embedded-on-cluster-worker",
+					Usage: "Run only this node's part of an embedded BACKUP/RESTORE ON CLUSTER (skip BACKUP/RESTORE SQL, handle own shards/N/replicas/M metadata), the initiator node passes it to other nodes through system.backup_actions, requires use_embedded_backup_restore: true and use_embedded_backup_restore_cluster",
+				},
+				&cli.BoolFlag{
 					Name:  "dry-run",
 					Usage: "Show tables count and data size which would be uploaded, without uploading",
 				},
@@ -473,6 +488,7 @@ func newRootCommand() *cli.Command {
 			Action: func(ctx context.Context, c *cli.Command) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				b.DryRun = c.Bool("dry-run")
+				b.EmbeddedOnClusterWorker = c.Bool("embedded-on-cluster-worker")
 				b.DiskLimit = c.Int("disk-limit")
 				return withDryRunResult(c, b, b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("hardlink-exists-files"), version, commandIdFromCli(c)))
 			},
@@ -540,6 +556,10 @@ func newRootCommand() *cli.Command {
 					Usage:  "Skip data part files which are missing on remote storage (404/NoSuchKey) with an error log and drop them from local table metadata instead of failing, salvage mode for partially corrupted backups, overrides general->allow_missing_files_on_download, https://github.com/Altinity/clickhouse-backup/issues/1456",
 				},
 				&cli.BoolFlag{
+					Name:  "embedded-on-cluster-worker",
+					Usage: "Run only this node's part of an embedded BACKUP/RESTORE ON CLUSTER (skip BACKUP/RESTORE SQL, handle own shards/N/replicas/M metadata), the initiator node passes it to other nodes through system.backup_actions, requires use_embedded_backup_restore: true and use_embedded_backup_restore_cluster",
+				},
+				&cli.BoolFlag{
 					Name:  "dry-run",
 					Usage: "Show tables count and data size which would be downloaded, without downloading",
 				},
@@ -591,6 +611,7 @@ func newRootCommand() *cli.Command {
 			Action: func(ctx context.Context, c *cli.Command) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				b.DryRun = c.Bool("dry-run")
+				b.EmbeddedOnClusterWorker = c.Bool("embedded-on-cluster-worker")
 				return withDryRunResult(c, b, b.Restore(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), version, commandIdFromCli(c)))
 			},
 			Flags: []cli.Flag{
@@ -712,6 +733,15 @@ func newRootCommand() *cli.Command {
 					Usage:  "Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent",
 				},
 				&cli.BoolFlag{
+					Name:   "drop-replica-if-exists",
+					Hidden: false,
+					Usage:  "Override clickhouse.drop_replica_if_exists, execute SYSTEM DROP REPLICA ... FROM ZKPATH ... and keep the original replication path when our own replica entry still exists in ZooKeeper but no local table uses it",
+				},
+				&cli.BoolFlag{
+					Name:  "embedded-on-cluster-worker",
+					Usage: "Run only this node's part of an embedded BACKUP/RESTORE ON CLUSTER (skip BACKUP/RESTORE SQL, handle own shards/N/replicas/M metadata), the initiator node passes it to other nodes through system.backup_actions, requires use_embedded_backup_restore: true and use_embedded_backup_restore_cluster",
+				},
+				&cli.BoolFlag{
 					Name:  "dry-run",
 					Usage: "Show tables count and data size which would be restored, without restoring",
 				},
@@ -724,6 +754,7 @@ func newRootCommand() *cli.Command {
 			Action: func(ctx context.Context, c *cli.Command) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				b.DryRun = c.Bool("dry-run")
+				b.EmbeddedOnClusterWorker = c.Bool("embedded-on-cluster-worker")
 				b.DiskLimit = c.Int("disk-limit")
 				return withDryRunResult(c, b, b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), c.Bool("hardlink-exists-files"), c.Bool("streaming"), version, commandIdFromCli(c)))
 			},
@@ -859,6 +890,15 @@ func newRootCommand() *cli.Command {
 					Name:   "rebind-replica-path-if-exists",
 					Hidden: false,
 					Usage:  "Override clickhouse.rebind_replica_path_if_exists, rebind a restored ReplicatedMergeTree to default_replica_path when the original ZK path still has leftover state but our replica entry is absent",
+				},
+				&cli.BoolFlag{
+					Name:   "drop-replica-if-exists",
+					Hidden: false,
+					Usage:  "Override clickhouse.drop_replica_if_exists, execute SYSTEM DROP REPLICA ... FROM ZKPATH ... and keep the original replication path when our own replica entry still exists in ZooKeeper but no local table uses it",
+				},
+				&cli.BoolFlag{
+					Name:  "embedded-on-cluster-worker",
+					Usage: "Run only this node's part of an embedded BACKUP/RESTORE ON CLUSTER (skip BACKUP/RESTORE SQL, handle own shards/N/replicas/M metadata), the initiator node passes it to other nodes through system.backup_actions, requires use_embedded_backup_restore: true and use_embedded_backup_restore_cluster",
 				},
 				&cli.BoolFlag{
 					Name:  "dry-run",
@@ -1011,6 +1051,7 @@ func newRootCommand() *cli.Command {
 					cli.ShowCommandHelpAndExit(ctx, c.Root(), c.Name, 1)
 				}
 				b.DryRun = c.Bool("dry-run")
+				b.EmbeddedOnClusterWorker = c.Bool("embedded-on-cluster-worker")
 				return withDryRunResult(c, b, b.Delete(c.Args().Get(0), c.Args().Get(1), c.Bool("force"), commandIdFromCli(c)))
 			},
 			Flags: []cli.Flag{
@@ -1019,6 +1060,10 @@ func newRootCommand() *cli.Command {
 					Aliases: []string{"f"},
 					Hidden:  false,
 					Usage:   "Delete the backup even when other backups depend on it via required_backup, breaks the incremental backups chain, also skips general.rebase_during_delete",
+				},
+				&cli.BoolFlag{
+					Name:  "embedded-on-cluster-worker",
+					Usage: "Delete only the local copy of this node, don't propagate `delete local` to the other nodes of `use_embedded_backup_restore_cluster`, used by the initiator node",
 				},
 				&cli.BoolFlag{
 					Name:  "dry-run",

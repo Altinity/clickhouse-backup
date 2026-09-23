@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"io/fs"
 	"math/rand"
@@ -76,10 +77,28 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 
 	doRestoreData := (!schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly) || dataOnly
 
+	if err := b.validateEmbeddedOnClusterWorker(); err != nil {
+		return err
+	}
+	if b.EmbeddedOnClusterWorker {
+		// rbac, configs and named collections are restored by the initiator node only, https://github.com/Altinity/clickhouse-backup/issues/928
+		if rbacOnly || configsOnly || namedCollectionsOnly {
+			return errors.Errorf("--%s restores tables only, --rbac-only, --configs-only and --named-collections-only are executed by the initiator node", embeddedOnClusterWorkerFlag)
+		}
+		restoreRBAC, restoreConfigs, restoreNamedCollections = false, false, false
+	}
 	if err := b.ch.Connect(); err != nil {
 		return errors.Wrap(err, "can't connect to clickhouse")
 	}
 	defer b.ch.Close()
+
+	// every node of RESTORE ... ON CLUSTER reads its own shards/N/replicas/M/metadata/*.sql, so the workers fix them
+	// before the initiator issues the RESTORE SQL, https://github.com/Altinity/clickhouse-backup/issues/928
+	if b.embeddedClusterInitiator() && !b.skipEmbeddedClusterFanOut && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+		if err := b.runEmbeddedClusterWorkers(ctx, embeddedClusterRestoreWorkerCommand("restore", backupName, tablePattern, databaseMapping, tableMapping, partitions, schemaOnly, dataOnly, dropExists, ignoreDependencies, schemaAsAttach, skipEmptyTables)); err != nil {
+			return errors.Wrap(err, "embedded ON CLUSTER workers")
+		}
+	}
 
 	prologue, err := b.restorePrologue(ctx, backupName, tablePattern, partitions, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, skipEmptyTables, doRestoreData, false)
 	if err != nil {
@@ -111,7 +130,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		}
 	}
 	// do not create UDF when use --data, --rbac-only, --configs-only flags, https://github.com/Altinity/clickhouse-backup/issues/697
-	if schemaOnly || (schemaOnly == dataOnly) {
+	if (schemaOnly || (schemaOnly == dataOnly)) && !b.embeddedClusterWorkerSkipsDDL() {
 		if funcErr := b.restoreFunctions(ctx, backupMetadata); funcErr != nil {
 			return errors.Wrap(funcErr, "restoreFunctions")
 		}
@@ -295,6 +314,7 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 		if err = b.resolveEmbeddedClusterShardReplica(ctx); err != nil {
 			return nil, errors.Wrap(err, "resolveEmbeddedClusterShardReplica")
 		}
+		b.applyEmbeddedClusterLayout(&backupMetadata)
 	}
 
 	// report what would be restored before the first side effect, no CREATE/DROP DATABASE, no RBAC,
@@ -305,7 +325,7 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 		return result, b.dryRunRestore(ctx, backupName, backupMetadata, disks, tablePattern, partitions, schemaOnly, dataOnly, dropExists, rbacOnly, configsOnly, namedCollectionsOnly, restoreRBAC, restoreConfigs, restoreNamedCollections, skipEmptyTables)
 	}
 
-	if schemaOnly || doRestoreData {
+	if (schemaOnly || doRestoreData) && !b.embeddedClusterWorkerSkipsDDL() {
 		for _, database := range backupMetadata.Databases {
 			targetDB := database.Name
 			if !IsInformationSchema(targetDB) {
@@ -402,9 +422,9 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 	if tablePattern == "" {
 		tablePattern = "*"
 	}
-	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
+	metadataPath := b.localMetadataDir(path.Join(b.DefaultDataPath, "backup", backupName))
 	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
-		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
+		metadataPath = b.localMetadataDir(path.Join(b.EmbeddedBackupDataPath, backupName))
 	}
 
 	tablesForRestore, partitionsNames, err = b.getTablesForRestoreLocal(ctx, backupName, metadataPath, tablePattern, dropExists, partitions)
@@ -454,7 +474,7 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 		// Safety check: prevent accidental data loss when restore_schema_on_cluster is set
 		// via config but RESTORE_SCHEMA_ON_CLUSTER env var is empty, and --rm/--drop is not provided.
 		// https://github.com/Altinity/clickhouse-backup/issues/1325
-		if !dropExists && !b.resume && b.cfg.General.RestoreSchemaOnCluster != "" && os.Getenv("RESTORE_SCHEMA_ON_CLUSTER") == "" {
+		if !dropExists && !b.resume && b.cfg.General.RestoreSchemaOnCluster != "" && os.Getenv("RESTORE_SCHEMA_ON_CLUSTER") == "" && !b.EmbeddedOnClusterWorker {
 			if err = b.checkClusterTablesHaveDataBeforeDrop(ctx, tablesForRestore, version); err != nil {
 				return nil, errors.Wrap(err, "checkClusterTablesHaveDataBeforeDrop")
 			}
@@ -1744,8 +1764,10 @@ func (b *Backuper) dropExistPartitions(ctx context.Context, tablesForRestore Lis
 func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, disks []clickhouse.Disk, tablesForRestore ListOfTables, ignoreDependencies bool, version int, schemaAsAttach bool) error {
 	startRestoreSchema := time.Now()
 	databaseEnginesForRestore := b.prepareDatabaseEnginesMap(backupMetadata.Databases)
-	if dropErr := b.dropExistsTables(tablesForRestore, databaseEnginesForRestore, ignoreDependencies, version, schemaAsAttach); dropErr != nil {
-		return errors.Wrap(dropErr, "dropExistsTables")
+	if !b.embeddedClusterWorkerSkipsDDL() {
+		if dropErr := b.dropExistsTables(tablesForRestore, databaseEnginesForRestore, ignoreDependencies, version, schemaAsAttach); dropErr != nil {
+			return errors.Wrap(dropErr, "dropExistsTables")
+		}
 	}
 	var restoreErr error
 	if b.isEmbedded {
@@ -1786,6 +1808,11 @@ func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string,
 	}
 	if err != nil {
 		return errors.Wrap(err, "fixEmbeddedMetadata")
+	}
+	if b.EmbeddedOnClusterWorker {
+		// the initiator issues RESTORE ... ON CLUSTER for every node once all workers fixed their metadata
+		log.Info().Msgf("--%s: %s metadata fixed, skip RESTORE SQL", embeddedOnClusterWorkerFlag, b.embeddedClusterPrefix)
+		return nil
 	}
 	return b.restoreEmbedded(ctx, backupName, true, false, version, tablesForRestore, nil)
 }
@@ -1995,7 +2022,9 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 			//materialized and window views should restore via ATTACH
 			b.replaceCreateToAttachForView(schema)
 			// https://github.com/Altinity/clickhouse-backup/issues/849
-			b.checkReplicaAlreadyExistsAndChangeReplicationPath(ctx, schema, version)
+			if replicaErr := b.checkReplicaAlreadyExistsAndChangeReplicationPath(ctx, schema, version); replicaErr != nil {
+				return replicaErr
+			}
 
 			// https://github.com/Altinity/clickhouse-backup/issues/466
 			b.replaceUUIDMacroValue(schema)
@@ -2030,12 +2059,12 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 var replicatedParamsRE = regexp.MustCompile(`(Replicated[a-zA-Z]*MergeTree)\('([^']+)'(\s*,\s*)'([^']+)'\)|(Replicated[a-zA-Z]*MergeTree)\(\)`)
 var replicatedUuidRE = regexp.MustCompile(` UUID '([^']+)'`)
 
-func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context.Context, schema *metadata.TableMetadata, version int) {
+func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context.Context, schema *metadata.TableMetadata, version int) error {
 	if matches := replicatedParamsRE.FindAllStringSubmatch(schema.Query, -1); len(matches) > 0 {
 		var err error
 		if len(matches[0]) < 1 {
 			log.Warn().Msgf("can't find Replicated paramaters in %s", schema.Query)
-			return
+			return nil
 		}
 		shortSyntax := true
 		var engine, replicaPath, replicaName, delimiter string
@@ -2086,20 +2115,30 @@ func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context
 				// No local table here: a remote HA sibling (join, safe default) or async-stale leftovers after
 				// DROP. Indistinguishable in ZK, so rebind only when explicitly opted in.
 				if !b.cfg.ClickHouse.RebindReplicaPathIfExists {
-					return
+					return nil
 				}
 				isTablePathStale := uint64(0)
 				if err = b.ch.SelectSingleRow(ctx, &isTablePathStale, "SELECT count() FROM system.zookeeper WHERE path=?", resolvedReplicaPath); err != nil {
 					// path does not exist => clean state, nothing to do
-					return
+					return nil
 				}
 				if isTablePathStale == 0 {
-					return
+					return nil
 				}
 				log.Warn().Msgf("zookeeper path %s still has %d children but replica entry is absent, rebind_replica_path_if_exists=true => will rebind to fresh replica path", resolvedReplicaPath, isTablePathStale)
 			} else {
 				log.Warn().Msgf("zookeeper path %s is already used by other local table(s) %s in system.replicas, will rebind to fresh replica path", resolvedReplicaPath, otherTablesWithSameZKPath)
 			}
+		} else if b.cfg.ClickHouse.DropReplicaIfExists {
+			// Our own replica entry is still in ZooKeeper, drop it and keep the original replication path from the
+			// backup DDL instead of rebinding to default_replica_path, https://github.com/Altinity/clickhouse-backup/issues/1162
+			if dropErr := b.dropLeftoverReplica(ctx, schema, version, resolvedReplicaPath, resolvedReplicaName); dropErr != nil {
+				return dropErr
+			}
+			if version < 19017000 {
+				schema.Query = strings.NewReplacer("{database}", schema.Database, "{table}", schema.Table).Replace(schema.Query)
+			}
+			return nil
 		}
 		newReplicaPath := b.cfg.ClickHouse.DefaultReplicaPath
 		newReplicaName := b.cfg.ClickHouse.DefaultReplicaName
@@ -2113,6 +2152,33 @@ func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context
 			schema.Query = strings.NewReplacer("{database}", schema.Database, "{table}", schema.Table).Replace(schema.Query)
 		}
 	}
+	return nil
+}
+
+// dropLeftoverReplica removes our own leftover replica entry from ZooKeeper with
+// `SYSTEM DROP REPLICA ... FROM ZKPATH ...`, so the table can be restored with the original replication path
+// from the backup DDL, https://github.com/Altinity/clickhouse-backup/issues/1162
+// The statement is deliberately executed without ON CLUSTER, replica name and path are already resolved with
+// the macros of THIS node and would be wrong on any other node.
+func (b *Backuper) dropLeftoverReplica(ctx context.Context, schema *metadata.TableMetadata, version int, resolvedReplicaPath, resolvedReplicaName string) error {
+	fullReplicaPath := path.Join(resolvedReplicaPath, "replicas", resolvedReplicaName)
+	// SYSTEM DROP REPLICA ... FROM ZKPATH ... is available since ClickHouse 20.4
+	if version < 20004000 {
+		return fmt.Errorf("drop_replica_if_exists=true, but `SYSTEM DROP REPLICA ... FROM ZKPATH ...` requires ClickHouse >= 20.4, current version %d, replica %s already exists", version, fullReplicaPath)
+	}
+	// a local table still using this path can't be dropped from ZooKeeper, ClickHouse rejects such DROP REPLICA
+	localTablesWithSameZKPath := ""
+	if err := b.ch.SelectSingleRow(ctx, &localTablesWithSameZKPath, "SELECT arrayStringConcat(groupArray(concat(database,'.',table)),', ') FROM system.replicas WHERE zookeeper_path=?", resolvedReplicaPath); err != nil {
+		return errors.Wrapf(err, "drop_replica_if_exists=true, can't check system.replicas for %s", resolvedReplicaPath)
+	}
+	if localTablesWithSameZKPath != "" {
+		return fmt.Errorf("drop_replica_if_exists=true, but zookeeper path %s is still used by local table(s) %s, drop them first or use rebind_replica_path_if_exists", resolvedReplicaPath, localTablesWithSameZKPath)
+	}
+	log.Warn().Msgf("replica %s already exists in system.zookeeper, drop_replica_if_exists=true => will drop it and keep the original replica path for `%s`.`%s`", fullReplicaPath, schema.Database, schema.Table)
+	if err := b.ch.QueryContext(ctx, fmt.Sprintf("SYSTEM DROP REPLICA '%s' FROM ZKPATH '%s'", resolvedReplicaName, resolvedReplicaPath)); err != nil {
+		return errors.Wrapf(err, "drop_replica_if_exists=true, SYSTEM DROP REPLICA '%s' FROM ZKPATH '%s' error", resolvedReplicaName, resolvedReplicaPath)
+	}
+	return nil
 }
 
 func (b *Backuper) replaceUUIDMacroValue(schema *metadata.TableMetadata) {
@@ -2342,6 +2408,10 @@ func (b *Backuper) waitForObjectStorageCleanup(ctx context.Context, disks []clic
 }
 
 func (b *Backuper) restoreDataEmbedded(ctx context.Context, backupName string, dataOnly bool, version int, tablesForRestore ListOfTables, partitionsNameList map[metadata.TableTitle][]string) error {
+	if b.EmbeddedOnClusterWorker {
+		log.Info().Msgf("--%s: skip RESTORE SQL, the initiator restores data ON CLUSTER", embeddedOnClusterWorkerFlag)
+		return nil
+	}
 	return b.restoreEmbedded(ctx, backupName, false, dataOnly, version, tablesForRestore, partitionsNameList)
 }
 
@@ -2459,19 +2529,19 @@ func (b *Backuper) restoreOneTable(ctx context.Context, backupName string, backu
 		return errors.Errorf("can't find '%s.%s' in current system.tables", dstDatabase, dstTableName)
 	}
 	// Check if this table needs key rewriting using ORIGINAL names
-	needsKeyRewrite := false
+	keySuffix := ""
 	originalTableTitle := metadata.TableTitle{Database: origDatabase, Table: origTable}
 	if _, exists := tablesToRewriteKeys[originalTableTitle]; exists {
-		needsKeyRewrite = true
+		keySuffix = objectKeySuffix(backupName, dstDatabase, dstTableName)
 	}
 
 	// https://github.com/Altinity/clickhouse-backup/issues/529
 	if b.cfg.ClickHouse.RestoreAsAttach {
-		if restoreErr := b.restoreDataRegularByAttach(ctx, backupName, backupMetadata, origDatabase, origTable, diskMap, diskTypes, disks, dstTable, skipProjections, logger, replicatedCopyToDetached, needsKeyRewrite, table); restoreErr != nil {
+		if restoreErr := b.restoreDataRegularByAttach(ctx, backupName, backupMetadata, origDatabase, origTable, diskMap, diskTypes, disks, dstTable, skipProjections, logger, replicatedCopyToDetached, keySuffix, table); restoreErr != nil {
 			return errors.Wrap(restoreErr, "restoreDataRegularByAttach")
 		}
 	} else {
-		if restoreErr := b.restoreDataRegularByParts(ctx, backupName, backupMetadata, origDatabase, origTable, diskMap, diskTypes, disks, dstTable, skipProjections, logger, replicatedCopyToDetached, needsKeyRewrite, table); restoreErr != nil {
+		if restoreErr := b.restoreDataRegularByParts(ctx, backupName, backupMetadata, origDatabase, origTable, diskMap, diskTypes, disks, dstTable, skipProjections, logger, replicatedCopyToDetached, keySuffix, table); restoreErr != nil {
 			return errors.Wrap(restoreErr, "restoreDataRegularByParts")
 		}
 	}
@@ -2491,7 +2561,7 @@ func (b *Backuper) restoreOneTable(ctx context.Context, backupName string, backu
 	return nil
 }
 
-func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, origDatabase, origTable string, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, skipProjections []string, logger zerolog.Logger, replicatedCopyToDetached bool, needsKeyRewrite bool, filteredTableMetadata metadata.TableMetadata) error {
+func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, origDatabase, origTable string, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, skipProjections []string, logger zerolog.Logger, replicatedCopyToDetached bool, keySuffix string, filteredTableMetadata metadata.TableMetadata) error {
 	// For Replicated*MergeTree tables with replicatedCopyToDetached, copy parts to detached folder
 	copyToDetached := replicatedCopyToDetached && strings.Contains(dstTable.Engine, "Replicated")
 
@@ -2504,6 +2574,27 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 	if err := b.prepareRequiredPartsForRestore(ctx, backupName, backupMetadata, backupTable, diskMap, disks); err != nil {
 		return errors.Wrapf(err, "can't prepare required data parts '%s.%s'", backupTable.Database, backupTable.Table)
 	}
+	var size int64
+	var err error
+	start := time.Now()
+	logger.
+		Info().
+		Str("size", utils.FormatBytes(uint64(size))).
+		Str("database", backupTable.Database).
+		Str("table", backupTable.Table).
+		Msg("download object_disks start")
+	// object disk metadata is copied and its keys are rewritten in the shadow before it is linked into the table,
+	// otherwise an interrupted restore leaves the table pointing to the object keys of the source table
+	// and DROP TABLE of the copy deletes the source data, https://github.com/Altinity/clickhouse-backup/issues/1568
+	// CAS backups carry no object-disk parts (object-disk tables are
+	// rejected by cas-upload preflight); the v1 detector inspects live
+	// ClickHouse disk types rather than backup metadata, so explicitly
+	// short-circuit when the local backup is CAS-shaped.
+	if backupMetadata.CAS == nil {
+		if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, backupTable, diskMap, diskTypes, disks, keySuffix); err != nil {
+			return errors.Wrapf(err, "can't restore object_disk server-side copy data parts '%s.%s'", backupTable.Database, backupTable.Table)
+		}
+	}
 	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, b.filterOutPlainDiskParts(backupMetadata, backupTable), disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, copyToDetached); err != nil {
 		if copyToDetached {
 			return errors.Wrapf(err, "can't copy data to detached '%s.%s'", backupTable.Database, backupTable.Table)
@@ -2514,24 +2605,6 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 		logger.Debug().Msg("data to 'detached' copied")
 	} else {
 		logger.Debug().Msg("data to 'storage' copied")
-	}
-	var size int64
-	var err error
-	start := time.Now()
-	logger.
-		Info().
-		Str("size", utils.FormatBytes(uint64(size))).
-		Str("database", backupTable.Database).
-		Str("table", backupTable.Table).
-		Msg("download object_disks start")
-	// CAS backups carry no object-disk parts (object-disk tables are
-	// rejected by cas-upload preflight); the v1 detector inspects live
-	// ClickHouse disk types rather than backup metadata, so explicitly
-	// short-circuit when the local backup is CAS-shaped.
-	if backupMetadata.CAS == nil {
-		if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, backupTable, diskMap, diskTypes, disks, needsKeyRewrite); err != nil {
-			return errors.Wrapf(err, "can't restore object_disk server-side copy data parts '%s.%s'", backupTable.Database, backupTable.Table)
-		}
 	}
 	if plainSize, plainErr := b.restorePlainDiskParts(ctx, backupName, backupMetadata, backupTable, dstTable, disks); plainErr != nil {
 		return errors.Wrapf(plainErr, "can't restore plain disk data parts '%s.%s'", backupTable.Database, backupTable.Table)
@@ -2567,7 +2640,7 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 	return nil
 }
 
-func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, origDatabase, origTable string, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, skipProjections []string, logger zerolog.Logger, replicatedCopyToDetached bool, needsKeyRewrite bool, filteredTableMetadata metadata.TableMetadata) error {
+func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, origDatabase, origTable string, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, skipProjections []string, logger zerolog.Logger, replicatedCopyToDetached bool, keySuffix string, filteredTableMetadata metadata.TableMetadata) error {
 	// Use filtered table metadata from tablesForRestore (contains only parts matching partition filter)
 	// Set database and table names to original names for backup file lookup
 	backupTable := filteredTableMetadata
@@ -2577,21 +2650,24 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 	if err := b.prepareRequiredPartsForRestore(ctx, backupName, backupMetadata, backupTable, diskMap, disks); err != nil {
 		return errors.Wrapf(err, "can't prepare required data parts '%s.%s'", backupTable.Database, backupTable.Table)
 	}
-	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, b.filterOutPlainDiskParts(backupMetadata, backupTable), disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, true); err != nil {
-		return errors.Wrapf(err, "can't copy data to detached `%s`.`%s`", dstTable.Database, dstTable.Name)
-	}
-	logger.Debug().Msg("data to 'detached' copied")
 	logger.Info().Msg("download object_disks start")
 	var size int64
 	var err error
 	start := time.Now()
+	// object disk metadata is copied and its keys are rewritten in the shadow before it is linked into `detached`,
+	// otherwise an interrupted restore leaves `detached` pointing to the object keys of the source table
+	// and DROP TABLE of the copy deletes the source data, https://github.com/Altinity/clickhouse-backup/issues/1568
 	// CAS backups never carry object-disk parts; see comment in
 	// restoreDataRegularByAttach above.
 	if backupMetadata.CAS == nil {
-		if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, backupTable, diskMap, diskTypes, disks, needsKeyRewrite); err != nil {
+		if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, backupTable, diskMap, diskTypes, disks, keySuffix); err != nil {
 			return errors.Wrapf(err, "can't restore object_disk server-side copy data parts '%s.%s'", backupTable.Database, backupTable.Table)
 		}
 	}
+	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, b.filterOutPlainDiskParts(backupMetadata, backupTable), disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, true); err != nil {
+		return errors.Wrapf(err, "can't copy data to detached `%s`.`%s`", dstTable.Database, dstTable.Name)
+	}
+	logger.Debug().Msg("data to 'detached' copied")
 	if plainSize, plainErr := b.restorePlainDiskParts(ctx, backupName, backupMetadata, backupTable, dstTable, disks); plainErr != nil {
 		return errors.Wrapf(plainErr, "can't restore plain disk data parts '%s.%s'", backupTable.Database, backupTable.Table)
 	} else {
@@ -2980,7 +3056,55 @@ func (b *Backuper) restorePlainDiskParts(ctx context.Context, backupName string,
 	return size, nil
 }
 
-func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, backupTable metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, needsKeyRewrite bool) (int64, error) {
+// restoreObjectKeys - object storage keys of one object disk file during restore
+type restoreObjectKeys struct {
+	// srcKey - key relative to the backup disk directory, always the key of the backup, never a rewritten one
+	srcKey string
+	// dstKey - key relative to the disk root to copy the object to
+	dstKey string
+	// metaPath - ObjectPath to store in the restored metadata file, full when the source path is absolute
+	metaPath string
+}
+
+// objectKeySuffix - suffix for object keys of a mapped table, the destination table is part of it,
+// so several copies of one backup restored next to each other never share objects,
+// https://github.com/Altinity/clickhouse-backup/issues/1568
+func objectKeySuffix(backupName, dstDatabase, dstTable string) string {
+	return fmt.Sprintf("_%s_%08x", backupName, crc32.ChecksumIEEE([]byte(dstDatabase+"."+dstTable)))
+}
+
+// splitRestoreObjectKeys - object key is `<prefix>/<dir>/<name>` (or a bare `<name>` on ClickHouse before 22.x),
+// a suffix produced by objectKeySuffix is appended to `<dir>` (`<name>` when there is no `<dir>`) for a mapped table.
+// A suffix left in the local backup by a previous mapped restore is stripped first, the source key is the key of the
+// backup. Only that component is examined, a disk key prefix which contains the backup name must not disable the
+// rewrite, https://github.com/Altinity/clickhouse-backup/issues/1568
+func splitRestoreObjectKeys(objectPath string, isAbsolute bool, backupName, keySuffix string) restoreObjectKeys {
+	pathParts := strings.Split(objectPath, "/")
+	dirIdx := len(pathParts) - 2
+	if dirIdx < 0 {
+		dirIdx = 0
+	}
+	srcDir := pathParts[dirIdx]
+	if suffixIdx := strings.Index(srcDir, "_"+backupName); suffixIdx > 0 {
+		srcDir = srcDir[:suffixIdx]
+	}
+	// 25.10+ contains full path, need make it relative again for properly copy, https://github.com/Altinity/clickhouse-backup/issues/1290
+	relIdx := 0
+	if isAbsolute {
+		relIdx = dirIdx
+	}
+	srcParts := append([]string{}, pathParts[relIdx:]...)
+	srcParts[dirIdx-relIdx] = srcDir
+	dstParts := append([]string{}, pathParts...)
+	dstParts[dirIdx] = srcDir + keySuffix
+	return restoreObjectKeys{
+		srcKey:   strings.Join(srcParts, "/"),
+		dstKey:   strings.Join(dstParts[relIdx:], "/"),
+		metaPath: strings.Join(dstParts, "/"),
+	}
+}
+
+func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, backupTable metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, keySuffix string) (int64, error) {
 	logger := log.With().Fields(map[string]interface{}{
 		"operation": "downloadObjectDiskParts",
 		"table":     fmt.Sprintf("%s.%s", backupTable.Database, backupTable.Table),
@@ -3119,39 +3243,27 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					}
 
 					// https://github.com/Altinity/clickhouse-backup/issues/1265
-					// Create mapping from original to rewritten paths for key rewriting
-					// Store original paths BEFORE rewriting for use in srcKey formation
-					originalToRewrittenPath := make(map[string]string)
-					if needsKeyRewrite {
-						for storageObjIdx := range objMeta.StorageObjects {
-							if objMeta.StorageObjects[storageObjIdx].ObjectSize == 0 {
-								continue
-							}
-							originalPath := objMeta.StorageObjects[storageObjIdx].ObjectPath
-							// Add backup name suffix if not already present
-							if !strings.Contains(originalPath, backupName) {
-								pathParts := strings.Split(originalPath, "/")
-								if len(pathParts) >= 2 {
-									// Insert backup name before the last component (object hash)
-									pathParts[len(pathParts)-2] = pathParts[len(pathParts)-2] + "_" + backupName
-									rewrittenPath := strings.Join(pathParts, "/")
-									originalToRewrittenPath[originalPath] = rewrittenPath
-									logger.Debug().Msgf("%s will rewrite object key from %s to %s", fPath, originalPath, rewrittenPath)
-								}
-							}
+					// source keys are always taken from the backup, destination keys carry keySuffix when the table is mapped
+					objectKeys := make([]restoreObjectKeys, len(objMeta.StorageObjects))
+					for storageObjIdx, storageObject := range objMeta.StorageObjects {
+						if storageObject.ObjectSize == 0 {
+							continue
+						}
+						objectKeys[storageObjIdx] = splitRestoreObjectKeys(storageObject.ObjectPath, storageObject.IsAbsolute, backupName, keySuffix)
+						if objectKeys[storageObjIdx].metaPath != storageObject.ObjectPath {
+							logger.Debug().Msgf("%s will rewrite object key from %s to %s", fPath, storageObject.ObjectPath, objectKeys[storageObjIdx].metaPath)
 						}
 					}
 
 					// Capture objMeta and fPath for goroutine
-					// NOTE: Do NOT modify objMeta.StorageObjects before copying - use original paths for srcKey!
 					capturedObjMeta := objMeta
 					capturedFPath := fPath
-					capturedOriginalToRewrittenPath := originalToRewrittenPath
+					capturedObjectKeys := objectKeys
 					capturedNeedObjMetaRewrite := needObjMetaRewrite
 
 					downloadObjectDiskPartsWorkingGroup.Go(func() error {
 						var srcBucket, srcKey string
-						for _, storageObject := range capturedObjMeta.StorageObjects {
+						for storageObjIdx, storageObject := range capturedObjMeta.StorageObjects {
 							if storageObject.ObjectSize == 0 {
 								continue
 							}
@@ -3159,18 +3271,8 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 							if objectDiskPathErr != nil {
 								return errors.Wrap(objectDiskPathErr, "getObjectDiskPath")
 							}
-							// Save original full path BEFORE modification for lookup in originalToRewrittenPath map
-							originalFullPath := storageObject.ObjectPath
-
-							// 25.10+ contains full path, need make it relative again after rewrite, for properly copy, https://github.com/Altinity/clickhouse-backup/issues/1290
-							if storageObject.IsAbsolute {
-								objPathParts := strings.Split(storageObject.ObjectPath, "/")
-								if len(objPathParts) >= 2 {
-									storageObject.ObjectPath = strings.Join(objPathParts[len(objPathParts)-2:], "/")
-								}
-							}
-
-							srcKey = path.Join(objectDiskPath, srcBackupName, srcDiskName, storageObject.ObjectPath)
+							srcKey = path.Join(objectDiskPath, srcBackupName, srcDiskName, capturedObjectKeys[storageObjIdx].srcKey)
+							dstObjectPath := capturedObjectKeys[storageObjIdx].dstKey
 							srcBucket = ""
 							if b.cfg.General.RemoteStorage == "s3" {
 								srcBucket = b.cfg.S3.Bucket
@@ -3178,21 +3280,6 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 								srcBucket = b.cfg.GCS.Bucket
 							} else if b.cfg.General.RemoteStorage == "azblob" {
 								srcBucket = b.cfg.AzureBlob.Container
-							}
-
-							// Determine destination path - use rewritten path if key rewriting is needed
-							// Look up using original full path, not the modified relative path
-							dstObjectPath := storageObject.ObjectPath
-							if rewrittenPath, shouldRewrite := capturedOriginalToRewrittenPath[originalFullPath]; shouldRewrite {
-								// Extract relative path from rewritten full path
-								if storageObject.IsAbsolute {
-									objPathParts := strings.Split(rewrittenPath, "/")
-									if len(objPathParts) >= 2 {
-										dstObjectPath = strings.Join(objPathParts[len(objPathParts)-2:], "/")
-									}
-								} else {
-									dstObjectPath = rewrittenPath
-								}
 							}
 
 							copiedSize := int64(0)
@@ -3240,16 +3327,13 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 
 						// After successful copy, apply key rewriting and save metadata if needed
 						metadataChanged := capturedNeedObjMetaRewrite
-						if len(capturedOriginalToRewrittenPath) > 0 {
-							for storageObjIdx := range capturedObjMeta.StorageObjects {
-								if capturedObjMeta.StorageObjects[storageObjIdx].ObjectSize == 0 {
-									continue
-								}
-								originalPath := capturedObjMeta.StorageObjects[storageObjIdx].ObjectPath
-								if rewrittenPath, shouldRewrite := capturedOriginalToRewrittenPath[originalPath]; shouldRewrite {
-									capturedObjMeta.StorageObjects[storageObjIdx].ObjectPath = rewrittenPath
-									metadataChanged = true
-								}
+						for storageObjIdx := range capturedObjMeta.StorageObjects {
+							if capturedObjMeta.StorageObjects[storageObjIdx].ObjectSize == 0 {
+								continue
+							}
+							if metaPath := capturedObjectKeys[storageObjIdx].metaPath; metaPath != capturedObjMeta.StorageObjects[storageObjIdx].ObjectPath {
+								capturedObjMeta.StorageObjects[storageObjIdx].ObjectPath = metaPath
+								metadataChanged = true
 							}
 						}
 						if metadataChanged {

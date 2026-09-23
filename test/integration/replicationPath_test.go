@@ -186,3 +186,94 @@ func TestRebindReplicaPathIfExists(t *testing.T) {
 	env.queryWithNoError(t, r, "DROP TABLE default.rebind_occupant"+dropSuffix)
 	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_rebind_backup"))
 }
+
+// TestDropReplicaIfExists covers clickhouse.drop_replica_if_exists (https://github.com/Altinity/clickhouse-backup/issues/1162).
+//
+// When our OWN replica entry `<zk_path>/replicas/<replica_name>` still exists in ZooKeeper and no local table
+// uses that path, restore has two possible outcomes:
+//
+//	flag off => the table is rebound to clickhouse.default_replica_path (historical behavior)
+//	flag on  => `SYSTEM DROP REPLICA ... FROM ZKPATH ...` removes the leftover entry and the table keeps the
+//	            original replication path from the backup
+//
+// The leftover state is created the same way as in TestChangeReplicationPathIfReplicaExists: a second table with
+// the same ZK path and replica name loses its metadata file, so after a restart its ZK entry has no local owner.
+func TestDropReplicaIfExists(t *testing.T) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.4") < 0 {
+		t.Logf("TestDropReplicaIfExists skipped, `SYSTEM DROP REPLICA ... FROM ZKPATH ...` requires ClickHouse >= 20.4, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
+		return
+	}
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	version, err := env.ch.GetVersion(t.Context())
+	r.NoError(err)
+
+	// `DROP TABLE ... NO DELAY` (synchronous drop) is available from 20.8, older versions use a plain DROP.
+	dropSuffix := ""
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
+		dropSuffix = " NO DELAY"
+	}
+
+	const zkPath = "/clickhouse/tables/drop_replica_path"
+	createSQL := fmt.Sprintf("CREATE TABLE default.test_drop_replica (id UInt64) ENGINE=ReplicatedMergeTree('%s','{replica}') ORDER BY id", zkPath)
+	env.queryWithNoError(t, r, createSQL)
+	env.queryWithNoError(t, r, "INSERT INTO default.test_drop_replica SELECT number FROM numbers(10)")
+
+	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables", "default.test_drop_replica", "test_drop_replica_backup"))
+	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: "default", Name: "test_drop_replica"}, createSQL, "", false, version, "", false, ""))
+
+	// leftover emulation: a table with the same ZK path and replica name, DETACH keeps its (persistent) replica
+	// entry in ZooKeeper, removes the (ephemeral) is_active entry and drops it from node-local system.replicas,
+	// so nothing uses that replica path anymore
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE default.test_drop_replica_leftover (id UInt64) ENGINE=ReplicatedMergeTree('%s','{replica}') ORDER BY id", zkPath))
+	env.queryWithNoError(t, r, "DETACH TABLE default.test_drop_replica_leftover")
+
+	engineFull := func() string {
+		out := ""
+		r.NoError(env.ch.SelectSingleRowNoCtx(&out, "SELECT engine_full FROM system.tables WHERE database=? AND name=?", "default", "test_drop_replica"))
+		return out
+	}
+	expectedDefaultPath := "/clickhouse/tables/{cluster}/{shard}/{database}/{table}"
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") > 0 {
+		expectedDefaultPath = strings.NewReplacer("{database}", "default", "{table}", "test_drop_replica").Replace(expectedDefaultPath)
+	}
+	restore := func(extraArgs ...string) string {
+		args := []string{"clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables", "default.test_drop_replica"}
+		args = append(args, extraArgs...)
+		args = append(args, "test_drop_replica_backup")
+		out, restoreErr := env.DockerExecOut("clickhouse-backup", args...)
+		level := zerolog.DebugLevel
+		if restoreErr != nil {
+			level = zerolog.InfoLevel
+		}
+		log.WithLevel(level).Msg(out)
+		r.NoError(restoreErr)
+		return out
+	}
+	rows := func() uint64 {
+		count := uint64(0)
+		r.NoError(env.ch.SelectSingleRowNoCtx(&count, "SELECT count() FROM default.test_drop_replica"))
+		return count
+	}
+
+	// flag off => the leftover replica entry forces a rebind to default_replica_path
+	rebindOut := restore()
+	r.Contains(rebindOut, "already exists in system.zookeeper will replace to")
+	r.Contains(engineFull(), expectedDefaultPath)
+	r.Equal(uint64(10), rows())
+
+	// flag on => the leftover replica entry is dropped from ZooKeeper, the original path is kept
+	env.queryWithNoError(t, r, "DROP TABLE default.test_drop_replica"+dropSuffix)
+	dropOut := restore("--drop-replica-if-exists")
+	r.Contains(dropOut, "drop_replica_if_exists=true => will drop it and keep the original replica path")
+	r.Contains(engineFull(), zkPath)
+	r.NotContains(engineFull(), expectedDefaultPath)
+	r.Equal(uint64(10), rows())
+
+	// cleanup: drop the restored table first, so the leftover table can re-create its own ZooKeeper state on ATTACH
+	env.queryWithNoError(t, r, "DROP TABLE default.test_drop_replica"+dropSuffix)
+	env.queryWithNoError(t, r, "ATTACH TABLE default.test_drop_replica_leftover")
+	env.queryWithNoError(t, r, "DROP TABLE default.test_drop_replica_leftover"+dropSuffix)
+	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_drop_replica_backup"))
+}
