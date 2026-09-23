@@ -103,6 +103,13 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	if b.cfg.General.NamedCollectionsBackupAlways {
 		createNamedCollections = true
 	}
+	if err := b.validateEmbeddedOnClusterWorker(); err != nil {
+		return err
+	}
+	if b.EmbeddedOnClusterWorker {
+		// rbac, configs and named collections are backed up by the initiator node only, https://github.com/Altinity/clickhouse-backup/issues/928
+		createRBAC, createConfigs, createNamedCollections = false, false, false
+	}
 	b.adjustResumeFlag(resume)
 
 	p, err := b.createPrologue(ctx, tablePattern, partitions, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly)
@@ -144,6 +151,13 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 			log.Error().Msgf("creating failed -> b.RemoveBackupLocal error: %v", removeBackupErr)
 		}
 		return errors.Wrap(err, "createBackup failed")
+	}
+	// BACKUP ... ON CLUSTER already wrote the shards/N/replicas/M data of every node, now each worker node describes its
+	// own part with clickhouse-backup metadata, https://github.com/Altinity/clickhouse-backup/issues/928
+	if b.embeddedClusterInitiator() && !b.skipEmbeddedClusterFanOut && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+		if err := b.runEmbeddedClusterWorkers(ctx, embeddedClusterCreateWorkerCommand("create", backupName, diffFromRemote, tablePattern, partitions, schemaOnly, skipCheckPartsColumns, false)); err != nil {
+			return errors.Wrap(err, "embedded ON CLUSTER workers")
+		}
 	}
 
 	// fix https://github.com/Altinity/clickhouse-backup/issues/1345 clean only shadow UUIDs created by this backup
@@ -632,11 +646,18 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 				return errors.Wrap(err, "b.generateEmbeddedBackupSQL")
 			}
 			backupResult := make([]clickhouse.SystemBackups, 0)
-			if err := b.ch.SelectContext(ctx, &backupResult, backupSQL); err != nil {
-				return errors.Wrap(err, "backup error")
-			}
-			if len(backupResult) != 1 || (backupResult[0].Status != "BACKUP_COMPLETE" && backupResult[0].Status != "BACKUP_CREATED") {
-				return errors.Errorf("backup return wrong results: %+v", backupResult)
+			if b.EmbeddedOnClusterWorker {
+				// the initiator already executed BACKUP ... ON CLUSTER, this node only describes its own shards/N/replicas/M part,
+				// the empty result routes the size calculation to system.parts below, https://github.com/Altinity/clickhouse-backup/issues/928
+				log.Info().Msgf("--%s: skip BACKUP SQL, describe %s only", embeddedOnClusterWorkerFlag, b.embeddedClusterPrefix)
+				backupResult = append(backupResult, clickhouse.SystemBackups{})
+			} else {
+				if err := b.ch.SelectContext(ctx, &backupResult, backupSQL); err != nil {
+					return errors.Wrap(err, "backup error")
+				}
+				if len(backupResult) != 1 || (backupResult[0].Status != "BACKUP_COMPLETE" && backupResult[0].Status != "BACKUP_CREATED") {
+					return errors.Errorf("backup return wrong results: %+v", backupResult)
+				}
 			}
 
 			if schemaOnly {
@@ -710,7 +731,8 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 						return errors.Wrap(err, "getPartsFromEmbeddedBackup")
 					}
 					if schemaOnly || doBackupData {
-						metadataSize, err := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
+						// per table .json next to the .sql of this node, so every node of an ON CLUSTER backup has its own set
+						metadataSize, err := b.createTableMetadata(path.Join(backupPath, b.embeddedClusterPrefix, "metadata"), metadata.TableMetadata{
 							Table:        table.Name,
 							Database:     table.Database,
 							UUID:         table.UUID,
@@ -730,7 +752,11 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 		} // end if l > 0
 	}
 	backupMetaFile := path.Join(backupPath, "metadata.json")
-	if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, baseBackup, backupVersion, "embedded", diskMap, diskTypes, disks, backupDataSize[0].Size, 0, backupMetadataSize, backupRBACSize, backupConfigSize, backupNamedCollectionsSize, tablesTitle, allDatabases, allFunctions); err != nil {
+	// a shared `embedded_backup_disk` is one directory for all nodes, the initiator wrote metadata.json before the fan-out
+	// and a worker must not overwrite it, in URL mode the path is node local and the worker writes its own
+	if _, statErr := os.Stat(backupMetaFile); b.EmbeddedOnClusterWorker && statErr == nil {
+		log.Info().Msgf("--%s: %s already written by the initiator, skip", embeddedOnClusterWorkerFlag, backupMetaFile)
+	} else if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, baseBackup, backupVersion, b.embeddedBackupTags(), diskMap, diskTypes, disks, backupDataSize[0].Size, 0, backupMetadataSize, backupRBACSize, backupConfigSize, backupNamedCollectionsSize, tablesTitle, allDatabases, allFunctions); err != nil {
 		return errors.Wrap(err, "b.createBackupMetadata")
 	}
 
