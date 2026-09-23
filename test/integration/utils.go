@@ -998,7 +998,9 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 		}
 		trimmed := strings.Trim(out, "\r\n\t ")
 		if trimmed != "" {
-			t.Errorf("%s:%s expected to contain no files, got:\n%s", container, path, trimmed)
+			// the top-level entry is only a backup name, the recursive listing shows which objects leaked
+			treeOut, _ := env.DockerExecOut(container, "sh", "-c", "ls -AR "+path+" 2>/dev/null")
+			t.Errorf("%s:%s expected to contain no files, got:\n%s\nrecursive listing:\n%s", container, path, trimmed, strings.Trim(treeOut, "\r\n\t "))
 		}
 	}
 

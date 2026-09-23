@@ -129,6 +129,9 @@ func runMaxBrokenPartRatioCase(t *testing.T, tc maxBrokenPartRatioCase) {
 	// best-effort teardown: aborted creates auto-remove their local backup, but don't
 	// leak the partial one (local or remote) if an assertion fails mid-test
 	partialBackup := backupPrefix + "_partial"
+	// outputs of the aborted creates, printed only when the teardown finds a leak: the assertions on
+	// them pass, so nothing else keeps the log of the create that left the objects behind
+	abortOutputs := make(map[string]string)
 	defer func() {
 		for _, name := range []string{backupPrefix + "_abort_default", backupPrefix + "_abort_low", partialBackup} {
 			if out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", name); err != nil {
@@ -140,7 +143,13 @@ func runMaxBrokenPartRatioCase(t *testing.T, tc maxBrokenPartRatioCase) {
 		}
 		// aborted creates must not leak object disk copies to the shared remote storage, otherwise the
 		// next test on the same env fails in its own checkObjectStorageIsEmpty far away from the real cause
+		failedBefore := t.Failed()
 		env.checkObjectStorageIsEmpty(t, r, tc.name, tc.configFile)
+		if t.Failed() && !failedBefore {
+			for name, out := range abortOutputs {
+				t.Logf("object storage not empty after aborted creates, output of create %s:\n%s", name, out)
+			}
+		}
 	}()
 
 	createCmd := func(ratio, backupName string) (string, error) {
@@ -152,11 +161,13 @@ func runMaxBrokenPartRatioCase(t *testing.T, tc maxBrokenPartRatioCase) {
 
 	log.Debug().Str("backend", tc.name).Msg("MAX_BROKEN_PART_RATIO=0 (legacy default) must abort on the broken part")
 	out, err := createCmd("0", backupPrefix+"_abort_default")
+	abortOutputs[backupPrefix+"_abort_default"] = out
 	r.Error(err, "create must fail with default max_broken_part_ratio=0, output: %s", out)
 	r.Contains(out, "uploadObjectDiskParts", "create must fail inside object disk upload, output: %s", out)
 
 	log.Debug().Str("backend", tc.name).Msg("MAX_BROKEN_PART_RATIO=0.1 < 1/4 must abort with the ratio error")
 	out, err = createCmd("0.1", backupPrefix+"_abort_low")
+	abortOutputs[backupPrefix+"_abort_low"] = out
 	r.Error(err, "create must fail with max_broken_part_ratio=0.1, output: %s", out)
 	r.Contains(out, "backup aborted", "create must report the ratio abort, output: %s", out)
 	// per-part granularity: exactly the one broken part is counted, not the whole disk/table
