@@ -65,6 +65,9 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	if err = b.validateUploadParams(ctx, backupName, diffFrom, diffFromRemote); err != nil {
 		return errors.Wrap(err, "validateUploadParams")
 	}
+	if err = b.validateEmbeddedOnClusterWorker(); err != nil {
+		return err
+	}
 	if b.cfg.General.RemoteStorage == "custom" {
 		if b.DryRun {
 			return errors.New("--dry-run is not supported for `remote_storage: custom`, the upload command is executed by an external script")
@@ -209,6 +212,11 @@ func (b *Backuper) uploadPrologue(ctx context.Context, backupName, diffFrom, dif
 	backupExistsOnRemote := false
 	for i := range remoteBackups {
 		if backupName == remoteBackups[i].BackupName {
+			// the nodes of an embedded ON CLUSTER backup share one remote backup folder: a worker joins it, and the initiator
+			// can see it as broken (no metadata.json yet) while the workers upload in parallel, https://github.com/Altinity/clickhouse-backup/issues/928
+			if b.EmbeddedOnClusterWorker || (remoteBackups[i].Broken != "" && b.embeddedClusterInitiator()) {
+				continue
+			}
 			backupExistsOnRemote = true
 			if !b.resume {
 				return nil, errors.Errorf("'%s' already exists on remote storage", backupName)
@@ -227,6 +235,7 @@ func (b *Backuper) uploadPrologue(ctx context.Context, backupName, diffFrom, dif
 		if err = b.resolveEmbeddedClusterShardReplica(ctx); err != nil {
 			return nil, errors.Wrap(err, "resolveEmbeddedClusterShardReplica")
 		}
+		b.applyEmbeddedClusterLayout(backupMetadata)
 	}
 	// will ignore partitions cause can't manipulate .backup
 	if b.isEmbedded {
@@ -354,6 +363,26 @@ func (b *Backuper) uploadOneTable(ctx context.Context, backupName string, delete
 // then applies remote/local retention and optionally removes the local source backup
 func (b *Backuper) uploadEpilogue(ctx context.Context, backupName string, deleteSource bool, tablesForUpload ListOfTables, backupMetadata *metadata.BackupMetadata, disks []clickhouse.Disk, compressedDataSize, metadataSize int64, doUploadData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly bool, backupVersion string, startUpload time.Time) error {
 	var err error
+	if b.EmbeddedOnClusterWorker {
+		// rbac, configs, named collections, .backup, metadata.json, the manifest and the remote retention belong to the
+		// initiator node of an embedded ON CLUSTER backup, https://github.com/Altinity/clickhouse-backup/issues/928
+		log.Info().Fields(map[string]interface{}{
+			"backup":      backupName,
+			"operation":   "upload",
+			"duration":    utils.HumanizeDuration(time.Since(startUpload)),
+			"upload_size": utils.FormatBytes(uint64(compressedDataSize) + uint64(metadataSize)),
+			"version":     backupVersion,
+		}).Msgf("done --%s", embeddedOnClusterWorkerFlag)
+		if err = b.RemoveOldBackupsLocal(ctx, false, nil); err != nil {
+			return errors.Wrap(err, "can't remove old local backups")
+		}
+		if b.cfg.General.BackupsToKeepLocal >= 0 && deleteSource {
+			if err = b.RemoveBackupLocal(ctx, backupName, disks, true); err != nil {
+				return errors.Wrap(err, "can't explicitly delete local source backup")
+			}
+		}
+		return nil
+	}
 	// upload rbac for backup, if not configsOnly
 	if rbacOnly || configsOnly == rbacOnly == namedCollectionsOnly == false {
 		if backupMetadata.RBACSize, err = b.uploadRBACData(ctx, backupName); err != nil {
@@ -535,9 +564,9 @@ func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remote
 }
 
 func (b *Backuper) prepareTableListToUpload(ctx context.Context, backupName string, tablePattern string, partitions []string) (tablesForUpload ListOfTables, err error) {
-	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
+	metadataPath := b.localMetadataDir(path.Join(b.DefaultDataPath, "backup", backupName))
 	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
-		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
+		metadataPath = b.localMetadataDir(path.Join(b.EmbeddedBackupDataPath, backupName))
 	}
 	tablesForUpload, _, err = b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, partitions)
 	if err != nil {
@@ -767,7 +796,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 			partSuffix := splitPart.Prefix
 			partFiles := splitPart.Files
 			splitPartsOffset[diskName] += 1
-			baseRemoteDataPath := path.Join(backupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
+			baseRemoteDataPath := path.Join(backupName, b.embeddedClusterFilesPrefix, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 			if b.cfg.GetCompressionFormat() == "none" {
 				remotePath := path.Join(baseRemoteDataPath, diskName)
 				remotePathFull := path.Join(remotePath, partSuffix)
@@ -897,7 +926,7 @@ func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName st
 	if err != nil {
 		return 0, errors.Wrap(err, "can't marshal json")
 	}
-	remoteTableMetaFile := path.Join(backupName, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableMetadata.Table)))
+	remoteTableMetaFile := remoteTableMetadataJSON(backupName, b.embeddedClusterFilesPrefix, tableMetadata.Database, tableMetadata.Table)
 	if b.resume {
 		isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(remoteTableMetaFile)
 		if resumeErr != nil {
