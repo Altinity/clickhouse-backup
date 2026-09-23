@@ -229,9 +229,7 @@ func (b *Backuper) cleanBackupFreezes(ctx context.Context, backupName string, di
 	return false, f.closeAndRemove()
 }
 
-// unfreezeShadow removes shadow/<uuid> from every regular disk: `SYSTEM UNFREEZE WITH NAME` on 22.6+ (works
-// even when the table was dropped and releases object disk blobs), `ALTER TABLE ... UNFREEZE WITH NAME` on
-// 21.4+ when the table is known, os.RemoveAll on older versions and as the fallback when UNFREEZE fails
+// unfreezeShadow removes shadow/<uuid> from every disk
 func (b *Backuper) unfreezeShadow(ctx context.Context, uuid string, rec freezeRecord, disks []clickhouse.Disk) error {
 	logger := log.With().Str("shadow", uuid).Str("database", rec.Database).Str("table", rec.Table).Logger()
 	if b.DryRun {
@@ -247,10 +245,10 @@ func (b *Backuper) unfreezeShadow(ctx context.Context, uuid string, rec freezeRe
 	// so wait for those queries to leave system.processes first
 	b.waitFreezeQueriesDone(ctx, uuid)
 	unfreezeQuery := ""
-	if version >= 22006000 {
-		unfreezeQuery = fmt.Sprintf("SYSTEM UNFREEZE WITH NAME '%s'", uuid)
-	} else if version > 21004000 && rec.Table != "" {
+	if version > 21004000 && rec.Table != "" {
 		unfreezeQuery = fmt.Sprintf("ALTER TABLE `%s`.`%s` UNFREEZE WITH NAME '%s'", rec.Database, rec.Table, uuid)
+	} else if version >= 22006000 {
+		unfreezeQuery = fmt.Sprintf("SYSTEM UNFREEZE WITH NAME '%s'", uuid)
 	}
 	if unfreezeQuery != "" {
 		if err = b.ch.QueryContext(ctx, unfreezeQuery); err != nil {
