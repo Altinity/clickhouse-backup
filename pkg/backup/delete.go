@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -58,10 +59,10 @@ func (b *Backuper) Clean(commandId int, all bool, olderThan time.Duration) error
 			}
 			shadowDir := path.Join(disk.Path, "shadow")
 			if b.DryRun {
-				log.Info().Msgf("dry-run: would remove everything in '%s'", shadowDir)
+				log.Info().Msgf("dry-run: would remove everything in '%s' except %s", shadowDir, shadowIncrementFile)
 				continue
 			}
-			if err := b.cleanDir(shadowDir); err != nil {
+			if err := b.cleanDir(shadowDir, shadowIncrementFile); err != nil {
 				return errors.Wrapf(err, "can't clean '%s'", shadowDir)
 			}
 			log.Info().Msg(shadowDir)
@@ -118,7 +119,13 @@ func (b *Backuper) Clean(commandId int, all bool, olderThan time.Duration) error
 	return nil
 }
 
-func (b *Backuper) cleanDir(dirName string) error {
+// shadowIncrementFile - FREEZE counter of ClickHouse inside the shadow directory, ClickHouse recreates it when it is missing,
+// concurrent FREEZE queries on a fresh shadow directory can leave it empty, then every next FREEZE fails with code 32
+// "File .../shadow/increment.txt is empty. You must fill it manually" (CounterInFile race)
+const shadowIncrementFile = "increment.txt"
+
+// cleanDir removes everything inside dirName except the keep entries
+func (b *Backuper) cleanDir(dirName string, keep ...string) error {
 	items, err := os.ReadDir(dirName)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -127,6 +134,9 @@ func (b *Backuper) cleanDir(dirName string) error {
 		return errors.Wrap(err, "os.ReadDir")
 	}
 	for _, item := range items {
+		if slices.Contains(keep, item.Name()) {
+			continue
+		}
 		if err = os.RemoveAll(path.Join(dirName, item.Name())); err != nil {
 			return errors.Wrap(err, "os.RemoveAll")
 		}
