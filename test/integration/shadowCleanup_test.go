@@ -67,12 +67,17 @@ func TestShadowCleanup(t *testing.T) {
 	r.NoError(err, "fresh foreign shadow directory should survive --older-than=24h, output: %s", out)
 
 	log.Debug().Msg("Verify 'clean --all' removes all shadows including foreign ones and keeps the FREEZE counter increment.txt")
+	// FREEZE ... WITH NAME creates increment.txt only on newer ClickHouse versions, so it is compared as is
+	incrementCmd := "cat /var/lib/clickhouse/shadow/increment.txt 2>/dev/null || echo MISSING"
+	incrementBefore, err := env.DockerExecOut("clickhouse-backup", "bash", "-c", incrementCmd)
+	r.NoError(err, incrementBefore)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean", "--all")
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c", "ls /var/lib/clickhouse/shadow/ 2>/dev/null | grep -v increment.txt || true")
 	r.NoError(err)
 	r.Empty(strings.TrimSpace(out), "clean --all should remove all shadows, but found: %s", out)
-	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c", "test -s /var/lib/clickhouse/shadow/increment.txt && cat /var/lib/clickhouse/shadow/increment.txt")
-	r.NoError(err, "clean --all shall keep non-empty shadow/increment.txt, output: %s", out)
+	incrementAfter, err := env.DockerExecOut("clickhouse-backup", "bash", "-c", incrementCmd)
+	r.NoError(err, incrementAfter)
+	r.Equal(incrementBefore, incrementAfter, "clean --all shall keep shadow/increment.txt as is")
 
 	log.Debug().Msg("Cleanup")
 	dropQuery := "DROP TABLE IF EXISTS default.shadow_test"
