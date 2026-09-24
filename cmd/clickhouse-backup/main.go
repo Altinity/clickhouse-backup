@@ -911,6 +911,7 @@ func newRootCommand() *cli.Command {
 				"   Credentials and defaults are taken from the s3 config section (also works for GCS via s3->endpoint=https://storage.googleapis.com with HMAC keys), or from the azblob config section when --container / --azblob-restore-url is passed or general->remote_storage is azblob\n" +
 				"   When s3->assume_role_arn is set, the manifest is read and RESTORE ... FROM S3(..., extra_credentials(role_arn='...')) is executed with the assumed AWS IAM role, the static keys only sign the STS AssumeRole call (requires ClickHouse 25.8+);\n" +
 				"   without any static keys the STS AssumeRole call is signed by the ambient AWS identity instead: shared credentials file / IRSA / EC2-ECS instance profile for the manifest reads, and the ClickHouse server's own environment for the RESTORE statement\n" +
+				"   For an incremental backup the base backups chain is resolved from <base_backup> of each .backup inside the same bucket/container, RESTORE gets SETTINGS base_backup with the configured credentials\n" +
 				"   https://github.com/Altinity/clickhouse-backup/issues/1508",
 			Action: func(ctx context.Context, c *cli.Command) error {
 				if c.Args().First() == "" {
@@ -958,7 +959,7 @@ func newRootCommand() *cli.Command {
 				&cli.StringFlag{
 					Name:   "base-prefix",
 					Hidden: false,
-					Usage:  "S3 key prefix of the base backup, for incremental backups with use_base files",
+					Usage:  "Key prefix of the base backup for incremental backups, by default the chain of base backups is resolved from <base_backup> of the .backup manifest, use it when the backups were copied from another bucket/prefix",
 				},
 				&cli.StringFlag{
 					Name:   "s3-restore-url",

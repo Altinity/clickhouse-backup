@@ -450,4 +450,37 @@ s3:
 	r.NoError(err)
 	r.Contains(statusOut, `"status":"success"`, "unexpected /backup/status: %s", statusOut)
 	checkCloudRestored(env, r, table, 10000)
+
+	// incremental backup on top of the cloud backup: the base is resolved from <base_backup> of .backup, no --base-prefix
+	incrementalBackupName := fmt.Sprintf("cloud_incremental_%d", id)
+	backupURL := func(name string) string {
+		return fmt.Sprintf("S3('https://s3.%s.amazonaws.com/%s/%s/%s','%s','%s')", region, bucket, remotePath, name, accessKey, secretKey)
+	}
+	cloudQuery(r, fmt.Sprintf("INSERT INTO default.%s SELECT number FROM numbers(10000, 5000)", table))
+	cloudQuery(r, fmt.Sprintf("BACKUP TABLE default.%s TO %s SETTINGS base_backup = %s", table, backupURL(incrementalBackupName), backupURL(cloudBackupName)), accessKey, secretKey)
+	out, err = chb("list", "remote")
+	r.NoError(err, "list remote output: %s", out)
+	incrementalLine := ""
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, incrementalBackupName+" ") {
+			incrementalLine = line
+		}
+	}
+	r.Contains(incrementalLine, "+"+cloudBackupName, "incremental cloud backup shall require the base: %s", out)
+	r.NotContains(out, secretKey)
+	// the base is protected by the required_backup guard
+	out, err = chb("delete", "remote", cloudBackupName)
+	r.Error(err, "delete remote of the base shall fail: %s", out)
+	r.Contains(out, "is required by remote backup(s) "+incrementalBackupName)
+
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE IF EXISTS default.%s SYNC", table))
+	out, err = chb("restore_remote", incrementalBackupName)
+	r.NoError(err, "restore_remote of the incremental backup output: %s", out)
+	r.Contains(out, "base backup s3://"+bucket+"/"+remotePath+"/"+cloudBackupName)
+	r.Contains(out, fmt.Sprintf("base_backup = S3('https://s3.%s.amazonaws.com/%s/%s/%s'", region, bucket, remotePath, cloudBackupName))
+	checkCloudRestored(env, r, table, 15000)
+
+	out, err = chb("restore_cloud", "--drop", remotePath+"/"+incrementalBackupName)
+	r.NoError(err, "restore_cloud of the incremental backup output: %s", out)
+	checkCloudRestored(env, r, table, 15000)
 }

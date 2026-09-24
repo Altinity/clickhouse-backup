@@ -20,17 +20,40 @@ import (
 // https://github.com/Altinity/clickhouse-backup/issues/1574
 const CloudBackupDataFormat = "cloud"
 
+// CloudBackupHeader - fields of the `.backup` manifest written before <contents>
+type CloudBackupHeader struct {
+	Timestamp time.Time
+	UUID      string
+	// BaseBackup - `<base_backup>` of an incremental backup, BackupInfo::toString() of ClickHouse keeps the credentials,
+	// never log it as is, use ParseCloudBackupLocation
+	BaseBackup     string
+	BaseBackupUUID string
+}
+
 // cloudBackupSummary - aggregates of the `.backup` manifest, the manifest has no totals,
 // ClickHouse computes them in BackupImpl::writeBackupMetadata and keeps them in system.backups only
 type cloudBackupSummary struct {
-	Timestamp time.Time
+	CloudBackupHeader
 	// DataSize - bytes stored under this backup prefix, same formula as size_of_entries in BackupImpl::writeBackupMetadata
 	DataSize uint64
 }
 
-// parseCloudBackupSummary streams the `.backup` XML token by token, the manifest has one <file> per logical file
-// of the backup and can be hundreds of MB, so the file list is never kept in memory
+// ReadCloudBackupHeader streams the `.backup` XML until <contents>, so the file list of a big manifest is not downloaded
+func ReadCloudBackupHeader(r io.Reader) (*CloudBackupHeader, error) {
+	summary, err := parseCloudBackup(r, true)
+	if err != nil {
+		return nil, err
+	}
+	return &summary.CloudBackupHeader, nil
+}
+
 func parseCloudBackupSummary(r io.Reader) (*cloudBackupSummary, error) {
+	return parseCloudBackup(r, false)
+}
+
+// parseCloudBackup streams the `.backup` XML token by token, the manifest has one <file> per logical file
+// of the backup and can be hundreds of MB, so the file list is never kept in memory
+func parseCloudBackup(r io.Reader, headerOnly bool) (*cloudBackupSummary, error) {
 	summary := &cloudBackupSummary{}
 	decoder := xml.NewDecoder(r)
 	deduplicateFiles, checksumGenerator := true, false
@@ -52,6 +75,9 @@ func parseCloudBackupSummary(r io.Reader) (*cloudBackupSummary, error) {
 		switch t := token.(type) {
 		case xml.StartElement:
 			text.Reset()
+			if headerOnly && t.Name.Local == "contents" {
+				return summary, nil
+			}
 			if t.Name.Local == "file" {
 				fileName, dataFile, size, baseSize, useBase = "", "", 0, 0, false
 			}
@@ -65,6 +91,12 @@ func parseCloudBackupSummary(r io.Reader) (*cloudBackupSummary, error) {
 				if ts, parseErr := time.Parse(time.DateTime, value); parseErr == nil {
 					summary.Timestamp = ts
 				}
+			case "uuid":
+				summary.UUID = value
+			case "base_backup":
+				summary.BaseBackup = value
+			case "base_backup_uuid":
+				summary.BaseBackupUUID = value
 			case "deduplicate_files":
 				deduplicateFiles = value != "0" && !strings.EqualFold(value, "false")
 			case "data_file_name_generator":
@@ -133,7 +165,45 @@ func (bd *BackupDestination) readCloudBackupMetadata(ctx context.Context, backup
 		cloudBackup.CreationDate = summary.Timestamp
 	}
 	cloudBackup.DataSize = summary.DataSize
+	if summary.BaseBackup != "" {
+		bucketOrContainer, remotePath := bd.cloudBucketAndPath()
+		cloudBackup.RequiredBackup, cloudBackup.Tags = cloudBaseBackupName(summary.BaseBackup, bucketOrContainer, remotePath)
+	}
 	return cloudBackup, true
+}
+
+// cloudBucketAndPath - bucket/container and path of the remote storage, to map `<base_backup>` to a backup name
+func (bd *BackupDestination) cloudBucketAndPath() (string, string) {
+	switch rs := bd.RemoteStorage.(type) {
+	case *S3:
+		return rs.Config.Bucket, rs.Config.Path
+	case *GCS:
+		return rs.Config.Bucket, rs.Config.Path
+	case *AzureBlob:
+		return rs.Config.Container, rs.Config.Path
+	}
+	return "", ""
+}
+
+// cloudBaseBackupName maps `<base_backup>` to the name of a backup under the same remote path (RequiredBackup),
+// a base stored elsewhere is described in tags without credentials
+func cloudBaseBackupName(baseBackup, bucketOrContainer, remotePath string) (string, string) {
+	loc, err := ParseCloudBackupLocation(baseBackup)
+	if err != nil {
+		log.Warn().Err(err).Msg("can't parse <base_backup> in .backup")
+		return "", "base=unknown"
+	}
+	if key, ok := loc.KeyIn(bucketOrContainer); ok {
+		remotePath = strings.Trim(remotePath, "/")
+		name, found := strings.CutPrefix(key, remotePath+"/")
+		if remotePath == "" {
+			name, found = key, true
+		}
+		if found && !strings.Contains(name, "/") {
+			return name, ""
+		}
+	}
+	return "", "base=" + loc.String()
 }
 
 // isStaleCloudCacheEntry - embedded `create_remote` writes `.backup` via BACKUP ... TO S3 before metadata.json is uploaded,

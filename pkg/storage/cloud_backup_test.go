@@ -186,3 +186,86 @@ func TestBackupListDetectsCloudBackup(t *testing.T) {
 	require.Len(t, backups, 1)
 	assert.Equal(t, "broken (can't stat metadata.json)", backups[0].Broken)
 }
+
+func TestParseCloudBackupLocation(t *testing.T) {
+	testCases := []struct {
+		name, baseBackup, bucket, expectedKey, expectedString string
+		expectedFound                                         bool
+		expectedSecrets                                       []string
+	}{
+		{"s3 path style", `S3('https://s3.us-east-1.amazonaws.com/bucket/path/base', 'AKIAKEY', 'se\'cret')`, "bucket", "path/base", "https://s3.us-east-1.amazonaws.com/bucket/path/base", true, []string{"AKIAKEY", "se'cret"}},
+		{"s3 virtual hosted", `S3('https://bucket.s3.us-east-1.amazonaws.com/path/base/', 'KEYX', 'SECRETX')`, "bucket", "path/base", "https://bucket.s3.us-east-1.amazonaws.com/path/base/", true, []string{"KEYX", "SECRETX"}},
+		{"gcs", `S3('https://storage.googleapis.com/bucket/base','KEYX','SECRETX')`, "bucket", "base", "https://storage.googleapis.com/bucket/base", true, []string{"KEYX", "SECRETX"}},
+		{"s3 scheme", `S3('s3://bucket/path/base')`, "bucket", "path/base", "s3://bucket/path/base", true, nil},
+		{"iam role", `S3('https://s3.us-west-2.amazonaws.com/bucket/base', extra_credentials(role_arn = 'arn:aws:iam::1:role/r'))`, "bucket", "base", "https://s3.us-west-2.amazonaws.com/bucket/base", true, nil},
+		{"key value url", `S3(url = 'http://minio:9000/bucket/base', access_key_id = 'KEYX', secret_access_key = 'SECRETX')`, "bucket", "base", "http://minio:9000/bucket/base", true, []string{"KEYX", "SECRETX"}},
+		{"another bucket", `S3('https://s3.us-east-1.amazonaws.com/other/base','KEYX','SECRETX')`, "bucket", "", "https://s3.us-east-1.amazonaws.com/other/base", false, []string{"KEYX", "SECRETX"}},
+		{"bucket name prefix only", `S3('https://s3.us-east-1.amazonaws.com/bucket2/base')`, "bucket", "", "https://s3.us-east-1.amazonaws.com/bucket2/base", false, nil},
+		{"azblob", `AzureBlobStorage('DefaultEndpointsProtocol=https;AccountName=acc;AccountKey=azkey==;BlobEndpoint=https://acc.blob.core.windows.net;', 'container', 'path/base/')`, "container", "path/base", "azblob://container/path/base", true, []string{"azkey=="}},
+		{"azblob account args", `AzureBlobStorage('https://acc.blob.core.windows.net', 'container', 'base', 'acc', 'azkey')`, "other", "", "azblob://container/base", false, []string{"acc", "azkey"}},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			loc, err := ParseCloudBackupLocation(tc.baseBackup)
+			require.NoError(t, err)
+			key, found := loc.KeyIn(tc.bucket)
+			assert.Equal(t, tc.expectedFound, found)
+			assert.Equal(t, tc.expectedKey, key)
+			assert.Equal(t, tc.expectedString, loc.String())
+			assert.ElementsMatch(t, tc.expectedSecrets, loc.Secrets)
+			for _, secret := range loc.Secrets {
+				assert.NotContains(t, loc.String(), secret)
+			}
+		})
+	}
+	_, err := ParseCloudBackupLocation("S3")
+	assert.Error(t, err)
+	_, err = ParseCloudBackupLocation("S3('unterminated)")
+	assert.Error(t, err)
+}
+
+func TestCloudBaseBackupName(t *testing.T) {
+	base := func(u string) string { return "S3('" + u + "', 'KEY', 'SECRET')" }
+	name, tags := cloudBaseBackupName(base("https://s3.us-east-1.amazonaws.com/bucket/backups/full"), "bucket", "/backups/")
+	assert.Equal(t, "full", name)
+	assert.Empty(t, tags)
+	name, _ = cloudBaseBackupName(base("https://bucket.s3.us-east-1.amazonaws.com/full"), "bucket", "")
+	assert.Equal(t, "full", name)
+	// nested under another path of the same bucket
+	name, tags = cloudBaseBackupName(base("https://s3.us-east-1.amazonaws.com/bucket/other/full"), "bucket", "backups")
+	assert.Empty(t, name)
+	assert.Equal(t, "base=https://s3.us-east-1.amazonaws.com/bucket/other/full", tags)
+	name, tags = cloudBaseBackupName(base("https://s3.us-east-1.amazonaws.com/bucket/backups/deep/full"), "bucket", "backups")
+	assert.Empty(t, name)
+	assert.NotContains(t, tags, "SECRET")
+	name, tags = cloudBaseBackupName(base("https://s3.us-east-1.amazonaws.com/other/full"), "bucket", "")
+	assert.Empty(t, name)
+	assert.Equal(t, "base=https://s3.us-east-1.amazonaws.com/other/full", tags)
+	name, tags = cloudBaseBackupName("garbage", "bucket", "")
+	assert.Empty(t, name)
+	assert.Equal(t, "base=unknown", tags)
+}
+
+func TestBackupListCloudBaseBackup(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	// the XML escaping of <base_backup> is decoded, memRemoteStorage has no bucket, so the base is described in tags
+	bd := &BackupDestination{RemoteStorage: &memRemoteStorage{files: map[string]string{
+		"incremental/.backup": `<config><version>1</version><timestamp>2026-09-23 00:00:00</timestamp><uuid>u2</uuid>` +
+			`<base_backup>S3(&apos;https://s3.us-east-1.amazonaws.com/bucket/full&apos;, &apos;KEY&apos;, &apos;SECRET&apos;)</base_backup><base_backup_uuid>u1</base_backup_uuid>` +
+			`<contents><file><name>metadata/default/t.sql</name><size>10</size><use_base>true</use_base></file></contents></config>`,
+	}}}
+	backups, err := bd.BackupList(context.Background(), true, "")
+	require.NoError(t, err)
+	require.Len(t, backups, 1)
+	assert.Equal(t, CloudBackupDataFormat, backups[0].DataFormat)
+	assert.Equal(t, "base=https://s3.us-east-1.amazonaws.com/bucket/full", backups[0].Tags)
+}
+
+func TestReadCloudBackupHeader(t *testing.T) {
+	// the header reader stops at <contents>, a truncated file list is not an error
+	header, err := ReadCloudBackupHeader(strings.NewReader(`<config><uuid>u2</uuid><base_backup>S3('u')</base_backup><base_backup_uuid>u1</base_backup_uuid><contents><file><name>x`))
+	require.NoError(t, err)
+	assert.Equal(t, "u2", header.UUID)
+	assert.Equal(t, "S3('u')", header.BaseBackup)
+	assert.Equal(t, "u1", header.BaseBackupUUID)
+}
