@@ -66,11 +66,13 @@ func TestShadowCleanup(t *testing.T) {
 	out, err = env.DockerExecOut("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/shadow/foreign_shadow_dir/store/abc/test/data.txt")
 	r.NoError(err, "fresh foreign shadow directory should survive --older-than=24h, output: %s", out)
 
-	log.Debug().Msg("Verify 'clean --all' removes all shadows including foreign ones")
+	log.Debug().Msg("Verify 'clean --all' removes all shadows including foreign ones and keeps the FREEZE counter increment.txt")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean", "--all")
-	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c", "ls /var/lib/clickhouse/shadow/ 2>/dev/null || true")
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c", "ls /var/lib/clickhouse/shadow/ 2>/dev/null | grep -v increment.txt || true")
 	r.NoError(err)
 	r.Empty(strings.TrimSpace(out), "clean --all should remove all shadows, but found: %s", out)
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c", "test -s /var/lib/clickhouse/shadow/increment.txt && cat /var/lib/clickhouse/shadow/increment.txt")
+	r.NoError(err, "clean --all shall keep non-empty shadow/increment.txt, output: %s", out)
 
 	log.Debug().Msg("Cleanup")
 	dropQuery := "DROP TABLE IF EXISTS default.shadow_test"

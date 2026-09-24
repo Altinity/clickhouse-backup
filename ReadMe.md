@@ -1298,7 +1298,7 @@ DESCRIPTION:
 
 OPTIONS:
    --older-than duration  Also remove 'shadow' directories without freezes.tmp record (created by versions before 2.8.1 or by manual FREEZE) not modified for this duration, e.g. 24h (default: 0s)
-   --all                  Remove everything in 'shadow' folder on every disk, including data frozen by other running commands and manual FREEZE
+   --all                  Remove everything in 'shadow' folder on every disk, including data frozen by other running commands and manual FREEZE, except the FREEZE counter increment.txt
    --dry-run              Only log which 'shadow' directories would be removed
    --help, -h             show help
 

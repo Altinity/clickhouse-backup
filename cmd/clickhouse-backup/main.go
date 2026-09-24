@@ -1100,7 +1100,7 @@ func newRootCommand() *cli.Command {
 				&cli.BoolFlag{
 					Name:   "all",
 					Hidden: false,
-					Usage:  "Remove everything in 'shadow' folder on every disk, including data frozen by other running commands and manual FREEZE",
+					Usage:  "Remove everything in 'shadow' folder on every disk, including data frozen by other running commands and manual FREEZE, except the FREEZE counter increment.txt",
 				},
 				&cli.BoolFlag{
 					Name:   "dry-run",
