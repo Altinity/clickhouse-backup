@@ -739,3 +739,78 @@ func (b *Backuper) restoreCloudExec(ctx context.Context, sql, what string, secre
 	}
 	return nil
 }
+
+// remoteCloudBackupPrefix returns the key prefix of backupName inside the bucket/container when the remote backup has
+// ClickHouse Cloud / native BACKUP layout (`.backup` without metadata.json), empty string for a regular backup,
+// https://github.com/Altinity/clickhouse-backup/issues/1574
+func (b *Backuper) remoteCloudBackupPrefix(ctx context.Context, backupName string) (string, error) {
+	if b.cfg.General.RemoteStorage == "none" || b.cfg.General.RemoteStorage == "custom" {
+		return "", nil
+	}
+	if !b.ch.IsOpen {
+		if err := b.ch.Connect(); err != nil {
+			return "", errors.Wrap(err, "can't connect to clickhouse")
+		}
+		defer b.ch.Close()
+	}
+	// NewBackupDestination resolves macros in s3->path / azblob->path of b.cfg in place
+	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
+	if err != nil {
+		return "", errors.Wrap(err, "NewBackupDestination")
+	}
+	if err = bd.Connect(ctx); err != nil {
+		return "", errors.Wrap(err, "bd.Connect")
+	}
+	defer func() {
+		if closeErr := bd.Close(ctx); closeErr != nil {
+			log.Warn().Msgf("can't close BackupDestination error: %v", closeErr)
+		}
+	}()
+	backupList, err := bd.BackupList(ctx, true, backupName)
+	if err != nil {
+		return "", errors.Wrap(err, "bd.BackupList")
+	}
+	if len(backupList) != 1 || backupList[0].DataFormat != storage.CloudBackupDataFormat {
+		return "", nil
+	}
+	switch b.cfg.General.RemoteStorage {
+	case "s3":
+		return path.Join(b.cfg.S3.Path, backupName), nil
+	case "azblob":
+		return path.Join(b.cfg.AzureBlob.Path, backupName), nil
+	}
+	return "", errors.Errorf("'%s' has ClickHouse Cloud / native BACKUP layout, restore_remote supports it only with `remote_storage: s3` or `remote_storage: azblob`, got `%s`, use restore_cloud with s3 or azblob config section", backupName, b.cfg.General.RemoteStorage)
+}
+
+// cloudUnsupportedRestoreRemoteOptions - restore_remote options which restore_cloud can't apply, restore fails
+// instead of silently ignoring them
+func cloudUnsupportedRestoreRemoteOptions(databaseMapping, tableMapping, skipProjections []string, schemaOnly, dataOnly, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, replicatedCopyToDetached, hardlinkExistsFiles, streaming bool) []string {
+	unsupported := make([]string, 0)
+	for _, option := range []struct {
+		name string
+		set  bool
+	}{
+		{"--restore-database-mapping", len(databaseMapping) > 0},
+		{"--restore-table-mapping", len(tableMapping) > 0},
+		{"--skip-projections", len(skipProjections) > 0},
+		{"--schema", schemaOnly},
+		{"--data", dataOnly},
+		{"--ignore-dependencies", ignoreDependencies},
+		{"--rbac", restoreRBAC},
+		{"--rbac-only", rbacOnly},
+		{"--configs", restoreConfigs},
+		{"--configs-only", configsOnly},
+		{"--named-collections", restoreNamedCollections},
+		{"--named-collections-only", namedCollectionsOnly},
+		{"--resume", resume},
+		{"--restore-schema-as-attach", schemaAsAttach},
+		{"--replicated-copy-to-detached", replicatedCopyToDetached},
+		{"--hardlink-exists-files", hardlinkExistsFiles},
+		{"--streaming", streaming},
+	} {
+		if option.set {
+			unsupported = append(unsupported, option.name)
+		}
+	}
+	return unsupported
+}

@@ -272,6 +272,10 @@ NAME:
 USAGE:
    clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] <backup_name>
 
+DESCRIPTION:
+   A remote backup with ClickHouse Cloud / native BACKUP layout (.backup without metadata.json, `cloud` in `list remote`) is restored via restore_cloud, only with remote_storage s3 or azblob and without mapping, --schema, --data, --rbac, --configs, --named-collections, --resume and --streaming options
+      https://github.com/Altinity/clickhouse-backup/issues/1574
+
 OPTIONS:
    --table string, --tables string, -t string                                                     Download and restore objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --restore-database-mapping string, -m string [ --restore-database-mapping string, -m string ]  Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.

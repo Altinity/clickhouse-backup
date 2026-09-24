@@ -496,6 +496,15 @@ func (b *Backuper) RemoveOldBackupsRemote(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "BackupList")
 	}
+	// native BACKUP (ClickHouse Cloud) backups are not created by clickhouse-backup, retention never deletes them,
+	// https://github.com/Altinity/clickhouse-backup/issues/1574
+	ownBackups := backupList[:0]
+	for _, backup := range backupList {
+		if backup.DataFormat != storage.CloudBackupDataFormat {
+			ownBackups = append(ownBackups, backup)
+		}
+	}
+	backupList = ownBackups
 	if b.cfg.General.RebaseBeforeRemoveOldRemote {
 		backupList = b.rebaseRequiredLiveBackups(ctx, backupList)
 	}

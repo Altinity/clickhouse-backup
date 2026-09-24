@@ -323,7 +323,7 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 		if loadErr != nil && !os.IsNotExist(loadErr) {
 			return nil, errors.Wrap(loadErr, "BackupList loadMetadataCache")
 		}
-		if cached, ok := listCache[parseMetadataOnly]; ok && cached.Broken == "" {
+		if cached, ok := listCache[parseMetadataOnly]; ok && cached.Broken == "" && !bd.isStaleCloudCacheEntry(ctx, cached) {
 			log.Debug().Str("backup", parseMetadataOnly).Msg("BackupList: using on-disk metadata cache")
 			return []Backup{cached}, nil
 		}
@@ -332,6 +332,19 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 			return nil, errors.Wrap(err, "BackupList readBackupMetadataDirect")
 		}
 		if backup == nil {
+			// no metadata.json, native BACKUP layout (ClickHouse Cloud) has `.backup` instead, https://github.com/Altinity/clickhouse-backup/issues/1574
+			if cloudBackup, complete := bd.readCloudBackupMetadata(ctx, parseMetadataOnly); cloudBackup != nil {
+				if complete {
+					if listCache == nil {
+						listCache = map[string]Backup{}
+					}
+					listCache[parseMetadataOnly] = *cloudBackup
+					if writeErr := bd.writeMetadataCacheFile(ctx, listCache); writeErr != nil {
+						log.Warn().Err(writeErr).Msg("BackupList writeMetadataCacheFile (fast path)")
+					}
+				}
+				return []Backup{*cloudBackup}, nil
+			}
 			// metadata.json not found — check if the backup prefix has any
 			// content at all. Walk with recursive=false returns top-level
 			// entries only; if we get at least one the folder exists and the
@@ -395,12 +408,23 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 			}
 			return nil
 		}
-		if cachedMetadata, isCached := listCache[backupName]; isCached {
+		if cachedMetadata, isCached := listCache[backupName]; isCached && !bd.isStaleCloudCacheEntry(ctx, cachedMetadata) {
 			result = append(result, cachedMetadata)
 			return nil
 		}
 		mf, err := bd.StatFile(ctx, path.Join(o.Name(), "metadata.json"))
 		if err != nil {
+			// native BACKUP layout (ClickHouse Cloud) has `.backup` instead of metadata.json, https://github.com/Altinity/clickhouse-backup/issues/1574
+			if errors.Is(err, ErrNotFound) {
+				if cloudBackup, complete := bd.readCloudBackupMetadata(ctx, backupName); cloudBackup != nil {
+					if complete {
+						listCache[backupName] = *cloudBackup
+						cacheMiss = true
+					}
+					result = append(result, *cloudBackup)
+					return nil
+				}
+			}
 			brokenBackup := Backup{
 				metadata.BackupMetadata{
 					BackupName: backupName,

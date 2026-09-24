@@ -327,3 +327,127 @@ azblob:
 			Timeout:               "1m",
 		}})
 }
+
+// TestRestoreRemoteCloudAutoDetect - a real ClickHouse Cloud backup exported via `BACKUP ... TO S3` into s3->path
+// next to a regular backup is detected by layout (`.backup` without metadata.json),
+// https://github.com/Altinity/clickhouse-backup/issues/1574:
+// `list remote` shows it as `cloud` instead of broken, `clean_remote_broken` and backups_to_keep_remote retention keep it,
+// `download` refuses it, `restore_remote` (CLI and POST /backup/restore_remote) switches to restore_cloud.
+func TestRestoreRemoteCloudAutoDetect(t *testing.T) {
+	if os.Getenv("QA_AWS_CLOUD_ENDPOINT") == "" || os.Getenv("QA_AWS_CLOUD_BUCKET") == "" || os.Getenv("QA_AWS_CLOUD_ACCESS_KEY") == "" {
+		t.Skip("QA_AWS_CLOUD_ENDPOINT, QA_AWS_CLOUD_BUCKET or QA_AWS_CLOUD_ACCESS_KEY is empty, TestRestoreRemoteCloudAutoDetect will skip")
+	}
+	realCloudPackedVersionGate(t)
+	r := require.New(t)
+	bucket, region := os.Getenv("QA_AWS_CLOUD_BUCKET"), getEnvDefault("QA_AWS_CLOUD_REGION", "us-west-2")
+	accessKey, secretKey := os.Getenv("QA_AWS_CLOUD_ACCESS_KEY"), os.Getenv("QA_AWS_CLOUD_SECRET_KEY")
+	id := rand.Int31()
+	table := fmt.Sprintf("test_restore_remote_cloud_%d", id)
+	regularTable := fmt.Sprintf("test_restore_remote_regular_%d", id)
+	cloudBackupName := fmt.Sprintf("cloud_backup_%d", id)
+	regularBackupName := fmt.Sprintf("regular_backup_%d", id)
+	// GITHUB_RUN_ID isolates parallel CI jobs which share the bucket
+	remotePath := fmt.Sprintf("restore_cloud_e2e/autodetect_%s_%d", os.Getenv("GITHUB_RUN_ID"), id)
+
+	cloudQuery(r, fmt.Sprintf("CREATE TABLE default.%s (id UInt64) PARTITION BY id %% 4 ORDER BY id", table))
+	defer cloudQuery(r, fmt.Sprintf("DROP TABLE IF EXISTS default.%s", table))
+	cloudQuery(r, fmt.Sprintf("INSERT INTO default.%s SELECT number FROM numbers(10000)", table))
+	cloudQuery(r, fmt.Sprintf(
+		"BACKUP TABLE default.%s TO S3('https://s3.%s.amazonaws.com/%s/%s/%s','%s','%s')",
+		table, region, bucket, remotePath, cloudBackupName, accessKey, secretKey,
+	), accessKey, secretKey)
+	defer deleteCloudBackup(r, &storage.S3{Config: &config.S3Config{
+		AccessKey: accessKey, SecretKey: secretKey, Bucket: bucket, Region: region,
+	}, Concurrency: 1}, remotePath)
+
+	env, _ := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE IF EXISTS default.%s SYNC", table))
+	defer env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE IF EXISTS default.%s SYNC", table))
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE default.%s (id UInt64) ENGINE=MergeTree ORDER BY id", regularTable))
+	defer env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE IF EXISTS default.%s SYNC", regularTable))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO default.%s SELECT number FROM numbers(100)", regularTable))
+
+	configYAML := `general:
+  remote_storage: s3
+  backups_to_keep_remote: 1
+` + cloudTestClickHouseYAML + `
+s3:
+  access_key: ${QA_AWS_CLOUD_ACCESS_KEY}
+  secret_key: ${QA_AWS_CLOUD_SECRET_KEY}
+  bucket: ${QA_AWS_CLOUD_BUCKET}
+  region: ${QA_AWS_CLOUD_REGION:-us-west-2}
+  path: ` + remotePath
+	configFile := "/etc/clickhouse-backup/config-cloud-autodetect.yml"
+	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "cat > "+configFile+" <<EOF\n"+configYAML+"\nEOF")
+	chb := func(args ...string) (string, error) {
+		return env.DockerExecOut("clickhouse", append([]string{"clickhouse-backup", "-c", configFile}, args...)...)
+	}
+	checkListRemote := func() {
+		out, err := chb("list", "remote")
+		r.NoError(err, "list remote output: %s", out)
+		cloudLine := ""
+		for _, line := range strings.Split(out, "\n") {
+			if strings.HasPrefix(line, cloudBackupName+" ") {
+				cloudLine = line
+			}
+		}
+		r.NotEmpty(cloudLine, "cloud backup is not listed: %s", out)
+		r.Contains(cloudLine, "cloud", "unexpected list remote line: %s", cloudLine)
+		r.NotContains(cloudLine, "broken", "unexpected list remote line: %s", cloudLine)
+		r.NotContains(cloudLine, "???", "cloud backup size is unknown: %s", cloudLine)
+		r.Contains(out, regularBackupName, "regular backup is not listed: %s", out)
+	}
+
+	// retention with backups_to_keep_remote=1 after the upload shall not count and delete the older cloud backup
+	out, err := chb("create_remote", "--tables=default."+regularTable, regularBackupName)
+	r.NoError(err, "create_remote output: %s", out)
+	defer func() {
+		_, _ = chb("delete", "local", regularBackupName)
+	}()
+	checkListRemote()
+
+	// the cloud backup is not broken, clean_remote_broken keeps it
+	out, err = chb("clean_remote_broken")
+	r.NoError(err, "clean_remote_broken output: %s", out)
+	checkListRemote()
+
+	out, err = chb("download", cloudBackupName)
+	r.Error(err, "download of the cloud backup shall fail: %s", out)
+	r.Contains(out, "can't be downloaded")
+
+	out, err = chb("restore_remote", "--restore-table-mapping="+table+":"+table+"_copy", cloudBackupName)
+	r.Error(err, "restore_remote with table mapping of the cloud backup shall fail: %s", out)
+	r.Contains(out, "doesn't support --restore-table-mapping")
+
+	out, err = chb("restore_remote", cloudBackupName)
+	r.NoError(err, "restore_remote output: %s", out)
+	r.Contains(out, "switching to restore_cloud")
+	checkCloudRestored(env, r, table, 10000)
+
+	// --rm recreates the table, --partitions restores partitions 0 and 1 of id % 4 only
+	out, err = chb("restore_remote", "--rm", "--partitions=0,1", cloudBackupName)
+	r.NoError(err, "restore_remote --rm --partitions output: %s", out)
+	checkCloudRestored(env, r, table, 5000)
+
+	// the same restore via POST /backup/restore_remote
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE IF EXISTS default.%s SYNC", table))
+	serverLog := "/tmp/clickhouse-backup-server-cloud-autodetect.log"
+	env.DockerExecBackgroundNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup -c "+configFile+" server &>>"+serverLog)
+	defer func() {
+		r.NoError(env.DockerExec("clickhouse", "pkill", "-n", "-f", "clickhouse-backup"))
+	}()
+	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "for i in $(seq 1 30); do wget -q -O - http://localhost:7171/backup/status >/dev/null 2>&1 && exit 0; sleep 1; done; echo 'API server did not start'; cat "+serverLog+"; exit 1")
+	// the server lists remote backups for metrics at startup, POST returns 423 until it finishes
+	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "for i in $(seq 1 60); do wget -q -O - http://localhost:7171/backup/status | grep -q 'in progress' || exit 0; sleep 1; done; echo 'startup operations are still in progress'; exit 1")
+	apiOut, err := env.DockerExecOut("clickhouse", "bash", "-ce", "wget -q -O - --content-on-error --post-data='' http://localhost:7171/backup/restore_remote/"+cloudBackupName+" || (cat "+serverLog+"; exit 1)")
+	r.NoError(err, "POST /backup/restore_remote output: %s", apiOut)
+	r.Contains(apiOut, "acknowledged")
+	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "for i in $(seq 1 60); do wget -q -O - http://localhost:7171/backup/status | grep -q 'in progress' || exit 0; sleep 1; done; echo 'restore_remote is still in progress'; exit 1")
+	statusOut, err := env.DockerExecOut("clickhouse", "bash", "-ce", "wget -q -O - http://localhost:7171/backup/status")
+	r.NoError(err)
+	r.Contains(statusOut, `"status":"success"`, "unexpected /backup/status: %s", statusOut)
+	checkCloudRestored(env, r, table, 10000)
+}

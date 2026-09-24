@@ -25,6 +25,32 @@ import (
 )
 
 func (b *Backuper) RestoreFromRemote(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, streaming bool, version string, commandId int) error {
+	// ClickHouse Cloud / native BACKUP layout is restored via restore_cloud, https://github.com/Altinity/clickhouse-backup/issues/1574
+	if !b.EmbeddedOnClusterWorker {
+		ctx, cancel, ctxErr := status.Current.GetContextWithCancel(commandId)
+		if ctxErr != nil {
+			return pkgerrors.Wrap(ctxErr, "RestoreFromRemote GetContextWithCancel")
+		}
+		cloudPrefix, detectErr := b.remoteCloudBackupPrefix(ctx, backupName)
+		cancel()
+		if detectErr != nil {
+			return pkgerrors.Wrap(detectErr, "RestoreFromRemote remoteCloudBackupPrefix")
+		}
+		if cloudPrefix != "" {
+			if unsupported := cloudUnsupportedRestoreRemoteOptions(databaseMapping, tableMapping, skipProjections, schemaOnly, dataOnly, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, replicatedCopyToDetached, hardlinkExistsFiles, streaming); len(unsupported) > 0 {
+				return pkgerrors.Errorf("'%s' has ClickHouse Cloud / native BACKUP layout, restore_remote switches to restore_cloud which doesn't support %s", backupName, strings.Join(unsupported, ", "))
+			}
+			log.Info().Str("backup", backupName).Str("prefix", cloudPrefix).Msg("backup has ClickHouse Cloud / native BACKUP layout (.backup without metadata.json), switching to restore_cloud")
+			return b.RestoreCloud(RestoreCloudOptions{
+				Prefix:           cloudPrefix,
+				TablePattern:     tablePattern,
+				Partitions:       partitions,
+				RestoreOnCluster: b.cfg.General.RestoreSchemaOnCluster,
+				SkipEmptyTables:  skipEmptyTables,
+				Drop:             dropExists,
+			}, commandId)
+		}
+	}
 	// don't need to create pid separately because we combine Download+Restore
 	defer pidlock.RemovePidFile(backupName)
 	// the worker nodes run `restore_remote --embedded-on-cluster-worker` below, Restore must not start `restore` on them

@@ -248,3 +248,11 @@ func TestCloudLogicalNamesShardPrefix(t *testing.T) {
 	assert.Equal(t, "default", db)
 	assert.Equal(t, "", table)
 }
+
+func TestCloudUnsupportedRestoreRemoteOptions(t *testing.T) {
+	assert.Empty(t, cloudUnsupportedRestoreRemoteOptions(nil, nil, nil, false, false, false, false, false, false, false, false, false, false, false, false, false, false))
+	assert.Equal(t,
+		[]string{"--restore-table-mapping", "--schema", "--streaming"},
+		cloudUnsupportedRestoreRemoteOptions(nil, []string{"t1:t2"}, nil, true, false, false, false, false, false, false, false, false, false, false, false, false, true),
+	)
+}

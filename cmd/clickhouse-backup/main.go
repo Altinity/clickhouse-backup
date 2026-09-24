@@ -746,6 +746,8 @@ func newRootCommand() *cli.Command {
 			Name:      "restore_remote",
 			Usage:     "Download and restore",
 			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] <backup_name>",
+			Description: "A remote backup with ClickHouse Cloud / native BACKUP layout (.backup without metadata.json, `cloud` in `list remote`) is restored via restore_cloud, only with remote_storage s3 or azblob and without mapping, --schema, --data, --rbac, --configs, --named-collections, --resume and --streaming options\n" +
+				"   https://github.com/Altinity/clickhouse-backup/issues/1574",
 			Action: func(ctx context.Context, c *cli.Command) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				b.DryRun = c.Bool("dry-run")

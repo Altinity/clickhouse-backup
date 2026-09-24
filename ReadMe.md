@@ -786,6 +786,8 @@ Note: this operation is asynchronous, so the API will return once the operation 
 
 Download and restore data from remote backup: `curl -s localhost:7171/backup/restore_remote/<BACKUP_NAME> -X POST | jq .`
 
+A backup with ClickHouse Cloud / native `BACKUP ... TO S3/AzureBlobStorage` layout (`.backup` without `metadata.json`, shown as `cloud` in `/backup/list/remote`) is restored the same way as `POST /backup/restore_cloud`, see the `restore_remote` CLI command description.
+
 - Optional boolean query argument `dry-run` or `dry_run` works the same as the `--dry-run` CLI argument (show the number of tables and the data size which would be downloaded and restored, without downloading and restoring). A dry-run request executes synchronously, is allowed even when another operation is in progress regardless of `api.allow_parallel`, and returns the report as JSON in the response body instead of the asynchronous acknowledgement.
 - Optional string query argument `table` works the same as the `--table value` CLI argument.
 - Optional string query argument `partitions` works the same as the `--partitions value` CLI argument.
@@ -1151,6 +1153,10 @@ NAME:
 
 USAGE:
    clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] <backup_name>
+
+DESCRIPTION:
+   A remote backup with ClickHouse Cloud / native BACKUP layout (.backup without metadata.json, `cloud` in `list remote`) is restored via restore_cloud, only with remote_storage s3 or azblob and without mapping, --schema, --data, --rbac, --configs, --named-collections, --resume and --streaming options
+      https://github.com/Altinity/clickhouse-backup/issues/1574
 
 OPTIONS:
    --table string, --tables string, -t string                                                     Download and restore objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
