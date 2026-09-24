@@ -2,6 +2,8 @@ package backup
 
 import (
 	"context"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -247,4 +249,119 @@ func TestCloudLogicalNamesShardPrefix(t *testing.T) {
 	db, table = cloudLogicalNames("shards/1/replicas/1/metadata/default.sql")
 	assert.Equal(t, "default", db)
 	assert.Equal(t, "", table)
+}
+
+func TestCloudUnsupportedRestoreRemoteOptions(t *testing.T) {
+	assert.Empty(t, cloudUnsupportedRestoreRemoteOptions(nil, nil, nil, false, false, false, false, false, false, false, false, false, false, false, false, false, false))
+	assert.Equal(t,
+		[]string{"--restore-table-mapping", "--schema", "--streaming"},
+		cloudUnsupportedRestoreRemoteOptions(nil, []string{"t1:t2"}, nil, true, false, false, false, false, false, false, false, false, false, false, false, false, true),
+	)
+}
+
+type memCloudReader map[string]string
+
+var errMemCloudNotFound = errors.New("not found")
+
+func (m memCloudReader) GetFileReaderAbsolute(_ context.Context, key string) (io.ReadCloser, error) {
+	content, exists := m[key]
+	if !exists {
+		return nil, errMemCloudNotFound
+	}
+	return io.NopCloser(strings.NewReader(content)), nil
+}
+
+func testCloudHeaderXML(uuid, baseURL, baseUUID string) string {
+	base := ""
+	if baseURL != "" {
+		base = "<base_backup>S3(&apos;" + baseURL + "&apos;, &apos;BASEKEY&apos;, &apos;BASESECRET&apos;)</base_backup><base_backup_uuid>" + baseUUID + "</base_backup_uuid>"
+	}
+	return "<config><version>1</version><uuid>" + uuid + "</uuid>" + base + "<contents></contents></config>"
+}
+
+func TestResolveCloudBaseChain(t *testing.T) {
+	b := &Backuper{}
+	ctx := context.Background()
+	newSource := func(files memCloudReader) *cloudSource {
+		return &cloudSource{
+			reader:            files,
+			isNotFound:        func(err error) bool { return errors.Is(err, errMemCloudNotFound) },
+			label:             "s3://bucket",
+			bucketOrContainer: "bucket",
+		}
+	}
+	files := memCloudReader{
+		"backups/incr2/.backup": testCloudHeaderXML("u3", "https://s3.us-east-1.amazonaws.com/bucket/backups/incr1", "u2"),
+		"backups/incr1/.backup": testCloudHeaderXML("u2", "https://bucket.s3.us-east-1.amazonaws.com/backups/full", "u1"),
+		"backups/full/.backup":  testCloudHeaderXML("u1", "", ""),
+		"copy/incr1/.backup":    testCloudHeaderXML("u2", "https://s3.us-east-1.amazonaws.com/bucket/backups/full", "u1"),
+	}
+	parse := func(key string) *cloudBackupManifest {
+		m, err := parseCloudManifest(strings.NewReader(files[key]))
+		require.NoError(t, err)
+		return m
+	}
+
+	source := newSource(files)
+	chain, err := b.resolveCloudBaseChain(ctx, source, parse("backups/incr2/.backup"), "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"backups/incr1", "backups/full"}, chain)
+	// credentials of <base_backup> are redacted from errors and logs
+	assert.Contains(t, source.secrets, "BASESECRET")
+
+	// --base-prefix overrides the first base only
+	chain, err = b.resolveCloudBaseChain(ctx, newSource(files), parse("backups/incr2/.backup"), "copy/incr1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"copy/incr1", "backups/full"}, chain)
+
+	// full backup, legacy --base-prefix without <base_backup>
+	chain, err = b.resolveCloudBaseChain(ctx, newSource(files), parse("backups/full/.backup"), "")
+	require.NoError(t, err)
+	assert.Empty(t, chain)
+	chain, err = b.resolveCloudBaseChain(ctx, newSource(files), parse("backups/full/.backup"), "legacy/base")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"legacy/base"}, chain)
+
+	// uuid mismatch
+	mismatch := parse("backups/incr2/.backup")
+	mismatch.BaseBackupUUID = "other"
+	_, err = b.resolveCloudBaseChain(ctx, newSource(files), mismatch, "")
+	assert.ErrorContains(t, err, "expected other")
+
+	// base in another bucket
+	other, err := parseCloudManifest(strings.NewReader(testCloudHeaderXML("u9", "https://s3.us-east-1.amazonaws.com/other/full", "u1")))
+	require.NoError(t, err)
+	_, err = b.resolveCloudBaseChain(ctx, newSource(files), other, "")
+	assert.ErrorContains(t, err, "pass --base-prefix")
+	assert.NotContains(t, err.Error(), "BASESECRET")
+
+	// missing base
+	missing, err := parseCloudManifest(strings.NewReader(testCloudHeaderXML("u9", "https://s3.us-east-1.amazonaws.com/bucket/missing", "u1")))
+	require.NoError(t, err)
+	_, err = b.resolveCloudBaseChain(ctx, newSource(files), missing, "")
+	assert.ErrorContains(t, err, "can't read base backup s3://bucket/missing/.backup")
+}
+
+func TestFetchCloudBlobBaseChain(t *testing.T) {
+	b := &Backuper{}
+	manifest := &cloudBackupManifest{DataFileNameGenerator: "FirstFileName"}
+	source := &cloudSource{
+		reader: memCloudReader{
+			"incr/metadata/default/new.sql":   "CREATE TABLE default.new",
+			"full/metadata/default/old.sql":   "CREATE TABLE default.old",
+			"incr/metadata/default/stale.sql": "stale",
+			"base/metadata/default/stale.sql": "CREATE TABLE default.stale",
+		},
+		isNotFound: func(err error) bool { return errors.Is(err, errMemCloudNotFound) },
+	}
+	ddl, err := b.fetchCloudBlob(context.Background(), source, manifest, &cloudManifestFile{Name: "metadata/default/new.sql"}, "incr", []string{"base", "full"})
+	require.NoError(t, err)
+	assert.Equal(t, "CREATE TABLE default.new", ddl)
+	// use_base looks into the chain first, the deepest base last
+	ddl, err = b.fetchCloudBlob(context.Background(), source, manifest, &cloudManifestFile{Name: "metadata/default/old.sql", UseBase: true}, "incr", []string{"base", "full"})
+	require.NoError(t, err)
+	assert.Equal(t, "CREATE TABLE default.old", ddl)
+	ddl, err = b.fetchCloudBlob(context.Background(), source, manifest, &cloudManifestFile{Name: "metadata/default/stale.sql", UseBase: true}, "incr", []string{"base", "full"})
+	require.NoError(t, err)
+	assert.Equal(t, "CREATE TABLE default.stale", ddl)
 }

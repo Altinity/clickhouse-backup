@@ -272,6 +272,10 @@ NAME:
 USAGE:
    clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] <backup_name>
 
+DESCRIPTION:
+   A remote backup with ClickHouse Cloud / native BACKUP layout (.backup without metadata.json, `cloud` in `list remote`) is restored via restore_cloud, only with remote_storage s3 or azblob and without mapping, --schema, --data, --rbac, --configs, --named-collections, --resume and --streaming options
+      https://github.com/Altinity/clickhouse-backup/issues/1574
+
 OPTIONS:
    --table string, --tables string, -t string                                                     Download and restore objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --restore-database-mapping string, -m string [ --restore-database-mapping string, -m string ]  Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.
@@ -324,13 +328,14 @@ DESCRIPTION:
       Credentials and defaults are taken from the s3 config section (also works for GCS via s3->endpoint=https://storage.googleapis.com with HMAC keys), or from the azblob config section when --container / --azblob-restore-url is passed or general->remote_storage is azblob
       When s3->assume_role_arn is set, the manifest is read and RESTORE ... FROM S3(..., extra_credentials(role_arn='...')) is executed with the assumed AWS IAM role, the static keys only sign the STS AssumeRole call (requires ClickHouse 25.8+);
       without any static keys the STS AssumeRole call is signed by the ambient AWS identity instead: shared credentials file / IRSA / EC2-ECS instance profile for the manifest reads, and the ClickHouse server's own environment for the RESTORE statement
+      For an incremental backup the base backups chain is resolved from <base_backup> of each .backup inside the same bucket/container, RESTORE gets SETTINGS base_backup with the configured credentials
       https://github.com/Altinity/clickhouse-backup/issues/1508
 
 OPTIONS:
    --bucket string                                          S3 bucket with the ClickHouse Cloud backup, overrides s3->bucket from config
    --region string                                          AWS region of the bucket, overrides s3->region from config
    --endpoint string                                        Custom S3 endpoint (MinIO, etc.), overrides s3->endpoint from config
-   --base-prefix string                                     S3 key prefix of the base backup, for incremental backups with use_base files
+   --base-prefix string                                     Key prefix of the base backup for incremental backups, by default the chain of base backups is resolved from <base_backup> of the .backup manifest, use it when the backups were copied from another bucket/prefix
    --s3-restore-url string                                  URL passed to RESTORE ... FROM S3('...'), default https://s3.<region>.amazonaws.com/<bucket>/<prefix>
    --container string                                       AzureBlobStorage container with the ClickHouse Cloud backup, overrides azblob->container from config and switches the source to AzureBlobStorage
    --azblob-restore-url string                              Blob endpoint passed to RESTORE ... FROM AzureBlobStorage(...), e.g. http://azurite:10000/devstoreaccount1, when it differs from azblob config section, switches the source to AzureBlobStorage

@@ -246,6 +246,9 @@ func (b *Backuper) downloadRemoteBackupInfo(ctx context.Context, backupName, tab
 	if !found {
 		return storage.Backup{}, nil, nil, errors.Errorf("'%s' is not found on remote storage", backupName)
 	}
+	if remoteBackup.DataFormat == storage.CloudBackupDataFormat {
+		return storage.Backup{}, nil, nil, errors.Errorf("'%s' has ClickHouse Cloud / native BACKUP layout (.backup without metadata.json), it can't be downloaded, use `restore_remote %s` or `restore_cloud`", backupName, backupName)
+	}
 	// Download file manifest for Walk-free restore (falls back gracefully if not present)
 	backupManifest := b.dst.DownloadManifest(ctx, backupName)
 
