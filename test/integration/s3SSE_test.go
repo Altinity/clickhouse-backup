@@ -26,8 +26,8 @@ import (
 // stack's TLS endpoint.
 func TestS3SSEC(t *testing.T) {
 	version := os.Getenv("CLICKHOUSE_VERSION")
-	if compareVersion(version, "21.8") < 0 {
-		t.Skipf("Test requires ClickHouse >= 21.8 for stable S3 SSE-C object_disk, current %s", version)
+	if compareVersion(version, "23.11") < 0 {
+		t.Skipf("Test requires ClickHouse >= 23.11 which signs SSE-C headers, https://github.com/ClickHouse/ClickHouse/pull/57001, current %s", version)
 	}
 
 	env, r := NewTestEnvironment(t)

@@ -135,8 +135,10 @@ EOT
 fi
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[8-9]|^21\.[0-9]{2} || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^23\.1[1-9] || "${CLICKHOUSE_VERSION}" =~ ^2[4-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 # https://github.com/Altinity/clickhouse-backup/issues/1374
+# 23.11+ only: older versions add SSE-C headers after SigV4 signing (fixed in https://github.com/ClickHouse/ClickHouse/pull/57001),
+# MinIO RELEASE.2026-09-22+ rejects unsigned x-amz-* headers and clickhouse-server fails on startup disk access check
 # disk with SSE-C; deterministic 32-byte raw key -> base64
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_ssec_s3.xml
 <yandex>
