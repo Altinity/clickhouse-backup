@@ -1,0 +1,1201 @@
+package backup
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas/casstorage"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
+	"github.com/rs/zerolog/log"
+)
+
+// setupCASContext mirrors the v1 Upload context-setup pattern (status correlator
+// + WithCancel). On commandId == status.NotFromAPI (-1) it returns a fresh
+// background context.
+func (b *Backuper) setupCASContext(commandId int) (context.Context, context.CancelFunc, error) {
+	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cas: GetContextWithCancel: %w", err)
+	}
+	ctx, cancel = context.WithCancel(ctx)
+	return ctx, cancel, nil
+}
+
+// ensureCAS opens a remote BackupDestination for CAS operations and returns the
+// adapter wrapping it plus a closer. Caller MUST invoke closer when done.
+//
+// Returns an error if cas.enabled is false or the config fails validation.
+func (b *Backuper) ensureCAS(ctx context.Context, backupName string) (cas.Backend, func(), error) {
+	if !b.cfg.CAS.Enabled {
+		return nil, func() {}, errors.New("cas: cas.enabled=false in config; cannot run cas-* commands")
+	}
+	if err := b.cfg.CAS.Validate(); err != nil {
+		return nil, func() {}, err
+	}
+	if b.cfg.General.RemoteStorage == "none" || b.cfg.General.RemoteStorage == "custom" {
+		return nil, func() {}, fmt.Errorf("cas: unsupported general.remote_storage=%q for cas-* commands", b.cfg.General.RemoteStorage)
+	}
+	// Connect to ClickHouse so we can resolve disks (needed by NewBackupDestination
+	// and DefaultDataPath).
+	if err := b.ch.Connect(); err != nil {
+		return nil, func() {}, fmt.Errorf("cas: can't connect to clickhouse: %w", err)
+	}
+	disks, err := b.ch.GetDisks(ctx, true)
+	if err != nil {
+		b.ch.Close()
+		return nil, func() {}, fmt.Errorf("cas: GetDisks: %w", err)
+	}
+	if initErr := b.initDisksPathsAndBackupDestination(ctx, disks, backupName); initErr != nil {
+		b.ch.Close()
+		return nil, func() {}, fmt.Errorf("cas: initDisksPathsAndBackupDestination: %w", initErr)
+	}
+	if b.dst == nil {
+		b.ch.Close()
+		return nil, func() {}, fmt.Errorf("cas: BackupDestination not initialized for remote_storage=%q", b.cfg.General.RemoteStorage)
+	}
+	backend := casstorage.NewStorageBackend(b.dst)
+	closer := func() {
+		if b.dst != nil {
+			if err := b.dst.Close(ctx); err != nil {
+				log.Warn().Msgf("cas: can't close BackupDestination: %v", err)
+			}
+		}
+		b.ch.Close()
+	}
+
+	// One-shot startup banner when operating in any unsafe-marker mode so
+	// the risk is visible in logs even when the operator never reads the
+	// runbook. Fires at most once per CASProbeState lifetime (i.e. once per
+	// daemon server start in API mode; once per process in CLI mode).
+	b.casProbeState.bannerOnce.Do(func() {
+		if b.cfg.CAS.SkipConditionalPutProbe {
+			log.Warn().Msg("cas: cas.skip_conditional_put_probe=true — conditional-put compliance NOT verified; if the backend silently ignores If-None-Match, marker locks are unsafe and concurrent uploads may corrupt backups. Use only on backends you have independently confirmed honor the precondition.")
+		}
+		if b.cfg.General.RemoteStorage == "ftp" && b.cfg.CAS.AllowUnsafeMarkers {
+			log.Warn().Msg("cas: cas.allow_unsafe_markers=true on FTP — markers use a STAT+STOR+RNFR/RNTO best-effort sequence with a small TOCTOU window between STAT and RNTO. Two concurrent cas-upload runs MAY both pass the marker write; serialize uploads externally if you cannot tolerate that risk.")
+		}
+		if b.cfg.CAS.AllowUnsafeObjectDiskSkip {
+			log.Warn().Msg("cas: cas.allow_unsafe_object_disk_skip=true — object-disk preflight will be skipped on disk-query failure; CAS backups may silently include unrestorable object-disk tables.")
+		}
+	})
+
+	return backend, closer, nil
+}
+
+// maybeProbeCondPut runs the conditional-put startup probe at most once per
+// CASProbeState. Skipped if cas.skip_conditional_put_probe=true. The probe is
+// called by every CAS command that writes a marker (cas-upload non-dry-run,
+// cas-prune non-dry-run, cas-delete). Read-only paths (cas-status,
+// cas-verify, cas-download, cas-restore, dry-run flows) skip it entirely,
+// ensuring they work with read-only credentials and don't mutate remote
+// storage.
+//
+// In daemon (APIServer) mode b.casProbeState is the server-level singleton, so
+// the probe fires exactly once per server lifetime regardless of how many
+// requests arrive. In CLI mode each process gets a fresh CASProbeState, so
+// the probe fires once per invocation.
+func (b *Backuper) maybeProbeCondPut(ctx context.Context, backend cas.Backend) error {
+	if b.cfg.CAS.SkipConditionalPutProbe {
+		return nil
+	}
+	b.casProbeState.probeOnce.Do(func() {
+		cp := b.cfg.CAS.ClusterPrefix()
+		b.casProbeState.probeErr = cas.ProbeConditionalPut(ctx, backend, cp)
+	})
+	return b.casProbeState.probeErr
+}
+
+// snapshotObjectDiskHitsFromDisks is the pure, testable core of the snapshot
+// pre-flight. It walks <localBackupDir>/shadow/<db>/<table>/<disk>/ to
+// enumerate (db, table, disk) triples actually present in the backup, then
+// cross-references diskTypeByName (disk name → type) to identify object-disk
+// hits. Returns deduplicated hits (empty slice + nil error for empty/no-object-disk backups).
+func (b *Backuper) snapshotObjectDiskHitsFromDisks(localBackupDir string, diskTypeByName map[string]string) ([]cas.ObjectDiskHit, error) {
+	shadow := filepath.Join(localBackupDir, "shadow")
+	var hits []cas.ObjectDiskHit
+	seen := map[cas.ObjectDiskHit]struct{}{}
+
+	dbs, err := os.ReadDir(shadow)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // empty backup or schema-only backup
+		}
+		return nil, fmt.Errorf("cas: read shadow dir: %w", err)
+	}
+	for _, dbe := range dbs {
+		if !dbe.IsDir() {
+			continue
+		}
+		db := dbe.Name()
+		tables, err := os.ReadDir(filepath.Join(shadow, db))
+		if err != nil {
+			continue
+		}
+		for _, tbe := range tables {
+			if !tbe.IsDir() {
+				continue
+			}
+			table := tbe.Name()
+			disks, err := os.ReadDir(filepath.Join(shadow, db, table))
+			if err != nil {
+				continue
+			}
+			for _, de := range disks {
+				if !de.IsDir() {
+					continue
+				}
+				disk := de.Name()
+				diskType, ok := diskTypeByName[disk]
+				if !ok {
+					continue // disk not present in live system.disks; treat as local
+				}
+				if !cas.IsObjectDiskType(diskType) {
+					continue
+				}
+				// Read the table's metadata JSON to get decoded (db, table) names.
+				// Fall back to the encoded directory names if the JSON is missing or
+				// unparseable (we still want to report a hit; downstream filtering may
+				// not match perfectly but the operator gets visibility).
+				decodedDB, decodedTable := db, table
+				metaPath := filepath.Join(localBackupDir, "metadata", db, table+".json")
+				if body, readErr := os.ReadFile(metaPath); readErr == nil {
+					var tm metadata.TableMetadata
+					if jsonErr := json.Unmarshal(body, &tm); jsonErr == nil && tm.Database != "" && tm.Table != "" {
+						decodedDB, decodedTable = tm.Database, tm.Table
+					}
+				}
+				h := cas.ObjectDiskHit{Database: decodedDB, Table: decodedTable, Disk: disk, DiskType: diskType}
+				if _, dup := seen[h]; dup {
+					continue
+				}
+				seen[h] = struct{}{}
+				hits = append(hits, h)
+			}
+		}
+	}
+	return hits, nil
+}
+
+// snapshotObjectDiskHits queries live system.disks for disk-type information,
+// then delegates to snapshotObjectDiskHitsFromDisks to walk the local backup
+// snapshot. If system.disks is unreachable the function fails closed (returns
+// an error) unless cas.allow_unsafe_object_disk_skip=true, in which case it
+// logs a warning and returns (nil, nil).
+func (b *Backuper) snapshotObjectDiskHits(ctx context.Context, localBackupDir string) ([]cas.ObjectDiskHit, error) {
+	diskTypeByName := map[string]string{}
+	disks, err := b.ch.GetDisks(ctx, true)
+	if err != nil {
+		if b.cfg.CAS.AllowUnsafeObjectDiskSkip {
+			log.Warn().Msgf("cas: GetDisks for snapshot pre-flight failed: %v; cas.allow_unsafe_object_disk_skip=true so continuing without object-disk detection — CAS backup may include unrestorable object-disk tables", err)
+			return nil, nil
+		}
+		return nil, fmt.Errorf("cas: object-disk pre-flight failed (cannot query system.disks): %w (set cas.allow_unsafe_object_disk_skip=true to bypass at your own risk)", err)
+	}
+	for _, d := range disks {
+		diskTypeByName[d.Name] = d.Type
+	}
+	return b.snapshotObjectDiskHitsFromDisks(localBackupDir, diskTypeByName)
+}
+
+// storagePolicyRE extracts the storage_policy name from a CREATE TABLE query.
+// Local copy of the logic in (*ClickHouse).ExtractStoragePolicy — kept here so
+// snapshotMetadataObjectDiskHits requires no live ClickHouse receiver and is
+// fully unit-testable.
+var storagePolicyRE = regexp.MustCompile(`SETTINGS.+storage_policy[^=]*=[^']*'([^']+)'`)
+
+// extractStoragePolicy returns the storage_policy value from a CREATE TABLE
+// query, defaulting to "default" when the SETTINGS clause is absent.
+func extractStoragePolicy(query string) string {
+	if m := storagePolicyRE.FindStringSubmatch(query); len(m) > 0 {
+		return m[1]
+	}
+	return "default"
+}
+
+// StoragePolicyResolver abstracts the live ClickHouse queries used by
+// snapshotMetadataObjectDiskHits. The production implementation is a
+// thin wrapper around (*Backuper).ch; tests inject a stub.
+type StoragePolicyResolver interface {
+	// DisksForPolicy returns the disk names attached to a storage policy.
+	// Should return ([], nil) for unknown policies.
+	DisksForPolicy(policy string) ([]string, error)
+	// DiskType returns the type of a disk (e.g. "S3", "ObjectStorage", "Local").
+	// Should return ("", nil) for unknown disks.
+	DiskType(disk string) (string, error)
+}
+
+// backuperResolver implements StoragePolicyResolver by reading from a
+// pre-fetched []clickhouse.Disk slice (each Disk has StoragePolicies
+// populated when GetDisks was called with enrich=true).
+type backuperResolver struct{ disks []clickhouse.Disk }
+
+func newBackuperResolver(disks []clickhouse.Disk) *backuperResolver {
+	return &backuperResolver{disks: disks}
+}
+
+func (r *backuperResolver) DisksForPolicy(policy string) ([]string, error) {
+	var out []string
+	for _, d := range r.disks {
+		for _, p := range d.StoragePolicies {
+			if p == policy {
+				out = append(out, d.Name)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (r *backuperResolver) DiskType(disk string) (string, error) {
+	for _, d := range r.disks {
+		if d.Name == disk {
+			return d.Type, nil
+		}
+	}
+	return "", nil
+}
+
+// snapshotMetadataObjectDiskHits enumerates per-table metadata JSONs in
+// the local backup directory and consults the resolver to determine each
+// table's source disk types. Returns hits for any table whose storage
+// policy includes an object-disk-typed disk. Caller is responsible for
+// merging with snapshotObjectDiskHits (which catches tables that DO have
+// shadow parts).
+func snapshotMetadataObjectDiskHits(localBackupDir string, resolver StoragePolicyResolver) ([]cas.ObjectDiskHit, error) {
+	metaRoot := filepath.Join(localBackupDir, "metadata")
+	st, err := os.Stat(metaRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if !st.IsDir() {
+		return nil, fmt.Errorf("metadata path %q is not a directory", metaRoot)
+	}
+	var hits []cas.ObjectDiskHit
+	seen := map[cas.ObjectDiskHit]struct{}{}
+	dbs, err := os.ReadDir(metaRoot)
+	if err != nil {
+		return nil, err
+	}
+	for _, dbe := range dbs {
+		if !dbe.IsDir() {
+			continue
+		}
+		files, err := os.ReadDir(filepath.Join(metaRoot, dbe.Name()))
+		if err != nil {
+			return nil, err
+		}
+		for _, fe := range files {
+			if !strings.HasSuffix(fe.Name(), ".json") {
+				continue
+			}
+			body, err := os.ReadFile(filepath.Join(metaRoot, dbe.Name(), fe.Name()))
+			if err != nil {
+				return nil, err
+			}
+			var tm metadata.TableMetadata
+			if err := json.Unmarshal(body, &tm); err != nil {
+				continue // skip malformed; not our problem here
+			}
+			policy := extractStoragePolicy(tm.Query)
+			disks, err := resolver.DisksForPolicy(policy)
+			if err != nil {
+				return nil, err
+			}
+			for _, disk := range disks {
+				dt, err := resolver.DiskType(disk)
+				if err != nil {
+					return nil, err
+				}
+				if !cas.IsObjectDiskType(dt) {
+					continue
+				}
+				h := cas.ObjectDiskHit{Database: tm.Database, Table: tm.Table, Disk: disk, DiskType: dt}
+				if _, dup := seen[h]; dup {
+					continue
+				}
+				seen[h] = struct{}{}
+				hits = append(hits, h)
+			}
+		}
+	}
+	return hits, nil
+}
+
+// mergeObjectDiskHits dedupes hits across two sources (shadow walk +
+// metadata-JSON enumeration). Order of the returned slice is not
+// guaranteed (callers that care should sort).
+func mergeObjectDiskHits(a, b []cas.ObjectDiskHit) []cas.ObjectDiskHit {
+	seen := map[cas.ObjectDiskHit]struct{}{}
+	out := make([]cas.ObjectDiskHit, 0, len(a)+len(b))
+	for _, h := range a {
+		if _, dup := seen[h]; !dup {
+			seen[h] = struct{}{}
+			out = append(out, h)
+		}
+	}
+	for _, h := range b {
+		if _, dup := seen[h]; !dup {
+			seen[h] = struct{}{}
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// snapshotMetadataObjectDiskHitsFromCH wraps the static
+// snapshotMetadataObjectDiskHits helper with a live ClickHouse query.
+// Best-effort: returns (nil, err) on failure; caller logs and falls back.
+func (b *Backuper) snapshotMetadataObjectDiskHitsFromCH(ctx context.Context, localBackupDir string) ([]cas.ObjectDiskHit, error) {
+	disks, err := b.ch.GetDisks(ctx, true)
+	if err != nil {
+		return nil, fmt.Errorf("get disks: %w", err)
+	}
+	return snapshotMetadataObjectDiskHits(localBackupDir, newBackuperResolver(disks))
+}
+
+// CASUpload uploads a local backup using the CAS layout.
+// When unlock=true the function removes a stranded in-progress marker for
+// backupName and exits immediately without uploading anything.
+// --unlock is incompatible with --dry-run and --skip-object-disks.
+func (b *Backuper) CASUpload(backupName string, skipObjectDisks, dryRun, unlock bool, backupVersion string, commandId int, waitForPrune time.Duration) error {
+	if backupName == "" {
+		return errors.New("cas-upload: backup name is required")
+	}
+
+	// Refuse incompatible flag combinations upfront.
+	if unlock && dryRun {
+		return errors.New("cas-upload: --unlock and --dry-run are incompatible; --unlock removes a real marker")
+	}
+	if unlock && skipObjectDisks {
+		return errors.New("cas-upload: --unlock and --skip-object-disks are incompatible; --unlock does not perform an upload")
+	}
+
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
+
+	ctx, cancel, err := b.setupCASContext(commandId)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+
+	backend, closer, err := b.ensureCAS(ctx, backupName)
+	if err != nil {
+		return err
+	}
+	defer closer()
+
+	// --unlock path: remove stranded marker and exit. No upload, no pidlock.
+	if unlock {
+		if err := cas.UnlockInProgress(ctx, backend, b.cfg.CAS, backupName); err != nil {
+			return err
+		}
+		fmt.Printf("cas-upload --unlock: inprogress marker for %q removed; backup slot is now free\n", backupName)
+		return nil
+	}
+
+	if pidErr := pidlock.CheckAndCreatePidFile(backupName, "cas-upload"); pidErr != nil {
+		return pidErr
+	}
+	defer pidlock.RemovePidFile(backupName)
+
+	start := time.Now()
+
+	// Resolve the local backup directory.
+	fullLocal := path.Join(b.DefaultDataPath, "backup", backupName)
+	if _, err := os.Stat(fullLocal); err != nil {
+		return fmt.Errorf("cas-upload: local backup %q not found at %s; run 'clickhouse-backup create %s' first", backupName, fullLocal, backupName)
+	}
+
+	// Snapshot-based pre-flight: read which disks the local backup actually
+	// uses, not which disks the live ClickHouse currently has.
+	shadowHits, err := b.snapshotObjectDiskHits(ctx, fullLocal)
+	if err != nil {
+		return fmt.Errorf("cas-upload: snapshot pre-flight: %w", err)
+	}
+
+	// Augment with metadata-JSON-driven detection so fully-object-disk-backed
+	// tables (no shadow parts) are also caught. Fail closed on error unless
+	// cas.allow_unsafe_object_disk_skip=true.
+	metaHits, metaErr := b.snapshotMetadataObjectDiskHitsFromCH(ctx, fullLocal)
+	if metaErr != nil {
+		if b.cfg.CAS.AllowUnsafeObjectDiskSkip {
+			log.Warn().Err(metaErr).Msg("cas-upload: metadata-driven object-disk pre-flight failed; cas.allow_unsafe_object_disk_skip=true so falling back to shadow-only detection — fully-object-disk-backed tables may be missed")
+		} else {
+			return fmt.Errorf("cas-upload: metadata-driven object-disk pre-flight failed: %w (set cas.allow_unsafe_object_disk_skip=true to bypass at your own risk)", metaErr)
+		}
+	}
+	hits := mergeObjectDiskHits(shadowHits, metaHits)
+
+	if !skipObjectDisks {
+		if len(hits) > 0 {
+			return fmt.Errorf("%w: %s",
+				cas.ErrObjectDiskRefused,
+				cas.FormatObjectDiskHits(hits))
+		}
+	}
+
+	uploadOpts := cas.UploadOptions{
+		LocalBackupDir:  fullLocal,
+		SkipObjectDisks: skipObjectDisks,
+		DryRun:          dryRun,
+		Parallelism:     int(b.cfg.General.UploadConcurrency),
+		WaitForPrune:    waitForPrune,
+	}
+	if skipObjectDisks {
+		excluded := make([]string, 0, len(hits))
+		for _, h := range hits {
+			excluded = append(excluded, h.Database+"."+h.Table)
+		}
+		uploadOpts.ExcludedTables = excluded
+	}
+
+	// Upload artifacts (RBAC, configs, named_collections) into the CAS metadata
+	// namespace BEFORE the cas.Upload orchestrator runs (which writes the in-
+	// progress marker at step 5). This way a failure here leaves no marker behind.
+	casMetaBase := b.cfg.CAS.ClusterPrefix() + "metadata/" + backupName
+
+	rbacSize, err := b.casUploadArtifactDir(ctx, fullLocal, "access", casMetaBase, dryRun)
+	if err != nil {
+		return err
+	}
+	configSize, err := b.casUploadArtifactDir(ctx, fullLocal, "configs", casMetaBase, dryRun)
+	if err != nil {
+		return err
+	}
+	ncSize, err := b.casUploadArtifactDir(ctx, fullLocal, "named_collections", casMetaBase, dryRun)
+	if err != nil {
+		return err
+	}
+
+	// Populate Databases and Functions from the local metadata.json written by
+	// `clickhouse-backup create`. These are stored in the CAS remote metadata.json
+	// so cas-download can reconstruct a v1-compatible directory.
+	localMeta, localMetaErr := b.ReadBackupMetadataLocal(ctx, backupName)
+	if localMetaErr != nil {
+		log.Warn().Err(localMetaErr).Msg("cas-upload: could not read local metadata.json; Databases/Functions will be empty in remote metadata")
+	} else {
+		uploadOpts.Databases = localMeta.Databases
+		uploadOpts.Functions = localMeta.Functions
+	}
+	uploadOpts.RBACSize = rbacSize
+	uploadOpts.ConfigSize = configSize
+	uploadOpts.NamedCollectionsSize = ncSize
+	if b.cfg.GetCompressionFormat() == "none" {
+		uploadOpts.DataFormat = DirectoryFormat
+	} else {
+		uploadOpts.DataFormat = b.cfg.GetCompressionFormat()
+	}
+
+	// Run the conditional-put probe only for real (non-dry-run) uploads that
+	// will actually write a marker. Dry-run and read-only commands skip it.
+	if !dryRun {
+		if err := b.maybeProbeCondPut(ctx, backend); err != nil {
+			return err
+		}
+	}
+	res, uploadErr := cas.Upload(ctx, backend, b.cfg.CAS, backupName, uploadOpts)
+	if uploadErr != nil {
+		return uploadErr
+	}
+	log.Info().
+		Str("backup", res.BackupName).
+		Int("total_files", res.TotalFiles).
+		Uint64("total_bytes", res.TotalBytes).
+		Int("inline_files", res.InlineFiles).
+		Uint64("inline_bytes", res.InlineBytes).
+		Int("unique_blobs", res.UniqueBlobs).
+		Uint64("blob_bytes_total", res.BlobBytesTotal).
+		Int("blobs_uploaded", res.BlobsUploaded).
+		Int64("bytes_uploaded", res.BytesUploaded).
+		Int("blobs_reused", res.BlobsReused).
+		Int64("bytes_reused", res.BytesReused).
+		Int("archives", res.PerTableArchives).
+		Int64("archive_bytes", res.ArchiveBytes).
+		Bool("dry_run", res.DryRun).
+		Dur("elapsed", time.Since(start)).
+		Msg("cas-upload done")
+
+	totalBytesH := utils.FormatBytes(res.TotalBytes)
+	inlineBytesH := utils.FormatBytes(res.InlineBytes)
+	blobBytesH := utils.FormatBytes(res.BlobBytesTotal)
+	uploadedH := utils.FormatBytes(uint64(res.BytesUploaded))
+	reusedH := utils.FormatBytes(uint64(res.BytesReused))
+	archiveH := utils.FormatBytes(uint64(res.ArchiveBytes))
+	prefix := "cas-upload"
+	if res.DryRun {
+		prefix = "cas-upload (dry-run)"
+	}
+	fmt.Printf("%s: %s\n", prefix, res.BackupName)
+	fmt.Printf("  Backup content : %d files, %s total\n", res.TotalFiles, totalBytesH)
+	fmt.Printf("  Inlined        : %d files, %s (packed into %d archive%s, %s compressed)\n",
+		res.InlineFiles, inlineBytesH, res.PerTableArchives, plural(res.PerTableArchives), archiveH)
+	fmt.Printf("  Blob store     : %d unique blobs, %s\n", res.UniqueBlobs, blobBytesH)
+	fmt.Printf("    uploaded now : %d blobs, %s\n", res.BlobsUploaded, uploadedH)
+	fmt.Printf("    reused       : %d blobs, %s (already in remote — saved by content-addressing)\n",
+		res.BlobsReused, reusedH)
+	fmt.Printf("  Wall clock     : %s\n", time.Since(start).Round(time.Millisecond))
+	return nil
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+// CASDownload materializes a CAS backup into the local backup directory.
+// This does NOT load tables into ClickHouse; use cas-restore for that.
+func (b *Backuper) CASDownload(backupName, tablePattern string, partitions []string, schemaOnly, dataOnly bool, backupVersion string, commandId int) error {
+	if backupName == "" {
+		return errors.New("cas-download: backup name is required")
+	}
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
+	// Use "cas-download-<backupName>" as the pidlock key so that concurrent
+	// cas-download and cas-restore runs (which also hold this lock during
+	// their download phase) mutually exclude each other without colliding
+	// with the inner v1 pidlock key (plain <backupName>) used by b.Restore.
+	casDownloadLockName := "cas-download-" + backupName
+	if pidErr := pidlock.CheckAndCreatePidFile(casDownloadLockName, "cas-download"); pidErr != nil {
+		return pidErr
+	}
+	defer pidlock.RemovePidFile(casDownloadLockName)
+
+	ctx, cancel, err := b.setupCASContext(commandId)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+
+	start := time.Now()
+	backend, closer, err := b.ensureCAS(ctx, backupName)
+	if err != nil {
+		return err
+	}
+	defer closer()
+
+	res, dlErr := b.casFetchToLocal(ctx, backend, backupName, casFetchOptions{
+		TableFilter: splitTablePattern(tablePattern),
+		Partitions:  partitions,
+		SchemaOnly:  schemaOnly,
+		DataOnly:    dataOnly,
+		Parallelism: int(b.cfg.General.DownloadConcurrency),
+	})
+	if dlErr != nil {
+		return dlErr
+	}
+
+	log.Info().
+		Str("backup", backupName).
+		Str("local_dir", res.LocalBackupDir).
+		Int("archives", res.PerTableArchives).
+		Int("blobs_fetched", res.BlobsFetched).
+		Int64("bytes_fetched", res.BytesFetched).
+		Dur("elapsed", time.Since(start)).
+		Msg("cas-download done")
+	fmt.Printf("cas-download: %s -> %s archives=%d blobs=%d bytes=%d elapsed=%s\n",
+		backupName, res.LocalBackupDir, res.PerTableArchives, res.BlobsFetched, res.BytesFetched, time.Since(start).Round(time.Millisecond))
+	return nil
+}
+
+// CASRestore downloads a CAS backup and hands off to the v1 restore flow.
+// Mirrors v1 'restore' for the six artifact flags so users don't need to
+// know about the cas-download + restore workaround.
+func (b *Backuper) CASRestore(
+	backupName, tablePattern string,
+	dbMapping, tableMapping, partitions, skipProjections []string,
+	schemaOnly, dataOnly, dropExists, ignoreDependencies bool,
+	restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, resume bool,
+	restoreRBAC, rbacOnly bool,
+	restoreConfigs, configsOnly bool,
+	restoreNamedCollections, namedCollectionsOnly bool,
+	backupVersion string, commandId int,
+) error {
+	if backupName == "" {
+		return errors.New("cas-restore: backup name is required")
+	}
+	// --ignore-dependencies is accepted for CLI parity with v1 'restore' but
+	// is a no-op for CAS: every CAS backup is a standalone snapshot referencing
+	// all blob hashes it needs (no required_backup chain to walk). We still
+	// pass the flag through so v1 b.Restore sees a consistent value; it has
+	// nothing to ignore because metadata.RequiredBackup is empty for CAS.
+	if ignoreDependencies {
+		log.Info().Str("backup", backupName).Msg("cas-restore: --ignore-dependencies is a no-op for CAS backups (no dependency chain)")
+	}
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
+
+	// Outer pidlock around the cas-download phase only. The inner v1
+	// b.Restore acquires its own pidlock at pkg/backup/restore.go; pidlock has
+	// no same-PID exemption, so we release this lock before the v1 handoff.
+	casDownloadLockName := "cas-download-" + backupName
+	if pidErr := pidlock.CheckAndCreatePidFile(casDownloadLockName, "cas-download"); pidErr != nil {
+		return pidErr
+	}
+	casDownloadLockReleased := false
+	defer func() {
+		if !casDownloadLockReleased {
+			pidlock.RemovePidFile(casDownloadLockName)
+		}
+	}()
+
+	ctx, cancel, err := b.setupCASContext(commandId)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+
+	start := time.Now()
+	backend, closer, err := b.ensureCAS(ctx, backupName)
+	if err != nil {
+		return err
+	}
+	defer closer()
+
+	// Build fetch options: when any *-only flag is set, skip all table data
+	// and fetch only the matching artifact(s). Otherwise full download.
+	isOnly := rbacOnly || configsOnly || namedCollectionsOnly
+	var wantArtifacts []string
+	if isOnly {
+		if rbacOnly {
+			wantArtifacts = append(wantArtifacts, "access")
+		}
+		if configsOnly {
+			wantArtifacts = append(wantArtifacts, "configs")
+		}
+		if namedCollectionsOnly {
+			wantArtifacts = append(wantArtifacts, "named_collections")
+		}
+	}
+	fetchOpts := casFetchOptions{
+		TableFilter:   splitTablePattern(tablePattern),
+		Partitions:    partitions,
+		SchemaOnly:    schemaOnly,
+		DataOnly:      dataOnly,
+		Parallelism:   int(b.cfg.General.DownloadConcurrency),
+		SkipTableData: isOnly,
+		WantArtifacts: wantArtifacts,
+	}
+
+	if _, err := b.casFetchToLocal(ctx, backend, backupName, fetchOpts); err != nil {
+		return err
+	}
+
+	// Download phase complete; the staging-swap race window is closed.
+	// Release the outer cas-download lock before b.Restore takes its own
+	// (pidlock has no same-PID exemption).
+	pidlock.RemovePidFile(casDownloadLockName)
+	casDownloadLockReleased = true
+
+	if err := b.Restore(
+		backupName,
+		tablePattern,
+		dbMapping,
+		tableMapping,
+		partitions,
+		skipProjections,
+		schemaOnly,
+		dataOnly,
+		dropExists,
+		ignoreDependencies,
+		restoreRBAC,
+		rbacOnly,
+		restoreConfigs,
+		configsOnly,
+		restoreNamedCollections,
+		namedCollectionsOnly,
+		resume,
+		restoreSchemaAsAttach,
+		replicatedCopyToDetached,
+		skipEmptyTables,
+		backupVersion,
+		commandId,
+	); err != nil {
+		return err
+	}
+
+	log.Info().Str("backup", backupName).Dur("elapsed", time.Since(start)).Msg("cas-restore done")
+	fmt.Printf("cas-restore: %s elapsed=%s\n", backupName, time.Since(start).Round(time.Millisecond))
+	return nil
+}
+
+// CASDelete removes a CAS backup's metadata subtree (blob reclamation is the
+// next prune's responsibility).
+func (b *Backuper) CASDelete(backupName string, commandId int, waitForPrune time.Duration) error {
+	if backupName == "" {
+		return errors.New("cas-delete: backup name is required")
+	}
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
+	if pidErr := pidlock.CheckAndCreatePidFile(backupName, "cas-delete"); pidErr != nil {
+		return pidErr
+	}
+	defer pidlock.RemovePidFile(backupName)
+	ctx, cancel, err := b.setupCASContext(commandId)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	backend, closer, err := b.ensureCAS(ctx, backupName)
+	if err != nil {
+		return err
+	}
+	defer closer()
+	// cas-delete always writes a tombstone marker; always probe.
+	if err := b.maybeProbeCondPut(ctx, backend); err != nil {
+		return err
+	}
+	if err := cas.Delete(ctx, backend, b.cfg.CAS, backupName, cas.DeleteOptions{WaitForPrune: waitForPrune}); err != nil {
+		return err
+	}
+	fmt.Printf("cas-delete: %s metadata removed\n", backupName)
+	fmt.Printf("cas-delete: blob storage will be reclaimed by the next cas-prune run\n")
+	return nil
+}
+
+// CASVerify performs a HEAD + size check on every blob referenced by the
+// backup, writing failures to stdout.
+func (b *Backuper) CASVerify(backupName string, jsonOut bool, commandId int) error {
+	if backupName == "" {
+		return errors.New("cas-verify: backup name is required")
+	}
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
+	ctx, cancel, err := b.setupCASContext(commandId)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	backend, closer, err := b.ensureCAS(ctx, backupName)
+	if err != nil {
+		return err
+	}
+	defer closer()
+	res, vErr := cas.Verify(ctx, backend, b.cfg.CAS, backupName, cas.VerifyOptions{JSON: jsonOut}, os.Stdout)
+	if vErr != nil && !errors.Is(vErr, cas.ErrVerifyFailures) {
+		return vErr
+	}
+	if res != nil {
+		log.Info().
+			Str("backup", res.BackupName).
+			Int("blobs_checked", res.BlobsChecked).
+			Int("failures", len(res.Failures)).
+			Msg("cas-verify done")
+	}
+	if vErr != nil {
+		// Non-zero exit on verify failures — surfaced via cli action error.
+		return vErr
+	}
+	return nil
+}
+
+// CASStatus prints a LIST-only health summary for the configured cluster.
+func (b *Backuper) CASStatus(commandId int) error {
+	ctx, cancel, err := b.setupCASContext(commandId)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	backend, closer, err := b.ensureCAS(ctx, "")
+	if err != nil {
+		return err
+	}
+	defer closer()
+	r, sErr := cas.Status(ctx, backend, b.cfg.CAS)
+	if sErr != nil {
+		return sErr
+	}
+	return cas.PrintStatus(r, os.Stdout)
+}
+
+// CASStatusJSON returns a structured status report suitable for HTTP responses.
+// It is the structured-data counterpart to CASStatus (which prints to stdout).
+func (b *Backuper) CASStatusJSON(commandId int) (*cas.StatusReport, error) {
+	ctx, cancel, err := b.setupCASContext(commandId)
+	if err != nil {
+		return nil, err
+	}
+	defer cancel()
+	backend, closer, err := b.ensureCAS(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	defer closer()
+	return cas.Status(ctx, backend, b.cfg.CAS)
+}
+
+// CASPrune runs mark-and-sweep GC against the configured CAS cluster.
+// graceHours / abandonDays are CLI overrides (0 = use config). unlock is
+// the operator escape hatch for a stranded prune.marker.
+func (b *Backuper) CASPrune(dryRun bool, graceBlob, abandonThreshold string, unlock bool, commandId int) error {
+	ctx, cancel, err := b.setupCASContext(commandId)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	backend, closer, err := b.ensureCAS(ctx, "")
+	if err != nil {
+		return err
+	}
+	defer closer()
+
+	opts := cas.PruneOptions{DryRun: dryRun, Unlock: unlock}
+	// Empty string = use the configured value. Any non-empty string must
+	// parse as a Go duration ("0s" is valid and means literal zero).
+	if graceBlob != "" {
+		d, perr := time.ParseDuration(graceBlob)
+		if perr != nil {
+			return fmt.Errorf("cas-prune: --grace-blob %q: %w", graceBlob, perr)
+		}
+		opts.GraceBlob = d
+		opts.GraceBlobSet = true
+	}
+	if abandonThreshold != "" {
+		d, perr := time.ParseDuration(abandonThreshold)
+		if perr != nil {
+			return fmt.Errorf("cas-prune: --abandon-threshold %q: %w", abandonThreshold, perr)
+		}
+		opts.AbandonThreshold = d
+		opts.AbandonThresholdSet = true
+	}
+	// Run the conditional-put probe only for real (non-dry-run) prune runs
+	// that write a prune marker. Dry-run and read-only commands skip it.
+	if !dryRun {
+		if err := b.maybeProbeCondPut(ctx, backend); err != nil {
+			return err
+		}
+	}
+	rep, err := cas.Prune(ctx, backend, b.cfg.CAS, opts)
+	if rep != nil {
+		_ = cas.PrintPruneReport(rep, os.Stdout)
+	}
+	return err
+}
+
+// splitTablePattern turns a comma-separated "db1.t1,db2.t2" string into the
+// exact-match filter slice expected by cas.{Download,Upload}.TableFilter.
+// Empty input returns nil (allow-all). Whitespace around each entry is trimmed.
+func splitTablePattern(p string) []string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return nil
+	}
+	parts := strings.Split(p, ",")
+	out := make([]string, 0, len(parts))
+	for _, s := range parts {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// casFetchOptions configures b.casFetchToLocal — the single download
+// orchestrator shared by CASDownload and CASRestore.
+//
+// Two modes:
+//   - SkipTableData=false: full download via cas.Download (table archives,
+//     blobs, per-table JSONs) followed by artifact downloads.
+//   - SkipTableData=true: minimal download — write a local metadata.json
+//     from the remote BackupMetadata and fetch only the artifacts named in
+//     WantArtifacts. No blobs, no archives, no per-table JSONs. Used by
+//     cas-restore when an --*-only flag is set (RBAC/configs/named-collections
+//     restore doesn't need any table data on disk).
+type casFetchOptions struct {
+	TableFilter   []string
+	Partitions    []string
+	SchemaOnly    bool
+	DataOnly      bool
+	Parallelism   int
+	SkipTableData bool
+	// WantArtifacts is the subset of artifact prefixes to download: any of
+	// "access", "configs", "named_collections". nil/empty = all three.
+	WantArtifacts []string
+}
+
+// casFetchResult summarizes what casFetchToLocal did. Stats fields are
+// populated from the inner cas.DownloadResult in the full path and remain
+// zero in the minimal path.
+type casFetchResult struct {
+	LocalBackupDir   string
+	DataFormat       string
+	PerTableArchives int
+	BlobsFetched     int
+	BytesFetched     int64
+}
+
+// casUploadArtifactDir uploads one artifact directory (access, configs, or
+// named_collections) from the local backup into the CAS metadata namespace at
+// cas/<cluster>/metadata/<name>/<prefix>[.<ext>]. Returns (0, nil) when the
+// directory is missing or empty (graceful skip). In dryRun mode it counts
+// local bytes without writing to remote.
+func (b *Backuper) casUploadArtifactDir(ctx context.Context, localBackupDir, prefix, casRemoteBase string, dryRun bool) (uint64, error) {
+	localDir := filepath.Join(localBackupDir, prefix)
+
+	// Walk to detect files. uploadBackupRelatedDir returns an error on empty dirs
+	// unless the v1 *BackupAlways flags are set, which are not meaningful here.
+	hasFiles := false
+	_ = filepath.WalkDir(localDir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		hasFiles = true
+		return filepath.SkipAll
+	})
+	if !hasFiles {
+		log.Debug().Str("prefix", prefix).Msg("cas-upload: artifact dir missing or empty, skipping")
+		return 0, nil
+	}
+
+	if dryRun {
+		var total uint64
+		_ = filepath.WalkDir(localDir, func(_ string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if info, infoErr := d.Info(); infoErr == nil {
+				total += uint64(info.Size())
+			}
+			return nil
+		})
+		log.Info().Str("prefix", prefix).Uint64("bytes", total).Msg("cas-upload (dry-run): would upload artifact dir")
+		return total, nil
+	}
+
+	// Glob pattern mirrors v1: configs uses recursive **/*.*, others use *.*.
+	glob := filepath.Join(localDir, "*.*")
+	if prefix == "configs" {
+		glob = filepath.Join(localDir, "**/*.*")
+	}
+
+	var remoteDest string
+	if b.cfg.GetCompressionFormat() == "none" {
+		remoteDest = path.Join(casRemoteBase, prefix)
+	} else {
+		remoteDest = path.Join(casRemoteBase, fmt.Sprintf("%s.%s", prefix, b.cfg.GetArchiveExtension()))
+	}
+
+	size, err := b.uploadBackupRelatedDir(ctx, localDir, glob, remoteDest)
+	if err != nil {
+		return 0, fmt.Errorf("cas-upload: artifact %s: %w", prefix, err)
+	}
+	log.Info().Str("prefix", prefix).Uint64("bytes", size).Str("remote", remoteDest).Msg("cas-upload: artifact uploaded")
+	return size, nil
+}
+
+// casDownloadArtifactDir downloads one artifact (access, configs, or
+// named_collections) from the CAS metadata namespace into the local backup
+// directory. Returns (0, nil) when the remote artifact does not exist —
+// graceful skip for older CAS backups or backups created without that artifact.
+func (b *Backuper) casDownloadArtifactDir(ctx context.Context, remoteSrc, localDir, dataFormat string) (uint64, error) {
+	if dataFormat == DirectoryFormat || dataFormat == "" {
+		downloadedBytes, dlErr := b.dst.DownloadPath(ctx, remoteSrc, localDir,
+			b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration,
+			b.cfg.General.RetriesJitter, b, b.cfg.General.DownloadMaxBytesPerSecond)
+		if dlErr != nil {
+			if strings.Contains(dlErr.Error(), "not exist") {
+				return 0, nil
+			}
+			return 0, fmt.Errorf("cas-download: artifact %s: %w", remoteSrc, dlErr)
+		}
+		if _, statErr := os.Stat(localDir); os.IsNotExist(statErr) {
+			return 0, nil // remote dir was empty or missing
+		}
+		return uint64(downloadedBytes), nil
+	}
+	// Compressed archive: stat first for a graceful skip when not present.
+	if _, err := b.dst.StatFile(ctx, remoteSrc); err != nil {
+		log.Debug().Str("remote", remoteSrc).Msg("cas-download: artifact not found, skipping")
+		return 0, nil
+	}
+	downloadedBytes, dlErr := b.dst.DownloadCompressedStream(ctx, remoteSrc, localDir, b.cfg.General.DownloadMaxBytesPerSecond)
+	if dlErr != nil {
+		return 0, fmt.Errorf("cas-download: artifact %s: %w", remoteSrc, dlErr)
+	}
+	return uint64(downloadedBytes), nil
+}
+
+// casFetchToLocal is the single download orchestrator used by CASDownload
+// and CASRestore. See casFetchOptions for the two modes.
+//
+// The function returns the absolute local backup directory and the
+// DataFormat read from the local metadata.json (needed by callers that
+// want to know whether artifacts were directory-format or compressed).
+func (b *Backuper) casFetchToLocal(
+	ctx context.Context,
+	backend cas.Backend,
+	name string,
+	opts casFetchOptions,
+) (*casFetchResult, error) {
+	localBackupRoot := path.Join(b.DefaultDataPath, "backup")
+	if err := os.MkdirAll(localBackupRoot, 0o755); err != nil {
+		return nil, fmt.Errorf("cas-fetch: mkdir %s: %w", localBackupRoot, err)
+	}
+
+	res := &casFetchResult{}
+
+	if opts.SkipTableData {
+		// Minimal path: read remote metadata, write it locally with Handoff=true,
+		// then download only the requested artifacts.
+		remoteBM, vErr := cas.ValidateBackup(ctx, backend, b.cfg.CAS, name)
+		if vErr != nil {
+			return nil, vErr
+		}
+		localBackupDir := filepath.Join(localBackupRoot, name)
+		if err := os.MkdirAll(localBackupDir, 0o755); err != nil {
+			return nil, fmt.Errorf("cas-fetch: mkdir %s: %w", localBackupDir, err)
+		}
+
+		// Copy the remote BackupMetadata into the local directory with
+		// Handoff=true so v1 restore knows this is a CAS-materialized backup.
+		bmLocal := *remoteBM
+		if bmLocal.CAS == nil {
+			bmLocal.CAS = &metadata.CASBackupParams{}
+		}
+		bmLocal.CAS.Handoff = true
+		body, mErr := json.MarshalIndent(&bmLocal, "", "\t")
+		if mErr != nil {
+			return nil, fmt.Errorf("cas-fetch: marshal local metadata.json: %w", mErr)
+		}
+		metaPath := filepath.Join(localBackupDir, "metadata.json")
+		if err := os.WriteFile(metaPath, body, 0o644); err != nil {
+			return nil, fmt.Errorf("cas-fetch: write %s: %w", metaPath, err)
+		}
+
+		res.LocalBackupDir = localBackupDir
+		res.DataFormat = remoteBM.DataFormat
+		if res.DataFormat == "" {
+			res.DataFormat = DirectoryFormat
+		}
+
+		if err := b.casDownloadArtifacts(ctx, name, res.LocalBackupDir, res.DataFormat, opts.WantArtifacts); err != nil {
+			return nil, err
+		}
+		return res, nil
+	}
+
+	// Full path: delegate to cas.Download for table data, then download artifacts.
+	dlRes, dlErr := cas.Download(ctx, backend, b.cfg.CAS, name, cas.DownloadOptions{
+		LocalBackupDir: localBackupRoot,
+		TableFilter:    opts.TableFilter,
+		Partitions:     opts.Partitions,
+		SchemaOnly:     opts.SchemaOnly,
+		DataOnly:       opts.DataOnly,
+		Parallelism:    opts.Parallelism,
+	})
+	if dlErr != nil {
+		return nil, dlErr
+	}
+	res.LocalBackupDir = dlRes.LocalBackupDir
+	res.PerTableArchives = dlRes.PerTableArchives
+	res.BlobsFetched = dlRes.BlobsFetched
+	res.BytesFetched = dlRes.BytesFetched
+
+	// Read local metadata.json to learn DataFormat (used to address artifact paths).
+	localBM, lmErr := b.ReadBackupMetadataLocal(ctx, name)
+	if lmErr != nil {
+		return nil, fmt.Errorf("cas-fetch: read local metadata.json: %w", lmErr)
+	}
+	res.DataFormat = localBM.DataFormat
+	if res.DataFormat == "" {
+		res.DataFormat = DirectoryFormat
+	}
+
+	if err := b.casDownloadArtifacts(ctx, name, res.LocalBackupDir, res.DataFormat, opts.WantArtifacts); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// casDownloadArtifacts downloads the requested artifact prefixes from
+// cas/<cluster>/metadata/<name>/ into localBackupDir. wantArtifacts==nil means
+// all three; otherwise only the listed prefixes are fetched.
+func (b *Backuper) casDownloadArtifacts(
+	ctx context.Context,
+	name, localBackupDir, dataFormat string,
+	wantArtifacts []string,
+) error {
+	want := func(prefix string) bool {
+		if len(wantArtifacts) == 0 {
+			return true
+		}
+		for _, p := range wantArtifacts {
+			if p == prefix {
+				return true
+			}
+		}
+		return false
+	}
+
+	casMetaBase := b.cfg.CAS.ClusterPrefix() + "metadata/" + name
+	for _, prefix := range []string{"access", "configs", "named_collections"} {
+		if !want(prefix) {
+			continue
+		}
+		var remoteSrc string
+		if dataFormat == DirectoryFormat {
+			remoteSrc = path.Join(casMetaBase, prefix)
+		} else {
+			archExt, ok := config.ArchiveExtensions[dataFormat]
+			if !ok {
+				archExt = dataFormat
+			}
+			remoteSrc = path.Join(casMetaBase, fmt.Sprintf("%s.%s", prefix, archExt))
+		}
+		localArtifactDir := filepath.Join(localBackupDir, prefix)
+		artSize, artErr := b.casDownloadArtifactDir(ctx, remoteSrc, localArtifactDir, dataFormat)
+		if artErr != nil {
+			return artErr
+		}
+		if artSize > 0 {
+			log.Info().Str("prefix", prefix).Uint64("bytes", artSize).Msg("cas-fetch: artifact downloaded")
+		}
+	}
+	return nil
+}
+
+// isCASBackupRemote returns true if a backup with the given name exists
+// in the CAS namespace (cas/<cluster>/metadata/<name>/metadata.json).
+// Used by v1 download/restore/delete to surface a proper cross-mode
+// refusal instead of "not found on remote storage" when an operator
+// types a CAS backup name into a v1 command. Best-effort: returns false
+// on any storage error or when CAS is disabled (no namespace configured).
+func isCASBackupRemote(ctx context.Context, dst *storage.BackupDestination, cfg cas.Config, name string) bool {
+	if !cfg.Enabled {
+		return false
+	}
+	if cfg.RootPrefix == "" {
+		return false
+	}
+	rp := cfg.RootPrefix
+	if !strings.HasSuffix(rp, "/") {
+		rp += "/"
+	}
+	clusterPrefix := rp + cfg.ClusterID + "/"
+	key := clusterPrefix + "metadata/" + name + "/metadata.json"
+	rf, err := dst.StatFile(ctx, key)
+	if err != nil || rf == nil {
+		return false
+	}
+	return true
+}

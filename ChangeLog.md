@@ -1,3 +1,16 @@
+# vNEXT (unreleased)
+
+BREAKING CHANGES
+
+- ⚠️ **DO NOT downgrade to a pre-CAS binary if CAS data exists in your bucket.** The pre-CAS binary has no knowledge of the `cas/` skip prefix and will treat the CAS namespace as a broken v1 backup. The next `clean remote_broken` run, or `BackupsToKeepRemote` retention cron, will silently DELETE all CAS data. Recovery procedures: see [docs/cas-operator-runbook.md](docs/cas-operator-runbook.md) "Binary rollback procedure".
+- The `pkg/storage.RemoteStorage` interface gains two required methods: `PutFileAbsoluteIfAbsent(ctx, key, r, size) (created bool, err error)` and `PutFileIfAbsent(ctx, key, r, size) (created bool, err error)`. Any third-party `RemoteStorage` implementation must add these methods to compile. Implementors that don't support atomic create-only-if-absent should return `pkg/storage.ErrConditionalPutNotSupported`; CAS commands then refuse on those backends unless `cas.allow_unsafe_markers=true`.
+- The `pkg/storage.BackupDestination.BackupList` signature gains a fourth `skipPrefixes []string` parameter. External callers must pass `nil` (or the result of `cas.Config.SkipPrefixes()`) to compile. Internal callers in this repo are updated.
+- A v1 backup literally named `"cas"` will be silently filtered after upgrade (the default `cas.root_prefix` is `"cas/"`). Rename or move any such backup before upgrading. The new binary logs an ERROR for each skipped entry and rejects future creation of names that collide with the CAS skip-prefix.
+
+NEW FEATURES
+
+- add experimental Content-Addressable Storage (CAS) backups via new `cas-upload`, `cas-download`, `cas-restore`, `cas-delete`, `cas-verify`, `cas-prune`, `cas-status` commands. CAS deduplicates file content across backups (especially effective for mutated parts) and removes the incremental-chain dependency — every CAS backup is independently restorable. Available in CLI and REST API. Configure via new `cas:` config block; see [docs/cas-design.md](docs/cas-design.md) and [docs/cas-operator-runbook.md](docs/cas-operator-runbook.md). Object-disk and client-side-encryption tables not yet supported.
+
 # v2.8.2
 NEW FEATURES
 - `use_embedded_backup_restore_cluster` now orchestrates the whole cluster instead of only adding `ON CLUSTER` to the BACKUP / RESTORE SQL: `create`, `create_remote`, `restore`, `restore_remote` on the initiator node send the same command with the new `--embedded-on-cluster-worker` flag to every other node of the cluster through its `system.backup_actions` table (`clickhouse-backup server` with `api.create_integration_tables: true` is required on every node) and wait for them, a worker skips the BACKUP / RESTORE SQL and only describes, uploads, downloads and fixes its own `shards/N/replicas/M/` part of the shared destination, per table `metadata/<db>/<table>.json` moved under `shards/N/replicas/M/` next to the `.sql` of each node (such backups are tagged `embedded,cluster=<name>`, older backups without the tag keep the flat layout), `.backup`, `metadata.json`, rbac, configs and named collections stay on the initiator, `delete local` is propagated to the other nodes as `delete local --embedded-on-cluster-worker`, so `delete` accepts the flag too, a single node cluster behaves as before, fix [#928](https://github.com/Altinity/clickhouse-backup/issues/928)

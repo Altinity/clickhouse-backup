@@ -40,6 +40,7 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -74,7 +75,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		return errors.Wrap(err, "prepareRestoreMapping table")
 	}
 
-	doRestoreData := (!schemaOnly && !rbacOnly && !configsOnly) || dataOnly
+	doRestoreData := (!schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly) || dataOnly
 
 	if err := b.validateEmbeddedOnClusterWorker(); err != nil {
 		return err
@@ -294,6 +295,19 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 	backupMetadata := metadata.BackupMetadata{}
 	if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
 		return nil, errors.Wrap(err, "unmarshal backup metadata")
+	}
+	// CAS-format backups are restored exclusively via the cas-restore CLI
+	// (pkg/cas.Restore); the v1 path looks up state (parts on disk, embedded
+	// metadata, object-disk descriptors) that CAS layouts do not carry.
+	//
+	// Exception: when cas-download has materialized a v1-shaped local backup
+	// for the cas-restore handoff it sets CAS.Handoff = true in the local
+	// metadata.json to signal "this layout was written by cas-restore; v1
+	// restore is permitted here, and object-disk handling must be skipped."
+	// The two downloadObjectDiskParts guards below already check CAS == nil
+	// and skip the call when CAS is set (including the Handoff case).
+	if backupMetadata.CAS != nil && !backupMetadata.CAS.Handoff {
+		return nil, cas.ErrCASBackup
 	}
 	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
 	if b.isEmbedded {
@@ -1276,6 +1290,24 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		keyHex = key
 	}
 
+	// DROP/CREATE NAMED COLLECTION ... ON CLUSTER is broken before 23.7:
+	// the distributed DDL log entry loses IF EXISTS (remote hosts raise
+	// NAMED_COLLECTION_DOESNT_EXIST) and CREATE silently drops the ON CLUSTER
+	// clause, see https://github.com/ClickHouse/ClickHouse/issues/51609.
+	// Fall back to local DDL there — that is all such versions can do anyway.
+	onCluster := ""
+	if b.cfg.General.RestoreSchemaOnCluster != "" {
+		version, versionErr := b.ch.GetVersion(ctx)
+		if versionErr != nil {
+			return errors.Wrap(versionErr, "restoreNamedCollections: b.ch.GetVersion")
+		}
+		if version != 0 && version < 23007000 {
+			log.Warn().Msgf("NAMED COLLECTION DDL ON CLUSTER doesn't work before 23.7 (https://github.com/ClickHouse/ClickHouse/issues/51609), restoring named collections without ON CLUSTER")
+		} else {
+			onCluster = fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
+		}
+	}
+
 	// Handle JSONL files
 	for _, jsonlFile := range jsonlFiles {
 		file, openErr := os.Open(jsonlFile)
@@ -1332,17 +1364,14 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 			collectionName := matches[1]
 
 			// Drop existing collection first
-			dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collectionName)
-			if b.cfg.General.RestoreSchemaOnCluster != "" {
-				dropQuery += fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
-			}
+			dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s%s", collectionName, onCluster)
 			if err := b.ch.QueryContext(ctx, dropQuery); err != nil {
 				return errors.Wrapf(err, "failed to drop named collection %s", collectionName)
 			}
 
 			// Create new collection
-			if b.cfg.General.RestoreSchemaOnCluster != "" {
-				sqlQuery = strings.Replace(sqlQuery, " AS ", fmt.Sprintf(" ON CLUSTER '%s' AS ", b.cfg.General.RestoreSchemaOnCluster), 1)
+			if onCluster != "" {
+				sqlQuery = strings.Replace(sqlQuery, " AS ", onCluster+" AS ", 1)
 			}
 			if err := b.ch.QueryContext(ctx, sqlQuery); err != nil {
 				return errors.Wrapf(err, "failed to create named collection %s", collectionName)
@@ -1393,17 +1422,14 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		collectionName := matches[1]
 
 		// Drop existing collection first
-		dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collectionName)
-		if b.cfg.General.RestoreSchemaOnCluster != "" {
-			dropQuery += fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
-		}
+		dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s%s", collectionName, onCluster)
 		if err := b.ch.QueryContext(ctx, dropQuery); err != nil {
 			return errors.Wrapf(err, "failed to drop named collection %s", collectionName)
 		}
 
 		// Create new collection
-		if b.cfg.General.RestoreSchemaOnCluster != "" {
-			sqlQuery = strings.Replace(sqlQuery, " AS ", fmt.Sprintf(" ON CLUSTER '%s' AS ", b.cfg.General.RestoreSchemaOnCluster), 1)
+		if onCluster != "" {
+			sqlQuery = strings.Replace(sqlQuery, " AS ", onCluster+" AS ", 1)
 		}
 		if err := b.ch.QueryContext(ctx, sqlQuery); err != nil {
 			return errors.Wrapf(err, "failed to create named collection %s", collectionName)
@@ -2560,8 +2586,14 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 	// object disk metadata is copied and its keys are rewritten in the shadow before it is linked into the table,
 	// otherwise an interrupted restore leaves the table pointing to the object keys of the source table
 	// and DROP TABLE of the copy deletes the source data, https://github.com/Altinity/clickhouse-backup/issues/1568
-	if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, backupTable, diskMap, diskTypes, disks, keySuffix); err != nil {
-		return errors.Wrapf(err, "can't restore object_disk server-side copy data parts '%s.%s'", backupTable.Database, backupTable.Table)
+	// CAS backups carry no object-disk parts (object-disk tables are
+	// rejected by cas-upload preflight); the v1 detector inspects live
+	// ClickHouse disk types rather than backup metadata, so explicitly
+	// short-circuit when the local backup is CAS-shaped.
+	if backupMetadata.CAS == nil {
+		if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, backupTable, diskMap, diskTypes, disks, keySuffix); err != nil {
+			return errors.Wrapf(err, "can't restore object_disk server-side copy data parts '%s.%s'", backupTable.Database, backupTable.Table)
+		}
 	}
 	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, b.filterOutPlainDiskParts(backupMetadata, backupTable), disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, copyToDetached); err != nil {
 		if copyToDetached {
@@ -2625,8 +2657,12 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 	// object disk metadata is copied and its keys are rewritten in the shadow before it is linked into `detached`,
 	// otherwise an interrupted restore leaves `detached` pointing to the object keys of the source table
 	// and DROP TABLE of the copy deletes the source data, https://github.com/Altinity/clickhouse-backup/issues/1568
-	if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, backupTable, diskMap, diskTypes, disks, keySuffix); err != nil {
-		return errors.Wrapf(err, "can't restore object_disk server-side copy data parts '%s.%s'", backupTable.Database, backupTable.Table)
+	// CAS backups never carry object-disk parts; see comment in
+	// restoreDataRegularByAttach above.
+	if backupMetadata.CAS == nil {
+		if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, backupTable, diskMap, diskTypes, disks, keySuffix); err != nil {
+			return errors.Wrapf(err, "can't restore object_disk server-side copy data parts '%s.%s'", backupTable.Database, backupTable.Table)
+		}
 	}
 	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, b.filterOutPlainDiskParts(backupMetadata, backupTable), disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, true); err != nil {
 		return errors.Wrapf(err, "can't copy data to detached `%s`.`%s`", dstTable.Database, dstTable.Name)
