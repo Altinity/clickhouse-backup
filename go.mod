@@ -44,7 +44,7 @@ require (
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/stretchr/testify v1.12.1
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.75
-	github.com/urfave/cli/v3 v3.12.0
+	github.com/urfave/cli/v3 v3.13.0
 	github.com/yargevad/filepathx v1.0.0
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/crypto v0.57.0
