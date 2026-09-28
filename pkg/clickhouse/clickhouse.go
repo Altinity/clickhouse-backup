@@ -172,6 +172,12 @@ func (ch *ClickHouse) Connect() error {
 			ch.IsOpen = true
 			break
 		}
+		// Open creates a pool even when Ping fails. Close it before retrying or
+		// returning so its drain goroutine and other resources are released.
+		if closeErr := ch.conn.Close(); closeErr != nil {
+			log.Warn().Msgf("can't close failed clickhouse connection: %v", closeErr)
+		}
+		ch.conn = nil
 		if ch.BreakConnectOnError || ch.shutdownRequested() || strings.Contains(err.Error(), "FIPS 140-only") {
 			return errors.WithStack(err)
 		}

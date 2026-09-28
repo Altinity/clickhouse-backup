@@ -5,10 +5,16 @@
 #  of Altinity LTD. Any dissemination of this information or
 #  reproduction of this material is strictly forbidden unless
 #  prior written permission is obtained from Altinity LTD.
+import faulthandler
 import os
 import shutil
+import signal
 import sys
 import yaml
+
+# run.sh kills a hung suite via `timeout` (SIGTERM), dump all thread stacks to stderr first to see where it hung,
+# chain=True keeps the default SIGTERM termination, so `timeout` still exits with 124
+faulthandler.register(signal.SIGTERM, all_threads=True, chain=True)
 import testflows.settings as testflows_settings
 from testflows.core import *
 
