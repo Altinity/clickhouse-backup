@@ -112,6 +112,7 @@ func prePullImages() {
 		"mcr.microsoft.com/azure-storage/azurite:latest",
 		"mcr.microsoft.com/azure-cli:latest",
 		"gcr.io/google.com/cloudsdktool/google-cloud-cli:slim",
+		"amazon/aws-cli:latest",
 		chImage,
 	}
 
@@ -139,7 +140,7 @@ func prePullImages() {
 
 	for _, img := range images {
 		log.Info().Msgf("pre-pulling image %s", img)
-		if err = tc.pullImageIfNeeded(ctx, img); err != nil {
+		if err = tc.pullImage(ctx, img); err != nil {
 			// not fatal here, startContainer will fail with the same error when the image is really needed
 			log.Warn().Err(err).Msgf("prePullImages: can't pull %s", img)
 		}

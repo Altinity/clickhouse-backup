@@ -78,6 +78,9 @@ type cloudManifestFile struct {
 
 type cloudBackupManifest struct {
 	XMLName                  xml.Name            `xml:"config"`
+	UUID                     string              `xml:"uuid"`
+	BaseBackup               string              `xml:"base_backup"` // contains credentials, see storage.CloudBackupHeader
+	BaseBackupUUID           string              `xml:"base_backup_uuid"`
 	DataFileNameGenerator    string              `xml:"data_file_name_generator"`
 	DataFileNamePrefixLength int                 `xml:"data_file_name_prefix_length"`
 	Files                    []cloudManifestFile `xml:"contents>file"`
@@ -218,7 +221,7 @@ type RestoreCloudOptions struct {
 	Region            string
 	Endpoint          string
 	Container         string // azblob container, switches the source to AzureBlobStorage
-	BasePrefix        string // prefix of the base backup for incremental backups with use_base
+	BasePrefix        string // prefix of the base backup for incremental backups with use_base, overrides the first `<base_backup>` of the .backup manifest
 	S3RestoreURL      string // URL passed to RESTORE ... FROM S3('...'), default https://s3.<region>.amazonaws.com/<bucket>/<prefix>
 	AzblobRestoreURL  string // blob endpoint passed to RESTORE ... FROM AzureBlobStorage(...), e.g. http://azurite:10000/devstoreaccount1, switches the source to AzureBlobStorage
 	TablePattern      string
@@ -237,11 +240,14 @@ type cloudSource struct {
 	reader interface {
 		GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error)
 	}
-	isNotFound      func(error) bool
-	restoreLocation string   // FROM clause of the RESTORE statement, contains credentials
-	secrets         []string // credentials to redact from logs and errors
-	label           string   // human-readable source for logs, e.g. s3://bucket
-	close           func(ctx context.Context)
+	isNotFound func(error) bool
+	// restoreLocation returns the FROM / base_backup clause of the RESTORE statement for a key prefix, contains credentials
+	restoreLocation   func(prefix string) string
+	secrets           []string // credentials to redact from logs and errors
+	label             string   // human-readable source for logs, e.g. s3://bucket
+	isAzblob          bool
+	bucketOrContainer string
+	close             func(ctx context.Context)
 }
 
 // connectCloudSourceS3 - S3 and any S3-compatible endpoint (GCS with HMAC keys, MinIO)
@@ -279,25 +285,31 @@ func (b *Backuper) connectCloudSourceS3(ctx context.Context, opts *RestoreCloudO
 	if err := s3Client.Connect(ctx); err != nil {
 		return nil, errors.Wrap(err, "can't connect to s3")
 	}
-	restoreURL := strings.TrimSuffix(opts.S3RestoreURL, "/")
-	if restoreURL == "" {
-		if s3cfg.Endpoint != "" {
-			restoreURL = fmt.Sprintf("%s/%s/%s", strings.TrimSuffix(s3cfg.Endpoint, "/"), s3cfg.Bucket, prefix)
-		} else {
-			restoreURL = fmt.Sprintf("https://s3.%s.amazonaws.com/%s/%s", s3cfg.Region, s3cfg.Bucket, prefix)
+	// --s3-restore-url points to the backup itself, a base backup prefix replaces its trailing prefix
+	customRestoreURL := strings.TrimSuffix(opts.S3RestoreURL, "/")
+	restoreURL := func(p string) string {
+		if customRestoreURL != "" && p == prefix {
+			return customRestoreURL
 		}
+		if customRestoreURL != "" && strings.HasSuffix(customRestoreURL, "/"+prefix) {
+			return strings.TrimSuffix(customRestoreURL, prefix) + p
+		}
+		if s3cfg.Endpoint != "" {
+			return fmt.Sprintf("%s/%s/%s", strings.TrimSuffix(s3cfg.Endpoint, "/"), s3cfg.Bucket, p)
+		}
+		return fmt.Sprintf("https://s3.%s.amazonaws.com/%s/%s", s3cfg.Region, s3cfg.Bucket, p)
 	}
 	// s3->assume_role_arn: the RESTORE reads the bucket with the assumed role's permissions,
 	// the static keys (when present) only sign the STS AssumeRole call, without them the
 	// ClickHouse server's ambient identity signs it (same semantics as the manifest reads above)
-	var restoreLocation string
-	switch {
-	case s3cfg.AssumeRoleARN != "" && accessKey == "":
-		restoreLocation = fmt.Sprintf("S3('%s', extra_credentials(role_arn = '%s'))", restoreURL, s3cfg.AssumeRoleARN)
-	case s3cfg.AssumeRoleARN != "":
-		restoreLocation = fmt.Sprintf("S3('%s', '%s', '%s', extra_credentials(role_arn = '%s'))", restoreURL, accessKey, secretKey, s3cfg.AssumeRoleARN)
-	default:
-		restoreLocation = fmt.Sprintf("S3('%s', '%s', '%s')", restoreURL, accessKey, secretKey)
+	restoreLocation := func(p string) string {
+		switch {
+		case s3cfg.AssumeRoleARN != "" && accessKey == "":
+			return fmt.Sprintf("S3('%s', extra_credentials(role_arn = '%s'))", restoreURL(p), s3cfg.AssumeRoleARN)
+		case s3cfg.AssumeRoleARN != "":
+			return fmt.Sprintf("S3('%s', '%s', '%s', extra_credentials(role_arn = '%s'))", restoreURL(p), accessKey, secretKey, s3cfg.AssumeRoleARN)
+		}
+		return fmt.Sprintf("S3('%s', '%s', '%s')", restoreURL(p), accessKey, secretKey)
 	}
 	return &cloudSource{
 		reader: s3Client,
@@ -305,9 +317,10 @@ func (b *Backuper) connectCloudSourceS3(ctx context.Context, opts *RestoreCloudO
 			var noSuchKey *s3types.NoSuchKey
 			return stderrors.As(err, &noSuchKey)
 		},
-		restoreLocation: restoreLocation,
-		secrets:         []string{accessKey, secretKey},
-		label:           fmt.Sprintf("s3://%s", s3cfg.Bucket),
+		restoreLocation:   restoreLocation,
+		secrets:           []string{accessKey, secretKey},
+		label:             fmt.Sprintf("s3://%s", s3cfg.Bucket),
+		bucketOrContainer: s3cfg.Bucket,
 		close: func(ctx context.Context) {
 			if closeErr := s3Client.Close(ctx); closeErr != nil {
 				log.Warn().Msgf("can't close S3 connection: %v", closeErr)
@@ -355,9 +368,13 @@ func (b *Backuper) connectCloudSourceAzblob(ctx context.Context, opts *RestoreCl
 		isNotFound: func(err error) bool {
 			return bloberror.HasCode(err, bloberror.BlobNotFound)
 		},
-		restoreLocation: fmt.Sprintf("AzureBlobStorage('%s', '%s', '%s/')", connectionString, azcfg.Container, prefix),
-		secrets:         []string{azcfg.AccountKey},
-		label:           fmt.Sprintf("azblob://%s", azcfg.Container),
+		restoreLocation: func(p string) string {
+			return fmt.Sprintf("AzureBlobStorage('%s', '%s', '%s/')", connectionString, azcfg.Container, p)
+		},
+		secrets:           []string{azcfg.AccountKey},
+		label:             fmt.Sprintf("azblob://%s", azcfg.Container),
+		isAzblob:          true,
+		bucketOrContainer: azcfg.Container,
 		close: func(ctx context.Context) {
 			if closeErr := azClient.Close(ctx); closeErr != nil {
 				log.Warn().Msgf("can't close AzureBlob connection: %v", closeErr)
@@ -424,6 +441,16 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 		return err
 	}
 	log.Info().Msgf("manifest generator=%s prefix_length=%d files=%d", manifest.DataFileNameGenerator, manifest.DataFileNamePrefixLength, len(manifest.Files))
+	basePrefixes, err := b.resolveCloudBaseChain(ctx, source, manifest, basePrefix)
+	if err != nil {
+		return errors.Errorf("%s", restoreCloudRedact(err.Error(), source.secrets...))
+	}
+	// RESTORE takes the base backup location with credentials from `<base_backup>`, it is replaced with the
+	// resolved location readable with the configured credentials, deeper bases are still read from their own .backup
+	restoreSettings := "allow_different_database_def=1, allow_different_table_def=1"
+	if len(basePrefixes) > 0 {
+		restoreSettings = "base_backup = " + source.restoreLocation(basePrefixes[0]) + ", " + restoreSettings
+	}
 
 	// group manifest entries: database DDL, table DDL and logical data bytes per table,
 	// `BACKUP ... ON CLUSTER` prefixes every name with shards/<shard_num>/replicas/<replica_num>/
@@ -526,7 +553,7 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 				log.Info().Msgf("skip empty %s", f.Name)
 				continue
 			}
-			ddl, fetchErr := b.fetchCloudBlob(ctx, source, manifest, f, prefix, basePrefix)
+			ddl, fetchErr := b.fetchCloudBlob(ctx, source, manifest, f, prefix, basePrefixes)
 			if fetchErr != nil {
 				if handledErr := handleError(fmt.Sprintf("fetch %s.%s", database, table), fetchErr); handledErr != nil {
 					return handledErr
@@ -549,7 +576,7 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 		}
 		log.Info().Msgf("######## database %s ########", database)
 		if f, exists := dbDDLFiles[database]; exists && f.Size > 0 {
-			ddl, fetchErr := b.fetchCloudBlob(ctx, source, manifest, f, prefix, basePrefix)
+			ddl, fetchErr := b.fetchCloudBlob(ctx, source, manifest, f, prefix, basePrefixes)
 			if fetchErr == nil {
 				fetchErr = b.restoreCloudExec(ctx, injectCloudOnCluster(rewriteCloudSchema(ddl, "database", "", ""), onClusterSQL), fmt.Sprintf("database %s", database), source.secrets)
 			}
@@ -589,8 +616,8 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 					}
 					if restoreErr == nil {
 						restoreSQL := fmt.Sprintf(
-							"RESTORE TABLE %s.%s%s%s FROM %s SETTINGS allow_different_database_def=1, allow_different_table_def=1",
-							cloudQuoteIdent(database), cloudQuoteIdent(t.table), t.partitionsSQL, onClusterSQL, source.restoreLocation,
+							"RESTORE TABLE %s.%s%s%s FROM %s SETTINGS %s",
+							cloudQuoteIdent(database), cloudQuoteIdent(t.table), t.partitionsSQL, onClusterSQL, source.restoreLocation(prefix), restoreSettings,
 						)
 						restoreErr = b.restoreCloudExec(tablesCtx, restoreSQL, fmt.Sprintf("RESTORE TABLE %s", label), source.secrets)
 					}
@@ -693,16 +720,12 @@ func (b *Backuper) cloudRestorePartitionsSQL(ctx context.Context, database, tabl
 }
 
 // fetchCloudBlob downloads a manifest entry, resolving its blob key and falling back between the
-// backup prefix and the base backup prefix (incremental backups store unchanged files in the base)
-func (b *Backuper) fetchCloudBlob(ctx context.Context, source *cloudSource, manifest *cloudBackupManifest, f *cloudManifestFile, prefix, basePrefix string) (string, error) {
+// backup prefix and the base backups chain prefixes (incremental backups store unchanged files in the base)
+func (b *Backuper) fetchCloudBlob(ctx context.Context, source *cloudSource, manifest *cloudBackupManifest, f *cloudManifestFile, prefix string, basePrefixes []string) (string, error) {
 	blob := manifest.blobKey(f)
-	prefixes := []string{prefix}
-	if basePrefix != "" {
-		if f.UseBase {
-			prefixes = []string{basePrefix, prefix}
-		} else {
-			prefixes = []string{prefix, basePrefix}
-		}
+	prefixes := append([]string{prefix}, basePrefixes...)
+	if f.UseBase && len(basePrefixes) > 0 {
+		prefixes = append(append([]string{}, basePrefixes...), prefix)
 	}
 	var lastErr error
 	for _, p := range prefixes {
@@ -738,4 +761,135 @@ func (b *Backuper) restoreCloudExec(ctx context.Context, sql, what string, secre
 		return errors.Errorf("%s", restoreCloudRedact(err.Error(), secrets...))
 	}
 	return nil
+}
+
+// remoteCloudBackupPrefix returns the key prefix of backupName inside the bucket/container when the remote backup has
+// ClickHouse Cloud / native BACKUP layout (`.backup` without metadata.json), empty string for a regular backup,
+// https://github.com/Altinity/clickhouse-backup/issues/1574
+func (b *Backuper) remoteCloudBackupPrefix(ctx context.Context, backupName string) (string, error) {
+	if b.cfg.General.RemoteStorage == "none" || b.cfg.General.RemoteStorage == "custom" {
+		return "", nil
+	}
+	if !b.ch.IsOpen {
+		if err := b.ch.Connect(); err != nil {
+			return "", errors.Wrap(err, "can't connect to clickhouse")
+		}
+		defer b.ch.Close()
+	}
+	// NewBackupDestination resolves macros in s3->path / azblob->path of b.cfg in place
+	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
+	if err != nil {
+		return "", errors.Wrap(err, "NewBackupDestination")
+	}
+	if err = bd.Connect(ctx); err != nil {
+		return "", errors.Wrap(err, "bd.Connect")
+	}
+	defer func() {
+		if closeErr := bd.Close(ctx); closeErr != nil {
+			log.Warn().Msgf("can't close BackupDestination error: %v", closeErr)
+		}
+	}()
+	backupList, err := bd.BackupList(ctx, true, backupName)
+	if err != nil {
+		return "", errors.Wrap(err, "bd.BackupList")
+	}
+	if len(backupList) != 1 || backupList[0].DataFormat != storage.CloudBackupDataFormat {
+		return "", nil
+	}
+	switch b.cfg.General.RemoteStorage {
+	case "s3":
+		return path.Join(b.cfg.S3.Path, backupName), nil
+	case "azblob":
+		return path.Join(b.cfg.AzureBlob.Path, backupName), nil
+	}
+	return "", errors.Errorf("'%s' has ClickHouse Cloud / native BACKUP layout, restore_remote supports it only with `remote_storage: s3` or `remote_storage: azblob`, got `%s`, use restore_cloud with s3 or azblob config section", backupName, b.cfg.General.RemoteStorage)
+}
+
+// cloudUnsupportedRestoreRemoteOptions - restore_remote options which restore_cloud can't apply, restore fails
+// instead of silently ignoring them
+func cloudUnsupportedRestoreRemoteOptions(databaseMapping, tableMapping, skipProjections []string, schemaOnly, dataOnly, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, replicatedCopyToDetached, hardlinkExistsFiles, streaming bool) []string {
+	unsupported := make([]string, 0)
+	for _, option := range []struct {
+		name string
+		set  bool
+	}{
+		{"--restore-database-mapping", len(databaseMapping) > 0},
+		{"--restore-table-mapping", len(tableMapping) > 0},
+		{"--skip-projections", len(skipProjections) > 0},
+		{"--schema", schemaOnly},
+		{"--data", dataOnly},
+		{"--ignore-dependencies", ignoreDependencies},
+		{"--rbac", restoreRBAC},
+		{"--rbac-only", rbacOnly},
+		{"--configs", restoreConfigs},
+		{"--configs-only", configsOnly},
+		{"--named-collections", restoreNamedCollections},
+		{"--named-collections-only", namedCollectionsOnly},
+		{"--resume", resume},
+		{"--restore-schema-as-attach", schemaAsAttach},
+		{"--replicated-copy-to-detached", replicatedCopyToDetached},
+		{"--hardlink-exists-files", hardlinkExistsFiles},
+		{"--streaming", streaming},
+	} {
+		if option.set {
+			unsupported = append(unsupported, option.name)
+		}
+	}
+	return unsupported
+}
+
+// resolveCloudBaseChain returns the key prefixes of the base backups chain of an incremental backup, the nearest base
+// first, each base is resolved from `<base_backup>` of the previous `.backup` and verified by `<base_backup_uuid>`,
+// basePrefix (--base-prefix) overrides the first base, e.g. when the backups were copied from another bucket
+func (b *Backuper) resolveCloudBaseChain(ctx context.Context, source *cloudSource, manifest *cloudBackupManifest, basePrefix string) ([]string, error) {
+	// a manifest without <base_backup> keeps the behavior of --base-prefix before base auto-detection
+	if manifest.BaseBackup == "" {
+		if basePrefix != "" {
+			return []string{basePrefix}, nil
+		}
+		return nil, nil
+	}
+	chain := make([]string, 0)
+	seen := map[string]struct{}{}
+	baseBackup, baseUUID := manifest.BaseBackup, manifest.BaseBackupUUID
+	for baseBackup != "" {
+		loc, err := storage.ParseCloudBackupLocation(baseBackup)
+		if err != nil {
+			return nil, err
+		}
+		source.secrets = append(source.secrets, loc.Secrets...)
+		p := basePrefix
+		if len(chain) > 0 || p == "" {
+			key, found := loc.KeyIn(source.bucketOrContainer)
+			if !found || loc.IsAzureBlob() != source.isAzblob {
+				if len(chain) == 0 {
+					return nil, errors.Errorf("base backup %s is not stored in %s, pass --base-prefix when the backups were copied there", loc.String(), source.label)
+				}
+				log.Warn().Msgf("base backup %s of %s is not stored in %s, RESTORE reads it with the location and credentials from %s/.backup", loc.String(), chain[len(chain)-1], source.label, chain[len(chain)-1])
+				break
+			}
+			p = key
+		}
+		if _, cycle := seen[p]; cycle {
+			return nil, errors.Errorf("base backups chain has a cycle at %s", p)
+		}
+		seen[p] = struct{}{}
+		manifestKey := path.Join(p, ".backup")
+		reader, err := source.reader.GetFileReaderAbsolute(ctx, manifestKey)
+		if err != nil {
+			return nil, errors.Wrapf(err, "can't read base backup %s/%s", source.label, manifestKey)
+		}
+		header, err := storage.ReadCloudBackupHeader(reader)
+		_ = reader.Close()
+		if err != nil {
+			return nil, errors.Wrapf(err, "can't parse base backup %s/%s", source.label, manifestKey)
+		}
+		if baseUUID != "" && header.UUID != baseUUID {
+			return nil, errors.Errorf("base backup %s/%s has uuid %s, expected %s", source.label, p, header.UUID, baseUUID)
+		}
+		log.Info().Msgf("base backup %s/%s uuid=%s", source.label, p, header.UUID)
+		chain = append(chain, p)
+		baseBackup, baseUUID = header.BaseBackup, header.BaseBackupUUID
+	}
+	return chain, nil
 }

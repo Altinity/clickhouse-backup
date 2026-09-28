@@ -680,6 +680,11 @@ func (tc *TestContainers) pullImageIfNeeded(ctx context.Context, imageName strin
 		log.Debug().Msgf("image %s already exists locally, skipping pull", imageName)
 		return nil
 	}
+	return tc.pullImage(ctx, imageName)
+}
+
+// pullImage always pulls, so floating tags like 26.3 or latest-alpine are refreshed to the same image CI gets
+func (tc *TestContainers) pullImage(ctx context.Context, imageName string) error {
 	reader, err := tc.client.ImagePull(ctx, imageName, dockerClient.ImagePullOptions{})
 	if err != nil {
 		return fmt.Errorf("pull %s: %w", imageName, err)
@@ -695,7 +700,7 @@ func (tc *TestContainers) pullImageIfNeeded(ctx context.Context, imageName strin
 			return fmt.Errorf("pull %s: read progress: %w", imageName, err)
 		}
 	}
-	if _, inspectErr = tc.client.ImageInspect(ctx, imageName); inspectErr != nil {
+	if _, inspectErr := tc.client.ImageInspect(ctx, imageName); inspectErr != nil {
 		return fmt.Errorf("pull %s: image is still missing after pull: %w", imageName, inspectErr)
 	}
 	return nil

@@ -746,6 +746,8 @@ func newRootCommand() *cli.Command {
 			Name:      "restore_remote",
 			Usage:     "Download and restore",
 			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] <backup_name>",
+			Description: "A remote backup with ClickHouse Cloud / native BACKUP layout (.backup without metadata.json, `cloud` in `list remote`) is restored via restore_cloud, only with remote_storage s3 or azblob and without mapping, --schema, --data, --rbac, --configs, --named-collections, --resume and --streaming options\n" +
+				"   https://github.com/Altinity/clickhouse-backup/issues/1574",
 			Action: func(ctx context.Context, c *cli.Command) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				b.DryRun = c.Bool("dry-run")
@@ -909,6 +911,7 @@ func newRootCommand() *cli.Command {
 				"   Credentials and defaults are taken from the s3 config section (also works for GCS via s3->endpoint=https://storage.googleapis.com with HMAC keys), or from the azblob config section when --container / --azblob-restore-url is passed or general->remote_storage is azblob\n" +
 				"   When s3->assume_role_arn is set, the manifest is read and RESTORE ... FROM S3(..., extra_credentials(role_arn='...')) is executed with the assumed AWS IAM role, the static keys only sign the STS AssumeRole call (requires ClickHouse 25.8+);\n" +
 				"   without any static keys the STS AssumeRole call is signed by the ambient AWS identity instead: shared credentials file / IRSA / EC2-ECS instance profile for the manifest reads, and the ClickHouse server's own environment for the RESTORE statement\n" +
+				"   For an incremental backup the base backups chain is resolved from <base_backup> of each .backup inside the same bucket/container, RESTORE gets SETTINGS base_backup with the configured credentials\n" +
 				"   https://github.com/Altinity/clickhouse-backup/issues/1508",
 			Action: func(ctx context.Context, c *cli.Command) error {
 				if c.Args().First() == "" {
@@ -956,7 +959,7 @@ func newRootCommand() *cli.Command {
 				&cli.StringFlag{
 					Name:   "base-prefix",
 					Hidden: false,
-					Usage:  "S3 key prefix of the base backup, for incremental backups with use_base files",
+					Usage:  "Key prefix of the base backup for incremental backups, by default the chain of base backups is resolved from <base_backup> of the .backup manifest, use it when the backups were copied from another bucket/prefix",
 				},
 				&cli.StringFlag{
 					Name:   "s3-restore-url",
