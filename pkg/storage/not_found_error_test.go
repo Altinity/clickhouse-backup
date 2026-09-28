@@ -61,3 +61,19 @@ func TestIsNotFoundErrDestinationWrite(t *testing.T) {
 	assert.False(t, IsNotFoundErr(storErr), "destination write failure must not be treated as permanent not found")
 	assert.False(t, IsNotFoundErr(pkgerrors.Wrap(storErr, "dstStorage.PutFileAbsolute error")))
 }
+
+func TestIsNotFoundErrNoSuchUpload(t *testing.T) {
+	apiErr := &smithy.GenericAPIError{Code: "NoSuchUpload", Message: "The specified upload does not exist"}
+	httpErr := &smithyhttp.ResponseError{
+		Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusNotFound}},
+		Err:      apiErr,
+	}
+	for _, err := range []error{
+		apiErr,
+		httpErr,
+		pkgerrors.Wrap(httpErr, "S3 PutFileAbsolute Upload"),
+		errors.New("operation error S3: UploadPart, https response error StatusCode: 404, api error NoSuchUpload: The specified upload does not exist"),
+	} {
+		assert.False(t, IsNotFoundErr(err), "a missing multipart session is not a missing object: %v", err)
+	}
+}
