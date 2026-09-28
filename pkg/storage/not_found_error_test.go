@@ -22,6 +22,8 @@ func TestIsNotFoundErr(t *testing.T) {
 		"object doesn't exist",
 		"key not found: metadata/default/test.json",
 		"NoSuchKey: The specified key does not exist",
+		"NoSuchKey: shadow/NoSuchUpload/data.tar does not exist",
+		"StatusCode: 404: metadata/NoSuchUpload.json does not exist",
 		"operation error S3: GetObject, https response error StatusCode: 404",
 		"StatusCode 404",
 		// real backend phrasings observed in test/integration TestMetadataNotFound*
@@ -71,6 +73,7 @@ func TestIsNotFoundErrNoSuchUpload(t *testing.T) {
 	for _, err := range []error{
 		apiErr,
 		httpErr,
+		errors.New("NoSuchUpload: The specified upload does not exist"),
 		pkgerrors.Wrap(httpErr, "S3 PutFileAbsolute Upload"),
 		errors.New("operation error S3: UploadPart, https response error StatusCode: 404, api error NoSuchUpload: The specified upload does not exist"),
 	} {

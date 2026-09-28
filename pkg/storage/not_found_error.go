@@ -57,7 +57,7 @@ func IsNotFoundErr(err error) bool {
 	// every backend phrases "object is missing" differently and some wrap it as a plain string,
 	// so fall back to the known permanent-not-found markers across S3/GCS/Azure/FTP/SFTP/FS
 	message := strings.ToLower(err.Error())
-	if strings.Contains(message, "nosuchupload") {
+	if strings.HasPrefix(message, "nosuchupload:") || strings.Contains(message, "api error nosuchupload:") {
 		return false
 	}
 	for _, marker := range []string{
