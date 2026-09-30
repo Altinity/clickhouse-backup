@@ -817,6 +817,15 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 						}
 						if isProcessed {
 							atomic.AddInt64(&uploadedBytes, processedSize)
+							// record the already uploaded part in the manifest, otherwise download falls back to Walk for it,
+							// with deleteSource the local part files are removed after upload, so their list is unreliable and the part stays out of the manifest,
+							// https://github.com/Altinity/clickhouse-backup/issues/1569
+							if !deleteSource && b.fileManifest != nil {
+								if b.cfg.General.UploadByPart {
+									partFiles = b.walkPartFiles(backupPath, partSuffix, table.Database, table.Table, skipProjections)
+								}
+								b.recordUploadedFiles(backupName, remotePath, partFiles)
+							}
 							return nil
 						}
 					}
@@ -861,6 +870,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 						}
 						if isProcessed {
 							atomic.AddInt64(&uploadedBytes, processedSize)
+							b.recordUploadedFile(backupName, remoteDataFile)
 							return nil
 						}
 					}
@@ -942,6 +952,7 @@ func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName st
 			return 0, errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
 		}
 		if isProcessed {
+			b.recordUploadedFile(backupName, remoteTableMetaFile)
 			return processedSize, nil
 		}
 	}
