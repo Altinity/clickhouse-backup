@@ -94,7 +94,7 @@ COPY --from=builder-fips /src/build/ /src/build/
 CMD ["/src/build/${TARGETPLATFORM}/clickhouse-backup-fips", "--help"]
 
 
-FROM alpine:3.23 AS image_short
+FROM alpine:3.24 AS image_short
 ARG TARGETPLATFORM
 ARG VERSION=unknown
 LABEL mantainer="Eugene Klimov <eklimov@altinity.com>"
