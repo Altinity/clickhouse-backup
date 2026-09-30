@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 	"testing"
 
 	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/eapache/go-resiliency/retrier"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
@@ -17,11 +19,17 @@ import (
 
 func TestClassify(t *testing.T) {
 	b := NewBackuper(&config.Config{})
+	noSuchUpload := fmt.Errorf("S3 PutFileAbsolute Upload: %w", &smithyhttp.ResponseError{
+		Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusNotFound}},
+		Err:      &smithy.GenericAPIError{Code: "NoSuchUpload", Message: "The specified upload does not exist"},
+	})
 	testcases := []struct {
 		err    error
 		expect retrier.Action
 	}{
 		{nil, retrier.Succeed},
+		{noSuchUpload, retrier.Retry},
+		{errors.Join(context.Canceled, noSuchUpload), retrier.Fail},
 		{context.Canceled, retrier.Fail},
 		{context.DeadlineExceeded, retrier.Fail},
 		{fmt.Errorf("object_disk.CopyObject: %w", context.Canceled), retrier.Fail},

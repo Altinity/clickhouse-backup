@@ -35,6 +35,9 @@ func IsNotFoundErr(err error) bool {
 	var apiErr smithy.APIError
 	if errors.As(err, &apiErr) {
 		switch apiErr.ErrorCode() {
+		case "NoSuchUpload":
+			// The multipart session is gone, not the object; retry with a new upload.
+			return false
 		case "NoSuchKey", "NotFound":
 			return true
 		}
@@ -54,6 +57,9 @@ func IsNotFoundErr(err error) bool {
 	// every backend phrases "object is missing" differently and some wrap it as a plain string,
 	// so fall back to the known permanent-not-found markers across S3/GCS/Azure/FTP/SFTP/FS
 	message := strings.ToLower(err.Error())
+	if strings.HasPrefix(message, "nosuchupload:") || strings.Contains(message, "api error nosuchupload:") {
+		return false
+	}
 	for _, marker := range []string{
 		"doesn't exist",             // GCS
 		"does not exist",            // SFTP ("file does not exist"), Azure ("the specified blob does not exist")

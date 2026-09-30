@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -489,4 +491,20 @@ func TestMakePartHardlinksReplaceFails(t *testing.T) {
 	err := backuper.makePartHardlinks(exists, newPath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "replace stale hardlink")
+}
+
+func TestSkipMissingPartNoSuchUpload(t *testing.T) {
+	for _, allowMissing := range []bool{false, true} {
+		for _, code := range []string{"NoSuchKey", "NoSuchUpload"} {
+			t.Run(fmt.Sprintf("%s/allow_missing=%t", code, allowMissing), func(t *testing.T) {
+				b := NewBackuper(&config.Config{General: config.GeneralConfig{AllowMissingFilesOnDownload: allowMissing}})
+				missing := &missingParts{}
+				table := metadata.TableMetadata{Parts: map[string][]metadata.Part{"default": {{Name: "part"}}}}
+				err := &smithy.GenericAPIError{Code: code, Message: "The specified resource does not exist"}
+				wantSkipped := allowMissing && code == "NoSuchKey"
+				assert.Equal(t, wantSkipped, b.skipMissingPart(err, missing, table, "default", "part", "shadow/part"))
+				assert.Equal(t, wantSkipped, missing.apply(&table))
+			})
+		}
+	}
 }
