@@ -8,6 +8,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestFindDependentBackups - `delete local|remote` must detect backups which reference the deleted
@@ -69,6 +70,25 @@ func TestCleanDir(t *testing.T) {
 			if err := b.cleanDir(dir); err != nil {
 				t.Fatalf("unexpected error during back to back invocation of delete: %v", err)
 			}
+		},
+	)
+
+	// ClickHouse keeps the FREEZE counter in shadow/increment.txt, recreating it under concurrent FREEZE
+	// can leave it empty and fail every next FREEZE with code 32 (CounterInFile race)
+	t.Run("Test clean --all keeps shadow/increment.txt",
+		func(t *testing.T) {
+			b := &Backuper{}
+			dir := t.TempDir()
+			require.NoError(t, os.MkdirAll(path.Join(dir, "0a1b2c3d", "store"), 0750))
+			require.NoError(t, os.WriteFile(path.Join(dir, shadowIncrementFile), []byte("42"), 0640))
+			require.NoError(t, b.cleanDir(dir, shadowIncrementFile))
+			entries, err := os.ReadDir(dir)
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			require.Equal(t, shadowIncrementFile, entries[0].Name())
+			content, err := os.ReadFile(path.Join(dir, shadowIncrementFile))
+			require.NoError(t, err)
+			require.Equal(t, "42", string(content))
 		},
 	)
 }

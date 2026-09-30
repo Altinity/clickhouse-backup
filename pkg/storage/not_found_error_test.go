@@ -22,6 +22,8 @@ func TestIsNotFoundErr(t *testing.T) {
 		"object doesn't exist",
 		"key not found: metadata/default/test.json",
 		"NoSuchKey: The specified key does not exist",
+		"NoSuchKey: shadow/NoSuchUpload/data.tar does not exist",
+		"StatusCode: 404: metadata/NoSuchUpload.json does not exist",
 		"operation error S3: GetObject, https response error StatusCode: 404",
 		"StatusCode 404",
 		// real backend phrasings observed in test/integration TestMetadataNotFound*
@@ -60,4 +62,21 @@ func TestIsNotFoundErrDestinationWrite(t *testing.T) {
 	assert.True(t, errors.Is(storErr, ErrDestinationWrite))
 	assert.False(t, IsNotFoundErr(storErr), "destination write failure must not be treated as permanent not found")
 	assert.False(t, IsNotFoundErr(pkgerrors.Wrap(storErr, "dstStorage.PutFileAbsolute error")))
+}
+
+func TestIsNotFoundErrNoSuchUpload(t *testing.T) {
+	apiErr := &smithy.GenericAPIError{Code: "NoSuchUpload", Message: "The specified upload does not exist"}
+	httpErr := &smithyhttp.ResponseError{
+		Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusNotFound}},
+		Err:      apiErr,
+	}
+	for _, err := range []error{
+		apiErr,
+		httpErr,
+		errors.New("NoSuchUpload: The specified upload does not exist"),
+		pkgerrors.Wrap(httpErr, "S3 PutFileAbsolute Upload"),
+		errors.New("operation error S3: UploadPart, https response error StatusCode: 404, api error NoSuchUpload: The specified upload does not exist"),
+	} {
+		assert.False(t, IsNotFoundErr(err), "a missing multipart session is not a missing object: %v", err)
+	}
 }

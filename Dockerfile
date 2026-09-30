@@ -94,7 +94,7 @@ COPY --from=builder-fips /src/build/ /src/build/
 CMD ["/src/build/${TARGETPLATFORM}/clickhouse-backup-fips", "--help"]
 
 
-FROM alpine:3.23 AS image_short
+FROM alpine:latest AS image_short
 ARG TARGETPLATFORM
 ARG VERSION=unknown
 LABEL mantainer="Eugene Klimov <eklimov@altinity.com>"
@@ -108,7 +108,7 @@ LABEL "org.opencontainers.image.documentation"="https://github.com/Altinity/clic
 
 RUN addgroup -S -g 101 clickhouse \
     && adduser -S -h /var/lib/clickhouse -s /bin/bash -G clickhouse -g "ClickHouse server" -u 101 clickhouse
-RUN apk update && apk add --no-cache ca-certificates tzdata bash curl && update-ca-certificates
+RUN apk update && apk upgrade --no-cache && apk add --no-cache ca-certificates tzdata bash curl && update-ca-certificates
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 COPY build/${TARGETPLATFORM}/clickhouse-backup /bin/clickhouse-backup

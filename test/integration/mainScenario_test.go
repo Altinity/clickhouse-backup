@@ -207,8 +207,9 @@ func cleanupAfterFailedScenario(t *testing.T, env *TestEnvironment, databaseList
 	}
 	log.Warn().Msgf("%s failed, cleanup leftovers before the environment returns to the pool", t.Name())
 	for _, backupType := range []string{"local", "remote"} {
+		// stderr carries log lines which mention the test name too, `cut` would take their timestamp as a backup name
 		list, listErr := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-			"clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" list "+backupType+" | grep -F "+t.Name()+" | cut -d ' ' -f 1")
+			"clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" list "+backupType+" 2>/dev/null | grep -F "+t.Name()+" | cut -d ' ' -f 1")
 		if listErr != nil {
 			log.Warn().Msgf("can't list %s backups: %v\n%s", backupType, listErr, list)
 			continue

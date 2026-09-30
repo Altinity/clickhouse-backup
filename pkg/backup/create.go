@@ -1573,7 +1573,8 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 				if !b.cfg.General.AllowObjectDiskStreaming {
 					retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 					copyObjectErr = retry.RunCtx(uploadCtx, func(ctx context.Context) error {
-						if objSize, err = b.dst.CopyObject(ctx, storageObject.ObjectSize, srcBucket, srcKey, dstKey); err != nil {
+						// WithoutCancel: server-side copy continues after client cancel, let it finish so abort cleanup sees dstKey
+						if objSize, err = b.dst.CopyObject(context.WithoutCancel(ctx), storageObject.ObjectSize, srcBucket, srcKey, dstKey); err != nil {
 							return err
 						}
 						return nil
@@ -1590,7 +1591,8 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 						copyRetry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), copyObjectRetryClassifier{b: b})
 						copyObjectErr = copyRetry.RunCtx(uploadCtx, func(ctx context.Context) error {
 							var copyErr error
-							objSize, copyErr = b.dst.CopyObject(ctx, storageObject.ObjectSize, srcBucket, srcKey, dstKey)
+							// WithoutCancel: server-side copy continues after client cancel, let it finish so abort cleanup sees dstKey
+							objSize, copyErr = b.dst.CopyObject(context.WithoutCancel(ctx), storageObject.ObjectSize, srcBucket, srcKey, dstKey)
 							return copyErr
 						})
 						if copyObjectErr != nil {
@@ -1765,7 +1767,8 @@ func (b *Backuper) uploadPlainDiskParts(ctx context.Context, backupName string, 
 			if !isCopyFailed.Load() {
 				copyRetry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), copyObjectRetryClassifier{b: b})
 				copyObjectErr = copyRetry.RunCtx(uploadCtx, func(ctx context.Context) error {
-					_, copyErr := b.dst.CopyObject(ctx, capturedSize, srcBucket, srcKey, dstKey)
+					// WithoutCancel: server-side copy continues after client cancel, let it finish so abort cleanup sees dstKey
+					_, copyErr := b.dst.CopyObject(context.WithoutCancel(ctx), capturedSize, srcBucket, srcKey, dstKey)
 					return copyErr
 				})
 				if copyObjectErr != nil && !b.cfg.General.AllowObjectDiskStreaming {

@@ -374,7 +374,7 @@ jobs:
           QA_AWS_SECRET_KEY: ${{ secrets.QA_AWS_SECRET_KEY }}
           QA_AWS_BUCKET: ${{ secrets.QA_AWS_BUCKET }}
           QA_AWS_REGION: ${{ secrets.QA_AWS_REGION }}
-          # need for TestRestoreCloud* (restore ClickHouse Cloud backup)
+          # need for TestRestoreCloud* (restore static ClickHouse Cloud backup from clickhouse_cloud_backup/test_backup),
           QA_AWS_CLOUD_ENDPOINT: ${{ secrets.QA_AWS_CLOUD_ENDPOINT }}
           QA_AWS_CLOUD_BUCKET: ${{ secrets.QA_AWS_CLOUD_BUCKET }}
           QA_AWS_CLOUD_REGION: ${{ secrets.QA_AWS_CLOUD_REGION }}

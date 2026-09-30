@@ -262,6 +262,9 @@ func (b *Backuper) downloadRemoteBackupInfo(ctx context.Context, backupName, tab
 	if remoteBackup.CAS != nil {
 		return storage.Backup{}, nil, nil, cas.ErrCASBackup
 	}
+	if remoteBackup.DataFormat == storage.CloudBackupDataFormat {
+		return storage.Backup{}, nil, nil, errors.Errorf("'%s' has ClickHouse Cloud / native BACKUP layout (.backup without metadata.json), it can't be downloaded, use `restore_remote %s` or `restore_cloud`", backupName, backupName)
+	}
 	// Download file manifest for Walk-free restore (falls back gracefully if not present)
 	backupManifest := b.dst.DownloadManifest(ctx, backupName)
 
