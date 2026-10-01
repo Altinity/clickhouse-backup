@@ -4,6 +4,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -20,6 +21,13 @@ func TestEmbeddedS3(t *testing.T) {
 	// CUSTOM backup creates folder in each disk, need to clear
 	env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/")
 	env.runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
+	// The scenario deletes the local backups before the remote backups. Verify
+	// that remote deletion also removes native data objects, including JSON files.
+	out, err := env.DockerExecOut("minio", "bash", "-ce",
+		"mc --insecure alias set local https://localhost:9000 access_key it_is_my_super_secret_key >/dev/null && "+
+			"mc --insecure ls --recursive local/clickhouse/backups_s3/")
+	r.NoError(err, "list native backup objects: %s", out)
+	r.Empty(strings.TrimSpace(out), "native backup objects remain after deleting local and remote backups")
 	// cleanup
 	env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3")
 	env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/backups_s3")
