@@ -87,8 +87,13 @@ func assertBackupNotComplete(r *require.Assertions, env *TestEnvironment, locati
 func assertBackupAbsent(r *require.Assertions, env *TestEnvironment, where, backupName string) {
 	out, _ := postActionAllowError(env, fmt.Sprintf("delete %s %s", where, backupName))
 	r.NotContains(out, "another clickhouse-backup", "delete must not see a stale pid lock: %s", out)
-	r.Contains(out, fmt.Sprintf("is not found on %s storage", where),
-		"the killed command ran to completion and left a usable %s backup %q, so /backup/kill did not cancel it: %s",
+	notFound := fmt.Sprintf("is not found on %s storage", where)
+	if !strings.Contains(out, notFound) {
+		// the server log tells a completed command from a canceled one which failed to clean up
+		out += "\n" + apiServerLogTail(env)
+	}
+	r.Contains(out, notFound,
+		"the killed command left a %s backup %q behind, it either ran to completion or failed to clean up after cancel: %s",
 		where, backupName, out)
 }
 
