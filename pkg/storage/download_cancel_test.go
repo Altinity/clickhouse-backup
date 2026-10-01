@@ -33,11 +33,11 @@ func (b *blockingReadCloser) Close() error {
 	return nil
 }
 
-type fakeRemoteFile struct{ size int64 }
+type fakeCancelFile struct{ size int64 }
 
-func (f fakeRemoteFile) Size() int64             { return f.size }
-func (f fakeRemoteFile) Name() string            { return "part.tar" }
-func (f fakeRemoteFile) LastModified() time.Time { return time.Time{} }
+func (f fakeCancelFile) Size() int64             { return f.size }
+func (f fakeCancelFile) Name() string            { return "part.tar" }
+func (f fakeCancelFile) LastModified() time.Time { return time.Time{} }
 
 // blockingRemote is a RemoteStorage whose download reader never returns data
 // until closed. Only the methods DownloadCompressedStream needs are
@@ -48,7 +48,7 @@ type blockingRemote struct {
 }
 
 func (m *blockingRemote) StatFile(_ context.Context, _ string) (RemoteFile, error) {
-	return fakeRemoteFile{size: 1024}, nil
+	return fakeCancelFile{size: 1024}, nil
 }
 
 func (m *blockingRemote) GetFileReaderWithLocalPath(_ context.Context, _, _ string, _ int64) (io.ReadCloser, error) {
@@ -74,7 +74,7 @@ type downloadPathRemote struct {
 func (m *downloadPathRemote) Kind() string { return "S3" }
 
 func (m *downloadPathRemote) Walk(ctx context.Context, _ string, _ bool, fn func(context.Context, RemoteFile) error) error {
-	return fn(ctx, fakeRemoteFile{size: 1024})
+	return fn(ctx, fakeCancelFile{size: 1024})
 }
 
 func (m *downloadPathRemote) GetFileReader(_ context.Context, _ string) (io.ReadCloser, error) {

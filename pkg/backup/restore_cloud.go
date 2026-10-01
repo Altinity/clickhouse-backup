@@ -789,7 +789,7 @@ func (b *Backuper) remoteCloudBackupPrefix(ctx context.Context, backupName strin
 			log.Warn().Msgf("can't close BackupDestination error: %v", closeErr)
 		}
 	}()
-	backupList, err := bd.BackupList(ctx, true, backupName)
+	backupList, err := bd.BackupList(ctx, true, backupName, b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return "", errors.Wrap(err, "bd.BackupList")
 	}
