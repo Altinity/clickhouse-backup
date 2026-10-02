@@ -693,6 +693,10 @@ func (b *Backuper) hasObjectDisksRemote(backup storage.Backup) bool {
 }
 
 func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backup) error {
+	// Native backups made on local disks contain ordinary files, not object pointers.
+	if backup.DiskTypes[b.cfg.ClickHouse.EmbeddedBackupDisk] == "local" {
+		return nil
+	}
 	if err := object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, b.cfg.ClickHouse.EmbeddedBackupDisk); err != nil {
 		return errors.Wrap(err, "object_disk.InitCredentialsAndConnections")
 	}

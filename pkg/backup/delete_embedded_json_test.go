@@ -30,11 +30,12 @@ import (
 // file is named serialization.json. The tool's own JSON files contain JSON and
 // must not be parsed as pointers.
 func TestCleanEmbeddedIncludesNativeJSON(t *testing.T) {
-	for _, location := range []string{"local", "remote", "remote_tar", "remote_gzip"} {
+	for _, location := range []string{"local", "remote", "remote_tar", "remote_gzip", "remote_local_disk"} {
 		t.Run(location, func(t *testing.T) {
 			ctx := context.Background()
 			var mu sync.Mutex
 			var deleted []string
+			var walked bool
 			remoteFiles := make(map[string][]byte)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
@@ -47,6 +48,7 @@ func TestCleanEmbeddedIncludesNativeJSON(t *testing.T) {
 						Contents    []embeddedCleanupS3Object
 					}{}
 					mu.Lock()
+					walked = true
 					var keys []string
 					for key := range remoteFiles {
 						if strings.HasPrefix(key, r.URL.Query().Get("prefix")) {
@@ -137,7 +139,19 @@ func TestCleanEmbeddedIncludesNativeJSON(t *testing.T) {
 				expected = append(expected, objectKey)
 			}
 			b := &Backuper{cfg: &config.Config{ClickHouse: config.ClickHouseConfig{EmbeddedBackupDisk: diskName}}}
-			backupMetadata := metadata.BackupMetadata{BackupName: "test-backup", DataFormat: DirectoryFormat}
+			backupMetadata := metadata.BackupMetadata{
+				BackupName: "test-backup", DataFormat: DirectoryFormat,
+				DiskTypes: map[string]string{diskName: "s3"},
+			}
+			if location == "remote_local_disk" {
+				backupMetadata.DiskTypes[diskName] = "local"
+				// A native backup on a local disk contains ordinary files, not
+				// object pointers, even when the backup is uploaded to S3.
+				for _, name := range pointerFiles {
+					files[name] = []byte("ordinary backup data, not an object pointer")
+				}
+				expected = nil
+			}
 			if location == "local" {
 				root := t.TempDir()
 				for name, body := range files {
@@ -150,7 +164,7 @@ func TestCleanEmbeddedIncludesNativeJSON(t *testing.T) {
 				}}))
 			} else {
 				compressionFormat := "none"
-				if format, compressed := strings.CutPrefix(location, "remote_"); compressed {
+				if format, compressed := strings.CutPrefix(location, "remote_"); compressed && location != "remote_local_disk" {
 					compressionFormat = format
 					backupMetadata.DataFormat = format
 					var archive bytes.Buffer
@@ -195,6 +209,9 @@ func TestCleanEmbeddedIncludesNativeJSON(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			require.ElementsMatch(t, expected, deleted)
+			if location == "remote_local_disk" {
+				require.False(t, walked, "local-disk backups must not enter object-pointer cleanup")
+			}
 		})
 	}
 }
