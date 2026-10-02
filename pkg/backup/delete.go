@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -17,6 +18,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/custom"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
@@ -421,6 +423,39 @@ func (b *Backuper) hasObjectDisksLocal(backupList []LocalBackup, backupName stri
 	return false
 }
 
+// shouldCleanEmbeddedFile excludes clickhouse-backup's records, but keeps
+// native data files such as serialization.json: on object disks those files
+// contain pointers to remote objects just like the other native backup files.
+func shouldCleanEmbeddedFile(relativePath string) bool {
+	// S3 Walk can return names with a leading slash after removing its prefix.
+	relativePath = strings.TrimLeft(filepath.ToSlash(relativePath), "/")
+	if relativePath == storage.ManifestFileName {
+		return false
+	}
+	// Access rules, server configuration and named collections are copied as
+	// ordinary files or archives, not as object-disk pointers.
+	for _, directory := range []string{"access", "configs", "named_collections"} {
+		if strings.HasPrefix(relativePath, directory+"/") {
+			return false
+		}
+		for _, extension := range config.ArchiveExtensions {
+			if relativePath == directory+"."+extension {
+				return false
+			}
+		}
+	}
+	if !strings.HasSuffix(relativePath, ".json") {
+		return true
+	}
+	// ON CLUSTER backups put each replica's files under shards/N/replicas/M/.
+	parts := strings.SplitN(relativePath, "/", 6)
+	if len(parts) == 6 && parts[0] == "shards" && parts[2] == "replicas" {
+		relativePath = parts[4] + "/" + parts[5]
+	}
+	// Local native payloads use data/; uploaded payloads use shadow/.
+	return strings.HasPrefix(relativePath, "data/") || strings.HasPrefix(relativePath, "shadow/")
+}
+
 func (b *Backuper) cleanLocalEmbedded(ctx context.Context, backup LocalBackup, disks []clickhouse.Disk) error {
 	for _, disk := range disks {
 		if disk.Name == b.cfg.ClickHouse.EmbeddedBackupDisk && disk.Type != "local" {
@@ -432,7 +467,11 @@ func (b *Backuper) cleanLocalEmbedded(ctx context.Context, backup LocalBackup, d
 				if err != nil {
 					return err
 				}
-				if !info.IsDir() && !strings.HasSuffix(filePath, ".json") && !strings.HasPrefix(filePath, path.Join(backupPath, "access")) {
+				relativePath, err := filepath.Rel(backupPath, filePath)
+				if err != nil {
+					return errors.Wrap(err, "filepath.Rel backupPath")
+				}
+				if !info.IsDir() && shouldCleanEmbeddedFile(relativePath) && !strings.HasPrefix(filePath, path.Join(backupPath, "access")) {
 					log.Debug().Msgf("object_disk.ReadMetadataFromFile(%s)", filePath)
 					meta, err := object_disk.ReadMetadataFromFile(filePath)
 					if err != nil {
@@ -616,6 +655,7 @@ func (b *Backuper) dryRunRemoveBackupRemote(ctx context.Context, backupName stri
 }
 
 func (b *Backuper) cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx context.Context, backup storage.Backup) error {
+	b.isEmbedded = strings.Contains(backup.Tags, "embedded")
 	var skip bool
 	var err error
 	if skip, err = b.skipIfSameLocalBackupPresent(ctx, backup.BackupName, backup.Tags); err != nil {
@@ -653,28 +693,46 @@ func (b *Backuper) hasObjectDisksRemote(backup storage.Backup) bool {
 }
 
 func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backup) error {
+	// Native backups made on local disks contain ordinary files, not object pointers.
+	if backup.DiskTypes[b.cfg.ClickHouse.EmbeddedBackupDisk] == "local" {
+		return nil
+	}
 	if err := object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, b.cfg.ClickHouse.EmbeddedBackupDisk); err != nil {
 		return errors.Wrap(err, "object_disk.InitCredentialsAndConnections")
 	}
 	return b.dst.Walk(ctx, backup.BackupName+"/", true, func(ctx context.Context, f storage.RemoteFile) error {
-		if !strings.HasSuffix(f.Name(), ".json") {
-			r, err := b.dst.GetFileReader(ctx, path.Join(backup.BackupName, f.Name()))
-			if err != nil {
-				return errors.Wrap(err, "b.dst.GetFileReader")
-			}
-			log.Debug().Msgf("object_disk.ReadMetadataFromReader(%s)", f.Name())
-			meta, err := object_disk.ReadMetadataFromReader(r, f.Name())
-			if err != nil {
-				return errors.Wrap(err, "object_disk.ReadMetadataFromReader")
-			}
-			for _, o := range meta.StorageObjects {
-				if err = object_disk.DeleteFile(ctx, b.cfg.ClickHouse.EmbeddedBackupDisk, o.ObjectPath); err != nil {
-					return errors.Wrap(err, "object_disk.DeleteFile")
-				}
-			}
+		if !shouldCleanEmbeddedFile(f.Name()) {
+			return nil
 		}
-		return nil
+		remotePath := path.Join(backup.BackupName, f.Name())
+		if extension, compressed := config.ArchiveExtensions[backup.DataFormat]; compressed && strings.HasSuffix(f.Name(), "."+extension) {
+			return b.dst.WalkCompressedStream(ctx, remotePath, func(ctx context.Context, name string, content io.Reader) error {
+				// Every file inside a native data archive is an object-disk pointer,
+				// including serialization.json. WalkCompressedStream closes each entry.
+				return b.cleanEmbeddedObjectsFromReader(ctx, io.NopCloser(content), name)
+			})
+		}
+		r, err := b.dst.GetFileReader(ctx, remotePath)
+		if err != nil {
+			return errors.Wrap(err, "b.dst.GetFileReader")
+		}
+		return b.cleanEmbeddedObjectsFromReader(ctx, r, f.Name())
 	})
+}
+
+func (b *Backuper) cleanEmbeddedObjectsFromReader(ctx context.Context, reader io.ReadCloser, name string) error {
+	log.Debug().Msgf("object_disk.ReadMetadataFromReader(%s)", name)
+	// ReadMetadataFromReader closes the reader on both success and failure.
+	meta, err := object_disk.ReadMetadataFromReader(reader, name)
+	if err != nil {
+		return errors.Wrapf(err, "object_disk.ReadMetadataFromReader(%s)", name)
+	}
+	for _, object := range meta.StorageObjects {
+		if err = object_disk.DeleteFile(ctx, b.cfg.ClickHouse.EmbeddedBackupDisk, object.ObjectPath); err != nil {
+			return errors.Wrap(err, "object_disk.DeleteFile")
+		}
+	}
+	return nil
 }
 
 // cleanBackupObjectDisks - recursive delete <object_disks_path>/<backupName>
