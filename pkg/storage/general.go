@@ -509,7 +509,16 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 	}
 	var reader io.ReadCloser
 	var getReaderErr error
-	if maxSpeed > 0 {
+	rangedUsed := false
+	// Ranged streaming keeps the object in memory chunks consumed in order (no temp file), so unlike the
+	// multipart path below it stays compatible with the rate limiter: the limiter paces the consumer and the
+	// prefetch window is bounded. Use it whenever the storage supports it and the object is large enough.
+	if rp, ok := bd.RemoteStorage.(RangedReaderProvider); ok {
+		reader, rangedUsed, getReaderErr = rp.GetFileRangedReader(ctx, remotePath, remoteFileInfo.Size())
+	}
+	if rangedUsed || getReaderErr != nil {
+		// reader (or error) already set by the ranged path
+	} else if maxSpeed > 0 {
 		// multipart download buffers the whole object to a temp file at full network
 		// speed, which bypasses the rate limiter (it would only throttle the local
 		// disk read). Force the streaming path so downloadLimiter governs the actual

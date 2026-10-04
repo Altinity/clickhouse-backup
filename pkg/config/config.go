@@ -219,6 +219,20 @@ type GCSConfig struct {
 	AllowMultipartDownload bool `yaml:"allow_multipart_download" envconfig:"GCS_ALLOW_MULTIPART_DOWNLOAD"`
 	// DownloadConcurrency - how many parts of one file download in parallel when allow_multipart_download enabled
 	DownloadConcurrency int `yaml:"download_concurrency" envconfig:"GCS_DOWNLOAD_CONCURRENCY"`
+	// RangedDownloadConcurrency - number of concurrent byte-range GETs used to stream ONE large archive during
+	// download, straight into the decompress/untar pipeline (no temporary file, works with
+	// download_max_bytes_per_second). One GCS stream tops out at a fixed rate, so a single big part is often the
+	// whole tail of a download; ranges of the same object scale with their number. 0 or 1 disables.
+	// When enabled it takes precedence over allow_multipart_download for objects >= ranged_download_min_size.
+	RangedDownloadConcurrency int `yaml:"ranged_download_concurrency" envconfig:"GCS_RANGED_DOWNLOAD_CONCURRENCY"`
+	// RangedDownloadMinSize - archives smaller than this (bytes) keep the single-stream reader
+	RangedDownloadMinSize int64 `yaml:"ranged_download_min_size" envconfig:"GCS_RANGED_DOWNLOAD_MIN_SIZE"`
+	// RangedDownloadChunkSize - bytes per range request, one chunk is one in-memory buffer
+	RangedDownloadChunkSize int64 `yaml:"ranged_download_chunk_size" envconfig:"GCS_RANGED_DOWNLOAD_CHUNK_SIZE"`
+	// RangedDownloadMaxBuffers - process-wide cap of chunk buffers in flight across ALL ranged readers, so peak
+	// extra memory is ranged_download_max_buffers * ranged_download_chunk_size no matter how many files are in
+	// flight; when only one big file is left at the tail it gets the whole budget
+	RangedDownloadMaxBuffers int `yaml:"ranged_download_max_buffers" envconfig:"GCS_RANGED_DOWNLOAD_MAX_BUFFERS"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
@@ -1014,6 +1028,11 @@ func DefaultConfig() *Config {
 			UploadBufferSize:       128 * 1024,
 			MultipartUploadMinSize: 1024 * 1024 * 1024,
 			DownloadConcurrency:    int(downloadConcurrency + 1),
+			// ranged streaming download is opt-in: ranged_download_concurrency: 8 enables it
+			RangedDownloadConcurrency: 0,
+			RangedDownloadMinSize:     256 * 1024 * 1024,
+			RangedDownloadChunkSize:   32 * 1024 * 1024,
+			RangedDownloadMaxBuffers:  64,
 		},
 		COS: COSConfig{
 			RowURL:                 "",
