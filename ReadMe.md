@@ -222,10 +222,13 @@ general:
   io_nice_priority: "idle" # IO niceness priority, to allow throttling DISK intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/ionice.1.html, on macOS mapped to setiopolicy_np(3): none=IOPOL_DEFAULT, realtime=IOPOL_IMPORTANT, best-effort=IOPOL_STANDARD, idle=IOPOL_THROTTLE
   
   rbac_backup_always: true # always backup RBAC objects
+  rbac_restore_always: false # RBAC_RESTORE_ALWAYS, always restore RBAC objects during `restore` and `restore_remote` like `--rbac`, disabled by default cause it overwrites existing RBAC objects and restarts clickhouse-server
   rbac_conflict_resolution: "recreate"  # RBAC_CONFLICT_RESOLUTION, action when RBAC object with the same name already exists during restore, allowed values "recreate", "ignore", "fail"
 
   config_backup_always: false # always backup CONFIGS, disabled by default cause configuration shall be manage via Infrastructure as Code approach
+  config_restore_always: false # CONFIG_RESTORE_ALWAYS, always restore CONFIGS during `restore` and `restore_remote` like `--configs`, disabled by default cause it overwrites existing configuration files and restarts clickhouse-server
   named_collections_backup_always: false # always backup Named Collections, disabled by default cause configuration shall be manage via Infrastructure as Code approach 
+  named_collections_restore_always: false # NAMED_COLLECTIONS_RESTORE_ALWAYS, always restore Named Collections during `restore` and `restore_remote` like `--named-collections`, disabled by default cause it drops and re-creates existing SQL named collections with the same names
   
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
@@ -1125,9 +1128,9 @@ OPTIONS:
    --data, -d                                                                                                                           Restore data only
    --rm, --drop                                                                                                                         Drop exists schema objects before restore
    -i, --ignore-dependencies                                                                                                            Ignore dependencies when drop exists schema objects
-   --rbac, --restore-rbac, --do-restore-rbac                                                                                            Restore RBAC related objects
-   --configs, --restore-configs, --do-restore-configs                                                                                   Restore 'clickhouse-server' CONFIG related files
-   --named-collections, --restore-named-collections, --do-restore-named-collections                                                     Restore named collections and settings
+   --rbac, --restore-rbac, --do-restore-rbac                                                                                            Restore RBAC related objects, enabled always when general->rbac_restore_always: true
+   --configs, --restore-configs, --do-restore-configs                                                                                   Restore 'clickhouse-server' CONFIG related files, enabled always when general->config_restore_always: true
+   --named-collections, --restore-named-collections, --do-restore-named-collections                                                     Restore named collections and settings, enabled always when general->named_collections_restore_always: true
    --rbac-only                                                                                                                          Restore RBAC related objects only, will skip restore data, will restore schema only if --schema added
    --configs-only                                                                                                                       Restore 'clickhouse-server' configuration files only, will skip restore data, will restore schema only if --schema added
    --named-collections-only                                                                                                             Restore named collections only, will skip restore data, will restore schema only if --schema added
@@ -1173,9 +1176,9 @@ OPTIONS:
    --data, -d                                                                                                                           Download and Restore data only
    --rm, --drop                                                                                                                         Drop schema objects before restore
    -i, --ignore-dependencies                                                                                                            Ignore dependencies when drop exists schema objects
-   --rbac, --restore-rbac, --do-restore-rbac                                                                                            Download and Restore RBAC related objects
-   --configs, --restore-configs, --do-restore-configs                                                                                   Download and Restore 'clickhouse-server' CONFIG related files
-   --named-collections, --restore-named-collections, --do-restore-named-collections                                                     Download and Restore named collections and settings
+   --rbac, --restore-rbac, --do-restore-rbac                                                                                            Download and Restore RBAC related objects, enabled always when general->rbac_restore_always: true
+   --configs, --restore-configs, --do-restore-configs                                                                                   Download and Restore 'clickhouse-server' CONFIG related files, enabled always when general->config_restore_always: true
+   --named-collections, --restore-named-collections, --do-restore-named-collections                                                     Download and Restore named collections and settings, enabled always when general->named_collections_restore_always: true
    --rbac-only                                                                                                                          Restore RBAC related objects only, will skip backup data, will backup schema only if --schema added
    --configs-only                                                                                                                       Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
    --named-collections-only                                                                                                             Restore named collections only, will skip restore data, will restore schema only if --schema added
