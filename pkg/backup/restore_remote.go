@@ -157,6 +157,7 @@ func (b *Backuper) restoreFromRemoteStreaming(backupName, tablePattern string, d
 	if err := b.prepareRestoreMapping(tableMapping, "table"); err != nil {
 		return pkgerrors.Wrap(err, "prepareRestoreMapping table")
 	}
+	b.applyRestoreAlways(&restoreRBAC, &restoreConfigs, &restoreNamedCollections)
 	doDownloadData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
 	doRestoreData := (!schemaOnly && !rbacOnly && !configsOnly) || dataOnly
 

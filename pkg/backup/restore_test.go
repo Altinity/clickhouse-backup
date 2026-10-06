@@ -374,3 +374,24 @@ func TestObjectDiskRestoreReasonIsDeterministic(t *testing.T) {
 			b.objectDiskRestoreReason(disks, backupMetadata))
 	}
 }
+
+func TestApplyRestoreAlways(t *testing.T) {
+	cfg := config.DefaultConfig()
+	b := &Backuper{cfg: cfg}
+	restoreRBAC, restoreConfigs, restoreNamedCollections := false, false, false
+	b.applyRestoreAlways(&restoreRBAC, &restoreConfigs, &restoreNamedCollections)
+	assert.False(t, restoreRBAC || restoreConfigs || restoreNamedCollections, "*_restore_always shall be disabled by default")
+
+	cfg.General.RBACRestoreAlways = true
+	cfg.General.NamedCollectionsRestoreAlways = true
+	b.applyRestoreAlways(&restoreRBAC, &restoreConfigs, &restoreNamedCollections)
+	assert.True(t, restoreRBAC)
+	assert.False(t, restoreConfigs)
+	assert.True(t, restoreNamedCollections)
+
+	// CLI flag stays enabled when config option is disabled
+	cfg.General.ConfigRestoreAlways = false
+	restoreConfigs = true
+	b.applyRestoreAlways(&restoreRBAC, &restoreConfigs, &restoreNamedCollections)
+	assert.True(t, restoreConfigs)
+}
