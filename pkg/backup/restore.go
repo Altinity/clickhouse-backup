@@ -75,6 +75,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	}
 
 	doRestoreData := (!schemaOnly && !rbacOnly && !configsOnly) || dataOnly
+	b.applyRestoreAlways(&restoreRBAC, &restoreConfigs, &restoreNamedCollections)
 
 	if err := b.validateEmbeddedOnClusterWorker(); err != nil {
 		return err
@@ -1207,6 +1208,19 @@ func (b *Backuper) restoreConfigs(backupName string, disks []clickhouse.Disk) er
 		return errors.Wrap(err, "restoreBackupRelatedDir for configs")
 	}
 	return nil
+}
+
+// applyRestoreAlways - enable rbac, configs and named collections restore via *_restore_always config options
+func (b *Backuper) applyRestoreAlways(restoreRBAC, restoreConfigs, restoreNamedCollections *bool) {
+	if b.cfg.General.RBACRestoreAlways {
+		*restoreRBAC = true
+	}
+	if b.cfg.General.ConfigRestoreAlways {
+		*restoreConfigs = true
+	}
+	if b.cfg.General.NamedCollectionsRestoreAlways {
+		*restoreNamedCollections = true
+	}
 }
 
 // restoreNamedCollections - restore named collections from backup

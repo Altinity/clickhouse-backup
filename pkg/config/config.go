@@ -142,15 +142,18 @@ type GeneralConfig struct {
 	// CallbackTimeout - max wait for the completion callback HTTP POST (duration string, default "5s").
 	CallbackTimeout string `yaml:"callback_timeout" envconfig:"CALLBACK_TIMEOUT"`
 	// WatchSchedules - named cron driven watch chains, alternative to watch_interval/full_interval, in env use ';' as separator between schedules, see https://github.com/Altinity/clickhouse-backup/issues/1354
-	WatchSchedules               WatchSchedules `yaml:"watch_schedules" envconfig:"WATCH_SCHEDULES"`
-	ShardedOperationMode         string         `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
-	CPUNicePriority              int            `yaml:"cpu_nice_priority" envconfig:"CPU_NICE_PRIORITY"`
-	IONicePriority               string         `yaml:"io_nice_priority" envconfig:"IO_NICE_PRIORITY"`
-	RBACBackupAlways             bool           `yaml:"rbac_backup_always" envconfig:"RBAC_BACKUP_ALWAYS"`
-	RBACConflictResolution       string         `yaml:"rbac_conflict_resolution" envconfig:"RBAC_CONFLICT_RESOLUTION"`
-	ConfigBackupAlways           bool           `yaml:"config_backup_always" envconfig:"CONFIG_BACKUP_ALWAYS"`
-	NamedCollectionsBackupAlways bool           `yaml:"named_collections_backup_always" envconfig:"NAMED_COLLECTIONS_BACKUP_ALWAYS"`
-	DeleteBatchSize              int            `yaml:"delete_batch_size" envconfig:"DELETE_BATCH_SIZE"`
+	WatchSchedules                WatchSchedules `yaml:"watch_schedules" envconfig:"WATCH_SCHEDULES"`
+	ShardedOperationMode          string         `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
+	CPUNicePriority               int            `yaml:"cpu_nice_priority" envconfig:"CPU_NICE_PRIORITY"`
+	IONicePriority                string         `yaml:"io_nice_priority" envconfig:"IO_NICE_PRIORITY"`
+	RBACBackupAlways              bool           `yaml:"rbac_backup_always" envconfig:"RBAC_BACKUP_ALWAYS"`
+	RBACRestoreAlways             bool           `yaml:"rbac_restore_always" envconfig:"RBAC_RESTORE_ALWAYS"`
+	RBACConflictResolution        string         `yaml:"rbac_conflict_resolution" envconfig:"RBAC_CONFLICT_RESOLUTION"`
+	ConfigBackupAlways            bool           `yaml:"config_backup_always" envconfig:"CONFIG_BACKUP_ALWAYS"`
+	ConfigRestoreAlways           bool           `yaml:"config_restore_always" envconfig:"CONFIG_RESTORE_ALWAYS"`
+	NamedCollectionsBackupAlways  bool           `yaml:"named_collections_backup_always" envconfig:"NAMED_COLLECTIONS_BACKUP_ALWAYS"`
+	NamedCollectionsRestoreAlways bool           `yaml:"named_collections_restore_always" envconfig:"NAMED_COLLECTIONS_RESTORE_ALWAYS"`
+	DeleteBatchSize               int            `yaml:"delete_batch_size" envconfig:"DELETE_BATCH_SIZE"`
 	// StatusHistorySize bounds how many finished operations are kept in the in-memory
 	// async status (`/backup/status`, `system.backup_actions`). Long living `watch`
 	// processes record one operation per iteration, so the history needs an upper bound.
