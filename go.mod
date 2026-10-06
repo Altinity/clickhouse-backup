@@ -31,7 +31,7 @@ require (
 	github.com/klauspost/pgzip v1.2.7
 	github.com/mattn/go-shellwords v1.0.16
 	github.com/mholt/archives v0.1.5
-	github.com/moby/moby/api v1.56.0
+	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.0
 	github.com/otiai10/copy v1.14.1
 	github.com/pkg/errors v0.9.1
