@@ -373,6 +373,7 @@ func (b *Backuper) uploadEpilogue(ctx context.Context, backupName string, delete
 			"upload_size": utils.FormatBytes(uint64(compressedDataSize) + uint64(metadataSize)),
 			"version":     backupVersion,
 		}).Msgf("done --%s", embeddedOnClusterWorkerFlag)
+		b.closeResumableState()
 		if err = b.RemoveOldBackupsLocal(ctx, false, nil); err != nil {
 			return errors.Wrap(err, "can't remove old local backups")
 		}
@@ -468,6 +469,8 @@ func (b *Backuper) uploadEpilogue(ctx context.Context, backupName string, delete
 		"version":          backupVersion,
 	}).Msg("done")
 
+	// the state file lives inside the local backup directory which retention below can remove
+	b.closeResumableState()
 	// Remote old backup retention
 	if err = b.RemoveOldBackupsRemote(ctx); err != nil {
 		return errors.Wrap(err, "can't remove old backups on remote storage")
@@ -484,6 +487,14 @@ func (b *Backuper) uploadEpilogue(ctx context.Context, backupName string, delete
 		}
 	}
 	return nil
+}
+
+// closeResumableState closes <backup>/<command>.state2 before the local backup directory is removed,
+// fix https://github.com/Altinity/clickhouse-backup/issues/1599
+func (b *Backuper) closeResumableState() {
+	if b.resume && b.resumableState != nil {
+		b.resumableState.Close()
+	}
 }
 
 func (b *Backuper) RemoveOldBackupsRemote(ctx context.Context) error {

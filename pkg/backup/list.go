@@ -432,6 +432,9 @@ func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk)
 			}
 			names, err := d.Readdirnames(-1)
 			if err != nil {
+				if closeErr := d.Close(); closeErr != nil {
+					log.Error().Msgf("can't close %s error: %v", backupPath, closeErr)
+				}
 				return nil, nil, errors.WithStack(err)
 			}
 			for _, name := range names {

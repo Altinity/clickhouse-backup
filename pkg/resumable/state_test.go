@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 // newTestState creates a State backed by a real bolt DB in a temp dir.
@@ -110,5 +113,36 @@ func TestAppendThenIsAlreadyProcessed(t *testing.T) {
 	}
 	if size != 4096 {
 		t.Errorf("expected size=4096, got %d", size)
+	}
+}
+
+// TestCloseReleasesStateFileAndIsIdempotent verifies that Close releases the bolt file before the caller removes
+// the backup directory and that the deferred second Close and later calls are no-ops, see issue #1599
+func TestCloseReleasesStateFileAndIsIdempotent(t *testing.T) {
+	s := newTestState(t)
+	if err := s.AppendToState("shard1/part-0", 1024); err != nil {
+		t.Fatalf("AppendToState: %v", err)
+	}
+	s.Close()
+	if s.db != nil {
+		t.Fatal("expected s.db to be nil after Close")
+	}
+	// the exclusive flock must be released, otherwise a second open would time out
+	db, err := bolt.Open(s.stateFile, 0600, &bolt.Options{Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("state file is still locked after Close: %v", err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatalf("db.Close: %v", err)
+	}
+	s.Close()
+	if err = s.AppendToState("shard1/part-1", 1024); err != nil {
+		t.Errorf("expected nil error from AppendToState after Close, got %v", err)
+	}
+	if processed, _, err := s.IsAlreadyProcessed("shard1/part-0"); err != nil || processed {
+		t.Errorf("expected (false, nil) from IsAlreadyProcessed after Close, got (%v, %v)", processed, err)
+	}
+	if err = os.RemoveAll(filepath.Dir(s.stateFile)); err != nil {
+		t.Fatalf("RemoveAll after Close: %v", err)
 	}
 }
