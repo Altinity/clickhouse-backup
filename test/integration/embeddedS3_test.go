@@ -61,6 +61,9 @@ func TestEmbeddedS3Cleanup(t *testing.T) {
 		"SETTINGS min_bytes_for_wide_part=0, min_rows_for_wide_part=0, ratio_of_defaults_for_sparse_serialization=0.9")
 	env.queryWithNoError(t, r, "INSERT INTO "+dbName+".t1 SELECT number, 0 FROM numbers(1000)")
 	configFile := "/etc/clickhouse-backup/config-s3-embedded.yml"
+	// backups_s3 endpoint is https://minio:9000/clickhouse/backups_s3/{cluster}/{shard}/
+	var objectPrefix string
+	r.NoError(env.ch.SelectSingleRowNoCtx(&objectPrefix, "SELECT concat('backups_s3/', getMacro('cluster'), '/', getMacro('shard'), '/')"))
 
 	for _, first := range []string{"local", "remote"} {
 		t.Run(first+"_first", func(t *testing.T) {
@@ -98,7 +101,7 @@ func TestEmbeddedS3Cleanup(t *testing.T) {
 			listObjects := func() map[string]bool {
 				out, err := env.DockerExecOut("minio", "bash", "-ce",
 					"mc --insecure alias set local https://localhost:9000 access_key it_is_my_super_secret_key >/dev/null && "+
-						"mc --insecure ls --recursive --json local/clickhouse/backups_s3/cluster/0/")
+						"mc --insecure ls --recursive --json local/clickhouse/"+objectPrefix)
 				r.NoError(err, "list native objects: %s", out)
 				keys := make(map[string]bool)
 				for _, line := range strings.Split(strings.TrimSpace(out), "\n") {

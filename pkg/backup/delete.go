@@ -655,7 +655,8 @@ func (b *Backuper) dryRunRemoveBackupRemote(ctx context.Context, backupName stri
 }
 
 func (b *Backuper) cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx context.Context, backup storage.Backup) error {
-	b.isEmbedded = strings.Contains(backup.Tags, "embedded")
+	// local variable, b.isEmbedded belongs to the current command, retention inside `upload` walks other backups
+	isEmbedded := strings.Contains(backup.Tags, "embedded")
 	var skip bool
 	var err error
 	if skip, err = b.skipIfSameLocalBackupPresent(ctx, backup.BackupName, backup.Tags); err != nil {
@@ -663,14 +664,14 @@ func (b *Backuper) cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx con
 	}
 	log.Debug().Str("backupName", backup.BackupName).Str("tags", backup.Tags).Msgf("b.skipIfSameLocalBackupPresent return skip=%v", skip)
 	if !skip {
-		if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+		if isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 			if err = b.cleanRemoteEmbedded(ctx, backup); err != nil {
 				log.Warn().Msgf("b.cleanRemoteEmbedded return error: %v", err)
 				return err
 			}
 			return nil
 		}
-		if b.hasObjectDisksRemote(backup) || (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "") {
+		if b.hasObjectDisksRemote(backup) || (isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "") {
 			startTime := time.Now()
 			if deletedKeys, deleteErr := b.cleanBackupObjectDisks(ctx, backup.BackupName); deleteErr != nil {
 				log.Warn().Msgf("b.cleanBackupObjectDisks return error: %v", deleteErr)
