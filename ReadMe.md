@@ -431,6 +431,12 @@ gcs:
   # GCS_ALLOW_MULTIPART_DOWNLOAD, download each file as parallel range reads (part size is `chunk_size`) into a temporary file, requires additional disk space, see https://github.com/Altinity/clickhouse-backup/issues/1028
   allow_multipart_download: false
   download_concurrency: 1      # GCS_DOWNLOAD_CONCURRENCY, how many parts of one file download in parallel when `allow_multipart_download` enabled, default `max(CPU/2, 1) + 1`
+  # GCS_RANGED_DOWNLOAD_CONCURRENCY, stream one large archive as N concurrent byte-range requests straight into decompression, without a temporary file and compatible with `download_max_bytes_per_second`,
+  # one GCS read stream has a fixed ceiling, so a single big part is often the whole tail of a download, 0 or 1 disables, takes precedence over `allow_multipart_download` for archives >= `ranged_download_min_size`, see https://github.com/Altinity/clickhouse-backup/issues/1592
+  ranged_download_concurrency: 0
+  ranged_download_min_size: 268435456  # GCS_RANGED_DOWNLOAD_MIN_SIZE, archives smaller than this size in bytes keep the single-stream reader, at least 2 * `ranged_download_chunk_size`
+  ranged_download_chunk_size: 33554432 # GCS_RANGED_DOWNLOAD_CHUNK_SIZE, bytes per range request, one chunk is one in-memory buffer
+  ranged_download_max_buffers: 64      # GCS_RANGED_DOWNLOAD_MAX_BUFFERS, process-wide limit of chunk buffers in flight for all ranged readers, so extra memory is at most `ranged_download_max_buffers` * `ranged_download_chunk_size` (2GiB by default) however many archives are in flight
   # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
   object_labels: {}
