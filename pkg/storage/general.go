@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
@@ -30,6 +31,7 @@ import (
 	"github.com/mholt/archives"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
 
 const (
@@ -61,6 +63,9 @@ type BackupDestination struct {
 	limiterMu                 sync.Mutex
 	uploadRateLimiter         *bwlimit.Limiter
 	downloadRateLimiter       *bwlimit.Limiter
+	// fileTransferConcurrency, fileTransferSlots - see SetFileTransfers
+	fileTransferConcurrency int
+	fileTransferSlots       *semaphore.Weighted
 }
 
 func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Backup, cfg *config.Config, retrierClassifier retrier.Classifier) error {
@@ -748,102 +753,113 @@ func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLoc
 func (bd *BackupDestination) DownloadPath(ctx context.Context, remotePath string, localPath string, RetriesOnFailure int, RetriesDuration time.Duration, RetriesJitter int8, RetrierClassifier retrier.Classifier, maxSpeed uint64) (int64, error) {
 	downloadedBytes := int64(0)
 	limiter := bd.DownloadLimiter(maxSpeed)
-	walkErr := bd.Walk(ctx, remotePath, true, func(ctx context.Context, f RemoteFile) error {
+	transfers := bd.newFileTransfers(ctx)
+	walkErr := bd.Walk(transfers.ctx, remotePath, true, func(_ context.Context, f RemoteFile) error {
 		if bd.Kind() == "SFTP" && (f.Name() == "." || f.Name() == "..") {
 			return nil
 		}
-		retry := retrier.New(retrier.ExponentialBackoff(RetriesOnFailure, common.AddRandomJitter(RetriesDuration, RetriesJitter)), RetrierClassifier)
-		err := retry.RunCtx(ctx, func(ctx context.Context) error {
-			r, err := bd.GetFileReader(ctx, path.Join(remotePath, f.Name()))
-			if err != nil {
-				log.Error().Err(err).Send()
-				return errors.Wrap(err, "DownloadPath GetFileReader")
-			}
-			r = bwlimit.ReadCloser(ctx, r, limiter)
-			var closeSrcOnce sync.Once
-			var srcCloseErr error
-			closeSrc := func() { closeSrcOnce.Do(func() { srcCloseErr = r.Close() }) }
-			// A stalled read is not interruptible by context alone: copyWithBuffer
-			// blocks in Read and never re-checks ctx, so /backup/kill cancels the
-			// context but the copy keeps running. Force-close the source reader on
-			// cancellation so the blocked read returns and the copy unwinds.
-			watchDone := make(chan struct{})
-			go func() {
-				select {
-				case <-ctx.Done():
-					closeSrc()
-				case <-watchDone:
+		return transfers.run(func(ctx context.Context) error {
+			retry := retrier.New(retrier.ExponentialBackoff(RetriesOnFailure, common.AddRandomJitter(RetriesDuration, RetriesJitter)), RetrierClassifier)
+			err := retry.RunCtx(ctx, func(ctx context.Context) error {
+				r, err := bd.GetFileReader(ctx, path.Join(remotePath, f.Name()))
+				if err != nil {
+					log.Error().Err(err).Send()
+					return errors.Wrap(err, "DownloadPath GetFileReader")
 				}
-			}()
-			defer close(watchDone)
-			dstFilePath := path.Join(localPath, f.Name())
-			dstDirPath, _ := path.Split(dstFilePath)
-			if err := os.MkdirAll(dstDirPath, 0750); err != nil {
-				log.Error().Err(err).Send()
-				return errors.Wrap(err, "DownloadPath MkdirAll")
-			}
-			dst, err := os.Create(dstFilePath)
-			if err != nil {
-				log.Error().Err(err).Send()
-				return errors.Wrap(err, "DownloadPath Create")
-			}
-			if copyBytes, copyErr := bd.copyWithBuffer(dst, r); copyErr != nil {
-				log.Error().Err(copyErr).Send()
-				return errors.Wrap(copyErr, "DownloadPath io.Copy")
-			} else {
-				downloadedBytes += copyBytes
-			}
-			if dstCloseErr := dst.Close(); dstCloseErr != nil {
-				log.Error().Err(dstCloseErr).Send()
-				return errors.Wrap(dstCloseErr, "DownloadPath dst.Close")
-			}
-			if closeSrc(); srcCloseErr != nil {
-				log.Error().Err(srcCloseErr).Send()
-				return errors.Wrap(srcCloseErr, "DownloadPath r.Close")
-			}
+				r = bwlimit.ReadCloser(ctx, r, limiter)
+				var closeSrcOnce sync.Once
+				var srcCloseErr error
+				closeSrc := func() { closeSrcOnce.Do(func() { srcCloseErr = r.Close() }) }
+				// A stalled read is not interruptible by context alone: copyWithBuffer
+				// blocks in Read and never re-checks ctx, so /backup/kill cancels the
+				// context but the copy keeps running. Force-close the source reader on
+				// cancellation so the blocked read returns and the copy unwinds.
+				watchDone := make(chan struct{})
+				go func() {
+					select {
+					case <-ctx.Done():
+						closeSrc()
+					case <-watchDone:
+					}
+				}()
+				defer close(watchDone)
+				dstFilePath := path.Join(localPath, f.Name())
+				dstDirPath, _ := path.Split(dstFilePath)
+				if err := os.MkdirAll(dstDirPath, 0750); err != nil {
+					log.Error().Err(err).Send()
+					return errors.Wrap(err, "DownloadPath MkdirAll")
+				}
+				dst, err := os.Create(dstFilePath)
+				if err != nil {
+					log.Error().Err(err).Send()
+					return errors.Wrap(err, "DownloadPath Create")
+				}
+				if copyBytes, copyErr := bd.copyWithBuffer(dst, r); copyErr != nil {
+					log.Error().Err(copyErr).Send()
+					return errors.Wrap(copyErr, "DownloadPath io.Copy")
+				} else {
+					atomic.AddInt64(&downloadedBytes, copyBytes)
+				}
+				if dstCloseErr := dst.Close(); dstCloseErr != nil {
+					log.Error().Err(dstCloseErr).Send()
+					return errors.Wrap(dstCloseErr, "DownloadPath dst.Close")
+				}
+				if closeSrc(); srcCloseErr != nil {
+					log.Error().Err(srcCloseErr).Send()
+					return errors.Wrap(srcCloseErr, "DownloadPath r.Close")
+				}
 
+				return nil
+			})
+			if err != nil {
+				return errors.Wrap(err, "DownloadPath retry")
+			}
 			return nil
 		})
-		if err != nil {
-			return errors.Wrap(err, "DownloadPath retry")
-		}
-		return nil
 	})
-	return downloadedBytes, walkErr
+	walkErr = transfers.wait(walkErr)
+	return atomic.LoadInt64(&downloadedBytes), walkErr
 }
 
 func (bd *BackupDestination) UploadPath(ctx context.Context, baseLocalPath string, files []string, remotePath string, RetriesOnFailure int, RetriesDuration time.Duration, RetriesJitter int8, RertierClassifier retrier.Classifier, maxSpeed uint64) (int64, error) {
 	totalBytes := int64(0)
 	limiter := bd.UploadLimiter(maxSpeed)
+	transfers := bd.newFileTransfers(ctx)
+	var err error
 	for _, filename := range files {
-		fInfo, err := os.Stat(filepath.Clean(path.Join(baseLocalPath, filename)))
-		if err != nil {
-			return 0, errors.Wrap(err, "UploadPath Stat")
-		}
-		if fInfo.Mode().IsRegular() {
-			totalBytes += fInfo.Size()
-		}
-		f, err := os.Open(filepath.Clean(path.Join(baseLocalPath, filename)))
-		if err != nil {
-			return 0, errors.Wrap(err, "UploadPath Open")
-		}
-		closeFile := func() {
-			if err := f.Close(); err != nil {
-				log.Warn().Msgf("can't close UploadPath file descriptor %v: %v", f, err)
+		if err = transfers.run(func(ctx context.Context) error {
+			fInfo, err := os.Stat(filepath.Clean(path.Join(baseLocalPath, filename)))
+			if err != nil {
+				return errors.Wrap(err, "UploadPath Stat")
 			}
+			if fInfo.Mode().IsRegular() {
+				atomic.AddInt64(&totalBytes, fInfo.Size())
+			}
+			f, err := os.Open(filepath.Clean(path.Join(baseLocalPath, filename)))
+			if err != nil {
+				return errors.Wrap(err, "UploadPath Open")
+			}
+			defer func() {
+				if err := f.Close(); err != nil {
+					log.Warn().Msgf("can't close UploadPath file descriptor %v: %v", f, err)
+				}
+			}()
+			retry := retrier.New(retrier.ExponentialBackoff(RetriesOnFailure, common.AddRandomJitter(RetriesDuration, RetriesJitter)), RertierClassifier)
+			err = retry.RunCtx(ctx, func(ctx context.Context) error {
+				return bd.PutFile(ctx, path.Join(remotePath, filename), bwlimit.ReadCloser(ctx, f, limiter), fInfo.Size())
+			})
+			if err != nil {
+				return errors.Wrap(err, "UploadPath PutFile")
+			}
+			return nil
+		}); err != nil {
+			break
 		}
-		retry := retrier.New(retrier.ExponentialBackoff(RetriesOnFailure, common.AddRandomJitter(RetriesDuration, RetriesJitter)), RertierClassifier)
-		err = retry.RunCtx(ctx, func(ctx context.Context) error {
-			return bd.PutFile(ctx, path.Join(remotePath, filename), bwlimit.ReadCloser(ctx, f, limiter), fInfo.Size())
-		})
-		if err != nil {
-			closeFile()
-			return 0, errors.Wrap(err, "UploadPath PutFile")
-		}
-		closeFile()
 	}
-
-	return totalBytes, nil
+	if err = transfers.wait(err); err != nil {
+		return 0, err
+	}
+	return atomic.LoadInt64(&totalBytes), nil
 }
 
 // copyWithBuffer copies src to dst using io.CopyBuffer with a configurable buffer size

@@ -191,7 +191,9 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			if n := b.downloadTransferConcurrency(); n > 0 {
 				b.downloadTransferSem = semaphore.NewWeighted(int64(n))
 				b.downloadPartLimit = n
+				b.dst.SetFileTransfers(b.cfg.General.FileTransferConcurrency, b.downloadTransferSem)
 				defer func() {
+					b.dst.SetFileTransfers(0, nil)
 					b.downloadTransferSem = nil
 					b.downloadPartLimit = 0
 				}()

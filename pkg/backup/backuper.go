@@ -80,6 +80,8 @@ type Backuper struct {
 	// downloadTransferSem - global budget of concurrent part transfers shared by all tables of one download, see issues/1591
 	downloadTransferSem *semaphore.Weighted
 	downloadPartLimit   int
+	// uploadTransferSem - budget of concurrent part and file transfers of one upload when file_transfer_concurrency > 1, see issues/1454
+	uploadTransferSem *semaphore.Weighted
 }
 
 func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {

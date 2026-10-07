@@ -92,6 +92,11 @@ type GeneralConfig struct {
 	// see https://github.com/Altinity/clickhouse-backup/issues/1591
 	DownloadTableOrder string `yaml:"download_table_order" envconfig:"DOWNLOAD_TABLE_ORDER"`
 	UploadConcurrency  uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	// FileTransferConcurrency - max concurrent file streams inside one data part with `compression_format: none`, 1 (default) keeps
+	// the sequential transfer; extra streams only take free slots of the global transfer budget (download_transfer_concurrency for
+	// download, upload_concurrency^2 for upload), so they never raise the total number of connections,
+	// see https://github.com/Altinity/clickhouse-backup/issues/1454
+	FileTransferConcurrency int `yaml:"file_transfer_concurrency" envconfig:"FILE_TRANSFER_CONCURRENCY"`
 	// RebaseConcurrency - how many tables process in parallel during `rebase` command execution
 	RebaseConcurrency uint8 `yaml:"rebase_concurrency" envconfig:"REBASE_CONCURRENCY"`
 	// RebaseBeforeRemoveOldRemote - when `backups_to_keep_remote` deletion is blocked by `required_backup` links from kept backups,
@@ -938,6 +943,7 @@ func DefaultConfig() *Config {
 			UploadConcurrency:                   uploadConcurrency,
 			DownloadConcurrency:                 downloadConcurrency,
 			DownloadTableOrder:                  "largest_first",
+			FileTransferConcurrency:             1,
 			RebaseConcurrency:                   downloadConcurrency,
 			ObjectDiskServerSideCopyConcurrency: objectDiskServerSideCopyConcurrency,
 			RestoreSchemaOnCluster:              "",
