@@ -17,18 +17,22 @@ import (
 func TestDownloadTransferConcurrency(t *testing.T) {
 	testCases := []struct {
 		name     string
+		storage  string
 		dc       uint8
 		transfer int
 		expected int
 	}{
-		{"auto is download_concurrency^2", 4, 0, 16},
-		{"auto with download_concurrency=1", 1, 0, 1},
-		{"explicit value", 4, 64, 64},
-		{"negative is legacy", 4, -1, 0},
+		{"auto is download_concurrency^2", "s3", 4, 0, 16},
+		{"auto with download_concurrency=1", "s3", 1, 0, 1},
+		{"explicit value", "s3", 4, 64, 64},
+		{"negative is legacy", "s3", 4, -1, 0},
+		{"ftp is capped by its connection pool", "ftp", 8, 0, 2 * 8},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := config.DefaultConfig()
+			cfg.General.RemoteStorage = tc.storage
+			cfg.FTP.Concurrency = tc.dc
 			cfg.General.DownloadConcurrency = tc.dc
 			cfg.General.DownloadTransferConcurrency = tc.transfer
 			b := &Backuper{cfg: cfg}

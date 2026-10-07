@@ -20,6 +20,11 @@ func (b *Backuper) downloadTransferConcurrency() int {
 		dc := max(int(b.cfg.General.DownloadConcurrency), 1)
 		n = dc * dc
 	}
+	// a recursive FTP Walk holds one pooled connection while its callbacks borrow another one, so one slot needs
+	// up to 2 connections of the pool of 4*ftp.concurrency, a bigger budget can exhaust the pool and hang
+	if b.cfg.General.RemoteStorage == "ftp" && b.cfg.FTP.Concurrency > 1 {
+		n = min(n, 2*int(b.cfg.FTP.Concurrency))
+	}
 	return max(n, 0)
 }
 
