@@ -19,6 +19,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/eapache/go-resiliency/retrier"
 	"github.com/pkg/errors"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -76,6 +77,9 @@ type Backuper struct {
 	localPartIndex *localPartIndex
 	// skippedMissingParts - data parts skipped by allow_missing_files_on_download during the current download, see issues/1456
 	skippedMissingParts atomic.Uint64
+	// downloadTransferSem - global budget of concurrent part transfers shared by all tables of one download, see issues/1591
+	downloadTransferSem *semaphore.Weighted
+	downloadPartLimit   int
 }
 
 func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {

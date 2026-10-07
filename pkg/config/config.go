@@ -83,7 +83,15 @@ type GeneralConfig struct {
 	DisableEnvironmentOverride bool  `yaml:"disable_environment_override" ignored:"true"`
 	AllowEmptyBackups          bool  `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
 	DownloadConcurrency        uint8 `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
-	UploadConcurrency          uint8 `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	// DownloadTransferConcurrency - global limit of concurrent part/archive transfers of one `download`, shared by all tables,
+	// so the last remaining table can use the whole budget instead of only `download_concurrency` slots of its own;
+	// 0 means auto = download_concurrency^2 (the current worst case, so no extra connections), a negative value keeps the legacy per-table limit,
+	// see https://github.com/Altinity/clickhouse-backup/issues/1591
+	DownloadTransferConcurrency int `yaml:"download_transfer_concurrency" envconfig:"DOWNLOAD_TRANSFER_CONCURRENCY"`
+	// DownloadTableOrder - order in which tables are dispatched by `download`: `largest_first` (default) or `metadata` (legacy),
+	// see https://github.com/Altinity/clickhouse-backup/issues/1591
+	DownloadTableOrder string `yaml:"download_table_order" envconfig:"DOWNLOAD_TABLE_ORDER"`
+	UploadConcurrency  uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
 	// RebaseConcurrency - how many tables process in parallel during `rebase` command execution
 	RebaseConcurrency uint8 `yaml:"rebase_concurrency" envconfig:"REBASE_CONCURRENCY"`
 	// RebaseBeforeRemoveOldRemote - when `backups_to_keep_remote` deletion is blocked by `required_backup` links from kept backups,
@@ -701,6 +709,9 @@ func ValidateConfig(cfg *Config) error {
 			cfg.GCS.DownloadConcurrency,
 		)
 	}
+	if cfg.General.DownloadTableOrder != "largest_first" && cfg.General.DownloadTableOrder != "metadata" {
+		return errors.Errorf("`download_table_order` shall be `largest_first` or `metadata`, current value: %s", cfg.General.DownloadTableOrder)
+	}
 	if cfg.GetCompressionFormat() == "unknown" {
 		return errors.Errorf("'%s' is unknown remote storage", cfg.General.RemoteStorage)
 	}
@@ -926,6 +937,7 @@ func DefaultConfig() *Config {
 			LogLevel:                            "info",
 			UploadConcurrency:                   uploadConcurrency,
 			DownloadConcurrency:                 downloadConcurrency,
+			DownloadTableOrder:                  "largest_first",
 			RebaseConcurrency:                   downloadConcurrency,
 			ObjectDiskServerSideCopyConcurrency: objectDiskServerSideCopyConcurrency,
 			RestoreSchemaOnCluster:              "",

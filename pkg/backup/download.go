@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
@@ -184,14 +185,23 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	metadataSize := prologue.metadataSize
 
 	if doDownloadData {
-		log.Debug().Str("backupName", backupName).Msgf("prepare table DATA concurrent semaphore with concurrency=%d len(tableMetadataAfterDownload)=%d", b.cfg.General.DownloadConcurrency, len(tableMetadataAfterDownload))
+		// one transfer budget shared by all tables of this Download; the RequiredBackup Download runs
+		// sequentially before this point, so budgets never stack
+		if b.downloadTransferSem == nil {
+			if n := b.downloadTransferConcurrency(); n > 0 {
+				b.downloadTransferSem = semaphore.NewWeighted(int64(n))
+				b.downloadPartLimit = n
+				defer func() {
+					b.downloadTransferSem = nil
+					b.downloadPartLimit = 0
+				}()
+			}
+		}
+		log.Debug().Str("backupName", backupName).Msgf("prepare table DATA concurrent semaphore with concurrency=%d len(tableMetadataAfterDownload)=%d download_transfer_concurrency=%d download_table_order=%s", b.cfg.General.DownloadConcurrency, len(tableMetadataAfterDownload), b.downloadPartLimit, b.cfg.General.DownloadTableOrder)
 		dataGroup, dataCtx := errgroup.WithContext(ctx)
 		dataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
 
-		for i, tableMetadata := range tableMetadataAfterDownload {
-			if tableMetadata == nil || tableMetadata.MetadataOnly {
-				continue
-			}
+		for _, i := range downloadTableOrder(tableMetadataAfterDownload, b.cfg.General.DownloadTableOrder) {
 			idx := i
 			dataGroup.Go(func() error {
 				start := time.Now()
@@ -971,7 +981,7 @@ func (b *Backuper) skipMissingPart(err error, missing *missingParts, table metad
 func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, disks []clickhouse.Disk, hardlinkExistsFiles bool, manifest *storage.ManifestReader) (uint64, error) {
 	dbAndTableDir := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 	dataGroup, dataCtx := errgroup.WithContext(ctx)
-	dataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
+	dataGroup.SetLimit(b.downloadPartGroupLimit())
 	downloadedSize := uint64(0)
 	var isRebalancedAfterHardLinks atomic.Bool
 	missing := &missingParts{}
@@ -1011,6 +1021,11 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 				downloadOffset[disk] += 1
 				tableRemoteFile := path.Join(remoteBackup.BackupName, b.embeddedClusterFilesPrefix, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table), archiveFile)
 				dataGroup.Go(func() error {
+					release, slotErr := acquireTransferSlot(dataCtx, b.downloadTransferSem)
+					if slotErr != nil {
+						return slotErr
+					}
+					defer release()
 					log.Debug().Msgf("start download %s", tableRemoteFile)
 					if b.resume {
 						isProcessed, downloadedFileSize, resumeErr := b.resumableState.IsAlreadyProcessed(tableRemoteFile)
@@ -1141,6 +1156,11 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 				capturedDisk := disk
 				idx := i
 				dataGroup.Go(func() error {
+					release, slotErr := acquireTransferSlot(dataCtx, b.downloadTransferSem)
+					if slotErr != nil {
+						return slotErr
+					}
+					defer release()
 					log.Debug().Msgf("start %s -> %s", partRemotePath, partLocalPath)
 					if b.resume {
 						isProcesses, pathSize, resumeErr := b.resumableState.IsAlreadyProcessed(partRemotePath)
@@ -1814,7 +1834,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 	downloadedDiffBytes := int64(0)
 	downloadedDiffParts := uint32(0)
 	downloadDiffGroup, downloadDiffCtx := errgroup.WithContext(ctx)
-	downloadDiffGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
+	downloadDiffGroup.SetLimit(b.downloadPartGroupLimit())
 	missing := &missingParts{}
 	diffRemoteFilesCache := map[string]*sync.Mutex{}
 	diffRemoteFilesLock := &sync.Mutex{}
@@ -1914,6 +1934,11 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 				capturedDisk := disk
 				idx := i
 				downloadDiffGroup.Go(func() error {
+					release, slotErr := acquireTransferSlot(downloadDiffCtx, b.downloadTransferSem)
+					if slotErr != nil {
+						return slotErr
+					}
+					defer release()
 					if hardlinkExistsFiles {
 						found, size, err := b.hardlinkIfLocalPartExistsAndChecksumEqual(remoteBackup.BackupName, table, &partForDownload, disks, capturedDisk, dbAndTableDir, livePartsByHash)
 						if err != nil {

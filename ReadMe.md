@@ -135,6 +135,8 @@ general:
   # Concurrency means parallel tables and parallel parts inside tables
   # For example, 4 means max 4 parallel tables and 4 parallel parts inside one table, so equals 16 concurrent streams
   download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is floor(AVAILABLE_CPU_CORES / 2). If result is < 1, then 1.
+  download_transfer_concurrency: 0 # DOWNLOAD_TRANSFER_CONCURRENCY, global limit of concurrent part/archive transfers of one `download`, shared by all tables, so the last remaining table can use the slots released by finished tables instead of draining with only `download_concurrency` streams, 0 means download_concurrency^2 (the same maximum number of connections as the nested table/part limits), a negative value restores the legacy per-table limit
+  download_table_order: largest_first # DOWNLOAD_TABLE_ORDER, `largest_first` or `metadata`, order in which `download` dispatches tables; `largest_first` starts big tables first, so they are not left to drain alone at the end of the download, only the dispatch order changes, restore order is not affected
   upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2)). If result is < 1, then 1.
   rebase_concurrency: 1          # REBASE_CONCURRENCY, max 255, how many tables process in parallel during `rebase` command, by default the same as download_concurrency.
   
