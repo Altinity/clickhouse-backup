@@ -26,6 +26,7 @@ import (
 	"github.com/eapache/go-resiliency/retrier"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/filesystemhelper"
@@ -148,7 +149,18 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	compressedDataSize := int64(0)
 	metadataSize := int64(0)
 
-	log.Debug().Msgf("prepare table concurrent semaphore with concurrency=%d len(tablesForUpload)=%d", b.cfg.General.UploadConcurrency, len(tablesForUpload))
+	if b.cfg.General.FileTransferConcurrency > 1 {
+		// upload_concurrency^2 is the most part transfers the nested table/part errgroups can run,
+		// extra file streams only take slots left idle by parts, so the total never grows
+		uc := int64(b.cfg.General.UploadConcurrency)
+		b.uploadTransferSem = semaphore.NewWeighted(uc * uc)
+		b.dst.SetFileTransfers(b.cfg.General.FileTransferConcurrency, b.uploadTransferSem)
+		defer func() {
+			b.dst.SetFileTransfers(0, nil)
+			b.uploadTransferSem = nil
+		}()
+	}
+	log.Debug().Msgf("prepare table concurrent semaphore with concurrency=%d len(tablesForUpload)=%d file_transfer_concurrency=%d", b.cfg.General.UploadConcurrency, len(tablesForUpload), b.cfg.General.FileTransferConcurrency)
 	uploadGroup, uploadCtx := errgroup.WithContext(ctx)
 	uploadGroup.SetLimit(int(b.cfg.General.UploadConcurrency))
 
@@ -821,6 +833,11 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 				remotePath := path.Join(baseRemoteDataPath, diskName)
 				remotePathFull := path.Join(remotePath, partSuffix)
 				dataGroup.Go(func() error {
+					release, slotErr := acquireTransferSlot(ctx, b.uploadTransferSem)
+					if slotErr != nil {
+						return slotErr
+					}
+					defer release()
 					if b.resume {
 						isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(remotePathFull)
 						if resumeErr != nil {
@@ -874,6 +891,11 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 				remoteDataFile := path.Join(baseRemoteDataPath, fileName)
 				localFiles := partFiles
 				dataGroup.Go(func() error {
+					release, slotErr := acquireTransferSlot(ctx, b.uploadTransferSem)
+					if slotErr != nil {
+						return slotErr
+					}
+					defer release()
 					if b.resume {
 						isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(remoteDataFile)
 						if resumeErr != nil {

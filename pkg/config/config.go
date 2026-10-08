@@ -83,7 +83,20 @@ type GeneralConfig struct {
 	DisableEnvironmentOverride bool  `yaml:"disable_environment_override" ignored:"true"`
 	AllowEmptyBackups          bool  `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
 	DownloadConcurrency        uint8 `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
-	UploadConcurrency          uint8 `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	// DownloadTransferConcurrency - global limit of concurrent part/archive transfers of one `download`, shared by all tables,
+	// so the last remaining table can use the whole budget instead of only `download_concurrency` slots of its own;
+	// 0 means auto = download_concurrency^2 (the current worst case, so no extra connections), a negative value keeps the legacy per-table limit,
+	// see https://github.com/Altinity/clickhouse-backup/issues/1591
+	DownloadTransferConcurrency int `yaml:"download_transfer_concurrency" envconfig:"DOWNLOAD_TRANSFER_CONCURRENCY"`
+	// DownloadTableOrder - order in which tables are dispatched by `download`: `largest_first` (default) or `metadata` (legacy),
+	// see https://github.com/Altinity/clickhouse-backup/issues/1591
+	DownloadTableOrder string `yaml:"download_table_order" envconfig:"DOWNLOAD_TABLE_ORDER"`
+	UploadConcurrency  uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	// FileTransferConcurrency - max concurrent file streams inside one data part with `compression_format: none`, 1 (default) keeps
+	// the sequential transfer; extra streams only take free slots of the global transfer budget (download_transfer_concurrency for
+	// download, upload_concurrency^2 for upload), so they never raise the total number of connections,
+	// see https://github.com/Altinity/clickhouse-backup/issues/1454
+	FileTransferConcurrency int `yaml:"file_transfer_concurrency" envconfig:"FILE_TRANSFER_CONCURRENCY"`
 	// RebaseConcurrency - how many tables process in parallel during `rebase` command execution
 	RebaseConcurrency uint8 `yaml:"rebase_concurrency" envconfig:"REBASE_CONCURRENCY"`
 	// RebaseBeforeRemoveOldRemote - when `backups_to_keep_remote` deletion is blocked by `required_backup` links from kept backups,
@@ -219,6 +232,20 @@ type GCSConfig struct {
 	AllowMultipartDownload bool `yaml:"allow_multipart_download" envconfig:"GCS_ALLOW_MULTIPART_DOWNLOAD"`
 	// DownloadConcurrency - how many parts of one file download in parallel when allow_multipart_download enabled
 	DownloadConcurrency int `yaml:"download_concurrency" envconfig:"GCS_DOWNLOAD_CONCURRENCY"`
+	// RangedDownloadConcurrency - number of concurrent byte-range GETs used to stream ONE large archive during
+	// download, straight into the decompress/untar pipeline (no temporary file, works with
+	// download_max_bytes_per_second). One GCS stream tops out at a fixed rate, so a single big part is often the
+	// whole tail of a download; ranges of the same object scale with their number. 0 or 1 disables.
+	// When enabled it takes precedence over allow_multipart_download for objects >= ranged_download_min_size.
+	RangedDownloadConcurrency int `yaml:"ranged_download_concurrency" envconfig:"GCS_RANGED_DOWNLOAD_CONCURRENCY"`
+	// RangedDownloadMinSize - archives smaller than this (bytes) keep the single-stream reader
+	RangedDownloadMinSize int64 `yaml:"ranged_download_min_size" envconfig:"GCS_RANGED_DOWNLOAD_MIN_SIZE"`
+	// RangedDownloadChunkSize - bytes per range request, one chunk is one in-memory buffer
+	RangedDownloadChunkSize int64 `yaml:"ranged_download_chunk_size" envconfig:"GCS_RANGED_DOWNLOAD_CHUNK_SIZE"`
+	// RangedDownloadMaxBuffers - process-wide cap of chunk buffers in flight across ALL ranged readers, so peak
+	// extra memory is ranged_download_max_buffers * ranged_download_chunk_size no matter how many files are in
+	// flight; when only one big file is left at the tail it gets the whole budget
+	RangedDownloadMaxBuffers int `yaml:"ranged_download_max_buffers" envconfig:"GCS_RANGED_DOWNLOAD_MAX_BUFFERS"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
@@ -687,6 +714,9 @@ func ValidateConfig(cfg *Config) error {
 			cfg.GCS.DownloadConcurrency,
 		)
 	}
+	if cfg.General.DownloadTableOrder != "largest_first" && cfg.General.DownloadTableOrder != "metadata" {
+		return errors.Errorf("`download_table_order` shall be `largest_first` or `metadata`, current value: %s", cfg.General.DownloadTableOrder)
+	}
 	if cfg.GetCompressionFormat() == "unknown" {
 		return errors.Errorf("'%s' is unknown remote storage", cfg.General.RemoteStorage)
 	}
@@ -912,6 +942,8 @@ func DefaultConfig() *Config {
 			LogLevel:                            "info",
 			UploadConcurrency:                   uploadConcurrency,
 			DownloadConcurrency:                 downloadConcurrency,
+			DownloadTableOrder:                  "largest_first",
+			FileTransferConcurrency:             1,
 			RebaseConcurrency:                   downloadConcurrency,
 			ObjectDiskServerSideCopyConcurrency: objectDiskServerSideCopyConcurrency,
 			RestoreSchemaOnCluster:              "",
@@ -1014,6 +1046,11 @@ func DefaultConfig() *Config {
 			UploadBufferSize:       128 * 1024,
 			MultipartUploadMinSize: 1024 * 1024 * 1024,
 			DownloadConcurrency:    int(downloadConcurrency + 1),
+			// ranged streaming download is opt-in: ranged_download_concurrency: 8 enables it
+			RangedDownloadConcurrency: 0,
+			RangedDownloadMinSize:     256 * 1024 * 1024,
+			RangedDownloadChunkSize:   32 * 1024 * 1024,
+			RangedDownloadMaxBuffers:  64,
 		},
 		COS: COSConfig{
 			RowURL:                 "",
