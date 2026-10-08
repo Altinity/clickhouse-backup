@@ -955,7 +955,7 @@ func DefaultConfig() *Config {
 			RetriesDuration:                     5 * time.Second,
 			CallbackTimeout:                     "5s",
 			CallbackTimeoutDuration:             5 * time.Second,
-			StatusHistorySize:                   1000,
+			StatusHistorySize:                   1024,
 			WatchInterval:                       "1h",
 			WatchDuration:                       1 * time.Hour,
 			FullInterval:                        "24h",

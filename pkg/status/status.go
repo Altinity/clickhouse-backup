@@ -67,7 +67,7 @@ type AsyncStatus struct {
 
 // DefaultMaxFinishedRows is used until SetMaxFinishedRows is called from a loaded
 // config, so a status list created before any config is read is still bounded.
-const DefaultMaxFinishedRows = 1000
+const DefaultMaxFinishedRows = 1024
 
 // maxFinishedRows bounds how many finished rows are kept in memory. Long running
 // `watch` processes register one row per iteration, so without a bound the history

@@ -820,8 +820,8 @@ func TestConfig_StatusHistorySize_Default(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if cfg.General.StatusHistorySize != 1000 {
-		t.Fatalf("expected default StatusHistorySize 1000, got %d", cfg.General.StatusHistorySize)
+	if cfg.General.StatusHistorySize != 1024 {
+		t.Fatalf("expected default StatusHistorySize 1024, got %d", cfg.General.StatusHistorySize)
 	}
 }
 

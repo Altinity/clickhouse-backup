@@ -200,7 +200,7 @@ general:
   # status_history_size - STATUS_HISTORY_SIZE, how many finished operations are kept in the in-memory
   # status list exposed by `/backup/status` and `system.backup_actions`. `watch` records one operation
   # per iteration, so the history needs an upper bound. Operations still running are never dropped.
-  status_history_size: 1000
+  status_history_size: 1024
 
   watch_interval: 1h       # WATCH_INTERVAL, use only for `watch` command, backup will create every 1h
   full_interval: 24h       # FULL_INTERVAL, use only for `watch` command, full backup will create every 24h
