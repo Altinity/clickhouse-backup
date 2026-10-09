@@ -26,6 +26,7 @@ import (
 	"github.com/eapache/go-resiliency/retrier"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/filesystemhelper"
@@ -148,7 +149,18 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	compressedDataSize := int64(0)
 	metadataSize := int64(0)
 
-	log.Debug().Msgf("prepare table concurrent semaphore with concurrency=%d len(tablesForUpload)=%d", b.cfg.General.UploadConcurrency, len(tablesForUpload))
+	if b.cfg.General.FileTransferConcurrency > 1 {
+		// upload_concurrency^2 is the most part transfers the nested table/part errgroups can run,
+		// extra file streams only take slots left idle by parts, so the total never grows
+		uc := int64(b.cfg.General.UploadConcurrency)
+		b.uploadTransferSem = semaphore.NewWeighted(uc * uc)
+		b.dst.SetFileTransfers(b.cfg.General.FileTransferConcurrency, b.uploadTransferSem)
+		defer func() {
+			b.dst.SetFileTransfers(0, nil)
+			b.uploadTransferSem = nil
+		}()
+	}
+	log.Debug().Msgf("prepare table concurrent semaphore with concurrency=%d len(tablesForUpload)=%d file_transfer_concurrency=%d", b.cfg.General.UploadConcurrency, len(tablesForUpload), b.cfg.General.FileTransferConcurrency)
 	uploadGroup, uploadCtx := errgroup.WithContext(ctx)
 	uploadGroup.SetLimit(int(b.cfg.General.UploadConcurrency))
 
@@ -373,6 +385,7 @@ func (b *Backuper) uploadEpilogue(ctx context.Context, backupName string, delete
 			"upload_size": utils.FormatBytes(uint64(compressedDataSize) + uint64(metadataSize)),
 			"version":     backupVersion,
 		}).Msgf("done --%s", embeddedOnClusterWorkerFlag)
+		b.closeResumableState()
 		if err = b.RemoveOldBackupsLocal(ctx, false, nil); err != nil {
 			return errors.Wrap(err, "can't remove old local backups")
 		}
@@ -468,6 +481,8 @@ func (b *Backuper) uploadEpilogue(ctx context.Context, backupName string, delete
 		"version":          backupVersion,
 	}).Msg("done")
 
+	// the state file lives inside the local backup directory which retention below can remove
+	b.closeResumableState()
 	// Remote old backup retention
 	if err = b.RemoveOldBackupsRemote(ctx); err != nil {
 		return errors.Wrap(err, "can't remove old backups on remote storage")
@@ -484,6 +499,14 @@ func (b *Backuper) uploadEpilogue(ctx context.Context, backupName string, delete
 		}
 	}
 	return nil
+}
+
+// closeResumableState closes <backup>/<command>.state2 before the local backup directory is removed,
+// fix https://github.com/Altinity/clickhouse-backup/issues/1599
+func (b *Backuper) closeResumableState() {
+	if b.resume && b.resumableState != nil {
+		b.resumableState.Close()
+	}
 }
 
 func (b *Backuper) RemoveOldBackupsRemote(ctx context.Context) error {
@@ -810,6 +833,11 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 				remotePath := path.Join(baseRemoteDataPath, diskName)
 				remotePathFull := path.Join(remotePath, partSuffix)
 				dataGroup.Go(func() error {
+					release, slotErr := acquireTransferSlot(ctx, b.uploadTransferSem)
+					if slotErr != nil {
+						return slotErr
+					}
+					defer release()
 					if b.resume {
 						isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(remotePathFull)
 						if resumeErr != nil {
@@ -817,6 +845,15 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 						}
 						if isProcessed {
 							atomic.AddInt64(&uploadedBytes, processedSize)
+							// record the already uploaded part in the manifest, otherwise download falls back to Walk for it,
+							// with deleteSource the local part files are removed after upload, so their list is unreliable and the part stays out of the manifest,
+							// https://github.com/Altinity/clickhouse-backup/issues/1569
+							if !deleteSource && b.fileManifest != nil {
+								if b.cfg.General.UploadByPart {
+									partFiles = b.walkPartFiles(backupPath, partSuffix, table.Database, table.Table, skipProjections)
+								}
+								b.recordUploadedFiles(backupName, remotePath, partFiles)
+							}
 							return nil
 						}
 					}
@@ -854,6 +891,11 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 				remoteDataFile := path.Join(baseRemoteDataPath, fileName)
 				localFiles := partFiles
 				dataGroup.Go(func() error {
+					release, slotErr := acquireTransferSlot(ctx, b.uploadTransferSem)
+					if slotErr != nil {
+						return slotErr
+					}
+					defer release()
 					if b.resume {
 						isProcessed, processedSize, resumeErr := b.resumableState.IsAlreadyProcessed(remoteDataFile)
 						if resumeErr != nil {
@@ -861,6 +903,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 						}
 						if isProcessed {
 							atomic.AddInt64(&uploadedBytes, processedSize)
+							b.recordUploadedFile(backupName, remoteDataFile)
 							return nil
 						}
 					}
@@ -942,6 +985,7 @@ func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName st
 			return 0, errors.Wrap(resumeErr, "resumableState.IsAlreadyProcessed")
 		}
 		if isProcessed {
+			b.recordUploadedFile(backupName, remoteTableMetaFile)
 			return processedSize, nil
 		}
 	}

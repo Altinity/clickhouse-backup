@@ -10,6 +10,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
@@ -374,62 +375,69 @@ func (r *ManifestReader) Close() {
 func (bd *BackupDestination) DownloadPathWithManifest(ctx context.Context, remotePath string, localPath string, fileNames []string, RetriesOnFailure int, RetriesDuration time.Duration, RetriesJitter int8, RetrierClassifier retrier.Classifier, maxSpeed uint64) (int64, error) {
 	downloadedBytes := int64(0)
 	limiter := bd.DownloadLimiter(maxSpeed)
-
+	transfers := bd.newFileTransfers(ctx)
+	var transferErr error
 	for _, fileName := range fileNames {
-		retry := retrier.New(retrier.ExponentialBackoff(RetriesOnFailure, common.AddRandomJitter(RetriesDuration, RetriesJitter)), RetrierClassifier)
-		err := retry.RunCtx(ctx, func(ctx context.Context) error {
-			r, err := bd.GetFileReader(ctx, path.Join(remotePath, fileName))
-			if err != nil {
-				log.Error().Err(err).Send()
-				return errors.WithMessage(err, "DownloadPathWithManifest GetFileReader")
-			}
-			r = bwlimit.ReadCloser(ctx, r, limiter)
-			var closeSrcOnce sync.Once
-			var srcCloseErr error
-			closeSrc := func() { closeSrcOnce.Do(func() { srcCloseErr = r.Close() }) }
-			// A stalled read is not interruptible by context alone: copyWithBuffer
-			// blocks in Read and never re-checks ctx, so /backup/kill cancels the
-			// context but the copy keeps running. Force-close the source reader on
-			// cancellation so the blocked read returns and the copy unwinds.
-			watchDone := make(chan struct{})
-			go func() {
-				select {
-				case <-ctx.Done():
-					closeSrc()
-				case <-watchDone:
+		if transferErr = transfers.run(func(ctx context.Context) error {
+			retry := retrier.New(retrier.ExponentialBackoff(RetriesOnFailure, common.AddRandomJitter(RetriesDuration, RetriesJitter)), RetrierClassifier)
+			err := retry.RunCtx(ctx, func(ctx context.Context) error {
+				r, err := bd.GetFileReader(ctx, path.Join(remotePath, fileName))
+				if err != nil {
+					log.Error().Err(err).Send()
+					return errors.WithMessage(err, "DownloadPathWithManifest GetFileReader")
 				}
-			}()
-			defer close(watchDone)
-			dstFilePath := path.Join(localPath, fileName)
-			dstDirPath, _ := path.Split(dstFilePath)
-			if err := os.MkdirAll(dstDirPath, 0750); err != nil {
-				log.Error().Err(err).Send()
-				return errors.WithMessage(err, "DownloadPathWithManifest MkdirAll")
-			}
-			dst, err := os.Create(dstFilePath)
+				r = bwlimit.ReadCloser(ctx, r, limiter)
+				var closeSrcOnce sync.Once
+				var srcCloseErr error
+				closeSrc := func() { closeSrcOnce.Do(func() { srcCloseErr = r.Close() }) }
+				// A stalled read is not interruptible by context alone: copyWithBuffer
+				// blocks in Read and never re-checks ctx, so /backup/kill cancels the
+				// context but the copy keeps running. Force-close the source reader on
+				// cancellation so the blocked read returns and the copy unwinds.
+				watchDone := make(chan struct{})
+				go func() {
+					select {
+					case <-ctx.Done():
+						closeSrc()
+					case <-watchDone:
+					}
+				}()
+				defer close(watchDone)
+				dstFilePath := path.Join(localPath, fileName)
+				dstDirPath, _ := path.Split(dstFilePath)
+				if err := os.MkdirAll(dstDirPath, 0750); err != nil {
+					log.Error().Err(err).Send()
+					return errors.WithMessage(err, "DownloadPathWithManifest MkdirAll")
+				}
+				dst, err := os.Create(dstFilePath)
+				if err != nil {
+					log.Error().Err(err).Send()
+					return errors.WithMessage(err, "DownloadPathWithManifest Create")
+				}
+				if copyBytes, copyErr := bd.copyWithBuffer(dst, r); copyErr != nil {
+					log.Error().Err(copyErr).Send()
+					return errors.WithMessage(copyErr, "DownloadPathWithManifest io.Copy")
+				} else {
+					atomic.AddInt64(&downloadedBytes, copyBytes)
+				}
+				if dstCloseErr := dst.Close(); dstCloseErr != nil {
+					log.Error().Err(dstCloseErr).Send()
+					return errors.WithMessage(dstCloseErr, "DownloadPathWithManifest dst.Close")
+				}
+				if closeSrc(); srcCloseErr != nil {
+					log.Error().Err(srcCloseErr).Send()
+					return errors.WithMessage(srcCloseErr, "DownloadPathWithManifest r.Close")
+				}
+				return nil
+			})
 			if err != nil {
-				log.Error().Err(err).Send()
-				return errors.WithMessage(err, "DownloadPathWithManifest Create")
-			}
-			if copyBytes, copyErr := bd.copyWithBuffer(dst, r); copyErr != nil {
-				log.Error().Err(copyErr).Send()
-				return errors.WithMessage(copyErr, "DownloadPathWithManifest io.Copy")
-			} else {
-				downloadedBytes += copyBytes
-			}
-			if dstCloseErr := dst.Close(); dstCloseErr != nil {
-				log.Error().Err(dstCloseErr).Send()
-				return errors.WithMessage(dstCloseErr, "DownloadPathWithManifest dst.Close")
-			}
-			if closeSrc(); srcCloseErr != nil {
-				log.Error().Err(srcCloseErr).Send()
-				return errors.WithMessage(srcCloseErr, "DownloadPathWithManifest r.Close")
+				return errors.WithMessage(err, "DownloadPathWithManifest retry")
 			}
 			return nil
-		})
-		if err != nil {
-			return downloadedBytes, errors.WithMessage(err, "DownloadPathWithManifest retry")
+		}); transferErr != nil {
+			break
 		}
 	}
-	return downloadedBytes, nil
+	transferErr = transfers.wait(transferErr)
+	return atomic.LoadInt64(&downloadedBytes), transferErr
 }

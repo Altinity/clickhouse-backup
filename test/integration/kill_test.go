@@ -87,8 +87,13 @@ func assertBackupNotComplete(r *require.Assertions, env *TestEnvironment, locati
 func assertBackupAbsent(r *require.Assertions, env *TestEnvironment, where, backupName string) {
 	out, _ := postActionAllowError(env, fmt.Sprintf("delete %s %s", where, backupName))
 	r.NotContains(out, "another clickhouse-backup", "delete must not see a stale pid lock: %s", out)
-	r.Contains(out, fmt.Sprintf("is not found on %s storage", where),
-		"the killed command ran to completion and left a usable %s backup %q, so /backup/kill did not cancel it: %s",
+	notFound := fmt.Sprintf("is not found on %s storage", where)
+	if !strings.Contains(out, notFound) {
+		// the server log tells a completed command from a canceled one which failed to clean up
+		out += "\n" + apiServerLogTail(env)
+	}
+	r.Contains(out, notFound,
+		"the killed command left a %s backup %q behind, it either ran to completion or failed to clean up after cancel: %s",
 		where, backupName, out)
 }
 
@@ -502,9 +507,11 @@ func killSetupTable(t *testing.T, r *require.Assertions, env *TestEnvironment, d
 const observeInProgressKillScript = `
 pid="__PID__"
 metric="__METRIC__"
-before=$(curl -sSL 'http://127.0.0.1:7171/metrics' 2>/dev/null | awk -v m="$metric" '$1==m {print $2}')
+curl_log="__CURLLOG__"
+: > "$curl_log"
+before=$(curl -sSL 'http://127.0.0.1:7171/metrics' 2>>"$curl_log" | awk -v m="$metric" '$1==m {print $2}')
 echo "FINISH_BEFORE=$before"
-start_resp=$(curl -sSL -XPOST 'http://127.0.0.1:7171/backup/actions' -d '__STARTBODY__' 2>/dev/null || true)
+start_resp=$(curl -sSL -XPOST 'http://127.0.0.1:7171/backup/actions' -d '__STARTBODY__' 2>>"$curl_log" || true)
 printf 'START_RESP=%s\n' "$(printf '%s' "$start_resp" | tr -d '\n')"
 SECONDS=0
 observed=0
@@ -514,10 +521,10 @@ done
 echo "OBSERVED=$observed"
 [ "$observed" -eq 1 ] || exit 0
 start=$(date +%s%N)
-kill_resp=$(curl -sSL -XPOST 'http://127.0.0.1:7171/backup/actions' -d '__KILLBODY__' 2>/dev/null || true)
+kill_resp=$(curl -sSL -XPOST 'http://127.0.0.1:7171/backup/actions' -d '__KILLBODY__' 2>>"$curl_log" || true)
 end=$(date +%s%N)
 echo "KILL_ELAPSED_MS=$(( (end - start) / 1000000 ))"
-after=$(curl -sSL 'http://127.0.0.1:7171/metrics' 2>/dev/null | awk -v m="$metric" '$1==m {print $2}')
+after=$(curl -sSL 'http://127.0.0.1:7171/metrics' 2>>"$curl_log" | awk -v m="$metric" '$1==m {print $2}')
 echo "FINISH_AFTER=$after"
 if [ -f "$pid" ]; then echo "PID=EXISTS"; else echo "PID=GONE"; fi
 printf 'KILL_RESP=%s\n' "$(printf '%s' "$kill_resp" | tr -d '\n')"
@@ -538,17 +545,24 @@ printf 'KILL_RESP=%s\n' "$(printf '%s' "$kill_resp" | tr -d '\n')"
 //     after cliApp.Run returns; if waitDone merely timed out it stays put.
 func observeInProgressAndKill(r *require.Assertions, env *TestEnvironment, command, backupName, metricCommand string, cancelTimeout time.Duration) {
 	pidPath := fmt.Sprintf("/tmp/clickhouse-backup.%s.pid", backupName)
+	curlLog := "/tmp/clickhouse-backup-observe-kill-curl.log"
 	metric := "clickhouse_backup_last_" + metricCommand + "_finish"
 	startBody := fmt.Sprintf(`{"command":%q}`, command)
 	killBody := fmt.Sprintf(`{"command":%q}`, fmt.Sprintf("kill %q", command))
 	script := strings.NewReplacer(
 		"__PID__", pidPath,
 		"__METRIC__", metric,
+		"__CURLLOG__", curlLog,
 		"__STARTBODY__", startBody,
 		"__KILLBODY__", killBody,
 	).Replace(observeInProgressKillScript)
 
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", script)
+	// curl stderr and the server log explain empty fields (e.g. the server died
+	// mid-command); appended after the script output so scriptField still finds
+	// the script's own lines first.
+	curlOut, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "cat "+curlLog+" 2>&1 || true")
+	out += "\n" + curlLog + ":\n" + curlOut + "\n" + apiServerLogTail(env)
 	r.NoError(err, "observe+kill script failed:\n%s", out)
 
 	r.Contains(scriptField(out, "START_RESP="), "acknowledged",

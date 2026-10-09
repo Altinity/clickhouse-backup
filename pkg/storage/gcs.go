@@ -23,6 +23,7 @@ import (
 	"cloud.google.com/go/storage/transfermanager"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 	"google.golang.org/api/impersonate"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
@@ -36,6 +37,8 @@ type GCS struct {
 	Config        *config.GCSConfig
 	clientPool    *pool.ObjectPool
 	encryptionKey []byte // Customer-Supplied Encryption Key (CSEK)
+	// rangedBudget - process-wide cap of ranged-download chunk buffers in flight (ranged_download_max_buffers)
+	rangedBudget *semaphore.Weighted
 }
 
 type debugGCSTransport struct {
@@ -236,6 +239,13 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		})
 	gcs.clientPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
 	gcs.clientPool.Config.MaxTotal = gcs.Config.ClientPoolSize * 3
+	if workers, _, _, ok := gcs.rangedDownloadSettings(); ok {
+		maxBuffers := gcs.Config.RangedDownloadMaxBuffers
+		if maxBuffers < workers {
+			maxBuffers = workers
+		}
+		gcs.rangedBudget = semaphore.NewWeighted(int64(maxBuffers))
+	}
 	gcs.client, err = storage.NewClient(ctx, clientOptions...)
 	if err != nil {
 		return errors.Wrap(err, "GCS Connect storage.NewClient")
@@ -454,6 +464,88 @@ func (gcs *GCS) downloadMultipart(ctx context.Context, key string, writer io.Wri
 		err = attempt(nil)
 	}
 	return errors.Wrap(err, "GCS downloadMultipart WaitAndClose")
+}
+
+// rangedDownloadSettings returns the effective ranged-download settings, ok=false when disabled.
+func (gcs *GCS) rangedDownloadSettings() (workers int, minSize, chunk int64, ok bool) {
+	workers = gcs.Config.RangedDownloadConcurrency
+	if workers < 2 {
+		return 0, 0, 0, false
+	}
+	chunk = gcs.Config.RangedDownloadChunkSize
+	if chunk <= 0 {
+		chunk = 32 * 1024 * 1024
+	}
+	minSize = gcs.Config.RangedDownloadMinSize
+	// ranging an object that fits in one or two chunks only adds requests
+	if minSize < 2*chunk {
+		minSize = 2 * chunk
+	}
+	return workers, minSize, chunk, true
+}
+
+// GetFileRangedReader streams a large object as concurrent byte-range GETs (see rangedReader).
+// ok=false means the caller should use its normal single-stream reader (feature disabled or object too small).
+// Every range borrows its own pooled client for the duration of the request, so with HTTP/2 the ranges
+// do not end up multiplexed on one connection.
+func (gcs *GCS) GetFileRangedReader(ctx context.Context, key string, size int64) (io.ReadCloser, bool, error) {
+	workers, minSize, chunk, enabled := gcs.rangedDownloadSettings()
+	if !enabled || size < minSize || gcs.rangedBudget == nil {
+		return nil, false, nil
+	}
+	absKey := path.Join(gcs.Config.Path, key)
+	isObjectDiskPath := gcs.Config.ObjectDiskPath != "" && strings.HasPrefix(absKey, gcs.Config.ObjectDiskPath)
+	fetch := func(ctx context.Context, offset, length int64) (io.ReadCloser, error) {
+		pClientObj, err := gcs.clientPool.BorrowObject(ctx)
+		if err != nil {
+			return nil, errors.Wrap(err, "GCS ranged read BorrowObject")
+		}
+		returned := false
+		giveBack := func(invalidate bool) {
+			if returned {
+				return
+			}
+			returned = true
+			if invalidate {
+				if pErr := gcs.clientPool.InvalidateObject(context.Background(), pClientObj); pErr != nil {
+					log.Warn().Msgf("gcs ranged read: InvalidateObject error: %v", pErr)
+				}
+				return
+			}
+			if pErr := gcs.clientPool.ReturnObject(context.Background(), pClientObj); pErr != nil {
+				log.Warn().Msgf("gcs ranged read: ReturnObject error: %v", pErr)
+			}
+		}
+		client := pClientObj.(*clientObject).Client
+		obj := client.Bucket(gcs.Config.Bucket).Object(absKey)
+		if !isObjectDiskPath {
+			obj = gcs.applyEncryption(obj)
+		}
+		rc, err := obj.NewRangeReader(ctx, offset, length)
+		if err != nil && !isObjectDiskPath && gcs.encryptionKey != nil && gcs.isNotEncryptedError(err) {
+			rc, err = client.Bucket(gcs.Config.Bucket).Object(absKey).NewRangeReader(ctx, offset, length)
+		}
+		if err != nil {
+			giveBack(true)
+			return nil, errors.Wrapf(err, "GCS NewRangeReader %s", absKey)
+		}
+		return &releasingReadCloser{ReadCloser: rc, onClose: func() { giveBack(false) }}, nil
+	}
+	log.Debug().Msgf("GCS ranged read %s size=%d chunk=%d workers=%d", absKey, size, chunk, workers)
+	return newRangedReader(ctx, fetch, size, chunk, workers, 2, gcs.rangedBudget), true, nil
+}
+
+// releasingReadCloser runs onClose once after the wrapped reader is closed.
+type releasingReadCloser struct {
+	io.ReadCloser
+	onClose func()
+	once    sync.Once
+}
+
+func (r *releasingReadCloser) Close() error {
+	err := r.ReadCloser.Close()
+	r.once.Do(r.onClose)
+	return err
 }
 
 func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
