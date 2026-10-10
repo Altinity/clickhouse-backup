@@ -167,12 +167,43 @@ func ReadCloser(ctx context.Context, reader io.ReadCloser, limiter *Limiter) io.
 	if limiter == nil {
 		return reader
 	}
-	return &rateLimitedReadCloser{
+	rc := &rateLimitedReadCloser{
 		Reader: Reader(ctx, reader, limiter),
 		closer: reader,
 	}
+	// keep WriteTo of the wrapped reader, sftp.File issues concurrent reads only from WriteTo,
+	// with Read it sends one request per round trip, see https://github.com/Altinity/clickhouse-backup/issues/1607
+	if wt, ok := reader.(io.WriterTo); ok {
+		return &rateLimitedWriterToReadCloser{rateLimitedReadCloser: rc, writerTo: wt, ctx: ctx, limiter: limiter}
+	}
+	return rc
 }
 
 func (r *rateLimitedReadCloser) Close() error {
 	return r.closer.Close()
+}
+
+type rateLimitedWriterToReadCloser struct {
+	*rateLimitedReadCloser
+	writerTo io.WriterTo
+	ctx      context.Context
+	limiter  *Limiter
+}
+
+// WriteTo paces the writes into w, the wrapped reader stops reading when its writes block
+func (r *rateLimitedWriterToReadCloser) WriteTo(w io.Writer) (int64, error) {
+	return r.writerTo.WriteTo(&rateLimitedWriter{ctx: r.ctx, writer: w, limiter: r.limiter})
+}
+
+type rateLimitedWriter struct {
+	ctx     context.Context
+	writer  io.Writer
+	limiter *Limiter
+}
+
+func (w *rateLimitedWriter) Write(p []byte) (int, error) {
+	if err := w.limiter.Wait(w.ctx, len(p)); err != nil {
+		return 0, err
+	}
+	return w.writer.Write(p)
 }

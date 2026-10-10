@@ -98,3 +98,61 @@ func TestLimiterIsSharedAcrossReaders(t *testing.T) {
 		t.Fatalf("shared limiter finished too quickly: %s", elapsed)
 	}
 }
+
+// writerToSource records whether io.Copy went through its WriteTo, like sftp.File,
+// which issues concurrent reads only from WriteTo
+type writerToSource struct {
+	*bytes.Reader
+	writeToCalled bool
+}
+
+func (s *writerToSource) WriteTo(w io.Writer) (int64, error) {
+	s.writeToCalled = true
+	return s.Reader.WriteTo(w)
+}
+
+func (s *writerToSource) Close() error { return nil }
+
+func TestReadCloserKeepsWriterToAndLimits(t *testing.T) {
+	src := &writerToSource{Reader: bytes.NewReader(bytes.Repeat([]byte("a"), 200))}
+	wrapped := ReadCloser(context.Background(), src, New(100))
+
+	if _, ok := wrapped.(io.WriterTo); !ok {
+		t.Fatal("ReadCloser() should expose io.WriterTo when the wrapped reader implements it")
+	}
+	var dst bytes.Buffer
+	start := time.Now()
+	n, err := io.Copy(&dst, wrapped)
+	if err != nil || n != 200 {
+		t.Fatalf("io.Copy() = (%d, %v), want (200, nil)", n, err)
+	}
+	if !src.writeToCalled {
+		t.Fatal("io.Copy() should use WriteTo of the wrapped reader")
+	}
+	// 100 bytes initial burst, the other 100 bytes need one second
+	if elapsed := time.Since(start); elapsed < 900*time.Millisecond {
+		t.Fatalf("WriteTo is not rate limited, finished in %s", elapsed)
+	}
+}
+
+func TestReadCloserWithoutWriterTo(t *testing.T) {
+	reader := &closeRecorder{Reader: bytes.NewReader([]byte("abc"))}
+	// io.Reader without WriteTo, an io.CopyBuffer buffer must still be used
+	wrapped := ReadCloser(context.Background(), struct {
+		io.Reader
+		io.Closer
+	}{reader, reader}, New(1024))
+	if _, ok := wrapped.(io.WriterTo); ok {
+		t.Fatal("ReadCloser() should not expose io.WriterTo when the wrapped reader does not implement it")
+	}
+}
+
+func TestWriteToReturnsContextError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	src := &writerToSource{Reader: bytes.NewReader(bytes.Repeat([]byte("a"), 10))}
+	wrapped := ReadCloser(ctx, src, New(1)).(io.WriterTo)
+	if _, err := wrapped.WriteTo(io.Discard); err == nil {
+		t.Fatal("WriteTo() should return the context error")
+	}
+}

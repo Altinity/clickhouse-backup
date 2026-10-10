@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/bwlimit"
 	pool "github.com/jolestar/go-commons-pool/v2"
 	"github.com/pkg/errors"
 
@@ -488,7 +489,7 @@ func (gcs *GCS) rangedDownloadSettings() (workers int, minSize, chunk int64, ok 
 // ok=false means the caller should use its normal single-stream reader (feature disabled or object too small).
 // Every range borrows its own pooled client for the duration of the request, so with HTTP/2 the ranges
 // do not end up multiplexed on one connection.
-func (gcs *GCS) GetFileRangedReader(ctx context.Context, key string, size int64) (io.ReadCloser, bool, error) {
+func (gcs *GCS) GetFileRangedReader(ctx context.Context, key string, size int64, limiter *bwlimit.Limiter) (io.ReadCloser, bool, error) {
 	workers, minSize, chunk, enabled := gcs.rangedDownloadSettings()
 	if !enabled || size < minSize || gcs.rangedBudget == nil {
 		return nil, false, nil
@@ -529,7 +530,7 @@ func (gcs *GCS) GetFileRangedReader(ctx context.Context, key string, size int64)
 			giveBack(true)
 			return nil, errors.Wrapf(err, "GCS NewRangeReader %s", absKey)
 		}
-		return &releasingReadCloser{ReadCloser: rc, onClose: func() { giveBack(false) }}, nil
+		return bwlimit.ReadCloser(ctx, &releasingReadCloser{ReadCloser: rc, onClose: func() { giveBack(false) }}, limiter), nil
 	}
 	log.Debug().Msgf("GCS ranged read %s size=%d chunk=%d workers=%d", absKey, size, chunk, workers)
 	return newRangedReader(ctx, fetch, size, chunk, workers, 2, gcs.rangedBudget), true, nil

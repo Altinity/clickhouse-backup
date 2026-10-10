@@ -516,10 +516,13 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 	var getReaderErr error
 	rangedUsed := false
 	// Ranged streaming keeps the object in memory chunks consumed in order (no temp file), so unlike the
-	// multipart path below it stays compatible with the rate limiter: the limiter paces the consumer and the
-	// prefetch window is bounded. Use it whenever the storage supports it and the object is large enough.
+	// multipart path below it stays compatible with the rate limiter: the limiter paces the range requests on
+	// the wire, not the in-order consumer. Pacing the consumer instead left it idle until the first chunks
+	// completed and the lost time was never made up (~80% of the cap), see https://github.com/Altinity/clickhouse-backup/issues/1607
+	// Use it whenever the storage supports it and the object is large enough.
+	limiter := bd.DownloadLimiter(maxSpeed)
 	if rp, ok := bd.RemoteStorage.(RangedReaderProvider); ok {
-		reader, rangedUsed, getReaderErr = rp.GetFileRangedReader(ctx, remotePath, remoteFileInfo.Size())
+		reader, rangedUsed, getReaderErr = rp.GetFileRangedReader(ctx, remotePath, remoteFileInfo.Size(), limiter)
 	}
 	if rangedUsed || getReaderErr != nil {
 		// reader (or error) already set by the ranged path
@@ -537,7 +540,9 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		return 0, errors.Wrap(getReaderErr, "DownloadCompressedStream GetFileReader")
 	}
 	rawReader := reader
-	reader = bwlimit.ReadCloser(ctx, reader, bd.DownloadLimiter(maxSpeed))
+	if !rangedUsed {
+		reader = bwlimit.ReadCloser(ctx, reader, limiter)
+	}
 	var closeReaderOnce sync.Once
 	closeReader := func() {
 		closeReaderOnce.Do(func() {

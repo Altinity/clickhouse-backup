@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/bwlimit"
+
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/semaphore"
 )
@@ -192,16 +194,25 @@ type rangedRemote struct {
 	archive []byte
 	used    atomic.Bool
 	budget  *semaphore.Weighted
+	limiter *bwlimit.Limiter
 }
 
 func (m *rangedRemote) StatFile(_ context.Context, _ string) (RemoteFile, error) {
 	return fakeRemoteFile{size: int64(len(m.archive))}, nil
 }
 
-func (m *rangedRemote) GetFileRangedReader(ctx context.Context, _ string, size int64) (io.ReadCloser, bool, error) {
+func (m *rangedRemote) GetFileRangedReader(ctx context.Context, _ string, size int64, limiter *bwlimit.Limiter) (io.ReadCloser, bool, error) {
 	m.used.Store(true)
+	m.limiter = limiter
 	f := &memFetcher{data: m.archive, failChunkAt: -1}
-	return newRangedReader(ctx, f.fetch, size, 64*1024, 4, 0, m.budget), true, nil
+	fetch := func(ctx context.Context, offset, length int64) (io.ReadCloser, error) {
+		rc, err := f.fetch(ctx, offset, length)
+		if err != nil {
+			return nil, err
+		}
+		return bwlimit.ReadCloser(ctx, rc, limiter), nil
+	}
+	return newRangedReader(ctx, fetch, size, 64*1024, 4, 0, m.budget), true, nil
 }
 
 func (m *rangedRemote) GetFileReader(_ context.Context, _ string) (io.ReadCloser, error) {
@@ -232,6 +243,7 @@ func TestDownloadCompressedStreamUsesRangedReaderWithRateLimit(t *testing.T) {
 	_, err = bd.DownloadCompressedStream(context.Background(), "shadow/db/tbl/part.tar", out, 1<<40)
 	require.NoError(t, err)
 	require.True(t, remote.used.Load(), "ranged reader was not used")
+	require.NotNil(t, remote.limiter, "the rate limit must be applied to the range requests, see https://github.com/Altinity/clickhouse-backup/issues/1607")
 	got, err := os.ReadFile(filepath.Join(out, "data.bin"))
 	require.NoError(t, err)
 	require.True(t, bytes.Equal(payload, got))
