@@ -3,9 +3,15 @@ package storage
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/stretchr/testify/assert"
@@ -221,4 +227,43 @@ func (gcs *GCS) validateAndDecodeEncryptionKey() error {
 	}
 	gcs.encryptionKey = key
 	return nil
+}
+
+// TestGCSHTTP1TransportReusesConnections every concurrent request above MaxIdleConnsPerHost closes its
+// connection after use, on a busy download that used up the whole ephemeral port range with
+// `connect: cannot assign requested address`, see https://github.com/Altinity/clickhouse-backup/issues/1607
+func TestGCSHTTP1TransportReusesConnections(t *testing.T) {
+	const workers, requestsPerWorker = 16, 20
+	var newConns atomic.Int64
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(time.Millisecond)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			newConns.Add(1)
+		}
+	}
+	srv.Start()
+	defer srv.Close()
+
+	client := &http.Client{Transport: newGCSHTTP1Transport()}
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range requestsPerWorker {
+				resp, err := client.Get(srv.URL)
+				if !assert.NoError(t, err) {
+					return
+				}
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+			}
+		}()
+	}
+	wg.Wait()
+	t.Logf("%d requests opened %d connections", workers*requestsPerWorker, newConns.Load())
+	assert.LessOrEqual(t, newConns.Load(), int64(2*workers), "concurrent requests should reuse idle connections")
 }

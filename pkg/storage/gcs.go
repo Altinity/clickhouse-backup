@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -169,31 +170,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 
 		var httpClient *http.Client
 		if gcs.Config.ForceHttp || gcs.Config.DisableHttp2 {
-			customTransport := &http.Transport{
-				WriteBufferSize: 128 * 1024,
-				Proxy:           http.ProxyFromEnvironment,
-				DialContext: (&net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-				MaxIdleConns:          1,
-				MaxIdleConnsPerHost:   1,
-				IdleConnTimeout:       90 * time.Second,
-				TLSHandshakeTimeout:   10 * time.Second,
-				ExpectContinueTimeout: 1 * time.Second,
-			}
-			if gcs.Config.DisableHttp2 {
-				// DisableHttp2 is designed for high-concurrency downloads — raise
-				// connection limits so each parallel part gets its own TCP stream.
-				customTransport.MaxIdleConns = 0
-				customTransport.MaxIdleConnsPerHost = 64
-			}
-			// must set ForceAttemptHTTP2 to false so that when a custom TLSClientConfig
-			// is provided Golang does not setup HTTP/2 transport
-			customTransport.ForceAttemptHTTP2 = false
-			customTransport.TLSClientConfig = &tls.Config{
-				NextProtos: []string{"http/1.1"},
-			}
+			customTransport := newGCSHTTP1Transport()
 			// ForceHttp downgrades the request scheme to cleartext http:// via
 			// rewriteTransport (needed only for internal caches like varnish).
 			// DisableHttp2 keeps the original https:// scheme so TLS and
@@ -483,6 +460,33 @@ func (gcs *GCS) rangedDownloadSettings() (workers int, minSize, chunk int64, ok 
 		minSize = 2 * chunk
 	}
 	return workers, minSize, chunk, true
+}
+
+// newGCSHTTP1Transport builds the HTTP/1.1 transport for force_http and disable_http2.
+// Idle connections are not limited: every concurrent request above MaxIdleConnsPerHost closed its connection
+// after use, a busy download left them in TIME_WAIT and exhausted the ephemeral ports with
+// `connect: cannot assign requested address`. There are never more idle connections than concurrent requests,
+// which the transfer budgets already bound, and IdleConnTimeout closes them, see https://github.com/Altinity/clickhouse-backup/issues/1607
+func newGCSHTTP1Transport() *http.Transport {
+	return &http.Transport{
+		WriteBufferSize: 128 * 1024,
+		Proxy:           http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          0,
+		MaxIdleConnsPerHost:   math.MaxInt32,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		// must set ForceAttemptHTTP2 to false so that when a custom TLSClientConfig
+		// is provided Golang does not setup HTTP/2 transport
+		ForceAttemptHTTP2: false,
+		TLSClientConfig: &tls.Config{
+			NextProtos: []string{"http/1.1"},
+		},
+	}
 }
 
 // GetFileRangedReader streams a large object as concurrent byte-range GETs (see rangedReader).
