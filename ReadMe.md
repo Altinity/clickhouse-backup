@@ -98,6 +98,21 @@ One-shot CLI commands (`create`, `upload`, `download`, `restore`, `delete`, `cre
 - `SIGTERM` cancels all running commands (same as `POST /backup/kill` for each of them), removes their pid files and stops the API server; in Kubernetes make sure `terminationGracePeriodSeconds` covers the shadow cleanup of a big table, otherwise the following `SIGKILL` leaves it for the next `clean`
 - `SIGHUP` reloads the config and restarts the API server, running commands are canceled the same way as via `POST /restart`
 
+## Logging
+
+All log messages go to stderr. stdout only carries the command output (`list`, `tables`, `print-config`, ...), so it can be piped to other tools, e.g. `clickhouse-backup list remote --format json | jq`.
+To keep the log in a file, redirect stderr as well:
+
+```shell
+clickhouse-backup create_remote my_backup >> clickhouse-backup.log 2>&1
+```
+
+`docker logs` and `kubectl logs` show only the output of the container's main process, e.g. `clickhouse-backup server` in a sidecar container.
+A command started with `docker exec` or `kubectl exec` writes its log to the exec session, so it doesn't appear in the container log.
+To get it there, run the command through the [API](#api), e.g. `POST /backup/create_remote` or `INSERT INTO system.backup_actions`: the server executes it in its own process.
+
+Use `log_level` / `LOG_LEVEL` to change the verbosity.
+
 ## Default Config File
 
 By default, the config file is located at `/etc/clickhouse-backup/config.yml`, but it can be redefined via the `CLICKHOUSE_BACKUP_CONFIG` environment variable or via `--config` command line parameter.
