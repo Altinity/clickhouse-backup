@@ -147,7 +147,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 			log.Error().Msgf("creating failed -> b.cleanOwnFreezes error: %v", cleanShadowErr)
 		}
 		// delete local backup when creation failure
-		if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks, true); removeBackupErr != nil {
+		if removeBackupErr := b.RemoveBackupLocal(context.WithoutCancel(ctx), backupName, disks, true); removeBackupErr != nil {
 			log.Error().Msgf("creating failed -> b.RemoveBackupLocal error: %v", removeBackupErr)
 		}
 		return errors.Wrap(err, "createBackup failed")
