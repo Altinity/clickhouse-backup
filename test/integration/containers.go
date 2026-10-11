@@ -1008,7 +1008,7 @@ func (tc *TestContainers) startKafka(ctx context.Context) error {
 	kafkaVersion := "latest"
 	// ClickHouse < 25.3 bundles librdkafka 1.6.1, it doesn't consume from Kafka 4.x which removed old protocol versions (KIP-896)
 	if v := os.Getenv("CLICKHOUSE_VERSION"); v != "" && v != "head" && compareVersion(v, "25.3") < 0 {
-		kafkaVersion = "3.9.1"
+		kafkaVersion = "3.9.2"
 	}
 	return tc.startContainer(ctx, "kafka",
 		&container.Config{
