@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/bwlimit"
 )
 
 var (
@@ -97,6 +99,7 @@ type RemoteStorage interface {
 
 // RangedReaderProvider is implemented by remote storages that can stream one large object as concurrent
 // byte-range requests delivered in order. ok=false means "not applicable, use the normal reader".
+// limiter (nil = unlimited) paces every range request on the wire, the returned reader must not be limited again.
 type RangedReaderProvider interface {
-	GetFileRangedReader(ctx context.Context, key string, size int64) (reader io.ReadCloser, ok bool, err error)
+	GetFileRangedReader(ctx context.Context, key string, size int64, limiter *bwlimit.Limiter) (reader io.ReadCloser, ok bool, err error)
 }

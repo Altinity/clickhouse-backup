@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/bwlimit"
 	pool "github.com/jolestar/go-commons-pool/v2"
 	"github.com/pkg/errors"
 
@@ -168,31 +170,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 
 		var httpClient *http.Client
 		if gcs.Config.ForceHttp || gcs.Config.DisableHttp2 {
-			customTransport := &http.Transport{
-				WriteBufferSize: 128 * 1024,
-				Proxy:           http.ProxyFromEnvironment,
-				DialContext: (&net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-				MaxIdleConns:          1,
-				MaxIdleConnsPerHost:   1,
-				IdleConnTimeout:       90 * time.Second,
-				TLSHandshakeTimeout:   10 * time.Second,
-				ExpectContinueTimeout: 1 * time.Second,
-			}
-			if gcs.Config.DisableHttp2 {
-				// DisableHttp2 is designed for high-concurrency downloads — raise
-				// connection limits so each parallel part gets its own TCP stream.
-				customTransport.MaxIdleConns = 0
-				customTransport.MaxIdleConnsPerHost = 64
-			}
-			// must set ForceAttemptHTTP2 to false so that when a custom TLSClientConfig
-			// is provided Golang does not setup HTTP/2 transport
-			customTransport.ForceAttemptHTTP2 = false
-			customTransport.TLSClientConfig = &tls.Config{
-				NextProtos: []string{"http/1.1"},
-			}
+			customTransport := newGCSHTTP1Transport()
 			// ForceHttp downgrades the request scheme to cleartext http:// via
 			// rewriteTransport (needed only for internal caches like varnish).
 			// DisableHttp2 keeps the original https:// scheme so TLS and
@@ -484,11 +462,38 @@ func (gcs *GCS) rangedDownloadSettings() (workers int, minSize, chunk int64, ok 
 	return workers, minSize, chunk, true
 }
 
+// newGCSHTTP1Transport builds the HTTP/1.1 transport for force_http and disable_http2.
+// Idle connections are not limited: every concurrent request above MaxIdleConnsPerHost closed its connection
+// after use, a busy download left them in TIME_WAIT and exhausted the ephemeral ports with
+// `connect: cannot assign requested address`. There are never more idle connections than concurrent requests,
+// which the transfer budgets already bound, and IdleConnTimeout closes them, see https://github.com/Altinity/clickhouse-backup/issues/1607
+func newGCSHTTP1Transport() *http.Transport {
+	return &http.Transport{
+		WriteBufferSize: 128 * 1024,
+		Proxy:           http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          0,
+		MaxIdleConnsPerHost:   math.MaxInt32,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		// must set ForceAttemptHTTP2 to false so that when a custom TLSClientConfig
+		// is provided Golang does not setup HTTP/2 transport
+		ForceAttemptHTTP2: false,
+		TLSClientConfig: &tls.Config{
+			NextProtos: []string{"http/1.1"},
+		},
+	}
+}
+
 // GetFileRangedReader streams a large object as concurrent byte-range GETs (see rangedReader).
 // ok=false means the caller should use its normal single-stream reader (feature disabled or object too small).
 // Every range borrows its own pooled client for the duration of the request, so with HTTP/2 the ranges
 // do not end up multiplexed on one connection.
-func (gcs *GCS) GetFileRangedReader(ctx context.Context, key string, size int64) (io.ReadCloser, bool, error) {
+func (gcs *GCS) GetFileRangedReader(ctx context.Context, key string, size int64, limiter *bwlimit.Limiter) (io.ReadCloser, bool, error) {
 	workers, minSize, chunk, enabled := gcs.rangedDownloadSettings()
 	if !enabled || size < minSize || gcs.rangedBudget == nil {
 		return nil, false, nil
@@ -529,7 +534,7 @@ func (gcs *GCS) GetFileRangedReader(ctx context.Context, key string, size int64)
 			giveBack(true)
 			return nil, errors.Wrapf(err, "GCS NewRangeReader %s", absKey)
 		}
-		return &releasingReadCloser{ReadCloser: rc, onClose: func() { giveBack(false) }}, nil
+		return bwlimit.ReadCloser(ctx, &releasingReadCloser{ReadCloser: rc, onClose: func() { giveBack(false) }}, limiter), nil
 	}
 	log.Debug().Msgf("GCS ranged read %s size=%d chunk=%d workers=%d", absKey, size, chunk, workers)
 	return newRangedReader(ctx, fetch, size, chunk, workers, 2, gcs.rangedBudget), true, nil

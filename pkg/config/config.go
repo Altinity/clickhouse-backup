@@ -1048,7 +1048,7 @@ func DefaultConfig() *Config {
 			DownloadConcurrency:    int(downloadConcurrency + 1),
 			// ranged streaming download is opt-in: ranged_download_concurrency: 8 enables it
 			RangedDownloadConcurrency: 0,
-			RangedDownloadMinSize:     256 * 1024 * 1024,
+			RangedDownloadMinSize:     64 * 1024 * 1024,
 			RangedDownloadChunkSize:   32 * 1024 * 1024,
 			RangedDownloadMaxBuffers:  64,
 		},

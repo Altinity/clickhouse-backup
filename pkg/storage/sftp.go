@@ -251,7 +251,14 @@ func (sftp *SFTP) PutFileAbsolute(_ context.Context, key string, r io.ReadCloser
 			log.Warn().Msgf("can't close %s err=%v", key, err)
 		}
 	}()
-	if _, err = remoteFile.ReadFrom(r); err != nil {
+	// ReadFrom keeps several writes in flight only when it can learn the size of r,
+	// an io.Pipe from the compressor has none and gets one write per round trip, see https://github.com/Altinity/clickhouse-backup/issues/1607
+	if sftp.Config.Concurrency > 0 {
+		_, err = remoteFile.ReadFromWithConcurrency(r, sftp.Config.Concurrency)
+	} else {
+		_, err = remoteFile.ReadFrom(r)
+	}
+	if err != nil {
 		return errors.Wrap(err, "SFTP PutFileAbsolute ReadFrom")
 	}
 	return nil
