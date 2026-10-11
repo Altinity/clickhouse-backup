@@ -92,15 +92,20 @@ func TestKafkaKeeperOffsets(t *testing.T) {
 	copyPath := resolvedKafkaKeeperPath(r, env, dbCopy, "kafka")
 	r.NotEqual(origPath, copyPath)
 	r.Contains(copyPath, "/"+dbCopy+"/")
+	// before 25.6 StorageKafka2 gets partitions via consumer group rebalance, the copy shares kafka_group_name with the original
+	// and each of them gets only part of partitions, so keep only one of them attached at a time
+	sharedConsumerGroup := compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.6") < 0
+	if sharedConsumerGroup {
+		env.queryWithNoError(t, r, fmt.Sprintf("DETACH TABLE %s.kafka", dbCopy))
+	}
 	produceKafkaMessages(r, env, topic, n+m+1, n+m+k)
 	waitKafkaTargetCount(t, r, env, dbName, n+m+k)
-	// before 25.6 StorageKafka2 gets partitions via consumer group rebalance, the copy shares kafka_group_name with the original
-	// and gets only part of partitions while the original is attached
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.6") < 0 {
+	if sharedConsumerGroup {
 		env.queryWithNoError(t, r, fmt.Sprintf("DETACH TABLE %s.kafka", dbName))
+		env.queryWithNoError(t, r, fmt.Sprintf("ATTACH TABLE %s.kafka", dbCopy))
 	}
 	waitKafkaTargetCount(t, r, env, dbCopy, n+m+k)
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.6") < 0 {
+	if sharedConsumerGroup {
 		env.queryWithNoError(t, r, fmt.Sprintf("ATTACH TABLE %s.kafka", dbName))
 	}
 
