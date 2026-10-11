@@ -1005,9 +1005,14 @@ func (tc *TestContainers) EnsureKafka(ctx context.Context) error {
 }
 
 func (tc *TestContainers) startKafka(ctx context.Context) error {
+	kafkaVersion := "latest"
+	// ClickHouse < 25.3 bundles librdkafka 1.6.1, it doesn't consume from Kafka 4.x which removed old protocol versions (KIP-896)
+	if v := os.Getenv("CLICKHOUSE_VERSION"); v != "" && v != "head" && compareVersion(v, "25.3") < 0 {
+		kafkaVersion = "3.9.1"
+	}
 	return tc.startContainer(ctx, "kafka",
 		&container.Config{
-			Image: fmt.Sprintf("docker.io/apache/kafka:%s", getEnvDefault("KAFKA_VERSION", "latest")),
+			Image: fmt.Sprintf("docker.io/apache/kafka:%s", getEnvDefault("KAFKA_VERSION", kafkaVersion)),
 			Env: envMap(map[string]string{
 				"KAFKA_NODE_ID":                                  "1",
 				"KAFKA_PROCESS_ROLES":                            "broker,controller",
