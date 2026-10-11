@@ -20,6 +20,7 @@ import (
 const (
 	kafkaKeeperRestoredLog      = "from backup, offsets:"
 	kafkaKeeperActiveReplicaLog = "is used by active replicas"
+	kafkaKeeperSharedGroupLog   = "restored with mapping shares kafka_group_name"
 )
 
 var kafkaKeeperPathRE = regexp.MustCompile(`kafka_keeper_path\s*=\s*'([^']+)'`)
@@ -98,6 +99,11 @@ func TestKafkaKeeperOffsets(t *testing.T) {
 	out, err = env.DockerExecOut("clickhouse-backup", mappedRestore...)
 	r.NoError(err, out)
 	r.NotContains(out, kafkaKeeperActiveReplicaLog)
+	if sharedConsumerGroup {
+		r.NotContains(out, kafkaKeeperSharedGroupLog, "detached source table is not live")
+	} else {
+		r.Contains(out, kafkaKeeperSharedGroupLog)
+	}
 	copyPath := resolvedKafkaKeeperPath(r, env, dbCopy, "kafka")
 	r.Contains(copyPath, "/"+dbCopy+"/")
 	produceKafkaMessages(r, env, topic, n+m+1, n+m+k)

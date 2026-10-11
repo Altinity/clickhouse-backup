@@ -585,16 +585,15 @@ func TestFindKafkaConsumerGroupConflict(t *testing.T) {
 	source := kafkaLiveTable{Database: "db", Table: "kafka", Query: liveQuery("k2:9092, k1:9092", "t2", "g")}
 	self := kafkaLiveTable{Database: "db_copy", Table: "kafka", Query: query}
 
-	conflict := findKafkaConsumerGroupConflict(25003000, true, "db_copy", "kafka", query, []kafkaLiveTable{self, source})
+	conflict := findKafkaConsumerGroupConflict(true, "db_copy", "kafka", query, []kafkaLiveTable{self, source})
 	require.NotNil(t, conflict, "same group, same brokers as a set, common topic")
 	assert.Equal(t, "db", conflict.Database)
 	assert.Equal(t, "kafka", conflict.Table)
 
-	assert.Nil(t, findKafkaConsumerGroupConflict(25006000, true, "db_copy", "kafka", query, []kafkaLiveTable{source}), "25.6+ assigns partitions via keeper locks")
-	assert.Nil(t, findKafkaConsumerGroupConflict(24008000, false, "db_copy", "kafka", query, []kafkaLiveTable{source}), "not mapped restore")
-	assert.Nil(t, findKafkaConsumerGroupConflict(24008000, true, "db_copy", "kafka", query, []kafkaLiveTable{self}), "target table itself is not a conflict")
-	assert.Nil(t, findKafkaConsumerGroupConflict(24008000, true, "db_copy", "kafka", query, []kafkaLiveTable{{Database: "db", Table: "kafka", Query: liveQuery("k1:9092,k2:9092", "t1", "other")}}), "other group")
-	assert.Nil(t, findKafkaConsumerGroupConflict(24008000, true, "db_copy", "kafka", query, []kafkaLiveTable{{Database: "db", Table: "kafka", Query: liveQuery("k3:9092", "t1", "g")}}), "other brokers")
-	assert.Nil(t, findKafkaConsumerGroupConflict(24008000, true, "db_copy", "kafka", query, []kafkaLiveTable{{Database: "db", Table: "kafka", Query: liveQuery("k1:9092,k2:9092", "t3", "g")}}), "no common topic")
-	assert.Nil(t, findKafkaConsumerGroupConflict(24008000, true, "db_copy", "kafka", strings.Replace(query, ", kafka_keeper_path = '/clickhouse/db_copy/kafka', kafka_replica_name = 'r1'", "", 1), []kafkaLiveTable{source}), "only Kafka tables with kafka_keeper_path")
+	assert.Nil(t, findKafkaConsumerGroupConflict(false, "db_copy", "kafka", query, []kafkaLiveTable{source}), "not mapped restore")
+	assert.Nil(t, findKafkaConsumerGroupConflict(true, "db_copy", "kafka", query, []kafkaLiveTable{self}), "target table itself is not a conflict")
+	assert.Nil(t, findKafkaConsumerGroupConflict(true, "db_copy", "kafka", query, []kafkaLiveTable{{Database: "db", Table: "kafka", Query: liveQuery("k1:9092,k2:9092", "t1", "other")}}), "other group")
+	assert.Nil(t, findKafkaConsumerGroupConflict(true, "db_copy", "kafka", query, []kafkaLiveTable{{Database: "db", Table: "kafka", Query: liveQuery("k3:9092", "t1", "g")}}), "other brokers")
+	assert.Nil(t, findKafkaConsumerGroupConflict(true, "db_copy", "kafka", query, []kafkaLiveTable{{Database: "db", Table: "kafka", Query: liveQuery("k1:9092,k2:9092", "t3", "g")}}), "no common topic")
+	assert.Nil(t, findKafkaConsumerGroupConflict(true, "db_copy", "kafka", strings.Replace(query, ", kafka_keeper_path = '/clickhouse/db_copy/kafka', kafka_replica_name = 'r1'", "", 1), []kafkaLiveTable{source}), "only Kafka tables with kafka_keeper_path")
 }

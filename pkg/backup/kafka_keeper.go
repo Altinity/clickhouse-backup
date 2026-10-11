@@ -412,12 +412,12 @@ func hasCommonKafkaListItem(a, b []string) bool {
 	return false
 }
 
-// findKafkaConsumerGroupConflict - before ClickHouse 25.6 StorageKafka2 gets partitions via consumer group rebalance,
-// a mapped copy with the same kafka_group_name, kafka_broker_list and a common topic takes partitions from the live source table,
-// since 25.6 partitions are assigned via keeper locks, see https://github.com/ClickHouse/ClickHouse/pull/78726,
+// findKafkaConsumerGroupConflict - find a live Kafka table with the same kafka_group_name, kafka_broker_list and a common topic as the mapped copy,
+// before ClickHouse 25.6 StorageKafka2 gets partitions via consumer group rebalance and the copy takes partitions from the live table,
+// since 25.6 partitions are assigned via keeper locks, see https://github.com/ClickHouse/ClickHouse/pull/78726, but both tables still commit offsets to the broker under the same group,
 // returns the conflicting live table or nil
-func findKafkaConsumerGroupConflict(version int, isMapped bool, database, table, query string, liveTables []kafkaLiveTable) *kafkaLiveTable {
-	if version >= kafkaKeeperPartitionLocksVersion || !isMapped {
+func findKafkaConsumerGroupConflict(isMapped bool, database, table, query string, liveTables []kafkaLiveTable) *kafkaLiveTable {
+	if !isMapped {
 		return nil
 	}
 	if _, ok := parseKafkaSetting(query, kafkaKeeperPathSetting); !ok {
@@ -780,11 +780,9 @@ func (b *Backuper) restoreKafkaKeeperOffsets(ctx context.Context, schema *metada
 }
 
 // checkKafkaConsumerGroupConflict - fail mapped restore on ClickHouse < 25.6 when a live Kafka table would lose partitions to the restored copy,
+// warn on 25.6+ because both tables commit offsets to the broker under the same group,
 // only the local server is checked, live tables on other servers of the cluster are not visible here
 func (b *Backuper) checkKafkaConsumerGroupConflict(ctx context.Context, schema *metadata.TableMetadata, version int) error {
-	if version >= kafkaKeeperPartitionLocksVersion {
-		return nil
-	}
 	origDatabase, origTable := b.resolveOrigTableNames(*schema)
 	isMapped := origDatabase != schema.Database || origTable != schema.Table
 	if !isMapped {
@@ -794,11 +792,15 @@ func (b *Backuper) checkKafkaConsumerGroupConflict(ctx context.Context, schema *
 	if err := b.ch.SelectContext(ctx, &liveTables, "SELECT database, name, create_table_query FROM system.tables WHERE engine='Kafka'"); err != nil {
 		return errors.Wrap(err, "can't read Kafka tables from system.tables")
 	}
-	live := findKafkaConsumerGroupConflict(version, isMapped, schema.Database, schema.Table, schema.Query, liveTables)
+	live := findKafkaConsumerGroupConflict(isMapped, schema.Database, schema.Table, schema.Query, liveTables)
 	if live == nil {
 		return nil
 	}
 	groupName, _ := parseKafkaSetting(schema.Query, "kafka_group_name")
+	if version >= kafkaKeeperPartitionLocksVersion {
+		log.Warn().Msgf("`%s`.`%s` restored with mapping shares kafka_group_name '%s' and topics with live table `%s`.`%s`, offsets in keeper stay independent, but both tables commit offsets to the Kafka broker under the same group, so consumer group lag monitoring becomes misleading and partitions without keeper offsets start from the group offset committed by the live table; consider changing kafka_group_name of the restored table", schema.Database, schema.Table, groupName, live.Database, live.Table)
+		return nil
+	}
 	return errors.Errorf("can't restore `%s`.`%s` with mapping: ClickHouse %d.%d < 25.6 assigns Kafka partitions via consumer group rebalance, live table `%s`.`%s` uses the same kafka_group_name '%s' and topics, the restored table would take partitions from it, see https://github.com/ClickHouse/ClickHouse/pull/78726; upgrade ClickHouse to 25.6+, drop or detach the source Kafka table, or change kafka_group_name", schema.Database, schema.Table, version/1000000, version/1000%1000, live.Database, live.Table, groupName)
 }
 

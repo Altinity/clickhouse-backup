@@ -1007,7 +1007,7 @@ func (tc *TestContainers) EnsureKafka(ctx context.Context) error {
 func (tc *TestContainers) startKafka(ctx context.Context) error {
 	return tc.startContainer(ctx, "kafka",
 		&container.Config{
-			Image: fmt.Sprintf("docker.io/apache/kafka:%s", getEnvDefault("KAFKA_VERSION", "3.9.1")),
+			Image: fmt.Sprintf("docker.io/apache/kafka:%s", getEnvDefault("KAFKA_VERSION", "latest")),
 			Env: envMap(map[string]string{
 				"KAFKA_NODE_ID":                                  "1",
 				"KAFKA_PROCESS_ROLES":                            "broker,controller",
