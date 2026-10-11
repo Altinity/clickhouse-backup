@@ -214,6 +214,15 @@ func (b *Backuper) createAndUploadStreaming(ctx context.Context, backupName, dif
 		return err
 	}
 	checkLocalPart := diffFrom != "" && diffFromRemote == ""
+	// https://github.com/Altinity/clickhouse-backup/issues/1120
+	kafkaKeeper, attachKafkaTables, err := b.backupKafkaKeeperOffsets(ctx, p.tables, p.doBackupData)
+	if err != nil {
+		return errors.Wrap(err, "b.backupKafkaKeeperOffsets")
+	}
+	defer func() {
+		// errors are already logged with the ATTACH statement for manual run
+		_ = attachKafkaTables()
+	}()
 
 	var backupDataSize, backupObjectDiskSize, backupMetadataSize uint64
 	var brokenParts, totalParts int64
@@ -265,7 +274,7 @@ func (b *Backuper) createAndUploadStreaming(ctx context.Context, backupName, dif
 		}
 		idx := tableIdx
 		createGroup.Go(func() error {
-			tableMeta, tableBackupSize, createOneTableErr := b.createOneTable(createCtx, backupName, backupPath, &table, tablesDiffFromRemote, p.partitionsIdMap, allInProgressMutations, skipProjections, p.disks, p.doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, version)
+			tableMeta, tableBackupSize, createOneTableErr := b.createOneTable(createCtx, backupName, backupPath, &table, tablesDiffFromRemote, p.partitionsIdMap, allInProgressMutations, kafkaKeeper, skipProjections, p.disks, p.doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, version)
 			if createOneTableErr != nil {
 				return createOneTableErr
 			}
@@ -287,6 +296,8 @@ func (b *Backuper) createAndUploadStreaming(ctx context.Context, backupName, dif
 		})
 	}
 	createErr := createGroup.Wait()
+	// all tables are frozen, Kafka tables can consume again
+	attachErr := attachKafkaTables()
 	if createErr != nil {
 		pipelineCancel()
 	}
@@ -301,6 +312,9 @@ func (b *Backuper) createAndUploadStreaming(ctx context.Context, backupName, dif
 	}
 	if createErr != nil {
 		return errors.Wrap(createErr, "one of createOneTable go-routine return error")
+	}
+	if attachErr != nil {
+		return errors.Wrapf(attachErr, "can't attach back Kafka tables with %s", kafkaKeeperPathSetting)
 	}
 
 	// tables already uploaded stay on remote storage when the ratio check fails, the returned error tells the user to delete the backup

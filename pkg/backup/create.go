@@ -345,6 +345,16 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 		return err
 	}
 
+	// https://github.com/Altinity/clickhouse-backup/issues/1120
+	kafkaKeeper, attachKafkaTables, err := b.backupKafkaKeeperOffsets(ctx, tables, doBackupData)
+	if err != nil {
+		return errors.Wrap(err, "b.backupKafkaKeeperOffsets")
+	}
+	defer func() {
+		// errors are already logged with the ATTACH statement for manual run
+		_ = attachKafkaTables()
+	}()
+
 	var backupDataSize, backupObjectDiskSize, backupMetadataSize uint64
 	// brokenParts/totalParts accumulate the broken vs. total data parts across all tables so that, when
 	// general.max_broken_part_ratio > 0, a backup that hit broken parts within the configured threshold is
@@ -363,7 +373,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 		}
 		idx := tableIdx
 		createBackupWorkingGroup.Go(func() error {
-			tableMeta, tableBackupSize, createOneTableErr := b.createOneTable(createCtx, backupName, backupPath, &table, tablesDiffFromRemote, partitionsIdMap, allInProgressMutations, skipProjections, disks, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, version)
+			tableMeta, tableBackupSize, createOneTableErr := b.createOneTable(createCtx, backupName, backupPath, &table, tablesDiffFromRemote, partitionsIdMap, allInProgressMutations, kafkaKeeper, skipProjections, disks, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, version)
 			if createOneTableErr != nil {
 				return createOneTableErr
 			}
@@ -384,8 +394,14 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 			return nil
 		})
 	}
-	if wgWaitErr := createBackupWorkingGroup.Wait(); wgWaitErr != nil {
+	wgWaitErr := createBackupWorkingGroup.Wait()
+	// all tables are frozen, Kafka tables can consume again
+	attachErr := attachKafkaTables()
+	if wgWaitErr != nil {
 		return errors.Wrap(wgWaitErr, "one of createBackupLocal go-routine return error")
+	}
+	if attachErr != nil {
+		return errors.Wrapf(attachErr, "can't attach back Kafka tables with %s", kafkaKeeperPathSetting)
 	}
 
 	if err := b.checkMaxBrokenPartRatio(atomic.LoadInt64(&brokenParts), atomic.LoadInt64(&totalParts)); err != nil {
@@ -521,7 +537,7 @@ type createOneTableSize struct {
 
 // createOneTable backs up data (when requested) and writes table metadata for a single table,
 // returns the written metadata (nil when no metadata was written) and per-table size counters
-func (b *Backuper) createOneTable(ctx context.Context, backupName, backupPath string, table *clickhouse.Table, tablesDiffFromRemote map[metadata.TableTitle]metadata.TableMetadata, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, allInProgressMutations map[metadata.TableTitle][]metadata.MutationMetadata, skipProjections []string, disks []clickhouse.Disk, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly bool, version int) (*metadata.TableMetadata, createOneTableSize, error) {
+func (b *Backuper) createOneTable(ctx context.Context, backupName, backupPath string, table *clickhouse.Table, tablesDiffFromRemote map[metadata.TableTitle]metadata.TableMetadata, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, allInProgressMutations map[metadata.TableTitle][]metadata.MutationMetadata, kafkaKeeper map[metadata.TableTitle]*metadata.KafkaKeeperMetadata, skipProjections []string, disks []clickhouse.Disk, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly bool, version int) (*metadata.TableMetadata, createOneTableSize, error) {
 	logger := log.With().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Logger()
 	size := createOneTableSize{}
 	var realSize, objectDiskSize map[string]int64
@@ -587,6 +603,7 @@ func (b *Backuper) createOneTable(ctx context.Context, backupName, backupPath st
 		Checksums:      checksums,
 		HashOfAllFiles: hashOfAllFiles,
 		Mutations:      inProgressMutations,
+		KafkaKeeper:    kafkaKeeper[metadata.TableTitle{Database: table.Database, Table: table.Name}],
 		MetadataOnly:   schemaOnly || table.BackupType == clickhouse.ShardBackupSchema,
 	}
 	metadataSize, createTableMetadataErr := b.createTableMetadata(path.Join(backupPath, "metadata"), tableMeta, disks)
@@ -615,6 +632,14 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 		backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: 0})
 	}
 	var tablesTitle []metadata.TableTitle
+	if doBackupData {
+		for _, table := range tables {
+			// https://github.com/Altinity/clickhouse-backup/issues/1120
+			if _, isKafkaKeeper := kafkaKeeperPathFromQuery(table.Engine, table.CreateTableQuery); isKafkaKeeper && !table.Skip {
+				log.Warn().Msgf("`%s`.`%s`: kafka offsets in keeper are not backed up with use_embedded_backup_restore", table.Database, table.Name)
+			}
+		}
+	}
 
 	if schemaOnly || doBackupData {
 		l := b.CalculateNonSkipTables(tables)

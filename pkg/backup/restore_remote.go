@@ -287,6 +287,8 @@ func (b *Backuper) restoreFromRemoteStreaming(backupName, tablePattern string, d
 			log.Warn().Msgf("not found schemas by %s in %s", prologue.tablePattern, backupName)
 		} else {
 			dataSize, err = b.streamTablesData(ctx, backupName, remoteBackup.BackupMetadata, backupManifest, downloaded.tableMetadataAfterDownload, prologue, skipProjections, replicatedCopyToDetached, hardlinkExistsFiles)
+			// https://github.com/Altinity/clickhouse-backup/issues/1120
+			b.finishKafkaKeeperHolds(ctx, prologue.tablesForRestore, err)
 			if err != nil {
 				return err
 			}

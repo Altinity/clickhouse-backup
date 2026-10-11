@@ -125,7 +125,10 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	tablesForRestore := prologue.tablesForRestore
 	existingTablesSnapshot := prologue.existingTablesSnapshot
 	if dataOnly || (schemaOnly == dataOnly) {
-		if restoreErr := b.RestoreData(ctx, backupName, backupMetadata, dataOnly, metadataPath, tablePattern, partitions, skipProjections, disks, version, replicatedCopyToDetached, tablesForRestore, existingTablesSnapshot); restoreErr != nil {
+		restoreErr := b.RestoreData(ctx, backupName, backupMetadata, dataOnly, metadataPath, tablePattern, partitions, skipProjections, disks, version, replicatedCopyToDetached, tablesForRestore, existingTablesSnapshot)
+		// https://github.com/Altinity/clickhouse-backup/issues/1120
+		b.finishKafkaKeeperHolds(ctx, tablesForRestore, restoreErr)
+		if restoreErr != nil {
 			return errors.Wrap(restoreErr, "RestoreData")
 		}
 	}
@@ -467,7 +470,13 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 			}
 		}
 		if err = b.RestoreSchema(ctx, backupName, backupMetadata, disks, tablesForRestore, ignoreDependencies, version, schemaAsAttach); err != nil {
+			// https://github.com/Altinity/clickhouse-backup/issues/1120
+			b.warnKafkaKeeperHeldLocks(backupName, "schema restore failed")
 			return nil, errors.Wrap(err, "RestoreSchema")
+		}
+		// https://github.com/Altinity/clickhouse-backup/issues/1120
+		if schemaOnly && !dataOnly {
+			b.warnKafkaKeeperHeldLocks(backupName, "schema only restore")
 		}
 	}
 	// https://github.com/Altinity/clickhouse-backup/issues/756
@@ -1992,6 +2001,14 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 	restoreRetries := 0
 	isDatabaseCreated := common.EmptyMap{}
 	var restoreErr error
+	// connected lazily only when backup contains Kafka tables with keeper offsets, https://github.com/Altinity/clickhouse-backup/issues/1120
+	var kafkaKeeper *keeper.Keeper
+	kafkaKeeperRestored := make(map[metadata.TableTitle]struct{})
+	defer func() {
+		if kafkaKeeper != nil {
+			kafkaKeeper.Close()
+		}
+	}()
 	for restoreRetries < totalRetries {
 		var notRestoredTables ListOfTables
 		for _, schema := range tablesForRestore {
@@ -2016,6 +2033,12 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 
 			// https://github.com/Altinity/clickhouse-backup/issues/466
 			b.replaceUUIDMacroValue(schema)
+			// https://github.com/Altinity/clickhouse-backup/issues/1120
+			if markKafkaKeeperRestored(kafkaKeeperRestored, schema) {
+				if kafkaErr := b.restoreKafkaKeeperOffsets(ctx, schema, databaseEnginesForRestore[schema.Database], version, &kafkaKeeper); kafkaErr != nil {
+					return kafkaErr
+				}
+			}
 			restoreErr = b.ch.CreateTable(clickhouse.Table{
 				Database: schema.Database,
 				Name:     schema.Table,
