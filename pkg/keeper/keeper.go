@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -583,6 +584,94 @@ func WalkDumpFile(dumpFile string, fn func(node DumpNode) error) error {
 		}
 	}
 	return nil
+}
+
+// DumpTree - return persistent znodes under prefix in pre-order with paths relative to prefix, prefix itself has empty path,
+// ephemeral znodes are skipped together with their subtrees, znodes removed by a concurrent writer during the walk are skipped,
+// returns zk.ErrNoNode when prefix doesn't exist, look https://github.com/Altinity/clickhouse-backup/issues/1120
+func (k *Keeper) DumpTree(prefix string) ([]DumpNode, error) {
+	nodes := make([]DumpNode, 0)
+	if err := k.dumpTreeRecursive(k.ResolvePath(prefix), "", &nodes); err != nil {
+		return nil, err
+	}
+	return nodes, nil
+}
+
+func (k *Keeper) dumpTreeRecursive(prefix, relativePath string, nodes *[]DumpNode) error {
+	nodePath := path.Join(prefix, relativePath)
+	value, stat, err := k.conn.Get(nodePath)
+	if err != nil {
+		if errors.Is(err, zk.ErrNoNode) && relativePath != "" {
+			return nil
+		}
+		return errors.Wrapf(err, "dumpTreeRecursive conn.Get(%s)", nodePath)
+	}
+	if stat.EphemeralOwner != 0 {
+		return nil
+	}
+	*nodes = append(*nodes, DumpNode{Path: relativePath, Value: value})
+	if stat.NumChildren == 0 {
+		return nil
+	}
+	children, _, err := k.conn.Children(nodePath)
+	if err != nil {
+		if errors.Is(err, zk.ErrNoNode) {
+			return nil
+		}
+		return errors.Wrapf(err, "dumpTreeRecursive conn.Children(%s)", nodePath)
+	}
+	sort.Strings(children)
+	for _, child := range children {
+		if err = k.dumpTreeRecursive(prefix, path.Join(relativePath, child), nodes); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Exists - check znode existence, nodePath shall be already resolved via ResolvePath
+func (k *Keeper) Exists(nodePath string) (bool, error) {
+	exists, _, err := k.conn.Exists(nodePath)
+	if err != nil {
+		return false, errors.Wrapf(err, "can't check znode %s, error", nodePath)
+	}
+	return exists, nil
+}
+
+// Create - create persistent znode with value, return false when znode already exists, parent shall exist,
+// nodePath shall be already resolved via ResolvePath
+func (k *Keeper) Create(nodePath string, value []byte) (bool, error) {
+	if _, err := k.conn.Create(nodePath, value, 0, zk.WorldACL(zk.PermAll)); err != nil {
+		if errors.Is(err, zk.ErrNodeExists) {
+			return false, nil
+		}
+		return false, errors.Wrapf(err, "can't create znode %s, error", nodePath)
+	}
+	return true, nil
+}
+
+// Get - return znode value and existence flag, nodePath shall be already resolved via ResolvePath
+func (k *Keeper) Get(nodePath string) ([]byte, bool, error) {
+	value, _, err := k.conn.Get(nodePath)
+	if err != nil {
+		if errors.Is(err, zk.ErrNoNode) {
+			return nil, false, nil
+		}
+		return nil, false, errors.Wrapf(err, "can't get znode %s, error", nodePath)
+	}
+	return value, true, nil
+}
+
+// Children - list znode children, empty list when znode doesn't exist, nodePath shall be already resolved via ResolvePath
+func (k *Keeper) Children(nodePath string) ([]string, error) {
+	children, _, err := k.conn.Children(nodePath)
+	if err != nil {
+		if errors.Is(err, zk.ErrNoNode) {
+			return nil, nil
+		}
+		return nil, errors.Wrapf(err, "can't list children of znode %s, error", nodePath)
+	}
+	return children, nil
 }
 
 // ResolvePath - apply <zookeeper><root> chroot to the passed znode path

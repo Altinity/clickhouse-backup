@@ -992,6 +992,48 @@ func (tc *TestContainers) startZookeeper(ctx context.Context, configsDir string)
 	)
 }
 
+// EnsureKafka lazily starts a single-node KRaft Kafka broker reachable as kafka:9092 on the env
+// network, only the Kafka tests need it, so it is not part of StartAll. StopAll removes it.
+func (tc *TestContainers) EnsureKafka(ctx context.Context) error {
+	if tc.GetContainerID("kafka") != "" {
+		return nil
+	}
+	if err := tc.startKafka(ctx); err != nil {
+		return err
+	}
+	return tc.waitHealthy(ctx, "kafka", 180*time.Second, "")
+}
+
+func (tc *TestContainers) startKafka(ctx context.Context) error {
+	return tc.startContainer(ctx, "kafka",
+		&container.Config{
+			Image: fmt.Sprintf("docker.io/apache/kafka:%s", getEnvDefault("KAFKA_VERSION", "3.9.1")),
+			Env: envMap(map[string]string{
+				"KAFKA_NODE_ID":                                  "1",
+				"KAFKA_PROCESS_ROLES":                            "broker,controller",
+				"KAFKA_LISTENERS":                                "PLAINTEXT://:9092,CONTROLLER://:9093",
+				"KAFKA_ADVERTISED_LISTENERS":                     "PLAINTEXT://kafka:9092",
+				"KAFKA_CONTROLLER_LISTENER_NAMES":                "CONTROLLER",
+				"KAFKA_LISTENER_SECURITY_PROTOCOL_MAP":           "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT",
+				"KAFKA_CONTROLLER_QUORUM_VOTERS":                 "1@localhost:9093",
+				"KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR":         "1",
+				"KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR": "1",
+				"KAFKA_TRANSACTION_STATE_LOG_MIN_ISR":            "1",
+				"KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS":         "0",
+				"KAFKA_HEAP_OPTS":                                "-Xmx256m -Xms256m",
+			}),
+			Healthcheck: &container.HealthConfig{
+				Test:     []string{"CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"},
+				Interval: 3 * time.Second,
+				Timeout:  30 * time.Second,
+				Retries:  60,
+			},
+		},
+		&container.HostConfig{SecurityOpt: []string{"label:disable"}},
+		"kafka",
+	)
+}
+
 func (tc *TestContainers) startMySQL(ctx context.Context) error {
 	return tc.startContainer(ctx, "mysql",
 		&container.Config{

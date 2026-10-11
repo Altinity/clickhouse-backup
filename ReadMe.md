@@ -803,6 +803,7 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 - Optional string query argument `restore_schema_as_attach` or `restore-schema-as-attach` works the same as the `--restore-schema-as-attach` CLI argument.
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
 - Optional boolean query argument `skip_empty_tables` or `skip-empty-tables` works the same as the `--skip-empty-tables` CLI argument (skip restoring tables that have no data).
+- Optional boolean query argument `skip_kafka_keeper_hold` or `skip-kafka-keeper-hold` works the same as the `--skip-kafka-keeper-hold` CLI argument (don't hold consumption of restored Kafka tables with `kafka_keeper_path` via partition locks until data restore completes, release already placed locks).
 - Optional boolean query argument `rebind_replica_path_if_exists` or `rebind-replica-path-if-exists` works the same as the `--rebind-replica-path-if-exists` CLI argument (overrides `clickhouse.rebind_replica_path_if_exists` for this request, rebind a restored ReplicatedMergeTree to `default_replica_path` when the original ZK path still has leftover state but our replica entry is absent). WARNING: never set during a concurrent HA multi-replica restore.
 - Optional boolean query argument `drop_replica_if_exists` or `drop-replica-if-exists` works the same as the `--drop-replica-if-exists` CLI argument (overrides `clickhouse.drop_replica_if_exists` for this request, execute `SYSTEM DROP REPLICA ... FROM ZKPATH ...` and keep the original replication path when our own replica entry still exists in ZooKeeper but no local table uses it). WARNING: never set during a concurrent HA multi-replica restore.
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success|cancel","error":"not empty when error happens", "operation_id" : "<random_uuid>", "command":"<full command line>", "duration":"<elapsed>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
@@ -837,6 +838,7 @@ A backup with ClickHouse Cloud / native `BACKUP ... TO S3/AzureBlobStorage` layo
 - Optional boolean query argument `allow_missing_files` or `allow-missing-files` works the same as the `--allow-missing-files` CLI argument (skip data parts missing on remote storage instead of failing, overrides `general.allow_missing_files_on_download` for this request).
 - Optional boolean query argument `streaming` works the same as the `--streaming` CLI argument (restore each table right after its download and delete its local copy, see [Streaming mode](#streaming-mode)).
 - Optional boolean query argument `skip_empty_tables` or `skip-empty-tables` works the same as the `--skip-empty-tables` CLI argument (skip restoring tables that have no data).
+- Optional boolean query argument `skip_kafka_keeper_hold` or `skip-kafka-keeper-hold` works the same as the `--skip-kafka-keeper-hold` CLI argument (don't hold consumption of restored Kafka tables with `kafka_keeper_path` via partition locks until data restore completes, release already placed locks).
 - Optional boolean query argument `rebind_replica_path_if_exists` or `rebind-replica-path-if-exists` works the same as the `--rebind-replica-path-if-exists` CLI argument (overrides `clickhouse.rebind_replica_path_if_exists` for this request, rebind a restored ReplicatedMergeTree to `default_replica_path` when the original ZK path still has leftover state but our replica entry is absent). WARNING: never set during a concurrent HA multi-replica restore.
 - Optional boolean query argument `drop_replica_if_exists` or `drop-replica-if-exists` works the same as the `--drop-replica-if-exists` CLI argument (overrides `clickhouse.drop_replica_if_exists` for this request, execute `SYSTEM DROP REPLICA ... FROM ZKPATH ...` and keep the original replication path when our own replica entry still exists in ZooKeeper but no local table uses it). WARNING: never set during a concurrent HA multi-replica restore.
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success|cancel","error":"not empty when error happens", "operation_id" : "<random_uuid>", "command":"<full command line>", "duration":"<elapsed>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
@@ -1135,7 +1137,7 @@ NAME:
    clickhouse-backup restore - Create schema and restore data from backup
 
 USAGE:
-   clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] [--skip-empty-tables] <backup_name>
+   clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] [--skip-empty-tables] [--skip-kafka-keeper-hold] <backup_name>
 
 OPTIONS:
    --table string, --tables string, -t string                                                     Restore only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
@@ -1151,6 +1153,7 @@ OPTIONS:
    --schema, -s                                                                                                                         Restore schema only
    --data, -d                                                                                                                           Restore data only
    --rm, --drop                                                                                                                         Drop exists schema objects before restore
+   --skip-kafka-keeper-hold                                                                                                             Don't hold consumption of restored Kafka tables with kafka_keeper_path via partition locks until data restore completes, release already placed locks
    -i, --ignore-dependencies                                                                                                            Ignore dependencies when drop exists schema objects
    --rbac, --restore-rbac, --do-restore-rbac                                                                                            Restore RBAC related objects, enabled always when general->rbac_restore_always: true
    --configs, --restore-configs, --do-restore-configs                                                                                   Restore 'clickhouse-server' CONFIG related files, enabled always when general->config_restore_always: true
@@ -1179,7 +1182,7 @@ NAME:
    clickhouse-backup restore_remote - Download and restore
 
 USAGE:
-   clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] <backup_name>
+   clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] [--skip-kafka-keeper-hold] <backup_name>
 
 DESCRIPTION:
    A remote backup with ClickHouse Cloud / native BACKUP layout (.backup without metadata.json, `cloud` in `list remote`) is restored via restore_cloud, only with remote_storage s3 or azblob and without mapping, --schema, --data, --rbac, --configs, --named-collections, --resume and --streaming options
@@ -1199,6 +1202,7 @@ OPTIONS:
    --schema, -s                                                                                                                         Download and Restore schema only
    --data, -d                                                                                                                           Download and Restore data only
    --rm, --drop                                                                                                                         Drop schema objects before restore
+   --skip-kafka-keeper-hold                                                                                                             Don't hold consumption of restored Kafka tables with kafka_keeper_path via partition locks until data restore completes, release already placed locks
    -i, --ignore-dependencies                                                                                                            Ignore dependencies when drop exists schema objects
    --rbac, --restore-rbac, --do-restore-rbac                                                                                            Download and Restore RBAC related objects, enabled always when general->rbac_restore_always: true
    --configs, --restore-configs, --do-restore-configs                                                                                   Download and Restore 'clickhouse-server' CONFIG related files, enabled always when general->config_restore_always: true

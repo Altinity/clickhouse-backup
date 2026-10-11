@@ -406,6 +406,8 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 					originTable.Query = replicatedRE.ReplaceAllString(originTable.Query, substitution)
 				}
 			}
+			// https://github.com/Altinity/clickhouse-backup/issues/1120
+			originTable.Query = adjustKafkaKeeperPathForMapping(originTable.Query, originTable.Database, targetDB, originTable.Database+"."+originTable.Table)
 			// https://github.com/Altinity/clickhouse-backup/issues/547
 			if distributedRE.MatchString(originTable.Query) {
 				matches := distributedRE.FindAllStringSubmatch(originTable.Query, -1)
@@ -510,6 +512,8 @@ func changeTableQueryToAdjustTableMapping(originTables *ListOfTables, tableMapRu
 					originTable.Query = replicatedRE.ReplaceAllString(originTable.Query, substitution)
 				}
 			}
+			// https://github.com/Altinity/clickhouse-backup/issues/1120
+			originTable.Query = adjustKafkaKeeperPathForMapping(originTable.Query, originTable.Table, targetTable, originTable.Database+"."+originTable.Table)
 			// https://github.com/Altinity/clickhouse-backup/issues/547
 			if distributedRE.MatchString(originTable.Query) {
 				matches := distributedRE.FindAllStringSubmatch(originTable.Query, -1)

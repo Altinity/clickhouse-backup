@@ -27,6 +27,21 @@ type TableMetadata struct {
 	LocalFile            string             `json:"local_file,omitempty"`
 	Checksums            map[string]uint64  `json:"checksums,omitempty"`
 	HashOfAllFiles       map[string]string  `json:"hash_of_all_files,omitempty"`
+	// KafkaKeeper - keeper state of Kafka engine table with `kafka_keeper_path` setting, see https://github.com/Altinity/clickhouse-backup/issues/1120
+	KafkaKeeper *KafkaKeeperMetadata `json:"kafka_keeper,omitempty"`
+}
+
+// KafkaKeeperMetadata - persistent znodes under `kafka_keeper_path` dumped while the Kafka table was detached
+type KafkaKeeperMetadata struct {
+	// Path - resolved source keeper path, informational only, restore resolves the path from the restored query
+	Path string `json:"path"`
+	// Nodes - znodes with paths relative to Path in pre-order, Path itself is not included
+	Nodes []KafkaKeeperNode `json:"nodes"`
+}
+
+type KafkaKeeperNode struct {
+	Path  string `json:"path"`
+	Value string `json:"value"`
 }
 
 func (tm *TableMetadata) Save(location string, metadataOnly bool) (uint64, error) {
@@ -37,6 +52,7 @@ func (tm *TableMetadata) Save(location string, metadataOnly bool) (uint64, error
 		Query:                tm.Query,
 		DependenciesTable:    tm.DependenciesTable,
 		DependenciesDatabase: tm.DependenciesDatabase,
+		KafkaKeeper:          tm.KafkaKeeper,
 		MetadataOnly:         true,
 	}
 
