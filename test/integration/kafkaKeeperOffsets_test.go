@@ -85,28 +85,31 @@ func TestKafkaKeeperOffsets(t *testing.T) {
 	r.Empty(kafkaKeeperBackupLocks(r, env, dbName, "kafka"), "combined restore shall release consumption locks")
 
 	// restore into mapped database while the original is live, both pipelines keep their own offsets
-	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", cfg, "restore", "--tables", dbName+".*", "--restore-database-mapping", dbName+":"+dbCopy, backupName)
-	r.NoError(err, out)
-	r.NotContains(out, kafkaKeeperActiveReplicaLog)
-	origPath := resolvedKafkaKeeperPath(r, env, dbName, "kafka")
-	copyPath := resolvedKafkaKeeperPath(r, env, dbCopy, "kafka")
-	r.NotEqual(origPath, copyPath)
-	r.Contains(copyPath, "/"+dbCopy+"/")
-	// before 25.6 StorageKafka2 gets partitions via consumer group rebalance, the copy shares kafka_group_name with the original
-	// and each of them gets only part of partitions, so keep only one of them attached at a time
+	mappedRestore := []string{"clickhouse-backup", "-c", cfg, "restore", "--rm", "--tables", dbName + ".*", "--restore-database-mapping", dbName + ":" + dbCopy, backupName}
+	// before 25.6 StorageKafka2 gets partitions via consumer group rebalance, the copy shares kafka_group_name with the live original
+	// and would take partitions from it, restore shall fail until the original is detached
 	sharedConsumerGroup := compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.6") < 0
 	if sharedConsumerGroup {
-		env.queryWithNoError(t, r, fmt.Sprintf("DETACH TABLE %s.kafka", dbCopy))
-	}
-	produceKafkaMessages(r, env, topic, n+m+1, n+m+k)
-	waitKafkaTargetCount(t, r, env, dbName, n+m+k)
-	if sharedConsumerGroup {
+		out, err = env.DockerExecOut("clickhouse-backup", mappedRestore...)
+		r.Error(err, out)
+		r.Contains(out, "https://github.com/ClickHouse/ClickHouse/pull/78726")
 		env.queryWithNoError(t, r, fmt.Sprintf("DETACH TABLE %s.kafka", dbName))
-		env.queryWithNoError(t, r, fmt.Sprintf("ATTACH TABLE %s.kafka", dbCopy))
 	}
-	waitKafkaTargetCount(t, r, env, dbCopy, n+m+k)
+	out, err = env.DockerExecOut("clickhouse-backup", mappedRestore...)
+	r.NoError(err, out)
+	r.NotContains(out, kafkaKeeperActiveReplicaLog)
+	copyPath := resolvedKafkaKeeperPath(r, env, dbCopy, "kafka")
+	r.Contains(copyPath, "/"+dbCopy+"/")
+	produceKafkaMessages(r, env, topic, n+m+1, n+m+k)
 	if sharedConsumerGroup {
+		waitKafkaTargetCount(t, r, env, dbCopy, n+m+k)
+		env.queryWithNoError(t, r, fmt.Sprintf("DETACH TABLE %s.kafka", dbCopy))
 		env.queryWithNoError(t, r, fmt.Sprintf("ATTACH TABLE %s.kafka", dbName))
+	}
+	r.NotEqual(resolvedKafkaKeeperPath(r, env, dbName, "kafka"), copyPath)
+	waitKafkaTargetCount(t, r, env, dbName, n+m+k)
+	if !sharedConsumerGroup {
+		waitKafkaTargetCount(t, r, env, dbCopy, n+m+k)
 	}
 
 	// keeper path with an active replica of another table, restore shall not overwrite its offsets

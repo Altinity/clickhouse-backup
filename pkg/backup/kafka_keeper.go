@@ -359,19 +359,92 @@ func releaseOwnKafkaKeeperLocks(k kafkaKeeperClient, keeperPath, tableTitle stri
 	return nil
 }
 
-// parseKafkaTopicList - topics from comma separated kafka_topic_list setting
-func parseKafkaTopicList(query string) []string {
-	topicList, ok := parseKafkaSetting(query, "kafka_topic_list")
+// parseKafkaListSetting - items of comma separated Kafka engine setting, like kafka_topic_list or kafka_broker_list
+func parseKafkaListSetting(query, name string) []string {
+	list, ok := parseKafkaSetting(query, name)
 	if !ok {
 		return nil
 	}
-	topics := make([]string, 0)
-	for _, topic := range strings.Split(topicList, ",") {
-		if topic = strings.TrimSpace(topic); topic != "" {
-			topics = append(topics, topic)
+	items := make([]string, 0)
+	for _, item := range strings.Split(list, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, item)
 		}
 	}
-	return topics
+	return items
+}
+
+// parseKafkaTopicList - topics from comma separated kafka_topic_list setting
+func parseKafkaTopicList(query string) []string {
+	return parseKafkaListSetting(query, "kafka_topic_list")
+}
+
+type kafkaLiveTable struct {
+	Database string `ch:"database"`
+	Table    string `ch:"name"`
+	Query    string `ch:"create_table_query"`
+}
+
+func isSameKafkaList(a, b []string) bool {
+	if len(a) == 0 || len(a) != len(b) {
+		return false
+	}
+	aSet := make(map[string]struct{}, len(a))
+	for _, item := range a {
+		aSet[item] = struct{}{}
+	}
+	for _, item := range b {
+		if _, exists := aSet[item]; !exists {
+			return false
+		}
+	}
+	return true
+}
+
+func hasCommonKafkaListItem(a, b []string) bool {
+	for _, itemA := range a {
+		for _, itemB := range b {
+			if itemA == itemB {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// findKafkaConsumerGroupConflict - before ClickHouse 25.6 StorageKafka2 gets partitions via consumer group rebalance,
+// a mapped copy with the same kafka_group_name, kafka_broker_list and a common topic takes partitions from the live source table,
+// since 25.6 partitions are assigned via keeper locks, see https://github.com/ClickHouse/ClickHouse/pull/78726,
+// returns the conflicting live table or nil
+func findKafkaConsumerGroupConflict(version int, isMapped bool, database, table, query string, liveTables []kafkaLiveTable) *kafkaLiveTable {
+	if version >= kafkaKeeperPartitionLocksVersion || !isMapped {
+		return nil
+	}
+	if _, ok := parseKafkaSetting(query, kafkaKeeperPathSetting); !ok {
+		return nil
+	}
+	groupName, ok := parseKafkaSetting(query, "kafka_group_name")
+	if !ok {
+		return nil
+	}
+	brokers := parseKafkaListSetting(query, "kafka_broker_list")
+	topics := parseKafkaTopicList(query)
+	for i := range liveTables {
+		live := liveTables[i]
+		if live.Database == database && live.Table == table {
+			continue
+		}
+		if liveGroupName, liveOk := parseKafkaSetting(live.Query, "kafka_group_name"); !liveOk || liveGroupName != groupName {
+			continue
+		}
+		if !isSameKafkaList(brokers, parseKafkaListSetting(live.Query, "kafka_broker_list")) {
+			continue
+		}
+		if hasCommonKafkaListItem(topics, parseKafkaTopicList(live.Query)) {
+			return &live
+		}
+	}
+	return nil
 }
 
 // ensureKafkaKeeperSkeleton - StorageKafka2 skips skeleton creation when `replicas` exists, so the restored tree shall contain
@@ -651,6 +724,10 @@ func (b *Backuper) restoreKafkaKeeperOffsets(ctx context.Context, schema *metada
 		}
 		return nil
 	}
+	// checked before any keeper write, failure leaves no state behind
+	if err := b.checkKafkaConsumerGroupConflict(ctx, schema, version); err != nil {
+		return err
+	}
 	if strings.Contains(keeperPath, "{uuid}") {
 		uuidMatches := uuidRE.FindStringSubmatch(schema.Query)
 		if len(uuidMatches) == 0 {
@@ -700,6 +777,29 @@ func (b *Backuper) restoreKafkaKeeperOffsets(ctx context.Context, schema *metada
 	}
 	b.kafkaHeldLocks = append(b.kafkaHeldLocks, heldLocks...)
 	return nil
+}
+
+// checkKafkaConsumerGroupConflict - fail mapped restore on ClickHouse < 25.6 when a live Kafka table would lose partitions to the restored copy,
+// only the local server is checked, live tables on other servers of the cluster are not visible here
+func (b *Backuper) checkKafkaConsumerGroupConflict(ctx context.Context, schema *metadata.TableMetadata, version int) error {
+	if version >= kafkaKeeperPartitionLocksVersion {
+		return nil
+	}
+	origDatabase, origTable := b.resolveOrigTableNames(*schema)
+	isMapped := origDatabase != schema.Database || origTable != schema.Table
+	if !isMapped {
+		return nil
+	}
+	liveTables := make([]kafkaLiveTable, 0)
+	if err := b.ch.SelectContext(ctx, &liveTables, "SELECT database, name, create_table_query FROM system.tables WHERE engine='Kafka'"); err != nil {
+		return errors.Wrap(err, "can't read Kafka tables from system.tables")
+	}
+	live := findKafkaConsumerGroupConflict(version, isMapped, schema.Database, schema.Table, schema.Query, liveTables)
+	if live == nil {
+		return nil
+	}
+	groupName, _ := parseKafkaSetting(schema.Query, "kafka_group_name")
+	return errors.Errorf("can't restore `%s`.`%s` with mapping: ClickHouse %d.%d < 25.6 assigns Kafka partitions via consumer group rebalance, live table `%s`.`%s` uses the same kafka_group_name '%s' and topics, the restored table would take partitions from it, see https://github.com/ClickHouse/ClickHouse/pull/78726; upgrade ClickHouse to 25.6+, drop or detach the source Kafka table, or change kafka_group_name", schema.Database, schema.Table, version/1000000, version/1000%1000, live.Database, live.Table, groupName)
 }
 
 // markKafkaKeeperRestored - restore keeper offsets at most once per table, CREATE could be retried several times in restoreSchemaRegular,
