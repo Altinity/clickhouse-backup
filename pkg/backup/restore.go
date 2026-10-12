@@ -665,7 +665,10 @@ func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePatt
 	}
 
 	// https://github.com/Altinity/clickhouse-backup/issues/514
-	if schemaOnly && dropTable {
+	// local DROP DATABASE for ENGINE=Replicated removes only current replica, CREATE DATABASE adds it again and the replica
+	// recovers from database DDL log concurrently with following DROP/CREATE TABLE, tables are dropped later in dropExistsTables
+	// and these DROP TABLE are replicated, https://github.com/Altinity/clickhouse-backup/issues/1611
+	if schemaOnly && dropTable && (b.cfg.General.RestoreSchemaOnCluster != "" || !strings.HasPrefix(database.Engine, "Replicated")) {
 		onCluster := ""
 		if b.cfg.General.RestoreSchemaOnCluster != "" {
 			onCluster = fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
@@ -1762,8 +1765,14 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, backupM
 	startRestoreSchema := time.Now()
 	databaseEnginesForRestore := b.prepareDatabaseEnginesMap(backupMetadata.Databases)
 	if !b.embeddedClusterWorkerSkipsDDL() {
+		if syncErr := b.syncReplicatedDatabases(ctx, tablesForRestore, databaseEnginesForRestore, version); syncErr != nil {
+			return syncErr
+		}
 		if dropErr := b.dropExistsTables(tablesForRestore, databaseEnginesForRestore, ignoreDependencies, version, schemaAsAttach); dropErr != nil {
 			return errors.Wrap(dropErr, "dropExistsTables")
+		}
+		if syncErr := b.syncReplicatedDatabases(ctx, tablesForRestore, databaseEnginesForRestore, version); syncErr != nil {
+			return syncErr
 		}
 	}
 	var restoreErr error
@@ -1780,6 +1789,34 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, backupM
 		"operation": "restore_schema",
 		"duration":  utils.HumanizeDuration(time.Since(startRestoreSchema)),
 	}).Msg("done")
+	return nil
+}
+
+// syncReplicatedDatabases waits until current replica of each existing ENGINE=Replicated database applies the whole database DDL log,
+// DDL on a lagging replica fails with code 529 `Cannot enqueue query on this replica, because it has replication lag`,
+// https://github.com/Altinity/clickhouse-backup/issues/1611
+func (b *Backuper) syncReplicatedDatabases(ctx context.Context, tablesForRestore ListOfTables, databaseEngines map[string]string, version int) error {
+	// SYSTEM SYNC DATABASE REPLICA available since 22.5
+	if version < 22005000 {
+		return nil
+	}
+	synced := common.EmptyMap{}
+	for _, schema := range tablesForRestore {
+		if _, isSynced := synced[schema.Database]; isSynced || !strings.HasPrefix(databaseEngines[schema.Database], "Replicated") {
+			continue
+		}
+		synced[schema.Database] = struct{}{}
+		existsEngine, err := b.ch.GetDatabaseEngine(schema.Database)
+		if err != nil {
+			return errors.Wrapf(err, "syncReplicatedDatabases")
+		}
+		if existsEngine != "Replicated" {
+			continue
+		}
+		if err = b.ch.QueryContext(ctx, fmt.Sprintf("SYSTEM SYNC DATABASE REPLICA `%s`", schema.Database)); err != nil {
+			return errors.Wrapf(err, "syncReplicatedDatabases")
+		}
+	}
 	return nil
 }
 
@@ -2026,13 +2063,18 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 			}
 			//materialized and window views should restore via ATTACH
 			b.replaceCreateToAttachForView(schema)
-			// https://github.com/Altinity/clickhouse-backup/issues/849
-			if replicaErr := b.checkReplicaAlreadyExistsAndChangeReplicationPath(ctx, schema, version); replicaErr != nil {
-				return replicaErr
-			}
+			// inside ENGINE=Replicated database the initiator generates the table UUID and shares it with other replicas via database DDL log,
+			// so {uuid} in ReplicatedMergeTree path is already unique and the replica of dropped table is removed by replicated DROP TABLE,
+			// explicit zookeeper_path different from default_replica_path is rejected with code 36, https://github.com/Altinity/clickhouse-backup/issues/1611
+			if !strings.HasPrefix(databaseEnginesForRestore[schema.Database], "Replicated") {
+				// https://github.com/Altinity/clickhouse-backup/issues/849
+				if replicaErr := b.checkReplicaAlreadyExistsAndChangeReplicationPath(ctx, schema, version); replicaErr != nil {
+					return replicaErr
+				}
 
-			// https://github.com/Altinity/clickhouse-backup/issues/466
-			b.replaceUUIDMacroValue(schema)
+				// https://github.com/Altinity/clickhouse-backup/issues/466
+				b.replaceUUIDMacroValue(schema)
+			}
 			// https://github.com/Altinity/clickhouse-backup/issues/1120
 			if markKafkaKeeperRestored(kafkaKeeperRestored, schema) {
 				if kafkaErr := b.restoreKafkaKeeperOffsets(ctx, schema, databaseEnginesForRestore[schema.Database], version, &kafkaKeeper); kafkaErr != nil {

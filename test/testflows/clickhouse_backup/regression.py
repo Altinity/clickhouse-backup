@@ -159,6 +159,7 @@ def regression(self, local, stress=False, fips=True, fips_godebug="only"):
             Scenario(run=load("clickhouse_backup.tests.views", "views"))
             Scenario(run=load("clickhouse_backup.tests.config_rbac", "config_rbac"))
             Scenario(run=load("clickhouse_backup.tests.embedded_on_cluster", "embedded_on_cluster"))
+            Scenario(run=load("clickhouse_backup.tests.replicated_database", "replicated_database"))
     finally:
         shutil.rmtree(config_dir, ignore_errors=True)
 
