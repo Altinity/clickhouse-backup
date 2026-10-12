@@ -220,6 +220,25 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_EncryptedStorage = Requirement(
     num='4.1.13'
 )
 
+RQ_SRS_013_ClickHouse_BackupUtility_Generic_ReplicatedDatabase = Requirement(
+    name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.ReplicatedDatabase',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        'The [clickhouse-backup] utility SHALL support restoring a database with `ENGINE=Replicated` on every replica of the cluster\n'
+        'when the schema is restored sequentially on each replica with `restore --schema --rm` (the first replica with\n'
+        '`RESTORE_SCHEMA_ON_CLUSTER`) and the data is restored on one replica of each shard, that SHALL result in\n'
+        'the same tables and data on all replicas.\n'
+        '\n'
+    ),
+    link=None,
+    level=3,
+    num='4.1.14'
+)
+
 RQ_SRS_013_ClickHouse_BackupUtility_Views_View = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Views.View',
     version='1.0',
@@ -1824,6 +1843,7 @@ QA_SRS013_ClickHouse_Backup_Utility = Specification(
         Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.ClickHouseVersions', level=3, num='4.1.11'),
         Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.TieredStorage', level=3, num='4.1.12'),
         Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.EncryptedStorage', level=3, num='4.1.13'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.ReplicatedDatabase', level=3, num='4.1.14'),
         Heading(name='Views', level=2, num='4.2'),
         Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Views.View', level=3, num='4.2.1'),
         Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Views.MaterializedView', level=3, num='4.2.2'),
@@ -1915,6 +1935,7 @@ QA_SRS013_ClickHouse_Backup_Utility = Specification(
         RQ_SRS_013_ClickHouse_BackupUtility_Generic_ClickHouseVersions,
         RQ_SRS_013_ClickHouse_BackupUtility_Generic_TieredStorage,
         RQ_SRS_013_ClickHouse_BackupUtility_Generic_EncryptedStorage,
+        RQ_SRS_013_ClickHouse_BackupUtility_Generic_ReplicatedDatabase,
         RQ_SRS_013_ClickHouse_BackupUtility_Views_View,
         RQ_SRS_013_ClickHouse_BackupUtility_Views_MaterializedView,
         RQ_SRS_013_ClickHouse_BackupUtility_Views_LiveView,
@@ -2008,6 +2029,7 @@ QA_SRS013_ClickHouse_Backup_Utility = Specification(
     * 4.1.11 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.ClickHouseVersions](#rqsrs-013clickhousebackuputilitygenericclickhouseversions)
     * 4.1.12 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.TieredStorage](#rqsrs-013clickhousebackuputilitygenerictieredstorage)
     * 4.1.13 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.EncryptedStorage](#rqsrs-013clickhousebackuputilitygenericencryptedstorage)
+    * 4.1.14 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.ReplicatedDatabase](#rqsrs-013clickhousebackuputilitygenericreplicateddatabase)
   * 4.2 [Views](#views)
     * 4.2.1 [RQ.SRS-013.ClickHouse.BackupUtility.Views.View](#rqsrs-013clickhousebackuputilityviewsview)
     * 4.2.2 [RQ.SRS-013.ClickHouse.BackupUtility.Views.MaterializedView](#rqsrs-013clickhousebackuputilityviewsmaterializedview)
@@ -2189,6 +2211,14 @@ The [clickhouse-backup] utility SHALL support `tiered storage` that was added in
 version: 1.0
 
 The [clickhouse-backup] utility SHALL support creating backups from [encrypted storages](https://clickhouse.tech/docs/en/operations/storing-data/#encrypted-virtual-file-system) and restoring them.
+
+#### RQ.SRS-013.ClickHouse.BackupUtility.Generic.ReplicatedDatabase
+version: 1.0
+
+The [clickhouse-backup] utility SHALL support restoring a database with `ENGINE=Replicated` on every replica of the cluster
+when the schema is restored sequentially on each replica with `restore --schema --rm` (the first replica with
+`RESTORE_SCHEMA_ON_CLUSTER`) and the data is restored on one replica of each shard, that SHALL result in
+the same tables and data on all replicas.
 
 ### Views
 
