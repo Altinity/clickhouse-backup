@@ -9,6 +9,8 @@
             <allow_experimental_live_view>1</allow_experimental_live_view>
             <allow_experimental_window_view>1</allow_experimental_window_view>
             <allow_experimental_database_materialized_mysql>1</allow_experimental_database_materialized_mysql>
+            <!-- obsolete since 24.4, required before for ENGINE=Replicated database, tests/replicated_database.py -->
+            <allow_experimental_database_replicated>1</allow_experimental_database_replicated>
        </default>
     </profiles>
 </yandex>
