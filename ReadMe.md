@@ -281,17 +281,6 @@ clickhouse:
   # CLICKHOUSE_SKIP_DISK_TYPES, list of disk types which are ignored during create, upload, download and restore command
   # The format for this env variable is "Engine1,Engine2,engine3". For YAML please continue using array syntax
   skip_disk_types: []
-  # CLICKHOUSE_SKIP_RESTORE_NON_SHARDED_REPLICATED_TABLES, default false.
-  # When true, `restore`, `restore_remote` and their dry-run skip replicated tables that are global on the cluster
-  # (one ZooKeeper path shared by more than one replica). The check, run only for those commands, is:
-  #   SELECT database, table
-  #   FROM clusterAllReplicas('<cluster>', system.replicas)
-  #   GROUP BY database, table
-  #   HAVING if(uniqExact(zookeeper_path) = 1 AND count() > 1, 'global', 'sharded') = 'global'
-  # `<cluster>` is skip_check_non_sharded_replicated_tables_cluster (CLICKHOUSE_SKIP_CHECK_NON_SHARDED_REPLICATED_TABLES_CLUSTER, default `{cluster}`).
-  # Replicas which must keep the global tables leave the bool false. Sharded replicated tables stay in the restore.
-  skip_restore_non_sharded_replicated_tables: false # CLICKHOUSE_SKIP_RESTORE_NON_SHARDED_REPLICATED_TABLES
-  skip_check_non_sharded_replicated_tables_cluster: "{cluster}" # CLICKHOUSE_SKIP_CHECK_NON_SHARDED_REPLICATED_TABLES_CLUSTER
   timeout: 5m                  # CLICKHOUSE_TIMEOUT
   freeze_by_part: false        # CLICKHOUSE_FREEZE_BY_PART, allow freezing by part instead of freezing the whole table
   freeze_by_part_where: ""     # CLICKHOUSE_FREEZE_BY_PART_WHERE, allow parts filtering during freezing when freeze_by_part: true
@@ -335,6 +324,21 @@ clickhouse:
   # Requires ClickHouse >= 20.4, restore fails when the drop is impossible (too old server, or a local table still uses the path). The statement is executed only on the current node, without ON CLUSTER, because the replica name and path are already resolved with the macros of this node.
   # WARNING: MUST be false during a concurrent multi-replica (HA) restore, a leftover replica entry is indistinguishable from an entry of a live sibling replica. Can be overridden per invocation with the `--drop-replica-if-exists` flag of `restore`/`restore_remote`.
   drop_replica_if_exists: false # CLICKHOUSE_DROP_REPLICA_IF_EXISTS
+  # CLICKHOUSE_SKIP_RESTORE_NON_SHARDED_REPLICATED_TABLES, restore the data of non-sharded replicated tables on one node of the cluster only (https://github.com/Altinity/clickhouse-backup/issues/1181).
+  # A non-sharded table is a Replicated*MergeTree whose ZooKeeper path in the backup DDL contains no macros other than `{database}`, `{table}` and `{cluster}` (for the short syntax `default_replica_path` from system.settings is checked),
+  # so every replica of every shard joins one replication queue and the data restored on several nodes would be duplicated or rejected by `check_replicas_before_attach`.
+  # `{shard}`, `{replica}`, `{uuid}` or any custom macro makes the table sharded, it is restored as before. A literal per shard path, e.g. `/clickhouse/tables/01/db/t`, can't be told apart from a cluster wide one, don't enable this option for such tables.
+  # The classification uses only the backup, it works on a freshly provisioned cluster, the live tables, system.replicas and other nodes are not queried.
+  # The node which restores the data is the first replica of the first shard (min shard_num, min replica_num) of `skip_check_non_sharded_replicated_tables_cluster` in system.clusters of the current node.
+  # Every other node restores the schema of these tables (with `--rm` the tables and databases are dropped and created again as usual) and skips only their data: it's not attached, not downloaded by `restore_remote --streaming`, and `--data --partitions` doesn't drop their partitions. The data arrives through replication.
+  # So set the option to true with the same value of `skip_check_non_sharded_replicated_tables_cluster` on every node of the cluster, a shared config.yml works. The skipped tables are logged in one warning and listed in `skipped_data_tables` of `restore --dry-run`.
+  # When non-sharded tables are selected and the cluster is missing in system.clusters, or the current node is not its replica, the restore fails before any DROP. No query is executed when the option is false or no such table is selected.
+  # When the replica of a non-sharded table already exists in ZooKeeper, the original path is kept instead of rebinding to `default_replica_path` which contains `{shard}`, CREATE fails with REPLICA_ALREADY_EXISTS, use `drop_replica_if_exists: true` to drop the existing replica.
+  # Not supported with `use_embedded_backup_restore: true` and `restore_cloud` (restore fails). Non-streaming `restore_remote` downloads the whole backup and skips the data on restore.
+  skip_restore_non_sharded_replicated_tables: false # CLICKHOUSE_SKIP_RESTORE_NON_SHARDED_REPLICATED_TABLES
+  # CLICKHOUSE_SKIP_CHECK_NON_SHARDED_REPLICATED_TABLES_CLUSTER, cluster name from system.clusters (macros are applied) which defines the node restoring the data of non-sharded replicated tables when `skip_restore_non_sharded_replicated_tables: true`,
+  # the value is unrelated to `use_embedded_backup_restore_cluster` and `restore_schema_on_cluster`, an empty value is an error when non-sharded tables are selected.
+  skip_check_non_sharded_replicated_tables_cluster: "{cluster}" # CLICKHOUSE_SKIP_CHECK_NON_SHARDED_REPLICATED_TABLES_CLUSTER
   use_embedded_backup_restore: false # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE, use BACKUP / RESTORE SQL statements instead of regular SQL queries to use features of modern ClickHouse server versions
   use_embedded_backup_restore_cluster: "" # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE_CLUSTER, add ON CLUSTER clause to BACKUP / RESTORE SQL statements when `use_embedded_backup_restore: true`, value is cluster name from system.clusters, e.g. "{cluster}", every node writes its own `shards/N/replicas/M/` part into the SAME shared destination (S3 / GCS / AzureBlob or a shared mount, node local disks don't work), `create`, `create_remote`, `restore`, `restore_remote` on one node drive the other nodes through their `system.backup_actions` tables, so every node needs a running `clickhouse-backup server` with `api.create_integration_tables: true` and the same `clickhouse.username` / `clickhouse.password` / `clickhouse.secure` (system.clusters has no secure column, the initiator connects to other nodes with remote() or remoteSecure() according to its own `clickhouse.secure`), the same `remote_storage` `path` on all nodes, the initiator writes `.backup`, `metadata.json` (tagged `embedded,cluster=<name>`), rbac, configs, named collections, each node writes `shards/N/replicas/M/metadata/<db>/<table>.json`, `delete local <name>` on one node is propagated to the other nodes, `delete remote` is not (shared destination)
   embedded_backup_disk: ""  # CLICKHOUSE_EMBEDDED_BACKUP_DISK - disk from system.disks which will use when `use_embedded_backup_restore: true`

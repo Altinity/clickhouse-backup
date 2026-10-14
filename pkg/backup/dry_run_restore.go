@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"fmt"
 	"path"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
@@ -62,12 +63,21 @@ func (b *Backuper) dryRunRestore(ctx context.Context, backupName string, backupM
 		// embedded RESTORE is executed by clickhouse-server from a single .backup, per table sizes are unavailable
 		report.DataSize = backupMetadata.DataSize
 	} else if doRestoreData {
+		// https://github.com/Altinity/clickhouse-backup/issues/1181
+		skipDataTables, err := b.getNonShardedReplicatedTablesSkipData(ctx, tablesForRestore)
+		if err != nil {
+			return err
+		}
 		diskTypeByName := make(map[string]string, len(disks))
 		for _, d := range disks {
 			diskTypeByName[d.Name] = d.Type
 		}
 		for _, t := range tablesForRestore {
 			if t == nil || t.MetadataOnly {
+				continue
+			}
+			if _, isSkipped := skipDataTables[metadata.TableTitle{Database: t.Database, Table: t.Table}]; isSkipped {
+				report.SkippedDataTables = append(report.SkippedDataTables, fmt.Sprintf("%s.%s", t.Database, t.Table))
 				continue
 			}
 			for diskName, parts := range t.Parts {

@@ -394,39 +394,37 @@ type CustomConfig struct {
 
 // ClickHouseConfig - clickhouse settings section
 type ClickHouseConfig struct {
-	Username                                   string            `yaml:"username" envconfig:"CLICKHOUSE_USERNAME"`
-	Password                                   string            `yaml:"password" envconfig:"CLICKHOUSE_PASSWORD"`
-	Host                                       string            `yaml:"host" envconfig:"CLICKHOUSE_HOST"`
-	Port                                       uint              `yaml:"port" envconfig:"CLICKHOUSE_PORT"`
-	DiskMapping                                map[string]string `yaml:"disk_mapping" envconfig:"CLICKHOUSE_DISK_MAPPING"`
-	SkipTables                                 []string          `yaml:"skip_tables" envconfig:"CLICKHOUSE_SKIP_TABLES"`
-	SkipTableEngines                           []string          `yaml:"skip_table_engines" envconfig:"CLICKHOUSE_SKIP_TABLE_ENGINES"`
-	SkipDisks                                  []string          `yaml:"skip_disks" envconfig:"CLICKHOUSE_SKIP_DISKS"`
-	SkipDiskTypes                              []string          `yaml:"skip_disk_types" envconfig:"CLICKHOUSE_SKIP_DISK_TYPES"`
-	SkipRestoreNonShardedReplicatedTables      bool              `yaml:"skip_restore_non_sharded_replicated_tables" envconfig:"CLICKHOUSE_SKIP_RESTORE_NON_SHARDED_REPLICATED_TABLES"`
-	SkipCheckNonShardedReplicatedTablesCluster string            `yaml:"skip_check_non_sharded_replicated_tables_cluster" envconfig:"CLICKHOUSE_SKIP_CHECK_NON_SHARDED_REPLICATED_TABLES_CLUSTER"`
-	Timeout                                    string            `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT"`
-	FreezeByPart                               bool              `yaml:"freeze_by_part" envconfig:"CLICKHOUSE_FREEZE_BY_PART"`
-	FreezeByPartWhere                          string            `yaml:"freeze_by_part_where" envconfig:"CLICKHOUSE_FREEZE_BY_PART_WHERE"`
-	UseEmbeddedBackupRestore                   bool              `yaml:"use_embedded_backup_restore" envconfig:"CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE"`
-	UseEmbeddedBackupRestoreCluster            string            `yaml:"use_embedded_backup_restore_cluster" envconfig:"CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE_CLUSTER"`
-	EmbeddedBackupDisk                         string            `yaml:"embedded_backup_disk" envconfig:"CLICKHOUSE_EMBEDDED_BACKUP_DISK"`
-	BackupMutations                            bool              `yaml:"backup_mutations" envconfig:"CLICKHOUSE_BACKUP_MUTATIONS"`
-	RestoreAsAttach                            bool              `yaml:"restore_as_attach" envconfig:"CLICKHOUSE_RESTORE_AS_ATTACH"`
-	RestoreDistributedCluster                  string            `yaml:"restore_distributed_cluster" envconfig:"CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER"`
-	CheckPartsColumns                          bool              `yaml:"check_parts_columns" envconfig:"CLICKHOUSE_CHECK_PARTS_COLUMNS"`
-	PartsColumnsBatchSize                      int               `yaml:"parts_columns_batch_size" envconfig:"CLICKHOUSE_PARTS_COLUMNS_BATCH_SIZE"`
-	Secure                                     bool              `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
-	SkipVerify                                 bool              `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`
-	KeeperIdentity                             string            `yaml:"keeper_identity" envconfig:"CLICKHOUSE_KEEPER_IDENTITY"`
-	SyncReplicatedTables                       bool              `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES"`
-	LogSQLQueries                              bool              `yaml:"log_sql_queries" envconfig:"CLICKHOUSE_LOG_SQL_QUERIES"`
-	ConfigDir                                  string            `yaml:"config_dir" envconfig:"CLICKHOUSE_CONFIG_DIR"`
-	RestartCommand                             string            `yaml:"restart_command" envconfig:"CLICKHOUSE_RESTART_COMMAND"`
-	IgnoreNotExistsErrorDuringFreeze           bool              `yaml:"ignore_not_exists_error_during_freeze" envconfig:"CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE"`
-	CheckReplicasBeforeAttach                  bool              `yaml:"check_replicas_before_attach" envconfig:"CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH"`
-	DefaultReplicaPath                         string            `yaml:"default_replica_path" envconfig:"CLICKHOUSE_DEFAULT_REPLICA_PATH"`
-	DefaultReplicaName                         string            `yaml:"default_replica_name" envconfig:"CLICKHOUSE_DEFAULT_REPLICA_NAME"`
+	Username                         string            `yaml:"username" envconfig:"CLICKHOUSE_USERNAME"`
+	Password                         string            `yaml:"password" envconfig:"CLICKHOUSE_PASSWORD"`
+	Host                             string            `yaml:"host" envconfig:"CLICKHOUSE_HOST"`
+	Port                             uint              `yaml:"port" envconfig:"CLICKHOUSE_PORT"`
+	DiskMapping                      map[string]string `yaml:"disk_mapping" envconfig:"CLICKHOUSE_DISK_MAPPING"`
+	SkipTables                       []string          `yaml:"skip_tables" envconfig:"CLICKHOUSE_SKIP_TABLES"`
+	SkipTableEngines                 []string          `yaml:"skip_table_engines" envconfig:"CLICKHOUSE_SKIP_TABLE_ENGINES"`
+	SkipDisks                        []string          `yaml:"skip_disks" envconfig:"CLICKHOUSE_SKIP_DISKS"`
+	SkipDiskTypes                    []string          `yaml:"skip_disk_types" envconfig:"CLICKHOUSE_SKIP_DISK_TYPES"`
+	Timeout                          string            `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT"`
+	FreezeByPart                     bool              `yaml:"freeze_by_part" envconfig:"CLICKHOUSE_FREEZE_BY_PART"`
+	FreezeByPartWhere                string            `yaml:"freeze_by_part_where" envconfig:"CLICKHOUSE_FREEZE_BY_PART_WHERE"`
+	UseEmbeddedBackupRestore         bool              `yaml:"use_embedded_backup_restore" envconfig:"CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE"`
+	UseEmbeddedBackupRestoreCluster  string            `yaml:"use_embedded_backup_restore_cluster" envconfig:"CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE_CLUSTER"`
+	EmbeddedBackupDisk               string            `yaml:"embedded_backup_disk" envconfig:"CLICKHOUSE_EMBEDDED_BACKUP_DISK"`
+	BackupMutations                  bool              `yaml:"backup_mutations" envconfig:"CLICKHOUSE_BACKUP_MUTATIONS"`
+	RestoreAsAttach                  bool              `yaml:"restore_as_attach" envconfig:"CLICKHOUSE_RESTORE_AS_ATTACH"`
+	RestoreDistributedCluster        string            `yaml:"restore_distributed_cluster" envconfig:"CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER"`
+	CheckPartsColumns                bool              `yaml:"check_parts_columns" envconfig:"CLICKHOUSE_CHECK_PARTS_COLUMNS"`
+	PartsColumnsBatchSize            int               `yaml:"parts_columns_batch_size" envconfig:"CLICKHOUSE_PARTS_COLUMNS_BATCH_SIZE"`
+	Secure                           bool              `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
+	SkipVerify                       bool              `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`
+	KeeperIdentity                   string            `yaml:"keeper_identity" envconfig:"CLICKHOUSE_KEEPER_IDENTITY"`
+	SyncReplicatedTables             bool              `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES"`
+	LogSQLQueries                    bool              `yaml:"log_sql_queries" envconfig:"CLICKHOUSE_LOG_SQL_QUERIES"`
+	ConfigDir                        string            `yaml:"config_dir" envconfig:"CLICKHOUSE_CONFIG_DIR"`
+	RestartCommand                   string            `yaml:"restart_command" envconfig:"CLICKHOUSE_RESTART_COMMAND"`
+	IgnoreNotExistsErrorDuringFreeze bool              `yaml:"ignore_not_exists_error_during_freeze" envconfig:"CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE"`
+	CheckReplicasBeforeAttach        bool              `yaml:"check_replicas_before_attach" envconfig:"CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH"`
+	DefaultReplicaPath               string            `yaml:"default_replica_path" envconfig:"CLICKHOUSE_DEFAULT_REPLICA_PATH"`
+	DefaultReplicaName               string            `yaml:"default_replica_name" envconfig:"CLICKHOUSE_DEFAULT_REPLICA_NAME"`
 	// RebindReplicaPathIfExists is a fallback for restore: a foreign/renamed table that still occupies our
 	// resolved ZK path on THIS node is detected automatically via system.replicas and rebound to
 	// default_replica_path regardless of this flag (https://github.com/Altinity/clickhouse-backup/issues/849).
@@ -450,6 +448,13 @@ type ClickHouseConfig struct {
 	// ForceRebalance triggers disk rebalancing during download even when the backup's disk
 	// name exists on the target, allowing distribution across JBOD disks under the same storage policy
 	ForceRebalance bool `yaml:"force_rebalance" envconfig:"CLICKHOUSE_FORCE_REBALANCE"`
+	// SkipRestoreNonShardedReplicatedTables restores only the schema of replicated tables with one zookeeper path on the
+	// whole cluster, unless the current node is the first replica of the first shard of SkipCheckNonShardedReplicatedTablesCluster,
+	// the data is replicated from that node, https://github.com/Altinity/clickhouse-backup/issues/1181
+	SkipRestoreNonShardedReplicatedTables bool `yaml:"skip_restore_non_sharded_replicated_tables" envconfig:"CLICKHOUSE_SKIP_RESTORE_NON_SHARDED_REPLICATED_TABLES"`
+	// SkipCheckNonShardedReplicatedTablesCluster is the cluster from system.clusters which defines the node restoring the data
+	// of non-sharded replicated tables, macros are applied
+	SkipCheckNonShardedReplicatedTablesCluster string `yaml:"skip_check_non_sharded_replicated_tables_cluster" envconfig:"CLICKHOUSE_SKIP_CHECK_NON_SHARDED_REPLICATED_TABLES_CLUSTER"`
 	// Memory caps injected into the system.parts_columns check query (https://github.com/Altinity/clickhouse-backup/issues/1420).
 	// 0 means don't inject the corresponding setting (pre-2.7.2 behavior).
 	PartsColumnsMaxBytesBeforeExternalGroupBy int64 `yaml:"parts_columns_max_bytes_before_external_group_by" envconfig:"CLICKHOUSE_PARTS_COLUMNS_MAX_BYTES_BEFORE_EXTERNAL_GROUP_BY"`
@@ -989,25 +994,26 @@ func DefaultConfig() *Config {
 				"information_schema.*",
 				"_temporary_and_external_tables.*",
 			},
-			Timeout:                                    "30m",
-			SyncReplicatedTables:                       false,
-			LogSQLQueries:                              true,
-			ConfigDir:                                  "/etc/clickhouse-server/",
-			RestartCommand:                             "exec:systemctl restart clickhouse-server",
-			IgnoreNotExistsErrorDuringFreeze:           true,
-			CheckReplicasBeforeAttach:                  true,
+			Timeout:                          "30m",
+			SyncReplicatedTables:             false,
+			LogSQLQueries:                    true,
+			ConfigDir:                        "/etc/clickhouse-server/",
+			RestartCommand:                   "exec:systemctl restart clickhouse-server",
+			IgnoreNotExistsErrorDuringFreeze: true,
+			CheckReplicasBeforeAttach:        true,
+			UseEmbeddedBackupRestore:         false,
+			BackupMutations:                  true,
+			RestoreAsAttach:                  false,
+			CheckPartsColumns:                true,
+			PartsColumnsBatchSize:            25,
+			PartsColumnsMaxBytesBeforeExternalGroupBy: 100000000,
+			PartsColumnsMaxMemoryUsage:                200000000,
+			DefaultReplicaPath:                        "/clickhouse/tables/{cluster}/{shard}/{database}/{table}",
+			DefaultReplicaName:                        "{replica}",
+			MaxConnections:                            int(downloadConcurrency),
+			// https://github.com/Altinity/clickhouse-backup/issues/1181
 			SkipRestoreNonShardedReplicatedTables:      false,
 			SkipCheckNonShardedReplicatedTablesCluster: "{cluster}",
-			UseEmbeddedBackupRestore:                   false,
-			BackupMutations:                            true,
-			RestoreAsAttach:                            false,
-			CheckPartsColumns:                          true,
-			PartsColumnsBatchSize:                      25,
-			PartsColumnsMaxBytesBeforeExternalGroupBy:  100000000,
-			PartsColumnsMaxMemoryUsage:                 200000000,
-			DefaultReplicaPath:                         "/clickhouse/tables/{cluster}/{shard}/{database}/{table}",
-			DefaultReplicaName:                         "{replica}",
-			MaxConnections:                             int(downloadConcurrency),
 		},
 		AzureBlob: AzureBlobConfig{
 			EndpointSchema:    "https",

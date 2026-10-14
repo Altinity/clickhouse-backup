@@ -387,6 +387,9 @@ func (b *Backuper) RestoreCloud(opts RestoreCloudOptions, commandId int) error {
 	if opts.Prefix == "" {
 		return errors.New("backup prefix must be defined")
 	}
+	if b.cfg.ClickHouse.SkipRestoreNonShardedReplicatedTables {
+		return errors.New("skip_restore_non_sharded_replicated_tables is not supported by restore_cloud, see https://github.com/Altinity/clickhouse-backup/issues/1181")
+	}
 	if opts.ReplicatedZkPath == "" {
 		opts.ReplicatedZkPath = "'/clickhouse/tables/{uuid}/{shard}'"
 	}
