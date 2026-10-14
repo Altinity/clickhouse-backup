@@ -1015,6 +1015,12 @@ spec:
                 name: clickhouse-backup-config
 ```
 
+The same identity is used for parts on ClickHouse Azure object disks which have no `<account_key>`, e.g.
+`<use_workload_identity>true</use_workload_identity>`: `clickhouse-backup` reads the endpoint and the container
+of the disk from the ClickHouse config and authenticates with `DefaultAzureCredential`, so the
+`clickhouse-backup` container needs the same `AZURE_*` environment variables as the `clickhouse` container,
+fix [#1604](https://github.com/Altinity/clickhouse-backup/issues/1604).
+
 ## How to use GCP Workload Identity to allow GCS backup without Explicit credentials
 
 This is the Google Cloud equivalent of AWS IRSA. On GKE with

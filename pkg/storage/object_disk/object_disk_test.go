@@ -189,6 +189,28 @@ func TestCredentialsFromDiskArgs_XMLAndSQLParity(t *testing.T) {
 				"account_key":         "Eby8vdM02xNOcqF==",
 			},
 		},
+		{
+			// https://github.com/Altinity/clickhouse-backup/issues/1604
+			name: "azure workload identity",
+			diskXML: `
+				<type>object_storage</type>
+				<object_storage_type>azure_blob_storage</object_storage_type>
+				<metadata_type>local</metadata_type>
+				<storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
+				<container_name>azure-wi-disk</container_name>
+				<account_name>devstoreaccount1</account_name>
+				<use_workload_identity>true</use_workload_identity>
+			`,
+			args: map[string]string{
+				"type":                  "object_storage",
+				"object_storage_type":   "azure_blob_storage",
+				"metadata_type":         "local",
+				"storage_account_url":   "http://azure:10000/devstoreaccount1",
+				"container_name":        "azure-wi-disk",
+				"account_name":          "devstoreaccount1",
+				"use_workload_identity": "true",
+			},
+		},
 	}
 	t.Setenv("AWS_ROLE_ARN", "arn:aws:iam::000000000000:role/backup")
 	t.Setenv("AWS_ACCESS_KEY_ID", "env_access_key")
@@ -224,6 +246,71 @@ func TestCredentialsFromDiskArgs_NonObjectDiskTypes(t *testing.T) {
 	}
 }
 
+// every endpoint and authentication form which clickhouse-server accepts for azure disks
+// https://github.com/Altinity/clickhouse-backup/issues/1604
+func TestCredentialsFromDiskArgs_AzureForms(t *testing.T) {
+	const key = "Eby8vdM02xNOcqF=="
+	testCases := map[string]struct {
+		args     map[string]string
+		version  int
+		expected ObjectStorageCredentials
+	}{
+		"storage_account_url without account_key": {
+			args:     map[string]string{"storage_account_url": "http://azure:10000/devstoreaccount1", "container_name": "c", "account_name": "devstoreaccount1", "use_workload_identity": "true"},
+			expected: ObjectStorageCredentials{EndPoint: "http://azure:10000/devstoreaccount1", AzureAccountName: "devstoreaccount1", AzureContainerName: "c"},
+		},
+		"storage_account_url without account_name": {
+			args:     map[string]string{"storage_account_url": "https://acc.blob.core.windows.net", "container": "c"},
+			expected: ObjectStorageCredentials{EndPoint: "https://acc.blob.core.windows.net", AzureAccountName: "acc", AzureContainerName: "c"},
+		},
+		"storage_account_url azurite without account_name": {
+			args:     map[string]string{"storage_account_url": "http://azure:10000/devstoreaccount1", "container_name": "c", "account_key": key},
+			expected: ObjectStorageCredentials{EndPoint: "http://azure:10000/devstoreaccount1", AzureAccountName: "devstoreaccount1", AzureAccountKey: key, AzureContainerName: "c"},
+		},
+		"endpoint with prefix and subpath": {
+			args:     map[string]string{"endpoint": "http://azure:10000/devstoreaccount1/c/data/", "endpoint_subpath": "sub", "account_name": "devstoreaccount1", "account_key": key, "container_name": "ignored"},
+			version:  25001000,
+			expected: ObjectStorageCredentials{EndPoint: "http://azure:10000/devstoreaccount1/data/sub", AzureAccountName: "devstoreaccount1", AzureAccountKey: key, AzureContainerName: "c"},
+		},
+		"endpoint_subpath ignored before 25.1": {
+			args:     map[string]string{"endpoint": "http://azure:10000/devstoreaccount1/c/data", "endpoint_subpath": "sub", "account_key": key},
+			version:  24008000,
+			expected: ObjectStorageCredentials{EndPoint: "http://azure:10000/devstoreaccount1/data", AzureAccountName: "devstoreaccount1", AzureAccountKey: key, AzureContainerName: "c"},
+		},
+		"endpoint without account_name": {
+			args:     map[string]string{"endpoint": "https://acc.blob.core.windows.net/c", "endpoint_contains_account_name": "false"},
+			expected: ObjectStorageCredentials{EndPoint: "https://acc.blob.core.windows.net", AzureAccountName: "acc", AzureContainerName: "c"},
+		},
+		"connection_string with BlobEndpoint": {
+			args:     map[string]string{"connection_string": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=" + key + ";BlobEndpoint=http://azure:10000/devstoreaccount1;", "container_name": "c"},
+			expected: ObjectStorageCredentials{EndPoint: "http://azure:10000/devstoreaccount1", AzureAccountName: "devstoreaccount1", AzureAccountKey: key, AzureContainerName: "c"},
+		},
+		"connection_string with SAS and EndpointSuffix": {
+			args:     map[string]string{"connection_string": "AccountName=acc;SharedAccessSignature=sv=2022-11-02&sig=abc%3D;EndpointSuffix=core.chinacloudapi.cn", "container_name": "c"},
+			expected: ObjectStorageCredentials{EndPoint: "https://acc.blob.core.chinacloudapi.cn", AzureAccountName: "acc", AzureSAS: "sv=2022-11-02&sig=abc%3D", AzureContainerName: "c"},
+		},
+		"endpoint has priority over connection_string and storage_account_url": {
+			args:     map[string]string{"endpoint": "http://azure:10000/devstoreaccount1/c", "connection_string": "AccountName=other", "storage_account_url": "http://other:10000/other", "account_key": key},
+			expected: ObjectStorageCredentials{EndPoint: "http://azure:10000/devstoreaccount1", AzureAccountName: "devstoreaccount1", AzureAccountKey: key, AzureContainerName: "c"},
+		},
+	}
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			r := require.New(t)
+			tc.args["type"] = "azure_blob_storage"
+			if tc.version == 0 {
+				tc.version = credentialsParityVersion
+			}
+			// azure branch never calls ApplyMacros, any version works without a live connection
+			creds, ok, err := credentialsFromDiskArgs(context.Background(), credentialsTestClient, tc.version, "unit_test_disk", mapGetter(tc.args))
+			r.NoError(err)
+			r.True(ok)
+			tc.expected.Type = "azblob"
+			r.Equal(tc.expected, creds)
+		})
+	}
+}
+
 func TestCredentialsFromDiskArgs_Errors(t *testing.T) {
 	r := require.New(t)
 	testCases := map[string]map[string]string{
@@ -232,8 +319,9 @@ func TestCredentialsFromDiskArgs_Errors(t *testing.T) {
 		"object_storage bad metadata_type":  {"type": "object_storage", "object_storage_type": "s3", "metadata_type": "keeper", "endpoint": "http://minio:9000/b/"},
 		"azure without storage_account_url": {"type": "azure_blob_storage", "container_name": "c"},
 		"azure without container_name":      {"type": "azure_blob_storage", "storage_account_url": "http://azure:10000/x"},
-		"azure without account_name":        {"type": "azure_blob_storage", "storage_account_url": "http://azure:10000/x", "container_name": "c"},
-		"azure without account_key":         {"type": "azure_blob_storage", "storage_account_url": "http://azure:10000/x", "container_name": "c", "account_name": "n"},
+		"azure without account_name in url": {"type": "azure_blob_storage", "storage_account_url": "http://azure:10000/", "container_name": "c"},
+		"azure endpoint without container":  {"type": "azure_blob_storage", "endpoint": "http://azure:10000/account"},
+		"azure connection_string w/o name":  {"type": "azure_blob_storage", "connection_string": "AccountKey=k", "container_name": "c"},
 	}
 	for name, args := range testCases {
 		_, ok, err := credentialsFromDiskArgs(context.Background(), credentialsTestClient, credentialsParityVersion, "unit_test_disk", mapGetter(args))
