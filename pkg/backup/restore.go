@@ -575,10 +575,73 @@ func (b *Backuper) getTablesForRestoreLocal(ctx context.Context, backupName stri
 		}
 	}
 
+	// Mapped names match system.replicas on the target. https://github.com/Altinity/clickhouse-backup/issues/1181
+	tablesForRestore, err = b.skipNonShardedReplicatedTables(ctx, tablesForRestore, partitionsNames)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	if len(tablesForRestore) == 0 {
-		return nil, nil, errors.Errorf("not found schemas by %s in %s, also check skip_tables and skip_table_engines setting", tablePattern, backupName)
+		return nil, nil, errors.Errorf("not found schemas by %s in %s, also check skip_tables, skip_table_engines and skip_restore_non_sharded_replicated_tables setting", tablePattern, backupName)
 	}
 	return tablesForRestore, partitionsNames, nil
+}
+
+// globalReplicatedTable is one global (non-sharded) table from clusterAllReplicas(system.replicas).
+type globalReplicatedTable struct {
+	Database string `ch:"database"`
+	Table    string `ch:"table"`
+}
+
+// skipNonShardedReplicatedTables drops replicated tables that share one zookeeper_path across replicas
+// when skip_restore_non_sharded_replicated_tables is set. The flag off returns the list and runs no SQL.
+// https://github.com/Altinity/clickhouse-backup/issues/1181
+func (b *Backuper) skipNonShardedReplicatedTables(ctx context.Context, tables ListOfTables, partitions map[metadata.TableTitle][]string) (ListOfTables, error) {
+	if !b.cfg.ClickHouse.SkipRestoreNonShardedReplicatedTables {
+		return tables, nil
+	}
+	cluster := strings.TrimSpace(b.cfg.ClickHouse.SkipCheckNonShardedReplicatedTablesCluster)
+	if cluster == "" {
+		return nil, errors.Errorf("skip_check_non_sharded_replicated_tables_cluster is empty")
+	}
+	var rows []globalReplicatedTable
+	query := b.nonShardedReplicatedTablesQuery(cluster)
+	if err := b.ch.SelectContext(ctx, &rows, query); err != nil {
+		return nil, errors.Wrap(err, "select global replicated tables for skip_restore_non_sharded_replicated_tables")
+	}
+	return b.dropNonShardedReplicatedTables(tables, partitions, rows), nil
+}
+
+// nonShardedReplicatedTablesQuery is the clusterAllReplicas check for global replicated tables.
+// ClickHouse expands the {cluster} macro inside clusterAllReplicas; the value is not pre-expanded.
+func (b *Backuper) nonShardedReplicatedTablesQuery(cluster string) string {
+	cluster = strings.ReplaceAll(cluster, "'", "\\'")
+	return "SELECT database, table FROM clusterAllReplicas('" + cluster + "', system.replicas) " +
+		"GROUP BY database, table " +
+		"HAVING if(uniqExact(zookeeper_path) = 1 AND count() > 1, 'global', 'sharded') = 'global'"
+}
+
+// dropNonShardedReplicatedTables removes global tables from the restore list, in reverse so relative order stays,
+// and deletes their partition-map entries. Rows that name a table the backup does not contain are ignored.
+func (b *Backuper) dropNonShardedReplicatedTables(tables ListOfTables, partitions map[metadata.TableTitle][]string, global []globalReplicatedTable) ListOfTables {
+	if len(global) == 0 {
+		return tables
+	}
+	skip := make(map[metadata.TableTitle]struct{}, len(global))
+	for _, row := range global {
+		skip[metadata.TableTitle{Database: row.Database, Table: row.Table}] = struct{}{}
+	}
+	// iterate in reverse so removing an element never shifts an unvisited one past the cursor
+	for i := len(tables) - 1; i >= 0; i-- {
+		title := metadata.TableTitle{Database: tables[i].Database, Table: tables[i].Table}
+		if _, ok := skip[title]; !ok {
+			continue
+		}
+		log.Warn().Msgf("skip restore of non-sharded replicated table %s.%s", title.Database, title.Table)
+		delete(partitions, title)
+		tables = append(tables[:i], tables[i+1:]...)
+	}
+	return tables
 }
 
 func (b *Backuper) restartClickHouse(ctx context.Context, backupName string) error {

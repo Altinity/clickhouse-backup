@@ -281,6 +281,17 @@ clickhouse:
   # CLICKHOUSE_SKIP_DISK_TYPES, list of disk types which are ignored during create, upload, download and restore command
   # The format for this env variable is "Engine1,Engine2,engine3". For YAML please continue using array syntax
   skip_disk_types: []
+  # CLICKHOUSE_SKIP_RESTORE_NON_SHARDED_REPLICATED_TABLES, default false.
+  # When true, `restore`, `restore_remote` and their dry-run skip replicated tables that are global on the cluster
+  # (one ZooKeeper path shared by more than one replica). The check, run only for those commands, is:
+  #   SELECT database, table
+  #   FROM clusterAllReplicas('<cluster>', system.replicas)
+  #   GROUP BY database, table
+  #   HAVING if(uniqExact(zookeeper_path) = 1 AND count() > 1, 'global', 'sharded') = 'global'
+  # `<cluster>` is skip_check_non_sharded_replicated_tables_cluster (CLICKHOUSE_SKIP_CHECK_NON_SHARDED_REPLICATED_TABLES_CLUSTER, default `{cluster}`).
+  # Replicas which must keep the global tables leave the bool false. Sharded replicated tables stay in the restore.
+  skip_restore_non_sharded_replicated_tables: false # CLICKHOUSE_SKIP_RESTORE_NON_SHARDED_REPLICATED_TABLES
+  skip_check_non_sharded_replicated_tables_cluster: "{cluster}" # CLICKHOUSE_SKIP_CHECK_NON_SHARDED_REPLICATED_TABLES_CLUSTER
   timeout: 5m                  # CLICKHOUSE_TIMEOUT
   freeze_by_part: false        # CLICKHOUSE_FREEZE_BY_PART, allow freezing by part instead of freezing the whole table
   freeze_by_part_where: ""     # CLICKHOUSE_FREEZE_BY_PART_WHERE, allow parts filtering during freezing when freeze_by_part: true

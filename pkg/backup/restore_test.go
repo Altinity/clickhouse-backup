@@ -12,6 +12,79 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestNonShardedReplicatedTablesQuery(t *testing.T) {
+	b := &Backuper{}
+	query := b.nonShardedReplicatedTablesQuery("{cluster}")
+	assert.Contains(t, query, "clusterAllReplicas('{cluster}', system.replicas)")
+	assert.Contains(t, query, "uniqExact(zookeeper_path) = 1 AND count() > 1")
+
+	escaped := b.nonShardedReplicatedTablesQuery("o'brien")
+	assert.Contains(t, escaped, `o\'brien`)
+}
+
+func TestDropNonShardedReplicatedTables(t *testing.T) {
+	b := &Backuper{}
+	tables := ListOfTables{
+		{Database: "db", Table: "g"},
+		{Database: "db", Table: "s"},
+		{Database: "db", Table: "v"},
+	}
+	partitions := map[metadata.TableTitle][]string{
+		{Database: "db", Table: "g"}: {"p"},
+		{Database: "db", Table: "s"}: {"p"},
+		{Database: "db", Table: "v"}: {"p"},
+	}
+	got := b.dropNonShardedReplicatedTables(tables, partitions, []globalReplicatedTable{{Database: "db", Table: "g"}})
+	if assert.Len(t, got, 2) {
+		assert.Equal(t, "db", got[0].Database)
+		assert.Equal(t, "s", got[0].Table)
+		assert.Equal(t, "db", got[1].Database)
+		assert.Equal(t, "v", got[1].Table)
+	}
+	_, hasGlobal := partitions[metadata.TableTitle{Database: "db", Table: "g"}]
+	assert.False(t, hasGlobal)
+	assert.Equal(t, []string{"p"}, partitions[metadata.TableTitle{Database: "db", Table: "s"}])
+	assert.Equal(t, []string{"p"}, partitions[metadata.TableTitle{Database: "db", Table: "v"}])
+
+	unchanged := ListOfTables{
+		{Database: "db", Table: "g"},
+		{Database: "db", Table: "s"},
+		{Database: "db", Table: "v"},
+	}
+	absentPartitions := map[metadata.TableTitle][]string{
+		{Database: "db", Table: "g"}: {"p"},
+		{Database: "db", Table: "s"}: {"p"},
+		{Database: "db", Table: "v"}: {"p"},
+	}
+	got = b.dropNonShardedReplicatedTables(unchanged, absentPartitions, []globalReplicatedTable{{Database: "db", Table: "missing"}})
+	assert.Equal(t, unchanged, got)
+	assert.Equal(t, []string{"p"}, absentPartitions[metadata.TableTitle{Database: "db", Table: "g"}])
+	assert.Equal(t, []string{"p"}, absentPartitions[metadata.TableTitle{Database: "db", Table: "s"}])
+	assert.Equal(t, []string{"p"}, absentPartitions[metadata.TableTitle{Database: "db", Table: "v"}])
+}
+
+func TestSkipNonShardedReplicatedTablesFlagFalse(t *testing.T) {
+	b := &Backuper{cfg: &config.Config{ClickHouse: config.ClickHouseConfig{
+		SkipRestoreNonShardedReplicatedTables: false,
+	}}}
+	tables := ListOfTables{{Database: "db", Table: "g"}, {Database: "db", Table: "s"}}
+	got, err := b.skipNonShardedReplicatedTables(context.Background(), tables, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, tables, got)
+}
+
+func TestSkipNonShardedReplicatedTablesEmptyCluster(t *testing.T) {
+	b := &Backuper{cfg: &config.Config{ClickHouse: config.ClickHouseConfig{
+		SkipRestoreNonShardedReplicatedTables:      true,
+		SkipCheckNonShardedReplicatedTablesCluster: " \t ",
+	}}}
+	tables := ListOfTables{{Database: "db", Table: "g"}}
+	got, err := b.skipNonShardedReplicatedTables(context.Background(), tables, nil)
+	assert.Nil(t, got)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "skip_check_non_sharded_replicated_tables_cluster")
+}
+
 func TestDetectRBACObject(t *testing.T) {
 	b := &Backuper{} // Create an instance of Backuper for testing
 
