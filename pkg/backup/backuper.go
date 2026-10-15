@@ -68,6 +68,8 @@ type Backuper struct {
 	skipEmbeddedClusterFanOut bool
 	// DiskLimit - max allowed local disk usage in percent after download, 0 disables the check, see issues/1458
 	DiskLimit int
+	// nonShardedReplicated - restored replicated tables with one zookeeper path on the whole cluster, see issues/1181
+	nonShardedReplicated map[metadata.TableTitle]struct{}
 	// SkipKafkaKeeperHold - don't hold consumption of restored Kafka tables with kafka_keeper_path via partition locks between
 	// schema and data restore and release the already placed locks, see issues/1120
 	SkipKafkaKeeperHold bool
