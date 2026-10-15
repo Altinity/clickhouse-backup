@@ -215,6 +215,49 @@ clickhouse-backup restore_remote --rm shard${shard_number}-backup
 clickhouse-backup delete local shard${shard_number}-backup
 ```
 
+### RESTORE with non-sharded replicated tables
+
+A replicated table whose ZooKeeper path has no `{shard}` or another macro with a different value on each shard, e.g.
+`ReplicatedMergeTree('/clickhouse/tables/{database}/{table}', '{replica}')`, is one replication queue for the whole cluster.
+The backup of every shard contains all its data, so the data step above attaches the same rows on every shard: the rows are duplicated, or the restore fails on `check_replicas_before_attach`.
+
+Find such tables on the source cluster before the backup; the query works when every shard has the table and its path:
+
+```sql
+SELECT database, table, any(zookeeper_path) AS zookeeper_path
+FROM cluster('{cluster}', system.replicas)
+GROUP BY database, table
+HAVING uniqExact(zookeeper_path) = 1 AND count() > 1
+```
+
+Then set the same options on every node, a shared `config.yml` works:
+
+```yaml
+clickhouse:
+  skip_restore_non_sharded_replicated_tables: true      # CLICKHOUSE_SKIP_RESTORE_NON_SHARDED_REPLICATED_TABLES
+  skip_check_non_sharded_replicated_tables_cluster: "{cluster}" # CLICKHOUSE_SKIP_CHECK_NON_SHARDED_REPLICATED_TABLES_CLUSTER, the cluster from system.clusters
+  always_sharded_macros: ["shard"]                       # CLICKHOUSE_ALWAYS_SHARDED_MACROS, warns when such a macro has one value on all shards
+```
+
+and run the same RESTORE steps as above. With the option:
+- the first replica of the first shard (min `shard_num`, min `replica_num` in `system.clusters`) restores the schema and the data of non-sharded tables;
+- every other node restores their schema only, the data arrives through replication;
+- sharded tables, non-replicated tables and everything else are restored as before.
+
+Check what each node will skip before the real restore; non-sharded tables are listed in `skipped_data_tables`:
+
+```bash
+clickhouse-backup restore_remote --rm --dry-run shard${shard_number}-backup
+```
+
+Keep in mind:
+- the data of non-sharded tables comes only from the first replica of the first shard, so restore it too, or keep it alive with the data; restoring only a lost replica of another shard needs the option set to `false` on that node;
+- on a single shard cluster every replicated table is non-sharded, the data is restored on the first replica only and replicated to the others;
+- when a ZooKeeper path contains macros other than `{database}`, `{table}`, `{uuid}`, at least one replica of every shard must answer `cluster('<cluster>', system.macros)`, otherwise the restore fails before any DROP;
+- a literal per shard path, e.g. `/clickhouse/tables/01/db/t`, looks like a non-sharded one, don't enable the option for such tables;
+- non-streaming `restore_remote` still downloads the data of non-sharded tables on every node, `restore_remote --streaming` doesn't;
+- not supported with `use_embedded_backup_restore: true` and `restore_cloud`.
+
 ## How to back up a sharded cluster with Ansible
 
 On the first day of month a full backup will be uploaded and increments on the other days.

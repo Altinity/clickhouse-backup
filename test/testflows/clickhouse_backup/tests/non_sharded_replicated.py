@@ -22,26 +22,45 @@ def backup_container(node):
     return current().context.backup if node.name == "clickhouse1" else current().context.backup2
 
 
+# zookeeper paths of non-sharded tables, their value is the same on both shards:
+# no macros, {uuid} of the table created ON CLUSTER, {shard} which is 01 on both nodes of sharded_cluster
+NON_SHARDED_PATHS = {
+    "global": "/clickhouse/tables/non_sharded_1181/{database}/{table}",
+    "global_uuid": "/clickhouse/tables/non_sharded_1181/{uuid}",
+    "global_shard_macro": "/clickhouse/tables/non_sharded_1181/{shard}/{database}/{table}",
+}
+
+
 @TestStep(Given)
 def create_tables(self):
     """Create the same tables on both shards:
-    `global` - ZooKeeper path without {shard}, both shards are replicas of one replication queue,
-    `sharded` - ZooKeeper path with {shard2} macro which differs between the shards (macro {shard} is 01 on both nodes here),
+    NON_SHARDED_PATHS - both shards are replicas of one replication queue,
+    `sharded` - ZooKeeper path with {shard2} macro which differs between the shards,
     `local` - MergeTree."""
     ch1, ch2 = self.context.nodes
     ch1.query(f"CREATE DATABASE IF NOT EXISTS {DATABASE} ON CLUSTER {CLUSTER}")
-    ch1.query(f"CREATE TABLE {DATABASE}.global ON CLUSTER {CLUSTER} (id UInt64) "
-              f"ENGINE=ReplicatedMergeTree('/clickhouse/tables/non_sharded_1181/{{database}}/{{table}}', '{{replica}}') ORDER BY id")
+    for table, zk_path in NON_SHARDED_PATHS.items():
+        ch1.query(f"CREATE TABLE {DATABASE}.{table} ON CLUSTER {CLUSTER} (id UInt64) "
+                  f"ENGINE=ReplicatedMergeTree('{zk_path}', '{{replica}}') ORDER BY id")
     ch1.query(f"CREATE TABLE {DATABASE}.sharded ON CLUSTER {CLUSTER} (id UInt64) "
               f"ENGINE=ReplicatedMergeTree('/clickhouse/tables/non_sharded_1181/{{shard2}}/{{database}}/{{table}}', '{{replica}}') ORDER BY id")
     ch1.query(f"CREATE TABLE {DATABASE}.local ON CLUSTER {CLUSTER} (id UInt64) ENGINE=MergeTree ORDER BY id")
-    ch1.query(f"INSERT INTO {DATABASE}.global SELECT number FROM numbers({GLOBAL_ROWS})")
+    for table in NON_SHARDED_PATHS:
+        ch1.query(f"INSERT INTO {DATABASE}.{table} SELECT number FROM numbers({GLOBAL_ROWS})")
     for node in (ch1, ch2):
         node.query(f"INSERT INTO {DATABASE}.sharded SELECT number FROM numbers({SHARD_ROWS[node.name]})")
         node.query(f"INSERT INTO {DATABASE}.local SELECT number FROM numbers({SHARD_ROWS[node.name]})")
-    ch2.query(f"SYSTEM SYNC REPLICA {DATABASE}.global", query_settings=[("receive_timeout", 600)])
+    sync_non_sharded()
     for node in (ch1, ch2):
-        assert count(node, "global") == GLOBAL_ROWS, error()
+        for table in NON_SHARDED_PATHS:
+            assert count(node, table) == GLOBAL_ROWS, error(table)
+
+
+@TestStep(When)
+def sync_non_sharded(self):
+    for node in self.context.nodes:
+        for table in NON_SHARDED_PATHS:
+            node.query(f"SYSTEM SYNC REPLICA {DATABASE}.{table}", query_settings=[("receive_timeout", 600)])
 
 
 @TestStep(Given)
@@ -60,28 +79,35 @@ def drop_database(self):
 def restore(self, node):
     """Restore with the same skip_restore_non_sharded_replicated_tables settings on every shard."""
     r = backup_container(node).cmd(f"clickhouse-backup {SKIP_ENV} restore --rm --tables={DATABASE}.* {BACKUP_NAME}")
+    n = len(NON_SHARDED_PATHS)
+    with Then("{shard} from always_sharded_macros has the same value on both shards"):
+        assert "{shard} listed in always_sharded_macros have the same value on all 2 shards" in r.output, error(r.output)
     if node.name == "clickhouse1":
-        assert "restore data of 1 non-sharded replicated tables" in r.output, error(r.output)
+        summary = f"restore data of {n} non-sharded replicated tables"
     else:
-        assert "skip data restore of 1 non-sharded replicated tables" in r.output, error(r.output)
-        assert f"`{DATABASE}`.`global`" in r.output, error(r.output)
-        # the sharded table is restored as usual
-        assert f"`{DATABASE}`.`sharded`" not in r.output.split("skip data restore of")[1].split("\n")[0], error(r.output)
+        summary = f"skip data restore of {n} non-sharded replicated tables"
+    assert summary in r.output, error(r.output)
+    summary_line = r.output.split(summary)[1].split("\n")[0]
+    for table in NON_SHARDED_PATHS:
+        assert f"`{DATABASE}`.`{table}`" in summary_line, error(summary_line)
+    with Then("{shard2} differs between the shards, the table with it is sharded"):
+        assert f"`{DATABASE}`.`sharded`" not in summary_line, error(summary_line)
 
 
 @TestStep(Then)
 def check_restored(self):
-    """`global` has the data of one backup on both shards, not the doubled one, the sharded data is restored on every shard."""
+    """non-sharded tables have the data of one backup on both shards, not the doubled one,
+    the sharded data is restored on every shard, the zookeeper paths are kept."""
     ch1, ch2 = self.context.nodes
-    for node in (ch1, ch2):
-        node.query(f"SYSTEM SYNC REPLICA {DATABASE}.global", query_settings=[("receive_timeout", 600)])
+    sync_non_sharded()
     for node in (ch1, ch2):
         with By(f"check {node.name}"):
-            assert count(node, "global") == GLOBAL_ROWS, error()
+            for table in NON_SHARDED_PATHS:
+                assert count(node, table) == GLOBAL_ROWS, error(table)
             assert count(node, "sharded") == SHARD_ROWS[node.name], error()
             assert count(node, "local") == SHARD_ROWS[node.name], error()
             engine = node.query(f"SELECT engine_full FROM system.tables WHERE database='{DATABASE}' AND name='global' FORMAT TSVRaw").output
-            assert "{shard}" not in engine and "/clickhouse/tables/non_sharded_1181/" in engine, error(engine)
+            assert "/clickhouse/tables/non_sharded_1181/" in engine and "{cluster}" not in engine, error(engine)
 
 
 @TestStep(Finally)
@@ -101,13 +127,16 @@ def restore_shards(self, order):
             drop_database()
         with When("I check that dry-run on the second shard reports the skipped data"):
             r = self.context.backup2.cmd(f"clickhouse-backup {SKIP_ENV} restore --rm --dry-run {BACKUP_NAME}")
-            assert "skipped_data_tables" in r.output and f"{DATABASE}.global" in r.output, error(r.output)
+            assert "skipped_data_tables" in r.output, error(r.output)
+            for table in NON_SHARDED_PATHS:
+                assert f"{DATABASE}.{table}" in r.output, error(table)
         for name in order:
             with When(f"I restore on {name}"):
                 restore(node=nodes[name])
                 if name == "clickhouse2" and order[0] == "clickhouse2":
-                    with Then("the second shard restores only the schema of the non-sharded table"):
-                        assert count(nodes[name], "global") == 0, error()
+                    with Then("the second shard restores only the schema of the non-sharded tables"):
+                        for table in NON_SHARDED_PATHS:
+                            assert count(nodes[name], table) == 0, error(table)
         check_restored()
     finally:
         cleanup()

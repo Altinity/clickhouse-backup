@@ -2216,7 +2216,7 @@ func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context
 				schema.Query = strings.NewReplacer("{database}", schema.Database, "{table}", schema.Table).Replace(schema.Query)
 			}
 			return nil
-		} else if b.cfg.ClickHouse.SkipRestoreNonShardedReplicatedTables && isNonShardedReplicatedPath(replicaPath) {
+		} else if _, isNonSharded := b.nonShardedReplicated[metadata.TableTitle{Database: schema.Database, Table: schema.Table}]; isNonSharded {
 			// default_replica_path contains {shard}, rebind would turn the table shared by the whole cluster into a sharded one,
 			// https://github.com/Altinity/clickhouse-backup/issues/1181
 			log.Warn().Msgf("replica %s of non-sharded replicated table `%s`.`%s` already exists in system.zookeeper, skip_restore_non_sharded_replicated_tables=true => keep the original replica path, use drop_replica_if_exists=true to drop the existing replica", fullReplicaPath, schema.Database, schema.Table)

@@ -455,6 +455,9 @@ type ClickHouseConfig struct {
 	// SkipCheckNonShardedReplicatedTablesCluster is the cluster from system.clusters which defines the node restoring the data
 	// of non-sharded replicated tables, macros are applied
 	SkipCheckNonShardedReplicatedTablesCluster string `yaml:"skip_check_non_sharded_replicated_tables_cluster" envconfig:"CLICKHOUSE_SKIP_CHECK_NON_SHARDED_REPLICATED_TABLES_CLUSTER"`
+	// AlwaysShardedMacros are macros expected to differ between shards, restore warns when such
+	// a macro from a zookeeper path has the same value on every shard, the classification itself uses only the macro values
+	AlwaysShardedMacros []string `yaml:"always_sharded_macros" envconfig:"CLICKHOUSE_ALWAYS_SHARDED_MACROS"`
 	// Memory caps injected into the system.parts_columns check query (https://github.com/Altinity/clickhouse-backup/issues/1420).
 	// 0 means don't inject the corresponding setting (pre-2.7.2 behavior).
 	PartsColumnsMaxBytesBeforeExternalGroupBy int64 `yaml:"parts_columns_max_bytes_before_external_group_by" envconfig:"CLICKHOUSE_PARTS_COLUMNS_MAX_BYTES_BEFORE_EXTERNAL_GROUP_BY"`
@@ -1014,6 +1017,7 @@ func DefaultConfig() *Config {
 			// https://github.com/Altinity/clickhouse-backup/issues/1181
 			SkipRestoreNonShardedReplicatedTables:      false,
 			SkipCheckNonShardedReplicatedTablesCluster: "{cluster}",
+			AlwaysShardedMacros:                        []string{"shard"},
 		},
 		AzureBlob: AzureBlobConfig{
 			EndpointSchema:    "https",
