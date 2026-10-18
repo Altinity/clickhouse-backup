@@ -13,15 +13,17 @@ STALE_BACKUPS = ["stale_1535_1", "stale_1535_2"]
 WATCH_TIMEOUT = 50
 # old remote backups tagged `embedded` are cleaned through `embedded_backup_disk`, a disk which doesn't exist on the
 # server makes every backups_to_keep_remote retention fail after the new backup is completely uploaded,
-# regular (non embedded) backups never use embedded_backup_disk
-WATCH_ENV = ("--env=REMOTE_STORAGE=ftp --env=BACKUPS_TO_KEEP_LOCAL=0 --env=BACKUPS_TO_KEEP_REMOTE=2 "
-             "--env=CLICKHOUSE_EMBEDDED_BACKUP_DISK=missing_disk_1535")
-FTP_ENV = "--env=REMOTE_STORAGE=ftp"
+# regular (non embedded) backups never use embedded_backup_disk;
+# the config file is modified instead of --env, watch reloads the config file every iteration without --env overrides
+WATCH_CONFIG = {
+    "general": {"remote_storage": "ftp", "backups_to_keep_local": 0, "backups_to_keep_remote": 2},
+    "clickhouse": {"embedded_backup_disk": "missing_disk_1535"},
+}
 
 
 def remote_backups(backup, prefix):
     """[(name, required_backup)] of remote backups with the name prefix, ordered by upload date."""
-    r = backup.cmd(f"clickhouse-backup {FTP_ENV} list remote")
+    r = backup.cmd("clickhouse-backup list remote")
     rows = []
     for line in r.output.splitlines():
         fields = line.split()
@@ -56,7 +58,7 @@ def cleanup(self):
     with By("delete remote backups newest first, a parent is never deleted before its increment"):
         for prefix in ("watch_1535_", "stale_1535_"):
             for name, _ in reversed(remote_backups(backup, prefix)):
-                backup.cmd(f"clickhouse-backup {FTP_ENV} delete remote {name}", exitcode=None)
+                backup.cmd(f"clickhouse-backup delete remote {name}", exitcode=None)
     with By("delete local backups left by the killed watch"):
         r = backup.cmd("clickhouse-backup list local", exitcode=None)
         for line in r.output.splitlines():
@@ -67,6 +69,8 @@ def cleanup(self):
     with Then("no backups of this test remain on remote storage"):
         rows = remote_backups(backup, "watch_1535_") + remote_backups(backup, "stale_1535_")
         assert rows == [], error(rows)
+    with And("I restore the original config"):
+        config_modifier()
 
 
 @TestScenario
@@ -77,7 +81,9 @@ def retention_failure_keeps_chain(self):
     ch = self.context.nodes[0]
     backup = self.context.backup
     try:
-        with Given("a table to back up"):
+        with Given("ftp remote storage, backups_to_keep_remote=2 and a missing embedded_backup_disk"):
+            config_modifier(fields=WATCH_CONFIG)
+        with And("a table to back up"):
             ch.query(f"CREATE DATABASE IF NOT EXISTS {DATABASE}")
             ch.query(f"CREATE TABLE {DATABASE}.t (id UInt64) ENGINE=MergeTree ORDER BY id")
             ch.query(f"INSERT INTO {DATABASE}.t SELECT number FROM numbers(100)")
@@ -85,7 +91,7 @@ def retention_failure_keeps_chain(self):
 
         with When(f"I run watch for {WATCH_TIMEOUT}s while every remote retention fails"):
             r = backup.cmd(
-                f"timeout {WATCH_TIMEOUT} clickhouse-backup {WATCH_ENV} watch --tables={DATABASE}.* "
+                f"timeout {WATCH_TIMEOUT} clickhouse-backup watch --tables={DATABASE}.* "
                 f"--watch-interval=30s --full-interval=60s "
                 f"--watch-backup-name-template='watch_1535_{{type}}_{{time:20060102150405}}'",
                 exitcode=124,
