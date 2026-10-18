@@ -81,7 +81,9 @@ def start_watch(self):
         "",
     ]))
     backup.cmd(f"rm -f {WATCH_LOG} {WATCH_PID}")
-    backup.cmd(f"nohup bash {WATCH_SCRIPT} > /dev/null 2>&1 &")
+    # background job of a child bash like BackupNode.start_server, a job of the interactive shell
+    # prints `[1]+ Done ...` into the output of a later command
+    backup.cmd(f"bash -c 'nohup bash {WATCH_SCRIPT} > /dev/null 2>&1 < /dev/null &'")
 
 
 @TestStep(Finally)
