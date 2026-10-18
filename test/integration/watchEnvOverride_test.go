@@ -32,7 +32,7 @@ func TestWatchEnvOverride(t *testing.T) {
 				env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml "+args+" delete --force remote "+backupName+" 2>/dev/null || true")
 			}
 		}
-		// backups killed mid-flight by timeout may not show up in `list local`, remove leftovers from all backup disks
+		// backups killed mid-flight by pkill may not show up in `list local`, remove leftovers from all backup disks
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "rm -rf /var/lib/clickhouse/backup/"+prefix+"-* /hdd1_data/backup/"+prefix+"-* /hdd2_data/backup/"+prefix+"-* 2>/dev/null || true")
 	}
 	cleanBackups()
@@ -46,11 +46,25 @@ func TestWatchEnvOverride(t *testing.T) {
 	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+".t1 (id UInt64) ENGINE=MergeTree() ORDER BY id")
 	env.queryWithNoError(t, r, "INSERT INTO "+dbName+".t1 SELECT number FROM numbers(1000)")
 
-	// timeout exits with 124 after killing watch, ignore it, the assertions below check what watch uploaded
-	out, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
-		"timeout 45 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml "+envArgs+" watch --watch-interval=10s --full-interval=1h --watch-backup-name-template="+prefix+"-{type}-{time:20060102150405} --tables="+dbName+".* 2>&1 || true")
-	log.Debug().Msg(out)
+	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce",
+		"BACKUPS_TO_KEEP_REMOTE=0 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml "+envArgs+" watch --watch-interval=10s --full-interval=1h --watch-backup-name-template="+prefix+"-{type}-{time:20060102150405} --tables="+dbName+".* &>>/tmp/watch_env_override.log")
+	defer func() {
+		// [c]lickhouse regexp bracket trick, so pkill doesn't match its own `bash -ce` command line and kill itself with SIGTERM;
+		// wait until the watch process actually exits, a backup in flight during pkill can re-create local files after cleanup
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "pkill -f '[c]lickhouse-backup.*watch' || true; for i in $(seq 1 30); do pgrep -f '[c]lickhouse-backup.*watch' >/dev/null || break; sleep 1; done")
+		out, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "cat /tmp/watch_env_override.log; rm -f /tmp/watch_env_override.log")
+		log.Debug().Msg(out)
+	}()
 
-	r.GreaterOrEqual(len(listMatched(envArgs)), 2, "every watch iteration shall upload into S3_PATH from --env\n%s", out)
+	// the second backup proves the config reload inside the watch loop keeps --env too, not only the initial load
+	var matched []string
+	deadline := time.Now().Add(5 * time.Minute)
+	for time.Now().Before(deadline) {
+		if matched = listMatched(envArgs); len(matched) >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Second)
+	}
+	r.GreaterOrEqual(len(matched), 2, "every watch iteration shall upload into S3_PATH from --env, got %v", matched)
 	r.Empty(listMatched(""), "watch shall not upload into s3->path from the config file when --env S3_PATH is passed")
 }

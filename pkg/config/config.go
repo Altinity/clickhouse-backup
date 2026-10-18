@@ -18,6 +18,7 @@ import (
 	"github.com/google/shlex"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli/v3"
 	"gopkg.in/yaml.v3"
@@ -1123,12 +1124,13 @@ var loadConfigFromCliMutex sync.Mutex
 func LoadConfigFromCli(ctx *cli.Command) (*Config, error) {
 	loadConfigFromCliMutex.Lock()
 	defer loadConfigFromCliMutex.Unlock()
+	prevLogLevel := zerolog.GlobalLevel()
 	var oldEnvValues map[string]oldEnvValues
 	// peek disable_environment_override from the config file before applying --env,
 	// deliberately ignoring the environment, so the option can't be bypassed by the mechanisms it disables
 	if envOverrideDisabled(GetConfigPath(ctx)) {
 		if len(ctx.StringSlice("env")) > 0 {
-			log.Warn().Msg("--env is ignored because general->disable_environment_override is enabled in the config file")
+			logOnce("--env is ignored", zerolog.WarnLevel).Msg("--env is ignored because general->disable_environment_override is enabled in the config file")
 		}
 	} else {
 		oldEnvValues = OverrideEnvVars(ctx)
@@ -1137,6 +1139,8 @@ func LoadConfigFromCli(ctx *cli.Command) (*Config, error) {
 	cfg, err := LoadConfig(configPath)
 	RestoreEnvVars(oldEnvValues)
 	if err != nil {
+		// OverrideEnvVars reset the log level, LoadConfig didn't reach the config value, keep the level of the running process
+		zerolog.SetGlobalLevel(prevLogLevel)
 		return nil, err
 	}
 	// `restore`/`restore_remote` expose --rebind-replica-path-if-exists to override the config value per invocation.
@@ -1287,11 +1291,15 @@ func OverrideEnvVars(ctx *cli.Command) map[string]oldEnvValues {
 		})
 
 		processEnvFromCli(func(envVariable []string) {
-			log.Info().Msgf("override %s=%s", envVariable[0], maskSensitiveEnvValue(envVariable[0], envVariable[1]))
-			oldValue, wasPresent := os.LookupEnv(envVariable[0])
-			oldValues[envVariable[0]] = oldEnvValues{
-				OldValue:   oldValue,
-				WasPresent: wasPresent,
+			overrideMsg := fmt.Sprintf("override %s=%s", envVariable[0], maskSensitiveEnvValue(envVariable[0], envVariable[1]))
+			logOnce(overrideMsg, zerolog.InfoLevel).Msg(overrideMsg)
+			// duplicated --env key, keep the value from before the first override, otherwise restore leaves the first override set
+			if _, alreadyOverridden := oldValues[envVariable[0]]; !alreadyOverridden {
+				oldValue, wasPresent := os.LookupEnv(envVariable[0])
+				oldValues[envVariable[0]] = oldEnvValues{
+					OldValue:   oldValue,
+					WasPresent: wasPresent,
+				}
 			}
 			if err := os.Setenv(envVariable[0], envVariable[1]); err != nil {
 				log.Warn().Msgf("can't override %s=%s, error: %v", envVariable[0], maskSensitiveEnvValue(envVariable[0], envVariable[1]), err)
@@ -1299,6 +1307,18 @@ func OverrideEnvVars(ctx *cli.Command) map[string]oldEnvValues {
 		})
 	}
 	return oldValues
+}
+
+// loggedOnce keeps messages already logged by logOnce
+var loggedOnce sync.Map
+
+// logOnce returns a `level` event for the first occurrence of msg and a debug event for repeated ones,
+// `watch` and `server` reload config with the same --env on every iteration / API call
+func logOnce(msg string, level zerolog.Level) *zerolog.Event {
+	if _, logged := loggedOnce.LoadOrStore(msg, true); logged {
+		return log.Debug()
+	}
+	return log.WithLevel(level)
 }
 
 func RestoreEnvVars(envVars map[string]oldEnvValues) {

@@ -82,14 +82,12 @@ func Run(cliCtx *cli.Command, newCliApp func() *cli.Command, configPath string, 
 	// from here on every re-entry into cliApp comes from an API handler which owns
 	// its own status row, see status.SetAPIServerMode
 	status.SetAPIServerMode()
+	// invalid config, including a bad --env value, is fatal, only ClickHouse connectivity is worth waiting for
+	if cfg, err = config.LoadConfigFromCli(cliCtx); err != nil {
+		return errors.Wrap(err, "server LoadConfigFromCli")
+	}
 	log.Debug().Msg("Wait for ClickHouse")
 	for {
-		cfg, err = config.LoadConfigFromCli(cliCtx)
-		if err != nil {
-			log.Error().Stack().Err(err).Send()
-			time.Sleep(5 * time.Second)
-			continue
-		}
 		ch := clickhouse.NewClickHouse(&cfg.ClickHouse)
 		if connErr := ch.Connect(); connErr != nil {
 			log.Error().Stack().Err(connErr).Send()
@@ -428,7 +426,7 @@ func (api *APIServer) actionsDeleteHandler(row status.ActionRow, args []string, 
 		return actionsResults, ErrAPILocked
 	}
 	commandId, _ := status.Current.Start(row.Command)
-	err := api.newCliApp().Run(context.Background(), append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
+	err := api.newCliApp().Run(context.Background(), api.cliArgs(commandId, args))
 	if err == nil {
 		// refresh metrics before marking the operation as completed so /metrics observers see consistent state
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), args[1] == "local"); metricsErr != nil {
@@ -459,7 +457,7 @@ func (api *APIServer) actionsAsyncCommandsHandler(command string, args []string,
 	}
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics(command, 0, func() error {
-			return api.newCliApp().Run(context.Background(), append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
+			return api.newCliApp().Run(context.Background(), api.cliArgs(commandId, args))
 		})
 		if err == nil {
 			// refresh metrics before marking the operation as completed so /metrics observers see consistent state
@@ -508,7 +506,7 @@ func (api *APIServer) actionsCleanHandler(row status.ActionRow, args []string, a
 		return actionsResults, ErrAPILocked
 	}
 	commandId, _ := status.Current.Start(row.Command)
-	err := api.newCliApp().Run(context.Background(), append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
+	err := api.newCliApp().Run(context.Background(), api.cliArgs(commandId, args))
 	if err != nil {
 		log.Error().Msgf("actions Clean error: %v", err)
 		status.Current.Stop(commandId, err)
@@ -2979,10 +2977,20 @@ func (api *APIServer) CreateIntegrationTables() error {
 	return nil
 }
 
+// cliArgs builds args to re-enter cliApp, server --env goes first, so the same config as api.config is loaded
+// and --env passed inside the command itself still wins
+func (api *APIServer) cliArgs(commandId int, args []string) []string {
+	cliArgs := []string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}
+	for _, envValue := range api.cliCtx.StringSlice("env") {
+		cliArgs = append(cliArgs, "--env", envValue)
+	}
+	return append(cliArgs, args...)
+}
+
 func (api *APIServer) ReloadConfig(w http.ResponseWriter, command string) (*config.Config, error) {
 	cfg, err := config.LoadConfigFromCli(api.cliCtx)
 	if err != nil {
-		log.Error().Msgf("config.LoadConfigFromCli(%s) return error: %v", api.configPath, err)
+		log.Error().Msgf("config.LoadConfigFromCli(%s) return error: %v", config.GetConfigPath(api.cliCtx), err)
 		if w != nil {
 			api.writeError(w, http.StatusInternalServerError, command, err)
 		}
@@ -3162,7 +3170,7 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 				log.Info().Str("operation", "ResumeOperationsAfterRestart").Send()
 				commandId, _ := status.Current.Start(fullCommand)
 				err, _ = api.metrics.ExecuteWithMetrics(metricsCommand, 0, func() error {
-					return api.newCliApp().Run(context.Background(), append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
+					return api.newCliApp().Run(context.Background(), api.cliArgs(commandId, args))
 				})
 				status.Current.Stop(commandId, err)
 				if err != nil {

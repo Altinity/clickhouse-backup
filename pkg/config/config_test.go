@@ -258,7 +258,16 @@ func TestLoadConfigFromCli(t *testing.T) {
 			t.Fatalf("can't write config file: %v", err)
 		}
 	}
-	ctx := parseTestFlags(t, "--config", configPath, "--env", "REMOTE_STORAGE=none", "--env", "BACKUPS_TO_KEEP_REMOTE=7")
+	// t.Setenv snapshots the ambient values and restores them after the test
+	for _, name := range []string{"REMOTE_STORAGE", "BACKUPS_TO_KEEP_REMOTE"} {
+		t.Setenv(name, "")
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatalf("can't unset %s: %v", name, err)
+		}
+	}
+	t.Setenv("S3_BUCKET", "ambient")
+	// duplicated key, the last value wins and the ambient value is restored, not the first override
+	ctx := parseTestFlags(t, "--config", configPath, "--env", "REMOTE_STORAGE=none", "--env", "BACKUPS_TO_KEEP_REMOTE=7", "--env", "S3_BUCKET=first", "--env", "S3_BUCKET=last")
 
 	writeConfig(false)
 	// the old watch reload, it only sees the config file and the real environment
@@ -276,13 +285,16 @@ func TestLoadConfigFromCli(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LoadConfigFromCli: %v", err)
 		}
-		if cfg.General.RemoteStorage != "none" || cfg.General.BackupsToKeepRemote != 7 {
-			t.Fatalf("reload %d expected --env overrides, got remote_storage=%q backups_to_keep_remote=%d", i, cfg.General.RemoteStorage, cfg.General.BackupsToKeepRemote)
+		if cfg.General.RemoteStorage != "none" || cfg.General.BackupsToKeepRemote != 7 || cfg.S3.Bucket != "last" {
+			t.Fatalf("reload %d expected --env overrides, got remote_storage=%q backups_to_keep_remote=%d s3->bucket=%q", i, cfg.General.RemoteStorage, cfg.General.BackupsToKeepRemote, cfg.S3.Bucket)
 		}
 		for _, name := range []string{"REMOTE_STORAGE", "BACKUPS_TO_KEEP_REMOTE"} {
 			if _, present := os.LookupEnv(name); present {
 				t.Fatalf("--env %s leaked into the process environment", name)
 			}
+		}
+		if got := os.Getenv("S3_BUCKET"); got != "ambient" {
+			t.Fatalf("expected ambient S3_BUCKET restored after duplicated --env, got %q", got)
 		}
 	}
 
@@ -296,7 +308,12 @@ func TestLoadConfigFromCli(t *testing.T) {
 		t.Fatalf("expected config file values with disable_environment_override, got remote_storage=%q backups_to_keep_remote=%d", cfg.General.RemoteStorage, cfg.General.BackupsToKeepRemote)
 	}
 
-	// load errors are returned instead of log.Fatal, and --env is restored anyway
+	// load errors are returned instead of log.Fatal, --env and the log level of the running process are restored anyway
+	originalGlobalLevel := zerolog.GlobalLevel()
+	t.Cleanup(func() {
+		zerolog.SetGlobalLevel(originalGlobalLevel)
+	})
+	zerolog.SetGlobalLevel(zerolog.DebugLevel)
 	if err = os.WriteFile(configPath, []byte("general: [\n"), 0644); err != nil {
 		t.Fatalf("can't write config file: %v", err)
 	}
@@ -305,6 +322,9 @@ func TestLoadConfigFromCli(t *testing.T) {
 	}
 	if _, present := os.LookupEnv("REMOTE_STORAGE"); present {
 		t.Fatal("--env REMOTE_STORAGE leaked into the process environment after load error")
+	}
+	if zerolog.GlobalLevel() != zerolog.DebugLevel {
+		t.Fatalf("expected log level %s kept after load error, got %s", zerolog.DebugLevel, zerolog.GlobalLevel())
 	}
 }
 
