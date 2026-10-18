@@ -10,6 +10,8 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 
+	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -92,4 +94,18 @@ func TestWalkPartFilesMemory(t *testing.T) {
 	}
 	t.Logf("%d parts x %d files: whole table list = %d KiB, one part at a time = %d KiB", partsCount, filesPerPart, wholeTable/1024, maxOnePart/1024)
 	require.Less(t, maxOnePart*10, wholeTable)
+}
+
+// https://github.com/Altinity/clickhouse-backup/issues/1535
+func TestWatchBackupUploaded(t *testing.T) {
+	assert.True(t, watchBackupUploaded(nil))
+	assert.False(t, watchBackupUploaded(errors.New("upload failed")))
+
+	retentionErr := &remoteRetentionError{err: errors.Wrap(errors.New("DeleteObjects failed"), "can't remove old backups on remote storage")}
+	assert.Equal(t, "can't remove old backups on remote storage: DeleteObjects failed", retentionErr.Error())
+	assert.True(t, watchBackupUploaded(retentionErr))
+	// callers of Upload may wrap the error further
+	assert.True(t, watchBackupUploaded(errors.WithStack(retentionErr)))
+	assert.True(t, watchBackupUploaded(errors.Wrap(retentionErr, "create_remote")))
+	assert.False(t, watchBackupUploaded(errors.Wrap(errors.New("upload failed"), "create_remote")))
 }

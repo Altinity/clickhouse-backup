@@ -485,7 +485,7 @@ func (b *Backuper) uploadEpilogue(ctx context.Context, backupName string, delete
 	b.closeResumableState()
 	// Remote old backup retention
 	if err = b.RemoveOldBackupsRemote(ctx); err != nil {
-		return errors.Wrap(err, "can't remove old backups on remote storage")
+		return &remoteRetentionError{err: errors.Wrap(err, "can't remove old backups on remote storage")}
 	}
 	// Local old backup retention, fix https://github.com/Altinity/clickhouse-backup/issues/834
 	if err = b.RemoveOldBackupsLocal(ctx, false, nil); err != nil {
@@ -507,6 +507,23 @@ func (b *Backuper) closeResumableState() {
 	if b.resume && b.resumableState != nil {
 		b.resumableState.Close()
 	}
+}
+
+// remoteRetentionError - backups_to_keep_remote retention failed after the new backup was completely uploaded,
+// https://github.com/Altinity/clickhouse-backup/issues/1535
+type remoteRetentionError struct {
+	err error
+}
+
+func (e *remoteRetentionError) Error() string { return e.err.Error() }
+
+func (e *remoteRetentionError) Unwrap() error { return e.err }
+
+// watchBackupUploaded - true when create_remote succeeded or only the remote retention after a complete upload failed,
+// so watch can use the new backup as the base of the next increment, https://github.com/Altinity/clickhouse-backup/issues/1535
+func watchBackupUploaded(err error) bool {
+	var retentionErr *remoteRetentionError
+	return err == nil || errors.As(err, &retentionErr)
 }
 
 func (b *Backuper) RemoveOldBackupsRemote(ctx context.Context) error {

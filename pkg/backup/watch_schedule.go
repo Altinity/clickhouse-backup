@@ -260,18 +260,26 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 	var deleteLocalErr error
 	if metrics != nil {
 		createRemoteErr, *createRemoteErrCount = metrics.ExecuteWithMetrics("create_remote", *createRemoteErrCount, createRemote)
-		if createRemoteErr == nil && rebaseRequired {
-			createRemoteErr, _ = metrics.ExecuteWithMetrics("rebase", 0, func() error {
+		// a failed remote retention after a complete upload doesn't break the chain, https://github.com/Altinity/clickhouse-backup/issues/1535
+		if watchBackupUploaded(createRemoteErr) && rebaseRequired {
+			if rebaseErr, _ := metrics.ExecuteWithMetrics("rebase", 0, func() error {
 				return b.Rebase(backupName, commandId)
-			})
+			}); rebaseErr != nil {
+				createRemoteErr = rebaseErr
+			}
 		}
 	} else {
 		createRemoteErr = createRemote()
-		if createRemoteErr == nil && rebaseRequired {
-			createRemoteErr = b.Rebase(backupName, commandId)
+		if watchBackupUploaded(createRemoteErr) && rebaseRequired {
+			if rebaseErr := b.Rebase(backupName, commandId); rebaseErr != nil {
+				createRemoteErr = rebaseErr
+			}
 		}
 	}
-	if createRemoteErr != nil {
+	uploaded := watchBackupUploaded(createRemoteErr)
+	if uploaded && createRemoteErr != nil {
+		log.Error().Str("schedule", st.schedule.Name).Msgf("scheduled %s backup `%s` uploaded, but return error: %v", backupType, backupName, createRemoteErr)
+	} else if createRemoteErr != nil {
 		log.Error().Str("schedule", st.schedule.Name).Msgf("scheduled %s backup `%s` return error: %v, will retry on next cron tick", backupType, backupName, createRemoteErr)
 	}
 	// If backups_to_keep_local=-1 then the local backup is deleted in the upload step when RemoveOldBackupsLocal is called,
@@ -294,7 +302,7 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 	} else {
 		status.Current.Stop(iterationCommandId, deleteLocalErr)
 	}
-	if createRemoteErr != nil {
+	if !uploaded {
 		return
 	}
 	st.prevBackupName = backupName
