@@ -33,12 +33,16 @@ def remote_backups(backup, prefix):
     return rows
 
 
+def ftp_config():
+    with open(current().context.backup_config_file) as f:
+        return yaml.safe_load(f)["ftp"]
+
+
 @TestStep(Given)
 def upload_stale_embedded_backups(self):
     """Put two old remote backups tagged `embedded` directly to FTP, retention tries to delete them first."""
     backup = self.context.backup
-    with open(self.context.backup_config_file) as f:
-        ftp = yaml.safe_load(f)["ftp"]
+    ftp = ftp_config()
     for name in STALE_BACKUPS:
         backup_metadata = {
             "backup_name": name, "disks": {}, "disk_types": {}, "version": "test",
@@ -56,9 +60,13 @@ def upload_stale_embedded_backups(self):
 def cleanup(self):
     backup = self.context.backup
     with By("delete remote backups newest first, a parent is never deleted before its increment"):
-        for prefix in ("watch_1535_", "stale_1535_"):
-            for name, _ in reversed(remote_backups(backup, prefix)):
-                backup.cmd(f"clickhouse-backup delete remote {name}", exitcode=None)
+        for name, _ in reversed(remote_backups(backup, "watch_1535_")):
+            backup.cmd(f"clickhouse-backup delete remote {name}", exitcode=None)
+    with By("delete stale backups directly on FTP, `delete remote` of an embedded backup fails with missing embedded_backup_disk"):
+        ftp = ftp_config()
+        for name in STALE_BACKUPS:
+            backup.cmd(f"curl -sS -o /dev/null ftp://{ftp['username']}:{ftp['password']}@{ftp['address']}/ "
+                       f"-Q 'DELE {ftp['path']}/{name}/metadata.json' -Q 'RMD {ftp['path']}/{name}'", exitcode=None)
     with By("delete local backups left by the killed watch"):
         r = backup.cmd("clickhouse-backup list local", exitcode=None)
         for line in r.output.splitlines():
@@ -66,11 +74,13 @@ def cleanup(self):
             if fields and fields[0].startswith("watch_1535_"):
                 backup.cmd(f"clickhouse-backup delete local {fields[0]}", exitcode=None)
     self.context.nodes[0].query(f"DROP DATABASE IF EXISTS {DATABASE} SYNC")
-    with Then("no backups of this test remain on remote storage"):
-        rows = remote_backups(backup, "watch_1535_") + remote_backups(backup, "stale_1535_")
-        assert rows == [], error(rows)
-    with And("I restore the original config"):
-        config_modifier()
+    try:
+        with Then("no backups of this test remain on remote storage"):
+            rows = remote_backups(backup, "watch_1535_") + remote_backups(backup, "stale_1535_")
+            assert rows == [], error(rows)
+    finally:
+        with And("I restore the original config"):
+            config_modifier()
 
 
 @TestScenario
