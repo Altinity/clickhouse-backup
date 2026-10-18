@@ -371,8 +371,8 @@ azblob:
   compression_format: tar        # AZBLOB_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   sse_key: ""                    # AZBLOB_SSE_KEY
   max_parts_count: 256           # AZBLOB_MAX_PARTS_COUNT, number of parts for AZBLOB uploads, for properly calculate buffer size
-  chunk_size: 0                  # AZBLOB_CHUNK_SIZE, fixed block size for uploads, used when ceil(file size / chunk_size) <= max_parts_count, otherwise file size / max_parts_count, clamped to [2MiB, 4000MiB]; 0 means file size / max_parts_count clamped to [2MiB, 10MiB]; each upload allocates up to chunk_size * AZBLOB_MAX_BUFFERS bytes of memory
-  max_buffers: 3                 # AZBLOB_MAX_BUFFERS, similar with S3_CONCURRENCY
+  chunk_size: 0                  # AZBLOB_CHUNK_SIZE, fixed block size for uploads, used when ceil(file size / chunk_size) <= max_parts_count, otherwise file size / max_parts_count, clamped to [2MiB, 4000MiB]; 0 means file size / max_parts_count clamped to [2MiB, 10MiB]; with chunk_size > 0 the fallback block size could reach 4000MiB, each upload allocates up to buffer_count * block size bytes of memory, multiplied by the number of concurrent uploads
+  buffer_count: 3                # AZBLOB_MAX_BUFFERS, similar with S3_CONCURRENCY
   timeout: 4h                    # AZBLOB_TIMEOUT, per-blob upload/download/delete operation timeout (Go duration), defaults to 4h
   delete_concurrency: 50         # AZBLOB_DELETE_CONCURRENCY, how many blobs delete in parallel during clean/delete operations
   debug: false                   # AZBLOB_DEBUG
@@ -408,7 +408,7 @@ s3:
   use_custom_storage_class: false  # S3_USE_CUSTOM_STORAGE_CLASS
   storage_class: STANDARD          # S3_STORAGE_CLASS, by default allow only from list https://github.com/aws/aws-sdk-go-v2/blob/main/service/s3/types/enums.go#L787-L799
   concurrency: 1                   # S3_CONCURRENCY, default: (download_concurrency + 1)
-  chunk_size: 5242880              # S3_CHUNK_SIZE, fixed part size for multipart upload, download and copy, used when ceil(file size / chunk_size) <= max_parts_count, otherwise file size / max_parts_count, 0 means always file size / max_parts_count, result is clamped to [5MiB, 5GiB] (minimum 128MiB for CopyObject), set it e.g. to 536870912 to upload big files as fewer bigger parts
+  chunk_size: 5242880              # S3_CHUNK_SIZE, fixed part size for multipart upload, download and copy, used when ceil(file size / chunk_size) <= max_parts_count, otherwise file size / max_parts_count, 0 means always file size / max_parts_count, result is clamped to [5MiB, 5GiB] (minimum 128MiB for CopyObject); each multipart upload allocates about (concurrency + 2) * part size bytes of memory, multiplied by the number of concurrent uploads, so a bigger value like 67108864 makes big files upload as fewer bigger parts at the cost of memory
   max_parts_count: 4000            # S3_MAX_PARTS_COUNT, number of parts for S3 multipart uploads and downloads
   allow_multipart_download: false  # S3_ALLOW_MULTIPART_DOWNLOAD, allow faster multipart download speed, but will require additional disk space, download_concurrency * part size in worst case
   checksum_algorithm: ""           # S3_CHECKSUM_ALGORITHM, use it when you use object lock which allow to avoid delete keys from bucket until some timeout after creation, use CRC32 as fastest

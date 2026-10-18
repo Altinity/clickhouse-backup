@@ -192,20 +192,23 @@ func TestS3CalculatePartSizeChunkSize(t *testing.T) {
 		name          string
 		chunkSize     int64
 		maxPartsCount int64
+		minPartSize   int64
 		expected      int64
 	}{
-		{"zero chunk_size uses size/max_parts_count clamped to 5MiB", 0, 4000, 5 * mib},
-		{"default chunk_size", config.DefaultConfig().S3.ChunkSize, 4000, 5 * mib},
-		{"512MiB chunk_size", 512 * mib, 4000, 512 * mib},
-		{"5GiB chunk_size", 5 * gib, 4000, 5 * gib},
-		{"10GiB chunk_size clamped to 5GiB", 10 * gib, 4000, 5 * gib},
-		{"parts count equal to max_parts_count uses chunk_size", 500 * mib, 21, 500 * mib},
-		{"parts count above max_parts_count falls back to size/max_parts_count", 512 * mib, 19, fileSize/19 + 1},
+		{"zero chunk_size uses size/max_parts_count clamped to 5MiB", 0, 4000, 5 * mib, 5 * mib},
+		// 1MiB minimum makes the size/max_parts_count branch and the chunk_size branch distinguishable
+		{"zero chunk_size uses size/max_parts_count", 0, 4000, 1 * mib, fileSize/4000 + 1},
+		{"default chunk_size uses chunk_size", config.DefaultConfig().S3.ChunkSize, 4000, 1 * mib, 5 * mib},
+		{"512MiB chunk_size", 512 * mib, 4000, 5 * mib, 512 * mib},
+		{"5GiB chunk_size", 5 * gib, 4000, 5 * mib, 5 * gib},
+		{"10GiB chunk_size clamped to 5GiB", 10 * gib, 4000, 5 * mib, 5 * gib},
+		{"parts count equal to max_parts_count uses chunk_size", 500 * mib, 21, 5 * mib, 500 * mib},
+		{"parts count above max_parts_count falls back to size/max_parts_count", 512 * mib, 19, 5 * mib, fileSize/19 + 1},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &S3{Config: &config.S3Config{ChunkSize: tc.chunkSize, MaxPartsCount: tc.maxPartsCount}}
-			partSize := s.calculatePartSize(fileSize, 5*mib)
+			partSize := s.calculatePartSize(fileSize, tc.minPartSize)
 			assert.Equal(t, tc.expected, partSize)
 			assert.LessOrEqual(t, (fileSize+partSize-1)/partSize, tc.maxPartsCount)
 		})

@@ -189,7 +189,7 @@ func (a *AzureBlob) PutFile(ctx context.Context, key string, r io.ReadCloser, lo
 }
 
 // calculateBlockSize derives the upload block size for a blob of localSize bytes,
-// configured ChunkSize is used as is when ceil(localSize/ChunkSize) <= MaxPartsCount, fix https://github.com/Altinity/clickhouse-backup/issues/1142
+// configured ChunkSize is used when ceil(localSize/ChunkSize) <= MaxPartsCount, the result is clamped to [2MiB, 4000MiB], so the blocks count could exceed MaxPartsCount only for ChunkSize > 4000MiB, fix https://github.com/Altinity/clickhouse-backup/issues/1142
 func (a *AzureBlob) calculateBlockSize(localSize int64) int64 {
 	// https://github.com/Altinity/clickhouse-backup/issues/317
 	blockSize := localSize / a.Config.MaxPartsCount
