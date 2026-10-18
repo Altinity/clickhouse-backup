@@ -84,7 +84,7 @@ func Run(cliCtx *cli.Command, newCliApp func() *cli.Command, configPath string, 
 	status.SetAPIServerMode()
 	log.Debug().Msg("Wait for ClickHouse")
 	for {
-		cfg, err = config.LoadConfig(configPath)
+		cfg, err = config.LoadConfigFromCli(cliCtx)
 		if err != nil {
 			log.Error().Stack().Err(err).Send()
 			time.Sleep(5 * time.Second)
@@ -2980,9 +2980,9 @@ func (api *APIServer) CreateIntegrationTables() error {
 }
 
 func (api *APIServer) ReloadConfig(w http.ResponseWriter, command string) (*config.Config, error) {
-	cfg, err := config.LoadConfig(api.configPath)
+	cfg, err := config.LoadConfigFromCli(api.cliCtx)
 	if err != nil {
-		log.Error().Msgf("config.LoadConfig(%s) return error: %v", api.configPath, err)
+		log.Error().Msgf("config.LoadConfigFromCli(%s) return error: %v", api.configPath, err)
 		if w != nil {
 			api.writeError(w, http.StatusInternalServerError, command, err)
 		}

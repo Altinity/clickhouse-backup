@@ -248,6 +248,66 @@ func TestDisableEnvironmentOverride(t *testing.T) {
 	}
 }
 
+// TestLoadConfigFromCli - `watch` and `server` reload the config on every iteration / API call,
+// a plain LoadConfig there loses --env overrides, so the reload must go through LoadConfigFromCli
+func TestLoadConfigFromCli(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	writeConfig := func(disable bool) {
+		content := fmt.Sprintf("general:\n  remote_storage: \"s3\"\n  backups_to_keep_remote: 3\n  disable_environment_override: %v\ns3:\n  bucket: \"from-file\"\n", disable)
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatalf("can't write config file: %v", err)
+		}
+	}
+	ctx := parseTestFlags(t, "--config", configPath, "--env", "REMOTE_STORAGE=none", "--env", "BACKUPS_TO_KEEP_REMOTE=7")
+
+	writeConfig(false)
+	// the old watch reload, it only sees the config file and the real environment
+	cfg, err := LoadConfig(GetConfigPath(ctx))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.General.RemoteStorage != "s3" || cfg.General.BackupsToKeepRemote != 3 {
+		t.Fatalf("expected config file values without --env, got remote_storage=%q backups_to_keep_remote=%d", cfg.General.RemoteStorage, cfg.General.BackupsToKeepRemote)
+	}
+
+	// every reload re-applies --env and restores the process environment afterwards
+	for i := 0; i < 2; i++ {
+		cfg, err = LoadConfigFromCli(ctx)
+		if err != nil {
+			t.Fatalf("LoadConfigFromCli: %v", err)
+		}
+		if cfg.General.RemoteStorage != "none" || cfg.General.BackupsToKeepRemote != 7 {
+			t.Fatalf("reload %d expected --env overrides, got remote_storage=%q backups_to_keep_remote=%d", i, cfg.General.RemoteStorage, cfg.General.BackupsToKeepRemote)
+		}
+		for _, name := range []string{"REMOTE_STORAGE", "BACKUPS_TO_KEEP_REMOTE"} {
+			if _, present := os.LookupEnv(name); present {
+				t.Fatalf("--env %s leaked into the process environment", name)
+			}
+		}
+	}
+
+	// disable_environment_override: true still ignores --env on reload
+	writeConfig(true)
+	cfg, err = LoadConfigFromCli(ctx)
+	if err != nil {
+		t.Fatalf("LoadConfigFromCli: %v", err)
+	}
+	if cfg.General.RemoteStorage != "s3" || cfg.General.BackupsToKeepRemote != 3 {
+		t.Fatalf("expected config file values with disable_environment_override, got remote_storage=%q backups_to_keep_remote=%d", cfg.General.RemoteStorage, cfg.General.BackupsToKeepRemote)
+	}
+
+	// load errors are returned instead of log.Fatal, and --env is restored anyway
+	if err = os.WriteFile(configPath, []byte("general: [\n"), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	if _, err = LoadConfigFromCli(ctx); err == nil {
+		t.Fatal("expected LoadConfigFromCli error for broken config file")
+	}
+	if _, present := os.LookupEnv("REMOTE_STORAGE"); present {
+		t.Fatal("--env REMOTE_STORAGE leaked into the process environment after load error")
+	}
+}
+
 func newEnvContext(t *testing.T, values ...string) *cli.Command {
 	t.Helper()
 	return parseTestFlags(t, envArgs(values)...)

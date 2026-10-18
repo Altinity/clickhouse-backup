@@ -145,10 +145,10 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 			return ctx.Err()
 		default:
 			if cliCtx != nil {
-				if cfg, err := config.LoadConfig(config.GetConfigPath(cliCtx)); err == nil {
+				if cfg, err := config.LoadConfigFromCli(cliCtx); err == nil {
 					b.cfg = cfg
 				} else {
-					log.Warn().Msgf("watch config.LoadConfig error: %v", err)
+					log.Warn().Msgf("watch config.LoadConfigFromCli error: %v", err)
 				}
 				if err := b.ValidateWatchParams(watchInterval, fullInterval, watchBackupNameTemplate, schedules); err != nil {
 					return errors.Wrap(err, "Watch ValidateWatchParams in loop")

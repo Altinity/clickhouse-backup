@@ -1107,6 +1107,22 @@ func DefaultConfig() *Config {
 }
 
 func GetConfigFromCli(ctx *cli.Command) *Config {
+	cfg, err := LoadConfigFromCli(ctx)
+	if err != nil {
+		log.Fatal().Stack().Err(err).Send()
+	}
+	return cfg
+}
+
+// loadConfigFromCliMutex serializes --env overrides, they are applied via the process environment,
+// while `server` reloads config concurrently from API handlers and `watch` goroutines
+var loadConfigFromCliMutex sync.Mutex
+
+// LoadConfigFromCli loads config with --env overrides and CLI flag overrides applied,
+// use it instead of LoadConfig for every config reload (`watch` iterations, `server` reload), otherwise --env is lost
+func LoadConfigFromCli(ctx *cli.Command) (*Config, error) {
+	loadConfigFromCliMutex.Lock()
+	defer loadConfigFromCliMutex.Unlock()
 	var oldEnvValues map[string]oldEnvValues
 	// peek disable_environment_override from the config file before applying --env,
 	// deliberately ignoring the environment, so the option can't be bypassed by the mechanisms it disables
@@ -1119,10 +1135,10 @@ func GetConfigFromCli(ctx *cli.Command) *Config {
 	}
 	configPath := GetConfigPath(ctx)
 	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		log.Fatal().Stack().Err(err).Send()
-	}
 	RestoreEnvVars(oldEnvValues)
+	if err != nil {
+		return nil, err
+	}
 	// `restore`/`restore_remote` expose --rebind-replica-path-if-exists to override the config value per invocation.
 	// Only override when passed as true, so the flag's default `false` doesn't clobber a `true` from the config file.
 	// Bool is false for commands that don't declare the flag, so this is safe to evaluate for every command.
@@ -1143,7 +1159,7 @@ func GetConfigFromCli(ctx *cli.Command) *Config {
 	if ctx.Bool("allow-missing-files") {
 		cfg.General.AllowMissingFilesOnDownload = true
 	}
-	return cfg
+	return cfg, nil
 }
 
 func GetConfigPath(ctx *cli.Command) string {
