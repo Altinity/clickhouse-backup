@@ -418,6 +418,7 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 				needClean = fmt.Sprintf("true.%d", rand.Uint64())
 			}
 			b.resumableState = resumable.NewState(b.GetStateDir(), backupName, "restore", map[string]interface{}{
+				"configHash":   resumableConfigHash(b.cfg, "restore"),
 				"tablePattern": tablePattern,
 				"partitions":   partitions,
 				"schemaOnly":   schemaOnly,

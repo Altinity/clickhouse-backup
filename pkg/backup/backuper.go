@@ -693,6 +693,37 @@ func (b *Backuper) GetStateDir() string {
 	return b.DefaultDataPath
 }
 
+// resumableConfigHash returns a hash of the config fields which define what the keys of `<command>.state2` point to,
+// it is stored in the resumable state params, so changing the remote storage location, compression_format or
+// (for restore) the database/table mapping between an interrupted run and `--resume` starts from scratch
+// instead of skipping keys processed for another location; tuning concurrency, retries, credentials or log level keeps resume,
+// see https://github.com/Altinity/clickhouse-backup/issues/1010
+func resumableConfigHash(cfg *config.Config, command string) string {
+	fields := []interface{}{cfg.General.RemoteStorage, cfg.GetCompressionFormat()}
+	switch cfg.General.RemoteStorage {
+	case "s3":
+		fields = append(fields, cfg.S3.Endpoint, cfg.S3.Bucket, cfg.S3.Path, cfg.S3.ObjectDiskPath)
+	case "gcs":
+		fields = append(fields, cfg.GCS.Endpoint, cfg.GCS.Bucket, cfg.GCS.Path, cfg.GCS.ObjectDiskPath)
+	case "azblob":
+		fields = append(fields, cfg.AzureBlob.EndpointSuffix, cfg.AzureBlob.AccountName, cfg.AzureBlob.Container, cfg.AzureBlob.Path, cfg.AzureBlob.ObjectDiskPath)
+	case "cos":
+		fields = append(fields, cfg.COS.RowURL, cfg.COS.Path, cfg.COS.ObjectDiskPath)
+	case "ftp":
+		fields = append(fields, cfg.FTP.Address, cfg.FTP.Path, cfg.FTP.ObjectDiskPath)
+	case "sftp":
+		fields = append(fields, cfg.SFTP.Address, cfg.SFTP.Port, cfg.SFTP.Path, cfg.SFTP.ObjectDiskPath)
+	case "custom":
+		fields = append(fields, cfg.Custom.UploadCommand, cfg.Custom.DownloadCommand)
+	}
+	// restore keys are named after the backup tables, the mappings decide which tables they are restored into
+	if command == "restore" || command == "download_restore_streaming" {
+		fields = append(fields, cfg.General.RestoreDatabaseMapping, cfg.General.RestoreTableMapping)
+	}
+	// %#v prints map keys sorted, so the hash is stable
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%#v", fields))))
+}
+
 func (b *Backuper) adjustResumeFlag(resume bool) {
 	if !resume && b.cfg.General.UseResumableState {
 		resume = true

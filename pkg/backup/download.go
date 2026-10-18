@@ -314,6 +314,7 @@ func (b *Backuper) downloadTablesMetadata(ctx context.Context, backupName, comma
 	}
 	if b.resume {
 		b.resumableState = resumable.NewState(b.GetStateDir(), backupName, command, map[string]interface{}{
+			"configHash":   resumableConfigHash(b.cfg, command),
 			"tablePattern": tablePattern,
 			"partitions":   partitions,
 			"schemaOnly":   schemaOnly,

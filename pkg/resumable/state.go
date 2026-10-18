@@ -104,7 +104,7 @@ func (s *State) cleanupStateIfParamsChange(params map[string]interface{}) {
 	}
 
 	if needCleanup {
-		log.Info().Msgf("parameters changed old=%#v new=%#v, %s cleanup begin", s.params, params, s.stateFile)
+		log.Warn().Msgf("parameters changed old=%#v new=%#v, %s cleanup begin", s.params, params, s.stateFile)
 		err := s.db.Batch(func(tx *bolt.Tx) error {
 			b := s.getBucket(tx)
 			if b == nil {
