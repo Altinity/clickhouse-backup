@@ -811,6 +811,101 @@ func TestConfig_ParseCallbackTimeout_RejectsNonPositive(t *testing.T) {
 	}
 }
 
+func TestConfig_SkipRestoreNonShardedReplicatedTables_Default(t *testing.T) {
+	if cfg := DefaultConfig(); cfg.ClickHouse.SkipRestoreNonShardedReplicatedTables || cfg.ClickHouse.SkipCheckNonShardedReplicatedTablesCluster != "{cluster}" {
+		t.Fatalf("expected DefaultConfig false / {cluster}, got %v / %q", cfg.ClickHouse.SkipRestoreNonShardedReplicatedTables, cfg.ClickHouse.SkipCheckNonShardedReplicatedTablesCluster)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(configPath, []byte("general:\n  remote_storage: none\n"), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.ClickHouse.SkipRestoreNonShardedReplicatedTables {
+		t.Fatal("expected default SkipRestoreNonShardedReplicatedTables false")
+	}
+	if cfg.ClickHouse.SkipCheckNonShardedReplicatedTablesCluster != "{cluster}" {
+		t.Fatalf("expected default SkipCheckNonShardedReplicatedTablesCluster %q, got %q", "{cluster}", cfg.ClickHouse.SkipCheckNonShardedReplicatedTablesCluster)
+	}
+}
+
+func TestConfig_SkipRestoreNonShardedReplicatedTables_FromYAML(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	content := "clickhouse:\n  skip_restore_non_sharded_replicated_tables: true\n  skip_check_non_sharded_replicated_tables_cluster: prod\n"
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.ClickHouse.SkipRestoreNonShardedReplicatedTables {
+		t.Fatal("expected SkipRestoreNonShardedReplicatedTables true")
+	}
+	if cfg.ClickHouse.SkipCheckNonShardedReplicatedTablesCluster != "prod" {
+		t.Fatalf("expected cluster %q, got %q", "prod", cfg.ClickHouse.SkipCheckNonShardedReplicatedTablesCluster)
+	}
+}
+
+func TestConfig_SkipRestoreNonShardedReplicatedTables_FromENV(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	content := "clickhouse:\n  skip_restore_non_sharded_replicated_tables: false\n  skip_check_non_sharded_replicated_tables_cluster: yaml-cluster\n"
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	t.Setenv("CLICKHOUSE_SKIP_RESTORE_NON_SHARDED_REPLICATED_TABLES", "1")
+	t.Setenv("CLICKHOUSE_SKIP_CHECK_NON_SHARDED_REPLICATED_TABLES_CLUSTER", "analytics")
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.ClickHouse.SkipRestoreNonShardedReplicatedTables {
+		t.Fatal("expected env override SkipRestoreNonShardedReplicatedTables true")
+	}
+	if cfg.ClickHouse.SkipCheckNonShardedReplicatedTablesCluster != "analytics" {
+		t.Fatalf("expected env override cluster %q, got %q", "analytics", cfg.ClickHouse.SkipCheckNonShardedReplicatedTablesCluster)
+	}
+}
+
+func TestConfig_SkipRestoreNonShardedReplicatedTables_FromENVZero(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	content := "clickhouse:\n  skip_restore_non_sharded_replicated_tables: true\n  skip_check_non_sharded_replicated_tables_cluster: prod\n"
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	t.Setenv("CLICKHOUSE_SKIP_RESTORE_NON_SHARDED_REPLICATED_TABLES", "0")
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.ClickHouse.SkipRestoreNonShardedReplicatedTables {
+		t.Fatal("expected env 0 to store SkipRestoreNonShardedReplicatedTables false")
+	}
+	if cfg.ClickHouse.SkipCheckNonShardedReplicatedTablesCluster != "prod" {
+		t.Fatalf("expected yaml cluster %q, got %q", "prod", cfg.ClickHouse.SkipCheckNonShardedReplicatedTablesCluster)
+	}
+}
+
+func TestConfig_AlwaysShardedMacros(t *testing.T) {
+	if macros := DefaultConfig().ClickHouse.AlwaysShardedMacros; len(macros) != 1 || macros[0] != "shard" {
+		t.Fatalf("expected DefaultConfig [shard], got %v", macros)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(configPath, []byte("general:\n  remote_storage: none\n"), 0644); err != nil {
+		t.Fatalf("can't write config file: %v", err)
+	}
+	t.Setenv("CLICKHOUSE_ALWAYS_SHARDED_MACROS", "shard,{layer}")
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if macros := cfg.ClickHouse.AlwaysShardedMacros; len(macros) != 2 || macros[0] != "shard" || macros[1] != "{layer}" {
+		t.Fatalf("expected env override [shard {layer}], got %v", macros)
+	}
+}
+
 func TestConfig_StatusHistorySize_Default(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yml")
 	if err := os.WriteFile(configPath, []byte("general:\n  remote_storage: none\n"), 0644); err != nil {
