@@ -607,11 +607,12 @@ func newRootCommand() *cli.Command {
 		{
 			Name:      "restore",
 			Usage:     "Create schema and restore data from backup",
-			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] [--skip-empty-tables] <backup_name>",
+			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] [--skip-empty-tables] [--skip-kafka-keeper-hold] <backup_name>",
 			Action: func(ctx context.Context, c *cli.Command) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				b.DryRun = c.Bool("dry-run")
 				b.EmbeddedOnClusterWorker = c.Bool("embedded-on-cluster-worker")
+				b.SkipKafkaKeeperHold = c.Bool("skip-kafka-keeper-hold")
 				return withDryRunResult(c, b, b.Restore(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), version, commandIdFromCli(c)))
 			},
 			Flags: []cli.Flag{
@@ -663,6 +664,11 @@ func newRootCommand() *cli.Command {
 					Usage:   "Drop exists schema objects before restore",
 				},
 				&cli.BoolFlag{
+					Name:   "skip-kafka-keeper-hold",
+					Hidden: false,
+					Usage:  "Don't hold consumption of restored Kafka tables with kafka_keeper_path via partition locks until data restore completes, release already placed locks",
+				},
+				&cli.BoolFlag{
 					Name:    "i",
 					Aliases: []string{"ignore-dependencies"},
 					Hidden:  false,
@@ -672,19 +678,19 @@ func newRootCommand() *cli.Command {
 					Name:    "rbac",
 					Aliases: []string{"restore-rbac", "do-restore-rbac"},
 					Hidden:  false,
-					Usage:   "Restore RBAC related objects",
+					Usage:   "Restore RBAC related objects, enabled always when general->rbac_restore_always: true",
 				},
 				&cli.BoolFlag{
 					Name:    "configs",
 					Aliases: []string{"restore-configs", "do-restore-configs"},
 					Hidden:  false,
-					Usage:   "Restore 'clickhouse-server' CONFIG related files",
+					Usage:   "Restore 'clickhouse-server' CONFIG related files, enabled always when general->config_restore_always: true",
 				},
 				&cli.BoolFlag{
 					Name:    "named-collections",
 					Aliases: []string{"restore-named-collections", "do-restore-named-collections"},
 					Hidden:  false,
-					Usage:   "Restore named collections and settings",
+					Usage:   "Restore named collections and settings, enabled always when general->named_collections_restore_always: true",
 				},
 				&cli.BoolFlag{
 					Name:   "rbac-only",
@@ -750,7 +756,7 @@ func newRootCommand() *cli.Command {
 		{
 			Name:      "restore_remote",
 			Usage:     "Download and restore",
-			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] <backup_name>",
+			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] [--skip-kafka-keeper-hold] <backup_name>",
 			Description: "A remote backup with ClickHouse Cloud / native BACKUP layout (.backup without metadata.json, `cloud` in `list remote`) is restored via restore_cloud, only with remote_storage s3 or azblob and without mapping, --schema, --data, --rbac, --configs, --named-collections, --resume and --streaming options\n" +
 				"   https://github.com/Altinity/clickhouse-backup/issues/1574",
 			Action: func(ctx context.Context, c *cli.Command) error {
@@ -758,6 +764,7 @@ func newRootCommand() *cli.Command {
 				b.DryRun = c.Bool("dry-run")
 				b.EmbeddedOnClusterWorker = c.Bool("embedded-on-cluster-worker")
 				b.DiskLimit = c.Int("disk-limit")
+				b.SkipKafkaKeeperHold = c.Bool("skip-kafka-keeper-hold")
 				return withDryRunResult(c, b, b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("skip-empty-tables"), c.Bool("hardlink-exists-files"), c.Bool("streaming"), version, commandIdFromCli(c)))
 			},
 			Flags: []cli.Flag{
@@ -809,6 +816,11 @@ func newRootCommand() *cli.Command {
 					Usage:   "Drop schema objects before restore",
 				},
 				&cli.BoolFlag{
+					Name:   "skip-kafka-keeper-hold",
+					Hidden: false,
+					Usage:  "Don't hold consumption of restored Kafka tables with kafka_keeper_path via partition locks until data restore completes, release already placed locks",
+				},
+				&cli.BoolFlag{
 					Name:    "i",
 					Aliases: []string{"ignore-dependencies"},
 					Hidden:  false,
@@ -818,19 +830,19 @@ func newRootCommand() *cli.Command {
 					Name:    "rbac",
 					Aliases: []string{"restore-rbac", "do-restore-rbac"},
 					Hidden:  false,
-					Usage:   "Download and Restore RBAC related objects",
+					Usage:   "Download and Restore RBAC related objects, enabled always when general->rbac_restore_always: true",
 				},
 				&cli.BoolFlag{
 					Name:    "configs",
 					Aliases: []string{"restore-configs", "do-restore-configs"},
 					Hidden:  false,
-					Usage:   "Download and Restore 'clickhouse-server' CONFIG related files",
+					Usage:   "Download and Restore 'clickhouse-server' CONFIG related files, enabled always when general->config_restore_always: true",
 				},
 				&cli.BoolFlag{
 					Name:    "named-collections",
 					Aliases: []string{"restore-named-collections", "do-restore-named-collections"},
 					Hidden:  false,
-					Usage:   "Download and Restore named collections and settings",
+					Usage:   "Download and Restore named collections and settings, enabled always when general->named_collections_restore_always: true",
 				},
 				&cli.BoolFlag{
 					Name:   "rbac-only",

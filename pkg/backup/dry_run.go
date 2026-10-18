@@ -31,6 +31,9 @@ type DryRunReport struct {
 	HardlinkEstimate30d uint64 `json:"hardlink_estimate_30d,omitempty"`
 	// DependentBackups is delete only, backups which reference the deleted one via required_backup
 	DependentBackups []string `json:"dependent_backups,omitempty"`
+	// SkippedDataTables is restore only, non-sharded replicated tables whose data is restored on another node,
+	// https://github.com/Altinity/clickhouse-backup/issues/1181
+	SkippedDataTables []string `json:"skipped_data_tables,omitempty"`
 }
 
 // JSONString marshals the report for the `result` field of a status row, it returns
@@ -88,6 +91,9 @@ func (b *Backuper) setDryRunResult(r *DryRunReport) {
 	}
 	if len(r.DependentBackups) > 0 {
 		fields["dependent_backups"] = r.DependentBackups
+	}
+	if len(r.SkippedDataTables) > 0 {
+		fields["skipped_data_tables"] = r.SkippedDataTables
 	}
 	log.Info().Fields(fields).Msgf("dry-run: would process %d tables, %s data", r.TableCount, utils.FormatBytes(r.TotalSize))
 }

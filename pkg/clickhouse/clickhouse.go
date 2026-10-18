@@ -1273,6 +1273,7 @@ var createObjRe = regexp.MustCompile(`(?is)^(CREATE [^(]+)(\(.+)`)
 var onClusterRe = regexp.MustCompile(`(?im)\s+ON\s+CLUSTER\s+`)
 var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^)]+)\)`)
 var macroRE = regexp.MustCompile(`(?i){[a-z0-9-_]+}`)
+var kafkaEngineRe = regexp.MustCompile(`ENGINE\s*=\s*Kafka\b`)
 var aliasEngineRe = regexp.MustCompile(`(?i)ENGINE\s*=\s*Alias\s*\(`)
 var aliasEngineColumnsRe = regexp.MustCompile(`(?is)^((?:CREATE|ATTACH)\s+TABLE\s+[^(]+?)\s*\(.+\)\s*(ENGINE\s*=\s*Alias\s*\(.*)$`)
 
@@ -1360,6 +1361,12 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	// WINDOW VIEW / LIVE VIEW unavailable with analyzer after 24.3
 	// Use per-query settings via clickhouse.Context to avoid connection pool race
 	ctx := ch.AnalyzerOffContextIfNecessary(version, query)
+	// https://github.com/Altinity/clickhouse-backup/issues/1120
+	if version >= 24008000 && kafkaEngineRe.MatchString(query) && strings.Contains(query, "kafka_keeper_path") {
+		ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
+			"allow_experimental_kafka_offsets_storage_in_keeper": 1,
+		}))
+	}
 	if err := ch.QueryContext(ctx, query); err != nil {
 		return errors.Wrap(err, "CreateTable: execute create query")
 	}

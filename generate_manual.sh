@@ -24,12 +24,12 @@ done > "${manual_file}"
 
 cp "${manual_file}" Manual.md
 
-# README.md embeds the same content under "## Common CLI Usage" - keep it in sync so the two
+# ReadMe.md embeds the same content under "## Common CLI Usage" - keep it in sync so the two
 # docs can't drift apart again.
 readme_tmp=$(mktemp)
 trap 'rm -f "${manual_file}" "${readme_tmp}"' EXIT
-awk '/^## Common CLI Usage$/{print; print ""; exit} {print}' README.md > "${readme_tmp}"
+awk '/^## Common CLI Usage$/{print; print ""; exit} {print}' ReadMe.md > "${readme_tmp}"
 cat "${manual_file}" >> "${readme_tmp}"
-mv "${readme_tmp}" README.md
+mv "${readme_tmp}" ReadMe.md
 
-echo "Updated Manual.md and README.md's 'Common CLI Usage' section." >&2
+echo "Updated Manual.md and ReadMe.md's 'Common CLI Usage' section." >&2

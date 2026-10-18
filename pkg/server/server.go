@@ -2186,6 +2186,13 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// https://github.com/Altinity/clickhouse-backup/issues/1120
+	skipKafkaKeeperHold := false
+	if _, exist := api.getQueryParameter(query, "skip_kafka_keeper_hold"); exist {
+		skipKafkaKeeperHold = true
+		fullCommand += " --skip-kafka-keeper-hold"
+	}
+
 	// Handle rebind-replica-path-if-exists parameter, overrides clickhouse.rebind_replica_path_if_exists for this request only
 	// https://github.com/Altinity/clickhouse-backup/issues/1428
 	rebindReplicaPathParamName := "rebind_replica_path_if_exists"
@@ -2238,6 +2245,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
 		b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
+		b.SkipKafkaKeeperHold = skipKafkaKeeperHold
 		b.DryRun = true
 		err = b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, api.clickhouseBackupVersion, commandId)
 		status.Current.SetResult(commandId, b.DryRunResult.JSONString())
@@ -2251,6 +2259,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(cfg)
 			b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
+			b.SkipKafkaKeeperHold = skipKafkaKeeperHold
 			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, api.clickhouseBackupVersion, commandId)
 		})
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
@@ -2494,6 +2503,13 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		}
 	}
 
+	// https://github.com/Altinity/clickhouse-backup/issues/1120
+	skipKafkaKeeperHold := false
+	if _, exist := api.getQueryParameter(query, "skip_kafka_keeper_hold"); exist {
+		skipKafkaKeeperHold = true
+		fullCommand += " --skip-kafka-keeper-hold"
+	}
+
 	// Handle rebind-replica-path-if-exists parameter, overrides clickhouse.rebind_replica_path_if_exists for this request only
 	// https://github.com/Altinity/clickhouse-backup/issues/1428
 	rebindReplicaPathParamName := "rebind_replica_path_if_exists"
@@ -2546,6 +2562,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
 		b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
+		b.SkipKafkaKeeperHold = skipKafkaKeeperHold
 		b.DryRun = true
 		b.DiskLimit = diskLimit
 		err = b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, streaming, api.clickhouseBackupVersion, commandId)
@@ -2560,6 +2577,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		err, _ := api.metrics.ExecuteWithMetrics("restore_remote", 0, func() error {
 			b := backup.NewBackuper(cfg)
 			b.EmbeddedOnClusterWorker = embeddedOnClusterWorker
+			b.SkipKafkaKeeperHold = skipKafkaKeeperHold
 			b.DiskLimit = diskLimit
 			return b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, streaming, api.clickhouseBackupVersion, commandId)
 		})

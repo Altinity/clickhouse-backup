@@ -216,6 +216,7 @@ type ObjectStorageCredentials struct {
 	AzureAccountName          string
 	AzureAccountKey           string
 	AzureContainerName        string
+	AzureSAS                  string // SharedAccessSignature of <connection_string>
 }
 
 var DisksCredentials = xsync.NewMapOf[ObjectStorageCredentials]()
@@ -433,29 +434,123 @@ func credentialsFromDiskArgs(ctx context.Context, ch *clickhouse.ClickHouse, ver
 		return creds, true, nil
 	case "azure", "azure_blob_storage", "azure_plain", "azure_plain_rewritable":
 		creds.Type = "azblob"
-		accountUrl, accountUrlExists := get("storage_account_url")
-		if !accountUrlExists {
-			return creds, false, errors.Errorf("%s doesn't contains <storage_account_url>", source)
+		if err := azureCredentialsFromDiskArgs(version, source, get, &creds); err != nil {
+			return creds, false, err
 		}
-		creds.EndPoint = accountUrl
-		containerName, containerNameExists := get("container_name")
-		if !containerNameExists {
-			return creds, false, errors.Errorf("%s doesn't contains <container_name>", source)
-		}
-		creds.AzureContainerName = containerName
-		accountName, accountNameExists := get("account_name")
-		if !accountNameExists {
-			return creds, false, errors.Errorf("%s doesn't contains <account_name>", source)
-		}
-		creds.AzureAccountName = accountName
-		accountKey, accountKeyExists := get("account_key")
-		if !accountKeyExists {
-			return creds, false, errors.Errorf("%s doesn't contains <account_key>", source)
-		}
-		creds.AzureAccountKey = accountKey
 		return creds, true, nil
 	}
 	return creds, false, nil
+}
+
+// azureCredentialsFromDiskArgs - the same endpoint and authentication rules as processEndpoint and getAuthMethod
+// in clickhouse-server src/Disks/DiskObjectStorage/ObjectStorages/AzureBlobStorage/AzureBlobStorageCommon.cpp:
+// endpoint is <endpoint> or <connection_string> or <storage_account_url>, authentication is <account_name> + <account_key>
+// or the key / SAS of <connection_string>, otherwise <use_workload_identity> or a managed identity which
+// makeObjectDiskConnection replaces with DefaultAzureCredential, https://github.com/Altinity/clickhouse-backup/issues/1604
+func azureCredentialsFromDiskArgs(version int, source string, get func(key string) (string, bool), creds *ObjectStorageCredentials) error {
+	accountName, accountNameExists := get("account_name")
+	accountKey, accountKeyExists := get("account_key")
+	containerName, containerNameExists := get("container_name")
+	if !containerNameExists {
+		containerName, containerNameExists = get("container")
+	}
+	if endpoint, endpointExists := get("endpoint"); endpointExists {
+		// <endpoint>http://host/account/container/prefix</endpoint>, or http://host/container/prefix with <endpoint_contains_account_name>false
+		endpointURL, err := url.Parse(endpoint)
+		if err != nil || endpointURL.Host == "" {
+			return errors.Errorf("%s, invalid <endpoint>%s</endpoint>", source, endpoint)
+		}
+		pathItems := strings.SplitN(strings.TrimPrefix(endpointURL.Path, "/"), "/", 3)
+		if containsAccountName, exists := get("endpoint_contains_account_name"); !exists || (containsAccountName != "false" && containsAccountName != "0") {
+			if len(pathItems) < 2 || pathItems[0] == "" || pathItems[1] == "" {
+				return errors.Errorf("%s, expected account_name and container_name in <endpoint>%s</endpoint>", source, endpoint)
+			}
+			accountName, accountNameExists = pathItems[0], true
+			pathItems = pathItems[1:]
+		} else {
+			pathItems = strings.SplitN(strings.Join(pathItems, "/"), "/", 2)
+			if pathItems[0] == "" {
+				return errors.Errorf("%s, expected container_name in <endpoint>%s</endpoint>", source, endpoint)
+			}
+		}
+		containerName, containerNameExists = pathItems[0], true
+		prefix := ""
+		if len(pathItems) > 1 {
+			prefix = pathItems[1]
+		}
+		// azure <endpoint_subpath> exists since 25.1, older versions ignore it
+		if subPath, subPathExists := get("endpoint_subpath"); subPathExists && version >= 25001000 {
+			if prefix != "" && !strings.HasSuffix(prefix, "/") {
+				prefix += "/"
+			}
+			prefix += subPath
+		}
+		creds.EndPoint = endpointURL.Scheme + "://" + endpointURL.Host
+		// makeObjectDiskConnection trims /<account_name> from the path, the rest is the object key prefix
+		if accountNameExists {
+			creds.EndPoint += "/" + accountName
+		}
+		if prefix != "" {
+			creds.EndPoint += "/" + prefix
+		}
+	} else if connectionString, connectionStringExists := get("connection_string"); connectionStringExists {
+		params := map[string]string{}
+		for _, item := range strings.Split(connectionString, ";") {
+			if key, value, found := strings.Cut(strings.TrimSpace(item), "="); found {
+				params[key] = value
+			}
+		}
+		if !accountNameExists && params["AccountName"] != "" {
+			accountName, accountNameExists = params["AccountName"], true
+		}
+		if !accountKeyExists && params["AccountKey"] != "" {
+			accountKey, accountKeyExists = params["AccountKey"], true
+		}
+		creds.AzureSAS = params["SharedAccessSignature"]
+		if blobEndpoint, blobEndpointExists := params["BlobEndpoint"]; blobEndpointExists {
+			creds.EndPoint = strings.TrimSuffix(blobEndpoint, "/")
+		} else {
+			protocol, endpointSuffix := params["DefaultEndpointsProtocol"], params["EndpointSuffix"]
+			if protocol == "" {
+				protocol = "https"
+			}
+			if endpointSuffix == "" {
+				endpointSuffix = "core.windows.net"
+			}
+			if !accountNameExists {
+				return errors.Errorf("%s, <connection_string> doesn't contains AccountName or BlobEndpoint", source)
+			}
+			creds.EndPoint = protocol + "://" + accountName + ".blob." + endpointSuffix
+		}
+	} else if storageAccountURL, storageAccountURLExists := get("storage_account_url"); storageAccountURLExists {
+		creds.EndPoint = storageAccountURL
+	} else {
+		return errors.Errorf("%s doesn't contains <storage_account_url>, <connection_string> or <endpoint>", source)
+	}
+	if !containerNameExists {
+		return errors.Errorf("%s doesn't contains <container_name>", source)
+	}
+	creds.AzureContainerName = containerName
+	if !accountNameExists {
+		// https://<account>.blob.core.windows.net or http://azurite:10000/<account>
+		endpointURL, err := url.Parse(creds.EndPoint)
+		if err != nil {
+			return errors.Wrapf(err, "%s, invalid endpoint %s", source, creds.EndPoint)
+		}
+		if host, _, isBlobHost := strings.Cut(endpointURL.Host, ".blob."); isBlobHost {
+			accountName = host
+		} else {
+			accountName, _, _ = strings.Cut(strings.TrimPrefix(endpointURL.Path, "/"), "/")
+		}
+		if accountName == "" {
+			return errors.Errorf("%s doesn't contains <account_name> and can't get it from %s", source, creds.EndPoint)
+		}
+	}
+	creds.AzureAccountName = accountName
+	if accountKeyExists {
+		creds.AzureAccountKey = accountKey
+	}
+	return nil
 }
 
 // systemDiskPath - raw `system.disks` name and path, without the grouping which clickhouse.GetDisks applies
@@ -835,11 +930,18 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 			if azureCfg.AccountName != "" && strings.HasPrefix(azureCfg.Path, "/"+creds.AzureAccountName) {
 				azureCfg.Path = strings.TrimPrefix(azureURL.Path, "/"+creds.AzureAccountName)
 			}
+			// object key prefix of <endpoint>, a leading slash makes a different blob name
+			azureCfg.Path = strings.Trim(azureCfg.Path, "/")
 			// need for CopyObject
 			azureCfg.ObjectDiskPath = azureCfg.Path
 		}
 		if creds.AzureAccountKey != "" {
 			azureCfg.AccountKey = creds.AzureAccountKey
+		} else if creds.AzureSAS != "" {
+			azureCfg.SharedAccessSignature = creds.AzureSAS
+		} else {
+			// <use_workload_identity> or a managed identity, https://github.com/Altinity/clickhouse-backup/issues/1604
+			azureCfg.UseManagedIdentity = true
 		}
 		if creds.AzureContainerName != "" {
 			azureCfg.Container = creds.AzureContainerName

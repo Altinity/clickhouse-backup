@@ -157,6 +157,7 @@ func (b *Backuper) restoreFromRemoteStreaming(backupName, tablePattern string, d
 	if err := b.prepareRestoreMapping(tableMapping, "table"); err != nil {
 		return pkgerrors.Wrap(err, "prepareRestoreMapping table")
 	}
+	b.applyRestoreAlways(&restoreRBAC, &restoreConfigs, &restoreNamedCollections)
 	doDownloadData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
 	doRestoreData := (!schemaOnly && !rbacOnly && !configsOnly) || dataOnly
 
@@ -284,8 +285,10 @@ func (b *Backuper) restoreFromRemoteStreaming(backupName, tablePattern string, d
 				return pkgerrors.Errorf("not found schemas schemas by %s in %s", prologue.tablePattern, backupName)
 			}
 			log.Warn().Msgf("not found schemas by %s in %s", prologue.tablePattern, backupName)
-		} else {
+		} else if len(prologue.dataTablesForRestore) > 0 {
 			dataSize, err = b.streamTablesData(ctx, backupName, remoteBackup.BackupMetadata, backupManifest, downloaded.tableMetadataAfterDownload, prologue, skipProjections, replicatedCopyToDetached, hardlinkExistsFiles)
+			// https://github.com/Altinity/clickhouse-backup/issues/1120
+			b.finishKafkaKeeperHolds(ctx, prologue.tablesForRestore, err)
 			if err != nil {
 				return err
 			}
@@ -327,7 +330,8 @@ func (b *Backuper) restoreFromRemoteStreaming(backupName, tablePattern string, d
 // download_concurrency, restores with max_connections, a failure on either side cancels the other,
 // returns the downloaded data size
 func (b *Backuper) streamTablesData(ctx context.Context, backupName string, remoteBackup metadata.BackupMetadata, backupManifest *storage.ManifestReader, downloadedTables ListOfTables, prologue *restorePrologueResult, skipProjections []string, replicatedCopyToDetached, hardlinkExistsFiles bool) (uint64, error) {
-	tablesForRestore := prologue.tablesForRestore
+	// the tables whose data is restored on another node are neither downloaded nor attached, https://github.com/Altinity/clickhouse-backup/issues/1181
+	tablesForRestore := prologue.dataTablesForRestore
 	disks := prologue.disks
 	diskMap, diskTypes := buildDiskMaps(disks, prologue.backupMetadata)
 	// tables declared with `SETTINGS disk = disk(...)` bring their own disk, which exists only after the schema

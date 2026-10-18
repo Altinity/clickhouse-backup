@@ -137,6 +137,21 @@ One-shot CLI commands (`create`, `upload`, `download`, `restore`, `delete`, `cre
 - `SIGTERM` cancels all running commands (same as `POST /backup/kill` for each of them), removes their pid files and stops the API server; in Kubernetes make sure `terminationGracePeriodSeconds` covers the shadow cleanup of a big table, otherwise the following `SIGKILL` leaves it for the next `clean`
 - `SIGHUP` reloads the config and restarts the API server, running commands are canceled the same way as via `POST /restart`
 
+## Logging
+
+All log messages go to stderr. stdout only carries the command output (`list`, `tables`, `print-config`, ...), so it can be piped to other tools, e.g. `clickhouse-backup list remote --format json | jq`.
+To keep the log in a file, redirect stderr as well:
+
+```shell
+clickhouse-backup create_remote my_backup >> clickhouse-backup.log 2>&1
+```
+
+`docker logs` and `kubectl logs` show only the output of the container's main process, e.g. `clickhouse-backup server` in a sidecar container.
+A command started with `docker exec` or `kubectl exec` writes its log to the exec session, so it doesn't appear in the container log.
+To get it there, run the command through the [API](#api), e.g. `POST /backup/create_remote` or `INSERT INTO system.backup_actions`: the server executes it in its own process.
+
+Use `log_level` / `LOG_LEVEL` to change the verbosity.
+
 ## Default Config File
 
 By default, the config file is located at `/etc/clickhouse-backup/config.yml`, but it can be redefined via the `CLICKHOUSE_BACKUP_CONFIG` environment variable or via `--config` command line parameter.
@@ -174,7 +189,10 @@ general:
   # Concurrency means parallel tables and parallel parts inside tables
   # For example, 4 means max 4 parallel tables and 4 parallel parts inside one table, so equals 16 concurrent streams
   download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is floor(AVAILABLE_CPU_CORES / 2). If result is < 1, then 1.
+  download_transfer_concurrency: 0 # DOWNLOAD_TRANSFER_CONCURRENCY, global limit of concurrent part/archive transfers of one `download`, shared by all tables, so the last remaining table can use the slots released by finished tables instead of draining with only `download_concurrency` streams, 0 means download_concurrency^2 (the same maximum number of connections as the nested table/part limits), a negative value restores the legacy per-table limit
+  download_table_order: largest_first # DOWNLOAD_TABLE_ORDER, `largest_first` or `metadata`, order in which `download` dispatches tables; `largest_first` starts big tables first, so they are not left to drain alone at the end of the download, only the dispatch order changes, restore order is not affected
   upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2)). If result is < 1, then 1.
+  file_transfer_concurrency: 1   # FILE_TRANSFER_CONCURRENCY, max concurrent file streams inside one data part, applies only to `compression_format: none` (with archive formats one part is one stream), 1 means sequential transfer of part files. Extra streams only take free slots of the global transfer budget (`download_transfer_concurrency` for download, upload_concurrency^2 for upload) and never block, so the total number of connections never grows, they use slots left idle by other parts, mostly at the tail of a transfer with high-latency remote storage. Disabled for download when `download_transfer_concurrency` is negative. Try raising `upload_concurrency` / `download_concurrency` first, values above 8 rarely help
   rebase_concurrency: 1          # REBASE_CONCURRENCY, max 255, how many tables process in parallel during `rebase` command, by default the same as download_concurrency.
   
   # Throttling speed for upload and download, enforced inline via a token-bucket rate limiter shared across all concurrent workers, so the value is an aggregate cap with smooth (non-bursty) throughput.
@@ -261,10 +279,13 @@ general:
   io_nice_priority: "idle" # IO niceness priority, to allow throttling DISK intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/ionice.1.html, on macOS mapped to setiopolicy_np(3): none=IOPOL_DEFAULT, realtime=IOPOL_IMPORTANT, best-effort=IOPOL_STANDARD, idle=IOPOL_THROTTLE
   
   rbac_backup_always: true # always backup RBAC objects
+  rbac_restore_always: false # RBAC_RESTORE_ALWAYS, always restore RBAC objects during `restore` and `restore_remote` like `--rbac`, disabled by default cause it overwrites existing RBAC objects and restarts clickhouse-server
   rbac_conflict_resolution: "recreate"  # RBAC_CONFLICT_RESOLUTION, action when RBAC object with the same name already exists during restore, allowed values "recreate", "ignore", "fail"
 
   config_backup_always: false # always backup CONFIGS, disabled by default cause configuration shall be manage via Infrastructure as Code approach
+  config_restore_always: false # CONFIG_RESTORE_ALWAYS, always restore CONFIGS during `restore` and `restore_remote` like `--configs`, disabled by default cause it overwrites existing configuration files and restarts clickhouse-server
   named_collections_backup_always: false # always backup Named Collections, disabled by default cause configuration shall be manage via Infrastructure as Code approach 
+  named_collections_restore_always: false # NAMED_COLLECTIONS_RESTORE_ALWAYS, always restore Named Collections during `restore` and `restore_remote` like `--named-collections`, disabled by default cause it drops and re-creates existing SQL named collections with the same names
   
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
@@ -342,6 +363,27 @@ clickhouse:
   # Requires ClickHouse >= 20.4, restore fails when the drop is impossible (too old server, or a local table still uses the path). The statement is executed only on the current node, without ON CLUSTER, because the replica name and path are already resolved with the macros of this node.
   # WARNING: MUST be false during a concurrent multi-replica (HA) restore, a leftover replica entry is indistinguishable from an entry of a live sibling replica. Can be overridden per invocation with the `--drop-replica-if-exists` flag of `restore`/`restore_remote`.
   drop_replica_if_exists: false # CLICKHOUSE_DROP_REPLICA_IF_EXISTS
+  # CLICKHOUSE_SKIP_RESTORE_NON_SHARDED_REPLICATED_TABLES, restore the data of non-sharded replicated tables on one node of the cluster only (https://github.com/Altinity/clickhouse-backup/issues/1181).
+  # A non-sharded table is a Replicated*MergeTree whose ZooKeeper path from the backup DDL (for the short syntax `default_replica_path` from system.settings) resolves to the same value on every shard,
+  # so every replica of every shard joins one replication queue and the data restored on several nodes would be duplicated or rejected by `check_replicas_before_attach`.
+  # The macro names don't matter, only their values: `{database}`, `{table}` and `{uuid}` (restore puts the table UUID from the backup there, a table created ON CLUSTER has one UUID everywhere) are the same for the table on every node,
+  # any other macro is resolved with system.macros of one replica of each shard, read with `cluster('<skip_check_non_sharded_replicated_tables_cluster>', system.macros)` only when such a macro is present.
+  # A literal per shard path, e.g. `/clickhouse/tables/01/db/t`, can't be told apart from a cluster wide one, don't enable this option for such tables.
+  # The node which restores the data is the first replica of the first shard (min shard_num, min replica_num) of `skip_check_non_sharded_replicated_tables_cluster` in system.clusters of the current node.
+  # On a single shard cluster every replicated table is non-sharded, the data is restored on the first replica and replicated to the others.
+  # Every other node restores the schema of these tables (with `--rm` the tables and databases are dropped and created again as usual) and skips only their data: it's not attached, not downloaded by `restore_remote --streaming`, and `--data --partitions` doesn't drop their partitions. The data arrives through replication.
+  # So set the option to true with the same value of `skip_check_non_sharded_replicated_tables_cluster` on every node of the cluster, a shared config.yml works. The skipped tables are logged in one warning and listed in `skipped_data_tables` of `restore --dry-run`.
+  # When replicated tables are selected and the cluster is missing in system.clusters, the current node is not its replica, all replicas of some shard are unavailable or a macro is not defined on some shard, the restore fails before any DROP. No query is executed when the option is false or no replicated table is selected.
+  # When the replica of a non-sharded table already exists in ZooKeeper, the original path is kept instead of rebinding to `default_replica_path` which contains `{shard}`, CREATE fails with REPLICA_ALREADY_EXISTS, use `drop_replica_if_exists: true` to drop the existing replica.
+  # Not supported with `use_embedded_backup_restore: true` and `restore_cloud` (restore fails). Non-streaming `restore_remote` downloads the whole backup and skips the data on restore.
+  skip_restore_non_sharded_replicated_tables: false # CLICKHOUSE_SKIP_RESTORE_NON_SHARDED_REPLICATED_TABLES
+  # CLICKHOUSE_SKIP_CHECK_NON_SHARDED_REPLICATED_TABLES_CLUSTER, cluster name from system.clusters (macros are applied) which defines the shards and the node restoring the data of non-sharded replicated tables when `skip_restore_non_sharded_replicated_tables: true`,
+  # the value is unrelated to `use_embedded_backup_restore_cluster` and `restore_schema_on_cluster`, an empty value is an error when replicated tables are selected.
+  skip_check_non_sharded_replicated_tables_cluster: "{cluster}" # CLICKHOUSE_SKIP_CHECK_NON_SHARDED_REPLICATED_TABLES_CLUSTER
+  # CLICKHOUSE_ALWAYS_SHARDED_MACROS, macros which are expected to differ between shards, a configuration check only, the classification uses the macro values.
+  # When such a macro from a ZooKeeper path has the same value on every shard of a multi shard cluster, restore logs a warning, usually <macros> or <remote_servers> is wrong, the tables with it are non-sharded.
+  # The format for this env variable is "macro1,macro2", braces are optional.
+  always_sharded_macros: ["shard"] # CLICKHOUSE_ALWAYS_SHARDED_MACROS
   use_embedded_backup_restore: false # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE, use BACKUP / RESTORE SQL statements instead of regular SQL queries to use features of modern ClickHouse server versions
   use_embedded_backup_restore_cluster: "" # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE_CLUSTER, add ON CLUSTER clause to BACKUP / RESTORE SQL statements when `use_embedded_backup_restore: true`, value is cluster name from system.clusters, e.g. "{cluster}", every node writes its own `shards/N/replicas/M/` part into the SAME shared destination (S3 / GCS / AzureBlob or a shared mount, node local disks don't work), `create`, `create_remote`, `restore`, `restore_remote` on one node drive the other nodes through their `system.backup_actions` tables, so every node needs a running `clickhouse-backup server` with `api.create_integration_tables: true` and the same `clickhouse.username` / `clickhouse.password` / `clickhouse.secure` (system.clusters has no secure column, the initiator connects to other nodes with remote() or remoteSecure() according to its own `clickhouse.secure`), the same `remote_storage` `path` on all nodes, the initiator writes `.backup`, `metadata.json` (tagged `embedded,cluster=<name>`), rbac, configs, named collections, each node writes `shards/N/replicas/M/metadata/<db>/<table>.json`, `delete local <name>` on one node is propagated to the other nodes, `delete remote` is not (shared destination)
   embedded_backup_disk: ""  # CLICKHOUSE_EMBEDDED_BACKUP_DISK - disk from system.disks which will use when `use_embedded_backup_restore: true`
@@ -464,6 +506,12 @@ gcs:
   # GCS_ALLOW_MULTIPART_DOWNLOAD, download each file as parallel range reads (part size is `chunk_size`) into a temporary file, requires additional disk space, see https://github.com/Altinity/clickhouse-backup/issues/1028
   allow_multipart_download: false
   download_concurrency: 1      # GCS_DOWNLOAD_CONCURRENCY, how many parts of one file download in parallel when `allow_multipart_download` enabled, default `max(CPU/2, 1) + 1`
+  # GCS_RANGED_DOWNLOAD_CONCURRENCY, stream one large archive as N concurrent byte-range requests straight into decompression, without a temporary file and compatible with `download_max_bytes_per_second`,
+  # one GCS read stream has a fixed ceiling, so a single big part is often the whole tail of a download, 0 or 1 disables, takes precedence over `allow_multipart_download` for archives >= `ranged_download_min_size`, see https://github.com/Altinity/clickhouse-backup/issues/1592
+  ranged_download_concurrency: 0
+  ranged_download_min_size: 67108864   # GCS_RANGED_DOWNLOAD_MIN_SIZE, archives smaller than this size in bytes keep the single-stream reader, at least 2 * `ranged_download_chunk_size`
+  ranged_download_chunk_size: 33554432 # GCS_RANGED_DOWNLOAD_CHUNK_SIZE, bytes per range request, one chunk is one in-memory buffer
+  ranged_download_max_buffers: 64      # GCS_RANGED_DOWNLOAD_MAX_BUFFERS, process-wide limit of chunk buffers in flight for all ranged readers, so extra memory is at most `ranged_download_max_buffers` * `ranged_download_chunk_size` (2GiB by default) however many archives are in flight
   # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
   object_labels: {}
@@ -815,6 +863,7 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 - Optional string query argument `restore_schema_as_attach` or `restore-schema-as-attach` works the same as the `--restore-schema-as-attach` CLI argument.
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
 - Optional boolean query argument `skip_empty_tables` or `skip-empty-tables` works the same as the `--skip-empty-tables` CLI argument (skip restoring tables that have no data).
+- Optional boolean query argument `skip_kafka_keeper_hold` or `skip-kafka-keeper-hold` works the same as the `--skip-kafka-keeper-hold` CLI argument (don't hold consumption of restored Kafka tables with `kafka_keeper_path` via partition locks until data restore completes, release already placed locks).
 - Optional boolean query argument `rebind_replica_path_if_exists` or `rebind-replica-path-if-exists` works the same as the `--rebind-replica-path-if-exists` CLI argument (overrides `clickhouse.rebind_replica_path_if_exists` for this request, rebind a restored ReplicatedMergeTree to `default_replica_path` when the original ZK path still has leftover state but our replica entry is absent). WARNING: never set during a concurrent HA multi-replica restore.
 - Optional boolean query argument `drop_replica_if_exists` or `drop-replica-if-exists` works the same as the `--drop-replica-if-exists` CLI argument (overrides `clickhouse.drop_replica_if_exists` for this request, execute `SYSTEM DROP REPLICA ... FROM ZKPATH ...` and keep the original replication path when our own replica entry still exists in ZooKeeper but no local table uses it). WARNING: never set during a concurrent HA multi-replica restore.
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success|cancel","error":"not empty when error happens", "operation_id" : "<random_uuid>", "command":"<full command line>", "duration":"<elapsed>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
@@ -849,6 +898,7 @@ A backup with ClickHouse Cloud / native `BACKUP ... TO S3/AzureBlobStorage` layo
 - Optional boolean query argument `allow_missing_files` or `allow-missing-files` works the same as the `--allow-missing-files` CLI argument (skip data parts missing on remote storage instead of failing, overrides `general.allow_missing_files_on_download` for this request).
 - Optional boolean query argument `streaming` works the same as the `--streaming` CLI argument (restore each table right after its download and delete its local copy, see [Streaming mode](#streaming-mode)).
 - Optional boolean query argument `skip_empty_tables` or `skip-empty-tables` works the same as the `--skip-empty-tables` CLI argument (skip restoring tables that have no data).
+- Optional boolean query argument `skip_kafka_keeper_hold` or `skip-kafka-keeper-hold` works the same as the `--skip-kafka-keeper-hold` CLI argument (don't hold consumption of restored Kafka tables with `kafka_keeper_path` via partition locks until data restore completes, release already placed locks).
 - Optional boolean query argument `rebind_replica_path_if_exists` or `rebind-replica-path-if-exists` works the same as the `--rebind-replica-path-if-exists` CLI argument (overrides `clickhouse.rebind_replica_path_if_exists` for this request, rebind a restored ReplicatedMergeTree to `default_replica_path` when the original ZK path still has leftover state but our replica entry is absent). WARNING: never set during a concurrent HA multi-replica restore.
 - Optional boolean query argument `drop_replica_if_exists` or `drop-replica-if-exists` works the same as the `--drop-replica-if-exists` CLI argument (overrides `clickhouse.drop_replica_if_exists` for this request, execute `SYSTEM DROP REPLICA ... FROM ZKPATH ...` and keep the original replication path when our own replica entry still exists in ZooKeeper but no local table uses it). WARNING: never set during a concurrent HA multi-replica restore.
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success|cancel","error":"not empty when error happens", "operation_id" : "<random_uuid>", "command":"<full command line>", "duration":"<elapsed>"}`. When omitted or empty, falls back to `general.callback_url` if configured.
@@ -1152,7 +1202,7 @@ NAME:
    clickhouse-backup restore - Create schema and restore data from backup
 
 USAGE:
-   clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] [--skip-empty-tables] <backup_name>
+   clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resume] [--skip-empty-tables] [--skip-kafka-keeper-hold] <backup_name>
 
 OPTIONS:
    --table string, --tables string, -t string                                                     Restore only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
@@ -1168,10 +1218,11 @@ OPTIONS:
    --schema, -s                                                                                                                         Restore schema only
    --data, -d                                                                                                                           Restore data only
    --rm, --drop                                                                                                                         Drop exists schema objects before restore
+   --skip-kafka-keeper-hold                                                                                                             Don't hold consumption of restored Kafka tables with kafka_keeper_path via partition locks until data restore completes, release already placed locks
    -i, --ignore-dependencies                                                                                                            Ignore dependencies when drop exists schema objects
-   --rbac, --restore-rbac, --do-restore-rbac                                                                                            Restore RBAC related objects
-   --configs, --restore-configs, --do-restore-configs                                                                                   Restore 'clickhouse-server' CONFIG related files
-   --named-collections, --restore-named-collections, --do-restore-named-collections                                                     Restore named collections and settings
+   --rbac, --restore-rbac, --do-restore-rbac                                                                                            Restore RBAC related objects, enabled always when general->rbac_restore_always: true
+   --configs, --restore-configs, --do-restore-configs                                                                                   Restore 'clickhouse-server' CONFIG related files, enabled always when general->config_restore_always: true
+   --named-collections, --restore-named-collections, --do-restore-named-collections                                                     Restore named collections and settings, enabled always when general->named_collections_restore_always: true
    --rbac-only                                                                                                                          Restore RBAC related objects only, will skip restore data, will restore schema only if --schema added
    --configs-only                                                                                                                       Restore 'clickhouse-server' configuration files only, will skip restore data, will restore schema only if --schema added
    --named-collections-only                                                                                                             Restore named collections only, will skip restore data, will restore schema only if --schema added
@@ -1196,7 +1247,7 @@ NAME:
    clickhouse-backup restore_remote - Download and restore
 
 USAGE:
-   clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] <backup_name>
+   clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--named-collections] [--resumable] [--skip-empty-tables] [--skip-kafka-keeper-hold] <backup_name>
 
 DESCRIPTION:
    A remote backup with ClickHouse Cloud / native BACKUP layout (.backup without metadata.json, `cloud` in `list remote`) is restored via restore_cloud, only with remote_storage s3 or azblob and without mapping, --schema, --data, --rbac, --configs, --named-collections, --resume and --streaming options
@@ -1216,10 +1267,11 @@ OPTIONS:
    --schema, -s                                                                                                                         Download and Restore schema only
    --data, -d                                                                                                                           Download and Restore data only
    --rm, --drop                                                                                                                         Drop schema objects before restore
+   --skip-kafka-keeper-hold                                                                                                             Don't hold consumption of restored Kafka tables with kafka_keeper_path via partition locks until data restore completes, release already placed locks
    -i, --ignore-dependencies                                                                                                            Ignore dependencies when drop exists schema objects
-   --rbac, --restore-rbac, --do-restore-rbac                                                                                            Download and Restore RBAC related objects
-   --configs, --restore-configs, --do-restore-configs                                                                                   Download and Restore 'clickhouse-server' CONFIG related files
-   --named-collections, --restore-named-collections, --do-restore-named-collections                                                     Download and Restore named collections and settings
+   --rbac, --restore-rbac, --do-restore-rbac                                                                                            Download and Restore RBAC related objects, enabled always when general->rbac_restore_always: true
+   --configs, --restore-configs, --do-restore-configs                                                                                   Download and Restore 'clickhouse-server' CONFIG related files, enabled always when general->config_restore_always: true
+   --named-collections, --restore-named-collections, --do-restore-named-collections                                                     Download and Restore named collections and settings, enabled always when general->named_collections_restore_always: true
    --rbac-only                                                                                                                          Restore RBAC related objects only, will skip backup data, will backup schema only if --schema added
    --configs-only                                                                                                                       Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
    --named-collections-only                                                                                                             Restore named collections only, will skip restore data, will restore schema only if --schema added

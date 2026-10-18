@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/bwlimit"
 )
 
 var (
@@ -108,4 +110,11 @@ type RemoteStorage interface {
 	// so that CAS marker keys are in the same namespace as ordinary objects.
 	PutFileIfAbsent(ctx context.Context, key string, r io.ReadCloser, localSize int64) (created bool, err error)
 	CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error)
+}
+
+// RangedReaderProvider is implemented by remote storages that can stream one large object as concurrent
+// byte-range requests delivered in order. ok=false means "not applicable, use the normal reader".
+// limiter (nil = unlimited) paces every range request on the wire, the returned reader must not be limited again.
+type RangedReaderProvider interface {
+	GetFileRangedReader(ctx context.Context, key string, size int64, limiter *bwlimit.Limiter) (reader io.ReadCloser, ok bool, err error)
 }

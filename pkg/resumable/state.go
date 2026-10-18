@@ -209,6 +209,9 @@ func (s *State) IsAlreadyProcessed(path string) (bool, int64, error) {
 	return found, size, nil
 }
 
+// Close releases the state file, it must be called before removing the backup directory which contains it,
+// on CIFS/SMB an open file defers its deletion and os.RemoveAll fails with ENOTEMPTY, see https://github.com/Altinity/clickhouse-backup/issues/1599
+// Close is idempotent, all calls after it are no-ops
 func (s *State) Close() {
 	if s.db == nil {
 		return
@@ -216,4 +219,5 @@ func (s *State) Close() {
 	if err := s.db.Close(); err != nil {
 		log.Warn().Err(err).Msgf("resumable state: can't close %s", s.stateFile)
 	}
+	s.db = nil
 }

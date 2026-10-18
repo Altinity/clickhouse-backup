@@ -76,6 +76,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	}
 
 	doRestoreData := (!schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly) || dataOnly
+	b.applyRestoreAlways(&restoreRBAC, &restoreConfigs, &restoreNamedCollections)
 
 	if err := b.validateEmbeddedOnClusterWorker(); err != nil {
 		return err
@@ -124,8 +125,13 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	tablePattern = prologue.tablePattern
 	tablesForRestore := prologue.tablesForRestore
 	existingTablesSnapshot := prologue.existingTablesSnapshot
-	if dataOnly || (schemaOnly == dataOnly) {
-		if restoreErr := b.RestoreData(ctx, backupName, backupMetadata, dataOnly, metadataPath, tablePattern, partitions, skipProjections, disks, version, replicatedCopyToDetached, tablesForRestore, existingTablesSnapshot); restoreErr != nil {
+	// RestoreData reads all tables by tablePattern from an empty list, https://github.com/Altinity/clickhouse-backup/issues/1181
+	allDataSkipped := len(tablesForRestore) > 0 && len(prologue.dataTablesForRestore) == 0
+	if (dataOnly || (schemaOnly == dataOnly)) && !allDataSkipped {
+		restoreErr := b.RestoreData(ctx, backupName, backupMetadata, dataOnly, metadataPath, tablePattern, partitions, skipProjections, disks, version, replicatedCopyToDetached, prologue.dataTablesForRestore, existingTablesSnapshot)
+		// https://github.com/Altinity/clickhouse-backup/issues/1120
+		b.finishKafkaKeeperHolds(ctx, tablesForRestore, restoreErr)
+		if restoreErr != nil {
 			return errors.Wrap(restoreErr, "RestoreData")
 		}
 	}
@@ -166,6 +172,9 @@ type restorePrologueResult struct {
 	tablePattern           string
 	tablesForRestore       ListOfTables
 	existingTablesSnapshot []clickhouse.Table
+	// dataTablesForRestore is tablesForRestore without the tables whose data is restored on another node,
+	// https://github.com/Altinity/clickhouse-backup/issues/1181
+	dataTablesForRestore ListOfTables
 }
 
 // objectDiskRestoreReason - why restoring the data of this backup needs a remote destination, "" when it doesn't.
@@ -316,6 +325,9 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 		}
 		b.applyEmbeddedClusterLayout(&backupMetadata)
 	}
+	if b.cfg.ClickHouse.SkipRestoreNonShardedReplicatedTables && (b.isEmbedded || b.cfg.ClickHouse.UseEmbeddedBackupRestore) {
+		return nil, errors.New("skip_restore_non_sharded_replicated_tables is not supported with embedded BACKUP/RESTORE, see https://github.com/Altinity/clickhouse-backup/issues/1181")
+	}
 
 	// report what would be restored before the first side effect, no CREATE/DROP DATABASE, no RBAC,
 	// configs and named collections restore, no clickhouse-server restart, no resumable state,
@@ -323,6 +335,19 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 	if b.DryRun {
 		result.done = true
 		return result, b.dryRunRestore(ctx, backupName, backupMetadata, disks, tablePattern, partitions, schemaOnly, dataOnly, dropExists, rbacOnly, configsOnly, namedCollectionsOnly, restoreRBAC, restoreConfigs, restoreNamedCollections, skipEmptyTables)
+	}
+
+	metadataPath := b.localMetadataDir(path.Join(b.DefaultDataPath, "backup", backupName))
+	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+		metadataPath = b.localMetadataDir(path.Join(b.EmbeddedBackupDataPath, backupName))
+	}
+	// resolved before DROP DATABASE, so a missing cluster can't fail the restore after the drop,
+	// https://github.com/Altinity/clickhouse-backup/issues/1181
+	var skipDataTables map[metadata.TableTitle]struct{}
+	if doRestoreData && len(backupMetadata.Tables) > 0 && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+		if skipDataTables, err = b.getNonShardedReplicatedTablesSkipDataByPattern(ctx, backupName, metadataPath, tablePattern, dropExists, partitions); err != nil {
+			return nil, err
+		}
 	}
 
 	if (schemaOnly || doRestoreData) && !b.embeddedClusterWorkerSkipsDDL() {
@@ -413,6 +438,8 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 				"dataOnly":     dataOnly,
 				"dropExists":   dropExists,
 				"needClean":    needClean,
+				// https://github.com/Altinity/clickhouse-backup/issues/1181
+				"skipRestoreNonShardedReplicatedTables": b.cfg.ClickHouse.SkipRestoreNonShardedReplicatedTables,
 			})
 			closeResumableState = true
 		}
@@ -421,10 +448,6 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 	var partitionsNames map[metadata.TableTitle][]string
 	if tablePattern == "" {
 		tablePattern = "*"
-	}
-	metadataPath := b.localMetadataDir(path.Join(b.DefaultDataPath, "backup", backupName))
-	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
-		metadataPath = b.localMetadataDir(path.Join(b.EmbeddedBackupDataPath, backupName))
 	}
 
 	tablesForRestore, partitionsNames, err = b.getTablesForRestoreLocal(ctx, backupName, metadataPath, tablePattern, dropExists, partitions)
@@ -451,6 +474,9 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 			return result, nil
 		}
 	}
+
+	// https://github.com/Altinity/clickhouse-backup/issues/1181
+	dataTablesForRestore := excludeTables(tablesForRestore, skipDataTables)
 
 	// Capture existing tables BEFORE RestoreSchema potentially drops them (with --rm flag)
 	// This is needed for determineTablesForObjectDiskKeyRewrite to detect existing object disk tables
@@ -480,12 +506,19 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 			}
 		}
 		if err = b.RestoreSchema(ctx, backupName, backupMetadata, disks, tablesForRestore, ignoreDependencies, version, schemaAsAttach); err != nil {
+			// https://github.com/Altinity/clickhouse-backup/issues/1120
+			b.warnKafkaKeeperHeldLocks(backupName, "schema restore failed")
 			return nil, errors.Wrap(err, "RestoreSchema")
+		}
+		// https://github.com/Altinity/clickhouse-backup/issues/1120
+		if schemaOnly && !dataOnly {
+			b.warnKafkaKeeperHeldLocks(backupName, "schema only restore")
 		}
 	}
 	// https://github.com/Altinity/clickhouse-backup/issues/756
 	if dataOnly && !schemaOnly && len(partitions) > 0 {
-		if err = b.dropExistPartitions(ctx, tablesForRestore, partitionsNames, partitions, version); err != nil {
+		// DROP PARTITION of a replicated table is replicated, the skipped tables keep the data restored on another node
+		if err = b.dropExistPartitions(ctx, dataTablesForRestore, partitionsNames, partitions, version); err != nil {
 			return nil, errors.Wrap(err, "dropExistPartitions")
 		}
 
@@ -503,6 +536,7 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 	result.metadataPath = metadataPath
 	result.tablePattern = tablePattern
 	result.tablesForRestore = tablesForRestore
+	result.dataTablesForRestore = dataTablesForRestore
 	result.existingTablesSnapshot = existingTablesSnapshot
 	return result, nil
 }
@@ -669,7 +703,10 @@ func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePatt
 	}
 
 	// https://github.com/Altinity/clickhouse-backup/issues/514
-	if schemaOnly && dropTable {
+	// local DROP DATABASE for ENGINE=Replicated removes only current replica, CREATE DATABASE adds it again and the replica
+	// recovers from database DDL log concurrently with following DROP/CREATE TABLE, tables are dropped later in dropExistsTables
+	// and these DROP TABLE are replicated, https://github.com/Altinity/clickhouse-backup/issues/1611
+	if schemaOnly && dropTable && (b.cfg.General.RestoreSchemaOnCluster != "" || !strings.HasPrefix(database.Engine, "Replicated")) {
 		onCluster := ""
 		if b.cfg.General.RestoreSchemaOnCluster != "" {
 			onCluster = fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
@@ -1223,6 +1260,19 @@ func (b *Backuper) restoreConfigs(backupName string, disks []clickhouse.Disk) er
 	return nil
 }
 
+// applyRestoreAlways - enable rbac, configs and named collections restore via *_restore_always config options
+func (b *Backuper) applyRestoreAlways(restoreRBAC, restoreConfigs, restoreNamedCollections *bool) {
+	if b.cfg.General.RBACRestoreAlways {
+		*restoreRBAC = true
+	}
+	if b.cfg.General.ConfigRestoreAlways {
+		*restoreConfigs = true
+	}
+	if b.cfg.General.NamedCollectionsRestoreAlways {
+		*restoreNamedCollections = true
+	}
+}
+
 // restoreNamedCollections - restore named collections from backup
 func (b *Backuper) restoreNamedCollections(backupName string) error {
 	ctx := context.Background()
@@ -1765,8 +1815,14 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, backupM
 	startRestoreSchema := time.Now()
 	databaseEnginesForRestore := b.prepareDatabaseEnginesMap(backupMetadata.Databases)
 	if !b.embeddedClusterWorkerSkipsDDL() {
+		if syncErr := b.syncReplicatedDatabases(ctx, tablesForRestore, databaseEnginesForRestore, version); syncErr != nil {
+			return syncErr
+		}
 		if dropErr := b.dropExistsTables(tablesForRestore, databaseEnginesForRestore, ignoreDependencies, version, schemaAsAttach); dropErr != nil {
 			return errors.Wrap(dropErr, "dropExistsTables")
+		}
+		if syncErr := b.syncReplicatedDatabases(ctx, tablesForRestore, databaseEnginesForRestore, version); syncErr != nil {
+			return syncErr
 		}
 	}
 	var restoreErr error
@@ -1783,6 +1839,34 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, backupM
 		"operation": "restore_schema",
 		"duration":  utils.HumanizeDuration(time.Since(startRestoreSchema)),
 	}).Msg("done")
+	return nil
+}
+
+// syncReplicatedDatabases waits until current replica of each existing ENGINE=Replicated database applies the whole database DDL log,
+// DDL on a lagging replica fails with code 529 `Cannot enqueue query on this replica, because it has replication lag`,
+// https://github.com/Altinity/clickhouse-backup/issues/1611
+func (b *Backuper) syncReplicatedDatabases(ctx context.Context, tablesForRestore ListOfTables, databaseEngines map[string]string, version int) error {
+	// SYSTEM SYNC DATABASE REPLICA available since 22.5
+	if version < 22005000 {
+		return nil
+	}
+	synced := common.EmptyMap{}
+	for _, schema := range tablesForRestore {
+		if _, isSynced := synced[schema.Database]; isSynced || !strings.HasPrefix(databaseEngines[schema.Database], "Replicated") {
+			continue
+		}
+		synced[schema.Database] = struct{}{}
+		existsEngine, err := b.ch.GetDatabaseEngine(schema.Database)
+		if err != nil {
+			return errors.Wrapf(err, "syncReplicatedDatabases")
+		}
+		if existsEngine != "Replicated" {
+			continue
+		}
+		if err = b.ch.QueryContext(ctx, fmt.Sprintf("SYSTEM SYNC DATABASE REPLICA `%s`", schema.Database)); err != nil {
+			return errors.Wrapf(err, "syncReplicatedDatabases")
+		}
+	}
 	return nil
 }
 
@@ -2004,6 +2088,14 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 	restoreRetries := 0
 	isDatabaseCreated := common.EmptyMap{}
 	var restoreErr error
+	// connected lazily only when backup contains Kafka tables with keeper offsets, https://github.com/Altinity/clickhouse-backup/issues/1120
+	var kafkaKeeper *keeper.Keeper
+	kafkaKeeperRestored := make(map[metadata.TableTitle]struct{})
+	defer func() {
+		if kafkaKeeper != nil {
+			kafkaKeeper.Close()
+		}
+	}()
 	for restoreRetries < totalRetries {
 		var notRestoredTables ListOfTables
 		for _, schema := range tablesForRestore {
@@ -2021,13 +2113,24 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 			}
 			//materialized and window views should restore via ATTACH
 			b.replaceCreateToAttachForView(schema)
-			// https://github.com/Altinity/clickhouse-backup/issues/849
-			if replicaErr := b.checkReplicaAlreadyExistsAndChangeReplicationPath(ctx, schema, version); replicaErr != nil {
-				return replicaErr
-			}
+			// inside ENGINE=Replicated database the initiator generates the table UUID and shares it with other replicas via database DDL log,
+			// so {uuid} in ReplicatedMergeTree path is already unique and the replica of dropped table is removed by replicated DROP TABLE,
+			// explicit zookeeper_path different from default_replica_path is rejected with code 36, https://github.com/Altinity/clickhouse-backup/issues/1611
+			if !strings.HasPrefix(databaseEnginesForRestore[schema.Database], "Replicated") {
+				// https://github.com/Altinity/clickhouse-backup/issues/849
+				if replicaErr := b.checkReplicaAlreadyExistsAndChangeReplicationPath(ctx, schema, version); replicaErr != nil {
+					return replicaErr
+				}
 
-			// https://github.com/Altinity/clickhouse-backup/issues/466
-			b.replaceUUIDMacroValue(schema)
+				// https://github.com/Altinity/clickhouse-backup/issues/466
+				b.replaceUUIDMacroValue(schema)
+			}
+			// https://github.com/Altinity/clickhouse-backup/issues/1120
+			if markKafkaKeeperRestored(kafkaKeeperRestored, schema) {
+				if kafkaErr := b.restoreKafkaKeeperOffsets(ctx, schema, databaseEnginesForRestore[schema.Database], version, &kafkaKeeper); kafkaErr != nil {
+					return kafkaErr
+				}
+			}
 			restoreErr = b.ch.CreateTable(clickhouse.Table{
 				Database: schema.Database,
 				Name:     schema.Table,
@@ -2135,6 +2238,14 @@ func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context
 			if dropErr := b.dropLeftoverReplica(ctx, schema, version, resolvedReplicaPath, resolvedReplicaName); dropErr != nil {
 				return dropErr
 			}
+			if version < 19017000 {
+				schema.Query = strings.NewReplacer("{database}", schema.Database, "{table}", schema.Table).Replace(schema.Query)
+			}
+			return nil
+		} else if _, isNonSharded := b.nonShardedReplicated[metadata.TableTitle{Database: schema.Database, Table: schema.Table}]; isNonSharded {
+			// default_replica_path contains {shard}, rebind would turn the table shared by the whole cluster into a sharded one,
+			// https://github.com/Altinity/clickhouse-backup/issues/1181
+			log.Warn().Msgf("replica %s of non-sharded replicated table `%s`.`%s` already exists in system.zookeeper, skip_restore_non_sharded_replicated_tables=true => keep the original replica path, use drop_replica_if_exists=true to drop the existing replica", fullReplicaPath, schema.Database, schema.Table)
 			if version < 19017000 {
 				schema.Query = strings.NewReplacer("{database}", schema.Database, "{table}", schema.Table).Replace(schema.Query)
 			}

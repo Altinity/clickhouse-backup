@@ -17,6 +17,8 @@ import yaml
 faulthandler.register(signal.SIGTERM, all_threads=True, chain=True)
 import testflows.settings as testflows_settings
 from testflows.core import *
+from testflows._core.compress import compress
+from testflows._core.io import LogWriter
 
 append_path(sys.path, "..")
 from helpers.cluster import Cluster
@@ -157,9 +159,30 @@ def regression(self, local, stress=False, fips=True, fips_godebug="only"):
             Scenario(run=load("clickhouse_backup.tests.views", "views"))
             Scenario(run=load("clickhouse_backup.tests.config_rbac", "config_rbac"))
             Scenario(run=load("clickhouse_backup.tests.embedded_on_cluster", "embedded_on_cluster"))
+            Scenario(run=load("clickhouse_backup.tests.replicated_database", "replicated_database"))
+            Scenario(run=load("clickhouse_backup.tests.non_sharded_replicated", "non_sharded_replicated"))
     finally:
         shutil.rmtree(config_dir, ignore_errors=True)
 
 
+def flush_log_writer_buffer():
+    """testflows LogWriter buffers messages and writes them from a 0.15s auto-flush task; an exception inside
+    that flush leaves `cancel=True`, so the final `close(final=True)` of the top test silently skips writing
+    the tail (results + STOP). The "tfs-output" thread then tails the log forever waiting for STOP and
+    `threading._shutdown` blocks on it until run.sh `timeout` kills the suite, write the lost tail ourselves."""
+    writer = LogWriter.instance
+    if writer is None or not writer.buffer:
+        return
+    with writer.lock:
+        tail = b"".join(writer.buffer)
+        del writer.buffer[:]
+    sys.stderr.write(f"testflows LogWriter lost {len(tail)} buffered bytes, writing them to {testflows_settings.write_logfile}\n")
+    with open(testflows_settings.write_logfile, "ab") as f:
+        f.write(compress(tail))
+
+
 if main():
-    regression()
+    try:
+        regression()
+    finally:
+        flush_log_writer_buffer()

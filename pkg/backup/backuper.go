@@ -19,6 +19,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/eapache/go-resiliency/retrier"
 	"github.com/pkg/errors"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -84,6 +85,13 @@ type Backuper struct {
 	skipEmbeddedClusterFanOut bool
 	// DiskLimit - max allowed local disk usage in percent after download, 0 disables the check, see issues/1458
 	DiskLimit int
+	// nonShardedReplicated - restored replicated tables with one zookeeper path on the whole cluster, see issues/1181
+	nonShardedReplicated map[metadata.TableTitle]struct{}
+	// SkipKafkaKeeperHold - don't hold consumption of restored Kafka tables with kafka_keeper_path via partition locks between
+	// schema and data restore and release the already placed locks, see issues/1120
+	SkipKafkaKeeperHold bool
+	// kafkaHeldLocks - keeper paths of partition locks placed by the current schema restore, see issues/1120
+	kafkaHeldLocks []string
 	// freezes - shadow uuids of the running `create`, persisted in <backup_name>/freezes.tmp, see issues/1563
 	freezes      *freezesState
 	freezesMutex sync.Mutex
@@ -100,6 +108,11 @@ type Backuper struct {
 	localPartIndex *localPartIndex
 	// skippedMissingParts - data parts skipped by allow_missing_files_on_download during the current download, see issues/1456
 	skippedMissingParts atomic.Uint64
+	// downloadTransferSem - global budget of concurrent part transfers shared by all tables of one download, see issues/1591
+	downloadTransferSem *semaphore.Weighted
+	downloadPartLimit   int
+	// uploadTransferSem - budget of concurrent part and file transfers of one upload when file_transfer_concurrency > 1, see issues/1454
+	uploadTransferSem *semaphore.Weighted
 }
 
 func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {
