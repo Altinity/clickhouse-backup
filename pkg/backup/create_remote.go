@@ -148,7 +148,7 @@ func (b *Backuper) createToRemoteStreaming(ctx context.Context, backupName, diff
 		log.Warn().Msgf("b.cleanOwnFreezes error: %v", cleanShadowErr)
 	}
 	if err := b.RemoveOldBackupsLocal(ctx, true, p.disks); err != nil {
-		return errors.Wrap(err, "b.RemoveOldBackupsLocal")
+		return &postUploadError{err: errors.Wrap(err, "b.RemoveOldBackupsLocal")}
 	}
 	return nil
 }

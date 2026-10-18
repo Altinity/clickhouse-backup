@@ -225,7 +225,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 				}
 
 			}
-			// the backup is completely uploaded and only the remote retention failed, keep the chain and don't count it towards abort watching,
+			// the backup is completely uploaded and only retention or --delete-source after the upload failed, keep the chain and don't count it towards abort watching,
 			// the error is still reported to status and callback, https://github.com/Altinity/clickhouse-backup/issues/1535
 			uploaded := watchBackupUploaded(createRemoteErr)
 			if uploaded {

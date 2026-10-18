@@ -260,7 +260,7 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 	var deleteLocalErr error
 	if metrics != nil {
 		createRemoteErr, *createRemoteErrCount = metrics.ExecuteWithMetrics("create_remote", *createRemoteErrCount, createRemote)
-		// a failed remote retention after a complete upload doesn't break the chain, https://github.com/Altinity/clickhouse-backup/issues/1535
+		// a failed retention or --delete-source after a complete upload doesn't break the chain, https://github.com/Altinity/clickhouse-backup/issues/1535
 		if watchBackupUploaded(createRemoteErr) && rebaseRequired {
 			if rebaseErr, _ := metrics.ExecuteWithMetrics("rebase", 0, func() error {
 				return b.Rebase(backupName, commandId)

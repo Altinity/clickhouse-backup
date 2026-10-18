@@ -101,11 +101,13 @@ func TestWatchBackupUploaded(t *testing.T) {
 	assert.True(t, watchBackupUploaded(nil))
 	assert.False(t, watchBackupUploaded(errors.New("upload failed")))
 
-	retentionErr := &remoteRetentionError{err: errors.Wrap(errors.New("DeleteObjects failed"), "can't remove old backups on remote storage")}
-	assert.Equal(t, "can't remove old backups on remote storage: DeleteObjects failed", retentionErr.Error())
-	assert.True(t, watchBackupUploaded(retentionErr))
-	// callers of Upload may wrap the error further
-	assert.True(t, watchBackupUploaded(errors.WithStack(retentionErr)))
-	assert.True(t, watchBackupUploaded(errors.Wrap(retentionErr, "create_remote")))
+	for _, msg := range []string{"can't remove old backups on remote storage", "can't remove old local backups", "can't explicitly delete local source backup"} {
+		postErr := &postUploadError{err: errors.Wrap(errors.New("delete failed"), msg)}
+		assert.Equal(t, msg+": delete failed", postErr.Error())
+		assert.True(t, watchBackupUploaded(postErr))
+		// callers of Upload may wrap the error further
+		assert.True(t, watchBackupUploaded(errors.WithStack(postErr)))
+		assert.True(t, watchBackupUploaded(errors.Wrap(postErr, "create_remote")))
+	}
 	assert.False(t, watchBackupUploaded(errors.Wrap(errors.New("upload failed"), "create_remote")))
 }
