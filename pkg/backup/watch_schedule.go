@@ -235,6 +235,16 @@ func (b *Backuper) watchWithSchedules(ctx context.Context, watchInterval, fullIn
 	}
 }
 
+// rebaseFailedError - a failed rebase leaves no usable full backup, so only rebaseErr stays in the error chain and
+// watchBackupUploaded is false, the message of the post-upload error of create_remote is kept for status and callback,
+// https://github.com/Altinity/clickhouse-backup/issues/1535
+func rebaseFailedError(createRemoteErr, rebaseErr error) error {
+	if createRemoteErr == nil {
+		return rebaseErr
+	}
+	return errors.WithMessage(rebaseErr, createRemoteErr.Error())
+}
+
 // executeScheduledBackup - create_remote (+ optional rebase for full_type=rebase) + delete local + optional delete previous cycle
 func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchScheduleState, backupType, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, streaming bool, version string, commandId int, metrics *metrics.APIMetrics, createRemoteErrCount, deleteLocalErrCount *int) {
 	backupName, err := b.newBackupWatchNameFromTemplate(ctx, st.template, backupType)
@@ -265,14 +275,14 @@ func (b *Backuper) executeScheduledBackup(ctx context.Context, st *watchSchedule
 			if rebaseErr, _ := metrics.ExecuteWithMetrics("rebase", 0, func() error {
 				return b.Rebase(backupName, commandId)
 			}); rebaseErr != nil {
-				createRemoteErr = rebaseErr
+				createRemoteErr = rebaseFailedError(createRemoteErr, rebaseErr)
 			}
 		}
 	} else {
 		createRemoteErr = createRemote()
 		if watchBackupUploaded(createRemoteErr) && rebaseRequired {
 			if rebaseErr := b.Rebase(backupName, commandId); rebaseErr != nil {
-				createRemoteErr = rebaseErr
+				createRemoteErr = rebaseFailedError(createRemoteErr, rebaseErr)
 			}
 		}
 	}
