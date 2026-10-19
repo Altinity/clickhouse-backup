@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/api/googleapi"
 )
 
 // recordingRoundTripper captures the request URL scheme it is asked to send
@@ -266,4 +268,22 @@ func TestGCSHTTP1TransportReusesConnections(t *testing.T) {
 	wg.Wait()
 	t.Logf("%d requests opened %d connections", workers*requestsPerWorker, newConns.Load())
 	assert.LessOrEqual(t, newConns.Load(), int64(2*workers), "concurrent requests should reuse idle connections")
+}
+
+// TestGCSIsNotEncryptedError uses the exact error GCS returns when a plain object is read with a CSEK,
+// the reason is lowerCamelCase "resourceNotEncryptedWithCustomerEncryptionKey"
+func TestGCSIsNotEncryptedError(t *testing.T) {
+	gcs := &GCS{}
+	apiErr := &googleapi.Error{
+		Code:    http.StatusBadRequest,
+		Message: "The target object is not encrypted by a customer-supplied encryption key.",
+		Errors: []googleapi.ErrorItem{{
+			Reason:  "resourceNotEncryptedWithCustomerEncryptionKey",
+			Message: "The target object is not encrypted by a customer-supplied encryption key.",
+		}},
+	}
+	assert.True(t, gcs.isNotEncryptedError(apiErr))
+	assert.True(t, gcs.isNotEncryptedError(errors.Wrap(apiErr, "GCS CopyObject src.Attrs")))
+	assert.False(t, gcs.isNotEncryptedError(nil))
+	assert.False(t, gcs.isNotEncryptedError(&googleapi.Error{Code: http.StatusNotFound, Message: "No such object"}))
 }
