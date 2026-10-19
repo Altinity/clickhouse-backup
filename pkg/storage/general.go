@@ -608,8 +608,18 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		if !ok {
 			return errors.Errorf("expected header to be *tar.Header but was %T", file.Header)
 		}
-		// Only extract regular files. Symlink/hardlink entries in a crafted
-		// archive could point outside the destination directory.
+		// Only extract regular files and directories. Symlink/hardlink entries
+		// in a crafted archive could point outside the destination directory.
+		if header.Typeflag == tar.TypeDir {
+			dirPath, dirErr := safeExtractPath(localPath, header.Name)
+			if dirErr != nil {
+				return dirErr
+			}
+			if _, statErr := os.Stat(dirPath); os.IsNotExist(statErr) {
+				_ = os.MkdirAll(dirPath, 0750)
+			}
+			return nil
+		}
 		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
 			return errors.Errorf("archive entry %q is not a regular file (typeflag %q), refusing to extract", header.Name, string(header.Typeflag))
 		}
