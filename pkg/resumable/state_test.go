@@ -180,3 +180,15 @@ func TestNewStateCleansStateWhenConfigHashChanges(t *testing.T) {
 		t.Fatalf("expected new params to be saved, got %#v", s.GetParams())
 	}
 }
+
+// TestChangedParams verifies that only differing keys are reported, including keys present on one side only,
+// see https://github.com/Altinity/clickhouse-backup/issues/1010
+func TestChangedParams(t *testing.T) {
+	changed := changedParams(
+		map[string]interface{}{"configHash": "a", "tablePattern": "*", "partitions": []interface{}{"p1"}, "needClean": "true.1"},
+		map[string]interface{}{"configHash": "a", "tablePattern": "*", "partitions": []string{"p1"}, "databaseMapping": []string{"db:db2"}},
+	)
+	if len(changed) != 2 || changed["needClean"] != "true.1 -> <nil>" || changed["databaseMapping"] != "<nil> -> [db:db2]" {
+		t.Fatalf("unexpected changed params: %#v", changed)
+	}
+}

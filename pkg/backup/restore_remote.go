@@ -237,6 +237,9 @@ func (b *Backuper) restoreFromRemoteStreaming(backupName, tablePattern string, d
 			"partitions":   partitions,
 			"schemaOnly":   schemaOnly,
 			"needClean":    fmt.Sprintf("true.%d", rand.Uint64()),
+			// https://github.com/Altinity/clickhouse-backup/issues/1010
+			"databaseMapping": restoreMappingParam(b.cfg.General.RestoreDatabaseMapping),
+			"tableMapping":    restoreMappingParam(b.cfg.General.RestoreTableMapping),
 		})
 	}
 	closeResumableState := func() {

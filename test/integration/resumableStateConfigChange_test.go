@@ -46,7 +46,7 @@ func TestResumableStateConfigChange(t *testing.T) {
 	// same CLI params, only s3.path changed, the state must be discarded and data uploaded to the other path
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", otherPathEnv+backupCmd+" upload --resume "+backupName+" 2>&1")
 	r.NoError(err, "%s", out)
-	r.Contains(out, "parameters changed")
+	r.Contains(out, "config which defines the resumable state targets changed")
 
 	// the only reliable check that data was really uploaded is a full restore from the other path
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", backupCmd+" delete local "+backupName)

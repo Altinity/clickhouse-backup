@@ -104,7 +104,14 @@ func (s *State) cleanupStateIfParamsChange(params map[string]interface{}) {
 	}
 
 	if needCleanup {
-		log.Warn().Msgf("parameters changed old=%#v new=%#v, %s cleanup begin", s.params, params, s.stateFile)
+		changed := changedParams(s.params, params)
+		// configHash changes when the remote location or the restore mapping changed, see https://github.com/Altinity/clickhouse-backup/issues/1010
+		// other params, like the needClean nonce of restore, are reset by design
+		if _, configChanged := changed["configHash"]; configChanged {
+			log.Warn().Msgf("config which defines the resumable state targets changed, %s cleanup begin, changed parameters: %v", s.stateFile, changed)
+		} else {
+			log.Info().Msgf("parameters changed, %s cleanup begin, changed parameters: %v", s.stateFile, changed)
+		}
 		err := s.db.Batch(func(tx *bolt.Tx) error {
 			b := s.getBucket(tx)
 			if b == nil {
@@ -131,6 +138,19 @@ func (s *State) cleanupStateIfParamsChange(params map[string]interface{}) {
 		return nil
 	})
 
+}
+
+// changedParams returns the keys whose values differ between oldParams and newParams as "old -> new"
+func changedParams(oldParams, newParams map[string]interface{}) map[string]string {
+	changed := make(map[string]string)
+	for _, params := range []map[string]interface{}{oldParams, newParams} {
+		for k := range params {
+			if !common.CompareMaps(map[string]interface{}{k: oldParams[k]}, map[string]interface{}{k: newParams[k]}) {
+				changed[k] = fmt.Sprintf("%v -> %v", oldParams[k], newParams[k])
+			}
+		}
+	}
+	return changed
 }
 
 func (s *State) saveParams(b *bolt.Bucket, params map[string]interface{}) {

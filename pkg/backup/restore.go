@@ -427,6 +427,9 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 				"needClean":    needClean,
 				// https://github.com/Altinity/clickhouse-backup/issues/1181
 				"skipRestoreNonShardedReplicatedTables": b.cfg.ClickHouse.SkipRestoreNonShardedReplicatedTables,
+				// https://github.com/Altinity/clickhouse-backup/issues/1010
+				"databaseMapping": restoreMappingParam(b.cfg.General.RestoreDatabaseMapping),
+				"tableMapping":    restoreMappingParam(b.cfg.General.RestoreTableMapping),
 			})
 			closeResumableState = true
 		}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -694,34 +695,60 @@ func (b *Backuper) GetStateDir() string {
 }
 
 // resumableConfigHash returns a hash of the config fields which define what the keys of `<command>.state2` point to,
-// it is stored in the resumable state params, so changing the remote storage location, compression_format or
-// (for restore) the database/table mapping between an interrupted run and `--resume` starts from scratch
-// instead of skipping keys processed for another location; tuning concurrency, retries, credentials or log level keeps resume,
+// it is stored in the resumable state params, so changing the remote storage location, the customer-provided encryption key,
+// compression_format (upload) or the database/table mapping (restore) between an interrupted run and `--resume` starts from scratch
+// instead of skipping keys processed for another target; tuning concurrency, retries, credentials or log level keeps resume,
+// only the digest is stored, so encryption keys never land in the state file,
 // see https://github.com/Altinity/clickhouse-backup/issues/1010
 func resumableConfigHash(cfg *config.Config, command string) string {
-	fields := []interface{}{cfg.General.RemoteStorage, cfg.GetCompressionFormat()}
+	fields := []interface{}{cfg.General.RemoteStorage}
+	// remote archive names depend on compression_format only during upload, download and restore use data_format of the backup
+	if command == "upload" || command == "create_upload_streaming" {
+		fields = append(fields, cfg.GetCompressionFormat())
+	}
+	storagePath := ""
 	switch cfg.General.RemoteStorage {
 	case "s3":
-		fields = append(fields, cfg.S3.Endpoint, cfg.S3.Bucket, cfg.S3.Path, cfg.S3.ObjectDiskPath)
+		fields = append(fields, cfg.S3.Endpoint, cfg.S3.Bucket, cfg.S3.ObjectDiskPath, cfg.S3.SSECustomerKey)
+		storagePath = cfg.S3.Path
 	case "gcs":
-		fields = append(fields, cfg.GCS.Endpoint, cfg.GCS.Bucket, cfg.GCS.Path, cfg.GCS.ObjectDiskPath)
+		fields = append(fields, cfg.GCS.Endpoint, cfg.GCS.Bucket, cfg.GCS.ObjectDiskPath, cfg.GCS.EncryptionKey)
+		storagePath = cfg.GCS.Path
 	case "azblob":
-		fields = append(fields, cfg.AzureBlob.EndpointSuffix, cfg.AzureBlob.AccountName, cfg.AzureBlob.Container, cfg.AzureBlob.Path, cfg.AzureBlob.ObjectDiskPath)
+		fields = append(fields, cfg.AzureBlob.EndpointSuffix, cfg.AzureBlob.AccountName, cfg.AzureBlob.Container, cfg.AzureBlob.ObjectDiskPath, cfg.AzureBlob.SSEKey)
+		storagePath = cfg.AzureBlob.Path
 	case "cos":
-		fields = append(fields, cfg.COS.RowURL, cfg.COS.Path, cfg.COS.ObjectDiskPath)
+		fields = append(fields, cfg.COS.RowURL, cfg.COS.ObjectDiskPath)
+		storagePath = cfg.COS.Path
 	case "ftp":
-		fields = append(fields, cfg.FTP.Address, cfg.FTP.Path, cfg.FTP.ObjectDiskPath)
+		fields = append(fields, cfg.FTP.Address, cfg.FTP.ObjectDiskPath)
+		storagePath = cfg.FTP.Path
 	case "sftp":
-		fields = append(fields, cfg.SFTP.Address, cfg.SFTP.Port, cfg.SFTP.Path, cfg.SFTP.ObjectDiskPath)
-	case "custom":
-		fields = append(fields, cfg.Custom.UploadCommand, cfg.Custom.DownloadCommand)
+		fields = append(fields, cfg.SFTP.Address, cfg.SFTP.Port, cfg.SFTP.ObjectDiskPath)
+		storagePath = cfg.SFTP.Path
 	}
-	// restore keys are named after the backup tables, the mappings decide which tables they are restored into
+	// create copies object disk data under object_disk_path only, path is not used
+	if command != "create" {
+		fields = append(fields, storagePath)
+	}
+	// restore keys are named after the backup tables, the mappings decide which tables they are restored into,
+	// and the object disk keys of a mapped table carry the destination table, https://github.com/Altinity/clickhouse-backup/issues/1568
 	if command == "restore" || command == "download_restore_streaming" {
 		fields = append(fields, cfg.General.RestoreDatabaseMapping, cfg.General.RestoreTableMapping)
 	}
 	// %#v prints map keys sorted, so the hash is stable
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%#v", fields))))
+}
+
+// restoreMappingParam returns mapping as sorted `src:dst` rules, it is stored in the resumable state params,
+// so ResumeOperationsAfterRestart can pass it back as --restore-database-mapping / --restore-table-mapping
+func restoreMappingParam(mapping map[string]string) []string {
+	rules := make([]string, 0, len(mapping))
+	for src, dst := range mapping {
+		rules = append(rules, src+":"+dst)
+	}
+	sort.Strings(rules)
+	return rules
 }
 
 func (b *Backuper) adjustResumeFlag(resume bool) {
