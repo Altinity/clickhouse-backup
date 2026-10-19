@@ -64,14 +64,17 @@ func (b *Backuper) CreateToRemote(backupName string, deleteSource bool, diffFrom
 			return errors.Wrap(err, "embedded ON CLUSTER workers")
 		}
 	}
-	if uploadErr := b.Upload(backupName, deleteSource, diffFrom, diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, version, commandId); uploadErr != nil {
+	uploadErr := b.Upload(backupName, deleteSource, diffFrom, diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, version, commandId)
+	if !watchBackupUploaded(uploadErr) {
 		return uploadErr
 	}
+	// a failed step after the complete upload on this node doesn't make the backup complete on the whole cluster,
+	// wait for the workers before it is reported as uploaded, https://github.com/Altinity/clickhouse-backup/issues/1535
 	if err = b.waitEmbeddedClusterWorkers(ctx, workerHosts, workerCommand); err != nil {
 		return errors.Wrap(err, "embedded ON CLUSTER workers")
 	}
 
-	return nil
+	return uploadErr
 }
 
 // validateStreamingParams rejects configurations where per-table upload can't work, https://github.com/Altinity/clickhouse-backup/issues/780
@@ -132,7 +135,8 @@ func (b *Backuper) createToRemoteStreaming(ctx context.Context, backupName, diff
 		return errors.Wrap(rbacConfigsNamedCollectionsErr, "createConfigsNamedCollectionsAndRBACIfNecessary")
 	}
 	err = b.createAndUploadStreaming(ctx, backupName, diffFrom, diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, backupVersion, p, backupRBACSize, backupConfigSize, backupNamedCollectionsSize, startBackup, clickHouseVersion)
-	if err != nil {
+	// a failed step after the complete upload is not a partial backup, https://github.com/Altinity/clickhouse-backup/issues/1535
+	if !watchBackupUploaded(err) {
 		log.Error().Msgf("streaming backup failed error: %v", err)
 		// the partial local backup and the tables already uploaded to remote are kept intentionally,
 		// `--resume` continues both, otherwise delete the backup locally and remotely before retry
@@ -147,10 +151,11 @@ func (b *Backuper) createToRemoteStreaming(ctx context.Context, backupName, diff
 	if cleanShadowErr := b.cleanOwnFreezes(p.disks); cleanShadowErr != nil {
 		log.Warn().Msgf("b.cleanOwnFreezes error: %v", cleanShadowErr)
 	}
-	if err := b.RemoveOldBackupsLocal(ctx, true, p.disks); err != nil {
-		return errors.Wrap(err, "b.RemoveOldBackupsLocal")
+	var localRetentionErr error
+	if retentionErr := b.RemoveOldBackupsLocal(ctx, true, p.disks); retentionErr != nil {
+		localRetentionErr = errors.Wrap(retentionErr, "b.RemoveOldBackupsLocal")
 	}
-	return nil
+	return newPostUploadError(err, localRetentionErr)
 }
 
 // createAndUploadStreaming writes an early backup-level metadata.json, so the upload prologue can find the local backup,
