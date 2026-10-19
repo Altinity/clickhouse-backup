@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/google/shlex"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli/v3"
 	"gopkg.in/yaml.v3"
@@ -1108,40 +1108,25 @@ func DefaultConfig() *Config {
 }
 
 func GetConfigFromCli(ctx *cli.Command) *Config {
-	cfg, err := LoadConfigFromCli(ctx)
-	if err != nil {
-		log.Fatal().Stack().Err(err).Send()
-	}
-	return cfg
-}
-
-// loadConfigFromCliMutex serializes --env overrides, they are applied via the process environment,
-// while `server` reloads config concurrently from API handlers and `watch` goroutines
-var loadConfigFromCliMutex sync.Mutex
-
-// LoadConfigFromCli loads config with --env overrides and CLI flag overrides applied,
-// use it instead of LoadConfig for every config reload (`watch` iterations, `server` reload), otherwise --env is lost
-func LoadConfigFromCli(ctx *cli.Command) (*Config, error) {
-	loadConfigFromCliMutex.Lock()
-	defer loadConfigFromCliMutex.Unlock()
-	prevLogLevel := zerolog.GlobalLevel()
 	var oldEnvValues map[string]oldEnvValues
 	// peek disable_environment_override from the config file before applying --env,
 	// deliberately ignoring the environment, so the option can't be bypassed by the mechanisms it disables
 	if envOverrideDisabled(GetConfigPath(ctx)) {
 		if len(ctx.StringSlice("env")) > 0 {
-			logOnce("--env is ignored", zerolog.WarnLevel).Msg("--env is ignored because general->disable_environment_override is enabled in the config file")
+			log.Warn().Msg("--env is ignored because general->disable_environment_override is enabled in the config file")
 		}
 	} else {
 		oldEnvValues = OverrideEnvVars(ctx)
 	}
 	configPath := GetConfigPath(ctx)
 	cfg, err := LoadConfig(configPath)
-	RestoreEnvVars(oldEnvValues)
 	if err != nil {
-		// OverrideEnvVars reset the log level, LoadConfig didn't reach the config value, keep the level of the running process
-		zerolog.SetGlobalLevel(prevLogLevel)
-		return nil, err
+		log.Fatal().Stack().Err(err).Send()
+	}
+	// --env stays in the process environment, so config reloads of long-lived `watch` and `server` see it with plain LoadConfig,
+	// only commands re-entered from the API server restore it, their own --env shall not leak into the server process
+	if ctx.Int("command-id") != status.NotFromAPI {
+		RestoreEnvVars(oldEnvValues)
 	}
 	// `restore`/`restore_remote` expose --rebind-replica-path-if-exists to override the config value per invocation.
 	// Only override when passed as true, so the flag's default `false` doesn't clobber a `true` from the config file.
@@ -1163,7 +1148,7 @@ func LoadConfigFromCli(ctx *cli.Command) (*Config, error) {
 	if ctx.Bool("allow-missing-files") {
 		cfg.General.AllowMissingFilesOnDownload = true
 	}
-	return cfg, nil
+	return cfg
 }
 
 func GetConfigPath(ctx *cli.Command) string {
@@ -1291,8 +1276,7 @@ func OverrideEnvVars(ctx *cli.Command) map[string]oldEnvValues {
 		})
 
 		processEnvFromCli(func(envVariable []string) {
-			overrideMsg := fmt.Sprintf("override %s=%s", envVariable[0], maskSensitiveEnvValue(envVariable[0], envVariable[1]))
-			logOnce(overrideMsg, zerolog.InfoLevel).Msg(overrideMsg)
+			log.Info().Msgf("override %s=%s", envVariable[0], maskSensitiveEnvValue(envVariable[0], envVariable[1]))
 			// duplicated --env key, keep the value from before the first override, otherwise restore leaves the first override set
 			if _, alreadyOverridden := oldValues[envVariable[0]]; !alreadyOverridden {
 				oldValue, wasPresent := os.LookupEnv(envVariable[0])
@@ -1307,18 +1291,6 @@ func OverrideEnvVars(ctx *cli.Command) map[string]oldEnvValues {
 		})
 	}
 	return oldValues
-}
-
-// loggedOnce keeps messages already logged by logOnce
-var loggedOnce sync.Map
-
-// logOnce returns a `level` event for the first occurrence of msg and a debug event for repeated ones,
-// `watch` and `server` reload config with the same --env on every iteration / API call
-func logOnce(msg string, level zerolog.Level) *zerolog.Event {
-	if _, logged := loggedOnce.LoadOrStore(msg, true); logged {
-		return log.Debug()
-	}
-	return log.WithLevel(level)
 }
 
 func RestoreEnvVars(envVars map[string]oldEnvValues) {
