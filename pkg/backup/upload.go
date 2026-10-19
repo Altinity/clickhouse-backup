@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"os"
@@ -483,22 +484,25 @@ func (b *Backuper) uploadEpilogue(ctx context.Context, backupName string, delete
 
 	// the state file lives inside the local backup directory which retention below can remove
 	b.closeResumableState()
+	// the backup is completely uploaded, every step below runs even when the previous one failed,
+	// https://github.com/Altinity/clickhouse-backup/issues/1535
+	var remoteRetentionErr, localRetentionErr, deleteSourceErr error
 	// Remote old backup retention
 	if err = b.RemoveOldBackupsRemote(ctx); err != nil {
-		return errors.Wrap(err, "can't remove old backups on remote storage")
+		remoteRetentionErr = errors.Wrap(err, "can't remove old backups on remote storage")
 	}
 	// Local old backup retention, fix https://github.com/Altinity/clickhouse-backup/issues/834
 	if err = b.RemoveOldBackupsLocal(ctx, false, nil); err != nil {
-		return errors.Wrap(err, "can't remove old local backups")
+		localRetentionErr = errors.Wrap(err, "can't remove old local backups")
 	}
 
 	// explicitly delete local backup after successful upload, fix https://github.com/Altinity/clickhouse-backup/issues/777
 	if b.cfg.General.BackupsToKeepLocal >= 0 && deleteSource {
 		if err = b.RemoveBackupLocal(ctx, backupName, disks, true); err != nil {
-			return errors.Wrap(err, "can't explicitly delete local source backup")
+			deleteSourceErr = errors.Wrap(err, "can't explicitly delete local source backup")
 		}
 	}
-	return nil
+	return newPostUploadError(remoteRetentionErr, localRetentionErr, deleteSourceErr)
 }
 
 // closeResumableState closes <backup>/<command>.state2 before the local backup directory is removed,
@@ -507,6 +511,31 @@ func (b *Backuper) closeResumableState() {
 	if b.resume && b.resumableState != nil {
 		b.resumableState.Close()
 	}
+}
+
+// postUploadError - remote/local retention or --delete-source failed after the new backup was completely uploaded,
+// https://github.com/Altinity/clickhouse-backup/issues/1535
+type postUploadError struct {
+	err error
+}
+
+func (e *postUploadError) Error() string { return e.err.Error() }
+
+func (e *postUploadError) Unwrap() error { return e.err }
+
+// newPostUploadError joins the failures of the steps after a complete upload, nil when every step succeeded
+func newPostUploadError(errs ...error) error {
+	if err := stderrors.Join(errs...); err != nil {
+		return &postUploadError{err: err}
+	}
+	return nil
+}
+
+// watchBackupUploaded - true when create_remote succeeded or only a step after a complete upload failed,
+// so watch can use the new backup as the base of the next increment, https://github.com/Altinity/clickhouse-backup/issues/1535
+func watchBackupUploaded(err error) bool {
+	var postErr *postUploadError
+	return err == nil || errors.As(err, &postErr)
 }
 
 func (b *Backuper) RemoveOldBackupsRemote(ctx context.Context) error {

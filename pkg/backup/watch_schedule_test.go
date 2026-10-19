@@ -10,6 +10,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -220,4 +221,16 @@ func TestWatchWithSchedulesStatesError(t *testing.T) {
 	err := b.watchWithSchedules(context.Background(), "", "", "", nil, "", nil, nil, false, false, false, false, false, false, false, "test", 0, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "watchWithSchedules newWatchScheduleStates")
+}
+
+// https://github.com/Altinity/clickhouse-backup/issues/1535
+func TestRebaseFailedError(t *testing.T) {
+	rebaseErr := errors.New("rebase failed")
+	assert.Equal(t, rebaseErr, rebaseFailedError(nil, rebaseErr))
+
+	postErr := newPostUploadError(errors.New("can't remove old backups on remote storage"))
+	err := rebaseFailedError(postErr, rebaseErr)
+	assert.False(t, watchBackupUploaded(err), "a failed rebase is never reported as uploaded")
+	assert.Contains(t, err.Error(), "can't remove old backups on remote storage")
+	assert.Contains(t, err.Error(), "rebase failed")
 }

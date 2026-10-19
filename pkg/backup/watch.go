@@ -225,6 +225,12 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 				}
 
 			}
+			// the backup is completely uploaded and only retention or --delete-source after the upload failed, keep the chain and don't count it towards abort watching,
+			// the error is still reported to status and callback, https://github.com/Altinity/clickhouse-backup/issues/1535
+			uploaded := watchBackupUploaded(createRemoteErr)
+			if uploaded {
+				createRemoteErrCount = 0
+			}
 			if createRemoteErr != nil {
 				status.Current.Stop(iterationCommandId, createRemoteErr)
 			} else {
@@ -234,7 +240,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 			if (createRemoteErrCount > b.cfg.General.BackupsToKeepRemote && b.cfg.General.BackupsToKeepRemote >= 0) || (deleteLocalErrCount > b.cfg.General.BackupsToKeepLocal && b.cfg.General.BackupsToKeepLocal >= 0) {
 				return errors.Errorf("too many errors create_remote: %d, delete local: %d, during watch full_interval: %s, abort watching", createRemoteErrCount, deleteLocalErrCount, b.cfg.General.FullInterval)
 			}
-			if (createRemoteErr != nil || deleteLocalErr != nil) && time.Now().Sub(lastFullBackup) > b.cfg.General.FullDuration {
+			if (!uploaded || deleteLocalErr != nil) && time.Now().Sub(lastFullBackup) > b.cfg.General.FullDuration {
 				return errors.Errorf("too many errors during watch full_interval: %s, abort watching", b.cfg.General.FullInterval)
 			}
 			// https://github.com/Altinity/clickhouse-backup/issues/1152
@@ -253,7 +259,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate st
 					metrics.NumberBackupsRemote.Set(0)
 				}
 			}
-			if createRemoteErr == nil {
+			if uploaded {
 				prevBackupName = backupName
 				prevBackupType = backupType
 				if prevBackupType == "full" {
