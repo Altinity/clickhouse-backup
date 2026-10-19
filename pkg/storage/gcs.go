@@ -280,12 +280,12 @@ func (gcs *GCS) applyEncryption(obj *storage.ObjectHandle) *storage.ObjectHandle
 	return obj
 }
 
-// isNotEncryptedError checks if the error is "ResourceNotEncryptedWithCustomerEncryptionKey"
+// isNotEncryptedError checks if the error is "resourceNotEncryptedWithCustomerEncryptionKey", GCS returns the reason in lowerCamelCase
 func (gcs *GCS) isNotEncryptedError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(err.Error(), "ResourceNotEncryptedWithCustomerEncryptionKey")
+	return strings.Contains(strings.ToLower(err.Error()), "resourcenotencryptedwithcustomerencryptionkey")
 }
 
 func (gcs *GCS) Walk(ctx context.Context, gcsPath string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {

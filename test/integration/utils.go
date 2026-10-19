@@ -556,8 +556,24 @@ func (env *TestEnvironment) DockerExec(container string, cmd ...string) error {
 }
 
 func (env *TestEnvironment) DockerExecOut(container string, cmd ...string) (string, error) {
-	dcmd := append(env.GetExecDockerCommand(container), cmd...)
-	return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", dcmd...)
+	// killing the `docker exec` client on timeout doesn't kill the process inside the container,
+	// so mark the exec process tree with a unique env variable and kill it explicitly on timeout
+	execMarker := "CLICKHOUSE_BACKUP_TEST_EXEC_ID=" + uuid.NewString()
+	execCmd := env.GetExecDockerCommand(container)
+	dcmd := append([]string{execCmd[0], "-e", execMarker}, execCmd[1:]...)
+	dcmd = append(dcmd, cmd...)
+	ctx, cancel := context.WithTimeout(context.Background(), dockerExecTimeout)
+	defer cancel()
+	out, err := utils.ExecCmdOut(ctx, dockerExecTimeout, "docker", dcmd...)
+	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		killCmd := append(execCmd,
+			"sh", "-c", `for p in /proc/[0-9]*; do tr '\0' '\n' 2>/dev/null < "$p/environ" | grep -qxF "$1" && kill -9 "${p#/proc/}" && echo "killed ${p#/proc/}"; done; true`,
+			"sh", execMarker,
+		)
+		killOut, killErr := utils.ExecCmdOut(context.Background(), 60*time.Second, "docker", killCmd...)
+		log.Warn().Err(killErr).Msgf("%s timed out after %s, kill processes inside %s: %s", strings.Join(cmd, " "), dockerExecTimeout, container, strings.TrimSpace(killOut))
+	}
+	return out, err
 }
 
 func (env *TestEnvironment) DockerExecBackgroundNoError(r *require.Assertions, container string, cmd ...string) {
