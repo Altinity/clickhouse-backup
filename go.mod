@@ -3,7 +3,7 @@ module github.com/Altinity/clickhouse-backup/v2
 require (
 	cloud.google.com/go/storage v1.69.0
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.3
-	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1
+	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.15.0
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.2
 	github.com/ClickHouse/clickhouse-go/v2 v2.49.0
 	github.com/antchfx/xmlquery v1.5.2
