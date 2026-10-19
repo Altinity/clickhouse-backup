@@ -10,6 +10,8 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 
+	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -92,4 +94,41 @@ func TestWalkPartFilesMemory(t *testing.T) {
 	}
 	t.Logf("%d parts x %d files: whole table list = %d KiB, one part at a time = %d KiB", partsCount, filesPerPart, wholeTable/1024, maxOnePart/1024)
 	require.Less(t, maxOnePart*10, wholeTable)
+}
+
+// https://github.com/Altinity/clickhouse-backup/issues/1535
+func TestWatchBackupUploaded(t *testing.T) {
+	assert.True(t, watchBackupUploaded(nil))
+	assert.False(t, watchBackupUploaded(errors.New("upload failed")))
+
+	for _, msg := range []string{"can't remove old backups on remote storage", "can't remove old local backups", "can't explicitly delete local source backup"} {
+		postErr := &postUploadError{err: errors.Wrap(errors.New("delete failed"), msg)}
+		assert.Equal(t, msg+": delete failed", postErr.Error())
+		assert.True(t, watchBackupUploaded(postErr))
+		// callers of Upload may wrap the error further
+		assert.True(t, watchBackupUploaded(errors.WithStack(postErr)))
+		assert.True(t, watchBackupUploaded(errors.Wrap(postErr, "create_remote")))
+	}
+	assert.False(t, watchBackupUploaded(errors.Wrap(errors.New("upload failed"), "create_remote")))
+}
+
+// https://github.com/Altinity/clickhouse-backup/issues/1535
+func TestNewPostUploadError(t *testing.T) {
+	assert.NoError(t, newPostUploadError(nil, nil, nil))
+
+	localErr := errors.New("can't remove old local backups: busy")
+	err := newPostUploadError(nil, localErr, nil)
+	assert.True(t, watchBackupUploaded(err))
+	assert.Equal(t, localErr.Error(), err.Error())
+	assert.ErrorIs(t, err, localErr)
+
+	// every failed step is reported
+	remoteErr := errors.New("can't remove old backups on remote storage: list failed")
+	deleteSourceErr := errors.New("can't explicitly delete local source backup: busy")
+	err = newPostUploadError(remoteErr, localErr, deleteSourceErr)
+	assert.True(t, watchBackupUploaded(errors.Wrap(err, "create_remote")))
+	for _, stepErr := range []error{remoteErr, localErr, deleteSourceErr} {
+		assert.ErrorIs(t, err, stepErr)
+		assert.Contains(t, err.Error(), stepErr.Error())
+	}
 }
