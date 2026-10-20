@@ -418,6 +418,7 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 				needClean = fmt.Sprintf("true.%d", rand.Uint64())
 			}
 			b.resumableState = resumable.NewState(b.GetStateDir(), backupName, "restore", map[string]interface{}{
+				"configHash":   resumableConfigHash(b.cfg, "restore"),
 				"tablePattern": tablePattern,
 				"partitions":   partitions,
 				"schemaOnly":   schemaOnly,
@@ -426,6 +427,9 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 				"needClean":    needClean,
 				// https://github.com/Altinity/clickhouse-backup/issues/1181
 				"skipRestoreNonShardedReplicatedTables": b.cfg.ClickHouse.SkipRestoreNonShardedReplicatedTables,
+				// https://github.com/Altinity/clickhouse-backup/issues/1010
+				"databaseMapping": restoreMappingParam(b.cfg.General.RestoreDatabaseMapping),
+				"tableMapping":    restoreMappingParam(b.cfg.General.RestoreTableMapping),
 			})
 			closeResumableState = true
 		}
