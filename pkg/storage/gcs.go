@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,8 @@ import (
 	pool "github.com/jolestar/go-commons-pool/v2"
 	"github.com/pkg/errors"
 
+	"cloud.google.com/go/auth"
+	"cloud.google.com/go/auth/credentials"
 	"cloud.google.com/go/storage"
 	"cloud.google.com/go/storage/transfermanager"
 	"github.com/rs/zerolog/log"
@@ -122,19 +125,32 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 	}
 
 	// 1. Build the credential option
+	// credentials are built once and shared by all clients, otherwise each pooled client fetches its own token
+	// and a cold pool opens delete_concurrency parallel TLS handshakes to oauth2.googleapis.com
+	credScopes := &credentials.DetectOptions{Scopes: []string{storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"}}
+	var creds *auth.Credentials
 	var credOption option.ClientOption
 	if gcs.Config.CredentialsJSON != "" {
 		d := []byte(gcs.Config.CredentialsJSON)
-		credOption = option.WithAuthCredentialsJSON(detectGCSCredentialType(d), d)
+		creds, err = credentials.NewCredentialsFromJSON(credentials.CredType(detectGCSCredentialType(d)), d, credScopes)
+		if err != nil {
+			return errors.Wrap(err, "GCS Connect failed to parse credentials_json")
+		}
 	} else if gcs.Config.CredentialsJSONEncoded != "" {
 		d, _ := base64.StdEncoding.DecodeString(gcs.Config.CredentialsJSONEncoded)
-		credOption = option.WithAuthCredentialsJSON(detectGCSCredentialType(d), d)
+		creds, err = credentials.NewCredentialsFromJSON(credentials.CredType(detectGCSCredentialType(d)), d, credScopes)
+		if err != nil {
+			return errors.Wrap(err, "GCS Connect failed to parse credentials_json_encoded")
+		}
 	} else if gcs.Config.CredentialsFile != "" {
 		d, err := os.ReadFile(gcs.Config.CredentialsFile)
 		if err != nil {
 			return errors.Wrap(err, "GCS Connect failed to read credentials_file")
 		}
-		credOption = option.WithAuthCredentialsFile(detectGCSCredentialType(d), gcs.Config.CredentialsFile)
+		creds, err = credentials.NewCredentialsFromJSON(credentials.CredType(detectGCSCredentialType(d)), d, credScopes)
+		if err != nil {
+			return errors.Wrap(err, "GCS Connect failed to parse credentials_file")
+		}
 	} else if gcs.Config.SAEmail != "" {
 		ts, err := impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{
 			TargetPrincipal: gcs.Config.SAEmail,
@@ -149,6 +165,24 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		credOption = option.WithTokenSource(ts)
 	} else if gcs.Config.SkipCredentials {
 		credOption = option.WithoutAuthentication()
+	} else {
+		creds, err = credentials.DetectDefault(credScopes)
+		if err != nil {
+			return errors.Wrap(err, "GCS Connect failed to detect default credentials")
+		}
+	}
+
+	// auth/httptransport overwrites TokenProvider of the passed credentials on each NewClient call,
+	// so every client gets own shallow copy which shares one cached token provider
+	if creds != nil {
+		creds.TokenProvider = auth.NewCachedTokenProvider(creds.TokenProvider, nil)
+	}
+	withCreds := func(opts []option.ClientOption) []option.ClientOption {
+		if creds == nil {
+			return opts
+		}
+		c := *creds
+		return append(slices.Clone(opts), option.WithAuthCredentials(&c))
 	}
 
 	// 2. Build base client options (credentials + telemetry)
@@ -181,13 +215,13 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 			if gcs.Config.ForceHttp {
 				roundTripper = &rewriteTransport{base: customTransport}
 			}
-			transport, err := googleHTTPTransport.NewTransport(ctx, roundTripper, clientOptions...)
+			transport, err := googleHTTPTransport.NewTransport(ctx, roundTripper, withCreds(clientOptions)...)
 			if err != nil {
 				return errors.Wrap(err, "failed to create GCP transport")
 			}
 			httpClient = &http.Client{Transport: transport}
 		} else {
-			httpClient, _, err = googleHTTPTransport.NewClient(ctx, clientOptions...)
+			httpClient, _, err = googleHTTPTransport.NewClient(ctx, withCreds(clientOptions)...)
 			if err != nil {
 				return errors.Wrap(err, "googleHTTPTransport.NewClient error")
 			}
@@ -198,6 +232,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		}
 
 		// Replace clientOptions: credentials are already baked into httpClient
+		creds = nil
 		clientOptions = []option.ClientOption{
 			option.WithHTTPClient(httpClient),
 			option.WithTelemetryDisabled(),
@@ -209,7 +244,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 
 	factory := pool.NewPooledObjectFactorySimple(
 		func(context.Context) (interface{}, error) {
-			sClient, err := storage.NewClient(ctx, clientOptions...)
+			sClient, err := storage.NewClient(ctx, withCreds(clientOptions)...)
 			if err != nil {
 				return nil, err
 			}
@@ -224,7 +259,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		}
 		gcs.rangedBudget = semaphore.NewWeighted(int64(maxBuffers))
 	}
-	gcs.client, err = storage.NewClient(ctx, clientOptions...)
+	gcs.client, err = storage.NewClient(ctx, withCreds(clientOptions)...)
 	if err != nil {
 		return errors.Wrap(err, "GCS Connect storage.NewClient")
 	}
@@ -234,7 +269,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		if credOption != nil {
 			grpcOptions = append(grpcOptions, credOption)
 		}
-		gcs.grpcClient, err = storage.NewGRPCClient(ctx, grpcOptions...)
+		gcs.grpcClient, err = storage.NewGRPCClient(ctx, withCreds(grpcOptions)...)
 		if err != nil {
 			return errors.Wrap(err, "GCS Connect storage.NewGRPCClient")
 		}
