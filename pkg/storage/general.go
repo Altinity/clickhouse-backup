@@ -45,6 +45,18 @@ func (readerWrapper readerWrapperForContext) Read(p []byte) (n int, err error) {
 	return readerWrapper(p)
 }
 
+// safeExtractPath resolves an archive entry name against the extraction
+// directory and rejects entries that would escape it (path traversal in a
+// crafted or tampered archive).
+func safeExtractPath(baseDir, name string) (string, error) {
+	baseDir = filepath.Clean(baseDir)
+	extractFile := filepath.Join(baseDir, name)
+	if extractFile == baseDir || !strings.HasPrefix(extractFile, baseDir+string(os.PathSeparator)) {
+		return "", errors.Errorf("archive entry %q escapes the extraction directory %q, refusing to extract", name, baseDir)
+	}
+	return extractFile, nil
+}
+
 type Backup struct {
 	metadata.BackupMetadata
 	Broken     string
@@ -596,7 +608,25 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		if !ok {
 			return errors.Errorf("expected header to be *tar.Header but was %T", file.Header)
 		}
-		extractFile := filepath.Join(localPath, header.Name)
+		// Only extract regular files and directories. Symlink/hardlink entries
+		// in a crafted archive could point outside the destination directory.
+		if header.Typeflag == tar.TypeDir {
+			dirPath, dirErr := safeExtractPath(localPath, header.Name)
+			if dirErr != nil {
+				return dirErr
+			}
+			if _, statErr := os.Stat(dirPath); os.IsNotExist(statErr) {
+				_ = os.MkdirAll(dirPath, 0750)
+			}
+			return nil
+		}
+		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			return errors.Errorf("archive entry %q is not a regular file (typeflag %q), refusing to extract", header.Name, string(header.Typeflag))
+		}
+		extractFile, extractErr := safeExtractPath(localPath, header.Name)
+		if extractErr != nil {
+			return extractErr
+		}
 		extractDir := filepath.Dir(extractFile)
 		if _, err := os.Stat(extractDir); os.IsNotExist(err) {
 			_ = os.MkdirAll(extractDir, 0750)
