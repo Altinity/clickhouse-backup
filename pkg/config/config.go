@@ -266,6 +266,7 @@ type AzureBlobConfig struct {
 	SSEKey                string `yaml:"sse_key" envconfig:"AZBLOB_SSE_KEY"`
 	MaxBuffers            int    `yaml:"buffer_count" envconfig:"AZBLOB_MAX_BUFFERS"`
 	MaxPartsCount         int64  `yaml:"max_parts_count" envconfig:"AZBLOB_MAX_PARTS_COUNT"`
+	ChunkSize             int64  `yaml:"chunk_size" envconfig:"AZBLOB_CHUNK_SIZE"`
 	Timeout               string `yaml:"timeout" envconfig:"AZBLOB_TIMEOUT"`
 	DeleteConcurrency     int    `yaml:"delete_concurrency" envconfig:"AZBLOB_DELETE_CONCURRENCY"`
 	Debug                 bool   `yaml:"debug" envconfig:"AZBLOB_DEBUG"`
