@@ -78,4 +78,13 @@ func TestLogQueryMasksURLCredentials(t *testing.T) {
 			assert.Equal(t, tc.Expected, entry.Message)
 		})
 	}
+
+	t.Run("disabled level writes nothing", func(t *testing.T) {
+		var buf bytes.Buffer
+		log.Logger = zerolog.New(&buf)
+		debugCh := ClickHouse{Config: &config.ClickHouseConfig{LogSQLQueries: false}}
+		query := testCases[0].Query
+		assert.Equal(t, query, debugCh.LogQuery(query))
+		assert.Empty(t, buf.String())
+	})
 }
