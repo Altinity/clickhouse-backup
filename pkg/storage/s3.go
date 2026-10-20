@@ -349,7 +349,7 @@ func (s *S3) enrichGetObjectParams(params *s3.GetObjectInput) {
 // honoring the configured ChunkSize/MaxPartsCount and clamping to [minPartSize, 5GB].
 func (s *S3) calculatePartSize(fullSize, minPartSize int64) int64 {
 	var partSize int64
-	if s.Config.ChunkSize > 0 && (fullSize+s.Config.ChunkSize-1)/s.Config.ChunkSize < s.Config.MaxPartsCount {
+	if s.Config.ChunkSize > 0 && (fullSize+s.Config.ChunkSize-1)/s.Config.ChunkSize <= s.Config.MaxPartsCount {
 		// Use configured chunk size
 		partSize = s.Config.ChunkSize
 	} else {

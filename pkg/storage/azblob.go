@@ -188,15 +188,28 @@ func (a *AzureBlob) PutFile(ctx context.Context, key string, r io.ReadCloser, lo
 	return a.PutFileAbsolute(ctx, path.Join(a.Config.Path, key), r, localSize)
 }
 
+// calculateBlockSize derives the upload block size for a blob of localSize bytes,
+// configured ChunkSize is used when ceil(localSize/ChunkSize) <= MaxPartsCount, the result is clamped to [2MiB, 4000MiB], so the blocks count could exceed MaxPartsCount only for ChunkSize > 4000MiB, fix https://github.com/Altinity/clickhouse-backup/issues/1142
+func (a *AzureBlob) calculateBlockSize(localSize int64) int64 {
+	// https://github.com/Altinity/clickhouse-backup/issues/317
+	blockSize := localSize / a.Config.MaxPartsCount
+	if localSize%a.Config.MaxPartsCount > 0 {
+		blockSize += max(1, (localSize%a.Config.MaxPartsCount)/a.Config.MaxPartsCount)
+	}
+	if a.Config.ChunkSize <= 0 {
+		return AdjustValueByRange(blockSize, 2*1024*1024, 10*1024*1024)
+	}
+	if (localSize+a.Config.ChunkSize-1)/a.Config.ChunkSize <= a.Config.MaxPartsCount {
+		blockSize = a.Config.ChunkSize
+	}
+	// 4000MiB is the maximum block size of Put Block
+	return AdjustValueByRange(blockSize, 2*1024*1024, 4000*1024*1024)
+}
+
 func (a *AzureBlob) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
 	a.logf("AZBLOB->PutFileAbsolute %s", key)
 	b := a.Container.NewBlockBlobClient(key)
-	// https://github.com/Altinity/clickhouse-backup/issues/317
-	bufferSize := localSize / a.Config.MaxPartsCount
-	if localSize%a.Config.MaxPartsCount > 0 {
-		bufferSize += max(1, (localSize%a.Config.MaxPartsCount)/a.Config.MaxPartsCount)
-	}
-	bufferSize = AdjustValueByRange(bufferSize, 2*1024*1024, 10*1024*1024)
+	bufferSize := a.calculateBlockSize(localSize)
 
 	if _, err := b.UploadStream(ctx, r, &blockblob.UploadStreamOptions{BlockSize: bufferSize, Concurrency: a.Config.MaxBuffers, CPKInfo: a.CPK}); err != nil {
 		return errors.Wrap(err, "AzureBlob PutFileAbsolute UploadStream")

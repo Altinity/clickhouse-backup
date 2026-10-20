@@ -332,7 +332,7 @@ s3:
   http_write_buffer_size: 1048576    # 1MB (default 4KB)
   http_read_buffer_size: 1048576     # 1MB (default 4KB)
   http_idle_conn_timeout: 120s       # default 90s
-  chunk_size: 67108864               # 64MB multipart part size (default 0 = remoteSize / max_parts_count, min 5MB), fewer parts for large files
+  chunk_size: 67108864               # 64MB multipart part size (default 5MB, used when file size / chunk_size <= max_parts_count, otherwise file size / max_parts_count), fewer parts for large files
 # when remote_storage: gcs
 gcs:
   upload_buffer_size: 1048576        # 1MB (default 128KB)
@@ -347,7 +347,7 @@ azblob:
 ```
 
 Notes for the other backends:
-- **azblob**: there is no separate buffer-size knob — the upload block size auto-scales (2–10MB) from `max_parts_count`, and `buffer_count` controls how many blocks upload in parallel. Raise both for fast networks.
+- **azblob**: the upload block size auto-scales (2–10MB) from `max_parts_count`, or set it explicitly with `chunk_size`, `buffer_count` controls how many blocks upload in parallel, each upload allocates `buffer_count` * block size bytes. Raise them for fast networks.
 - **cos**: the SDK uses `cos.DNSScatterTransport` for internal Tencent endpoints, which already spreads connections across IPs; raise `concurrency` rather than touching the HTTP pool.
 - **ftp**: the FTP library has no transfer-buffer knob; throughput is governed by `concurrency` (connection pool size).
 
