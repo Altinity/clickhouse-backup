@@ -234,6 +234,50 @@ func TestReBalanceTablesMetadataIfDiskNotExists_Parts_NoErrors(t *testing.T) {
 	}
 }
 
+// JBOD disks on the same filesystem report almost the same free space, the difference is statvfs noise
+// from concurrent writes, parts shall be distributed across all of them instead of landing on one disk
+func TestReBalanceTablesMetadataIfDiskNotExists_SameFilesystemDisks(t *testing.T) {
+	fb := Backuper{
+		DiskToPathMap: map[string]string{"default": "/var/lib/clickhouse"},
+		cfg:           &config.Config{ClickHouse: config.ClickHouseConfig{ForceRebalance: true}},
+	}
+	const totalSpace = 100 * 1024 * 1024 * 1024
+	sameFSDisks := []clickhouse.Disk{
+		{Name: "hdd1", Path: "/hdd1_data", Type: "local", FreeSpace: 50*1024*1024*1024 + 10*1024*1024, TotalSpace: totalSpace, StoragePolicies: []string{"default"}},
+		{Name: "hdd2", Path: "/hdd2_data", Type: "local", FreeSpace: 50 * 1024 * 1024 * 1024, TotalSpace: totalSpace, StoragePolicies: []string{"default"}},
+	}
+	table := metadata.TableMetadata{
+		Parts: map[string][]metadata.Part{
+			"default": {{Name: "202401_1_1_0"}, {Name: "202402_2_2_0"}, {Name: "202403_3_3_0"}, {Name: "202404_4_4_0"}},
+		},
+		Database:   "default",
+		Table:      "test",
+		Query:      "CREATE TABLE default.test(id UInt64) ENGINE=MergeTree() ORDER BY id",
+		TotalBytes: 4 * 8192,
+		LocalFile:  "/dev/null",
+	}
+	backup := storage.Backup{BackupMetadata: metadata.BackupMetadata{BackupName: "test", DataFormat: "directory", DiskTypes: map[string]string{"default": "local"}}}
+	require.NoError(t, fb.reBalanceTablesMetadataIfDiskNotExists(ListOfTables{&table}, sameFSDisks, backup))
+	partsByDisk := map[string]int{}
+	for _, p := range table.Parts["default"] {
+		partsByDisk[p.RebalancedDisk]++
+	}
+	assert.Equal(t, map[string]int{"hdd1": 2, "hdd2": 2}, partsByDisk)
+
+	// disks with really different free space keep `least_used` behavior
+	differentDisks := []clickhouse.Disk{
+		{Name: "hdd1", Path: "/hdd1_data", Type: "local", FreeSpace: 80 * 1024 * 1024 * 1024, TotalSpace: totalSpace, StoragePolicies: []string{"default"}},
+		{Name: "hdd2", Path: "/hdd2_data", Type: "local", FreeSpace: 20 * 1024 * 1024 * 1024, TotalSpace: totalSpace, StoragePolicies: []string{"default"}},
+	}
+	for j := range table.Parts["default"] {
+		table.Parts["default"][j].RebalancedDisk = ""
+	}
+	require.NoError(t, fb.reBalanceTablesMetadataIfDiskNotExists(ListOfTables{&table}, differentDisks, backup))
+	for _, p := range table.Parts["default"] {
+		assert.Equal(t, "hdd1", p.RebalancedDisk)
+	}
+}
+
 func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	invalidRemoteBackup := remoteBackup
 	invalidRemoteBackup.DataFormat = DirectoryFormat
