@@ -497,6 +497,7 @@ func (b *Backuper) saveLocalBackupMetadata(backupName string, backupMetadata met
 
 func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownload ListOfTables, disks []clickhouse.Disk, remoteBackup storage.Backup) error {
 	var disksByStoragePolicyAndType map[string]map[string][]clickhouse.Disk
+	assignedParts := map[string]int{}
 	filterDisksByTypeAndStoragePolicies := func(disk string, diskType string, disks []clickhouse.Disk, remoteBackup storage.Backup, t metadata.TableMetadata) (string, []clickhouse.Disk, error) {
 		_, ok := remoteBackup.DiskTypes[disk]
 		if !ok {
@@ -568,6 +569,7 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 					if t.Parts[disk][j].RebalancedDisk != "" {
 						existingDisk := t.Parts[disk][j].RebalancedDisk
 						rebalancedDisks[existingDisk] = struct{}{}
+						assignedParts[existingDisk]++
 						isRebalanced = true
 						// Rebuild RebalancedFiles map for already-rebalanced parts
 						if t.Files != nil && len(t.Files[disk]) > 0 {
@@ -582,7 +584,7 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 						}
 						continue
 					}
-					isObjectDisk, downloadDisk, newFreeSpace, reBalanceErr := b.getDownloadDiskForNonExistsDisk(diskType, filteredDisks, partSize)
+					isObjectDisk, downloadDisk, newFreeSpace, reBalanceErr := b.getDownloadDiskForNonExistsDisk(diskType, filteredDisks, partSize, assignedParts)
 					if reBalanceErr != nil {
 						return errors.Wrap(reBalanceErr, "getDownloadDiskForNonExistsDisk")
 					}
@@ -2417,23 +2419,38 @@ func (b *Backuper) splitDisksByTypeAndStoragePolicy(disks []clickhouse.Disk) map
 // getDownloadDiskForNonExistsDisk - https://github.com/Altinity/clickhouse-backup/issues/561
 // allow to Restore to new server with different storage policy, different disk count,
 // implements `least_used` for normal disk and `random` for Object disks
-func (b *Backuper) getDownloadDiskForNonExistsDisk(notExistsDiskType string, filteredDisks []clickhouse.Disk, partSize uint64) (bool, string, uint64, error) {
+// local disks whose free space differs from the least used one by less than 1% of total space are treated as
+// equally used (JBOD disks on the same filesystem, the difference is statvfs noise from concurrent writes),
+// parts are distributed across them round-robin by assignedParts
+func (b *Backuper) getDownloadDiskForNonExistsDisk(notExistsDiskType string, filteredDisks []clickhouse.Disk, partSize uint64, assignedParts map[string]int) (bool, string, uint64, error) {
 	// random for non-local disks
 	if notExistsDiskType != "local" {
 		roundRobinIdx := rand.Intn(len(filteredDisks))
 		return true, filteredDisks[roundRobinIdx].Name, 0, nil
 	}
 	// least_used for local
-	freeSpace := partSize
+	maxFreeSpace := uint64(0)
+	maxTotalSpace := uint64(0)
+	for _, d := range filteredDisks {
+		if d.FreeSpace > partSize && d.FreeSpace > maxFreeSpace {
+			maxFreeSpace = d.FreeSpace
+		}
+		maxTotalSpace = max(maxTotalSpace, d.TotalSpace)
+	}
+	if maxFreeSpace == 0 {
+		return false, "", 0, errors.Errorf("%s free space, not found in system.disks with `local` type", utils.FormatBytes(partSize))
+	}
+	tolerance := maxTotalSpace / 100
 	leastUsedIdx := -1
 	for idx, d := range filteredDisks {
-		if filteredDisks[idx].FreeSpace > freeSpace {
-			freeSpace = d.FreeSpace
+		if d.FreeSpace <= partSize || d.FreeSpace+tolerance < maxFreeSpace {
+			continue
+		}
+		if leastUsedIdx < 0 || assignedParts[d.Name] < assignedParts[filteredDisks[leastUsedIdx].Name] ||
+			(assignedParts[d.Name] == assignedParts[filteredDisks[leastUsedIdx].Name] && d.FreeSpace > filteredDisks[leastUsedIdx].FreeSpace) {
 			leastUsedIdx = idx
 		}
 	}
-	if leastUsedIdx < 0 {
-		return false, "", 0, errors.Errorf("%s free space, not found in system.disks with `local` type", utils.FormatBytes(partSize))
-	}
+	assignedParts[filteredDisks[leastUsedIdx].Name]++
 	return false, filteredDisks[leastUsedIdx].Name, filteredDisks[leastUsedIdx].FreeSpace - partSize, nil
 }
