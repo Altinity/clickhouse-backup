@@ -1,7 +1,12 @@
 package storage
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -286,4 +291,58 @@ func TestGCSIsNotEncryptedError(t *testing.T) {
 	assert.True(t, gcs.isNotEncryptedError(errors.Wrap(apiErr, "GCS CopyObject src.Attrs")))
 	assert.False(t, gcs.isNotEncryptedError(nil))
 	assert.False(t, gcs.isNotEncryptedError(&googleapi.Error{Code: http.StatusNotFound, Message: "No such object"}))
+}
+
+// TestGCSPooledClientsShareToken - every pooled client used to build its own credentials and fetch its own
+// OAuth2 token, so a cold delete with delete_concurrency=50 opened ~50 parallel TLS handshakes to
+// oauth2.googleapis.com and failed with "auth: cannot fetch token: ... TLS handshake timeout"
+func TestGCSPooledClientsShareToken(t *testing.T) {
+	var tokenRequests, deleteRequests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			tokenRequests.Add(1)
+			time.Sleep(50 * time.Millisecond)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"test-token","token_type":"Bearer","expires_in":3600}`))
+			return
+		}
+		if r.Method == http.MethodDelete && r.Header.Get("Authorization") == "Bearer test-token" {
+			deleteRequests.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	credJSON, err := json.Marshal(map[string]string{
+		"type":           "service_account",
+		"project_id":     "test",
+		"private_key_id": "test",
+		"private_key":    string(keyPEM),
+		"client_email":   "test@test.iam.gserviceaccount.com",
+		"token_uri":      srv.URL + "/token",
+	})
+	require.NoError(t, err)
+
+	gcs := &GCS{Config: &config.GCSConfig{
+		CredentialsJSON:   string(credJSON),
+		Endpoint:          srv.URL + "/storage/v1/",
+		Bucket:            "test",
+		ClientPoolSize:    20,
+		DeleteConcurrency: 20,
+	}}
+	require.NoError(t, gcs.Connect(t.Context()))
+	defer func() { require.NoError(t, gcs.Close(t.Context())) }()
+
+	keys := make([]string, 100)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("key%d", i)
+	}
+	require.NoError(t, gcs.DeleteKeysBatch(t.Context(), keys))
+	assert.Equal(t, int64(len(keys)), deleteRequests.Load())
+	assert.Equal(t, int64(1), tokenRequests.Load(), "all pooled clients shall share one cached token")
 }

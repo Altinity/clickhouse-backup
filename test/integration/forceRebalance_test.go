@@ -107,9 +107,9 @@ XML
 
 	// Step 6: Verify backup data landed on both hdd1 and hdd2
 	hdd1Out, err := env.DockerExecOut("clickhouse-backup", "find", "/hdd1_data/backup/"+backupName+"/shadow", "-type", "f")
-	r.NoError(err)
+	r.NoError(err, hdd1Out)
 	hdd2Out, err := env.DockerExecOut("clickhouse-backup", "find", "/hdd2_data/backup/"+backupName+"/shadow", "-type", "f")
-	r.NoError(err)
+	r.NoError(err, hdd2Out)
 	log.Debug().Msgf("hdd1 files:\n%s", hdd1Out)
 	log.Debug().Msgf("hdd2 files:\n%s", hdd2Out)
 	r.NotEmpty(hdd1Out, "hdd1 should contain some backup data")
