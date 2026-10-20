@@ -232,10 +232,14 @@ func (b *Backuper) restoreFromRemoteStreaming(backupName, tablePattern string, d
 		// reset it the same way restorePrologue resets the restore state with needClean
 		b.resumableState.Close()
 		b.resumableState = resumable.NewState(b.GetStateDir(), backupName, "download_restore_streaming", map[string]interface{}{
+			"configHash":   resumableConfigHash(b.cfg, "download_restore_streaming"),
 			"tablePattern": tablePattern,
 			"partitions":   partitions,
 			"schemaOnly":   schemaOnly,
 			"needClean":    fmt.Sprintf("true.%d", rand.Uint64()),
+			// https://github.com/Altinity/clickhouse-backup/issues/1010
+			"databaseMapping": restoreMappingParam(b.cfg.General.RestoreDatabaseMapping),
+			"tableMapping":    restoreMappingParam(b.cfg.General.RestoreTableMapping),
 		})
 	}
 	closeResumableState := func() {

@@ -322,6 +322,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 		}()
 		if b.resume {
 			b.resumableState = resumable.NewState(b.GetStateDir(), backupName, "create", map[string]interface{}{
+				"configHash":     resumableConfigHash(b.cfg, "create"),
 				"diffFromRemote": diffFromRemote,
 				"tablePattern":   tablePattern,
 				"partitions":     partitions,

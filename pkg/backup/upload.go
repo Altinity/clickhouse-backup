@@ -307,6 +307,7 @@ func (b *Backuper) uploadInitResumableAndManifest(backupName, command, diffFrom,
 	}
 	if b.resume {
 		b.resumableState = resumable.NewState(b.GetStateDir(), backupName, command, map[string]interface{}{
+			"configHash":     resumableConfigHash(b.cfg, command),
 			"diffFrom":       diffFrom,
 			"diffFromRemote": diffFromRemote,
 			"tablePattern":   tablePattern,
