@@ -75,21 +75,14 @@ var (
 
 // Run - expose CLI commands as REST API
 func Run(cliCtx *cli.Command, newCliApp func() *cli.Command, configPath string, clickhouseBackupVersion string) error {
-	var (
-		cfg *config.Config
-		err error
-	)
 	// from here on every re-entry into cliApp comes from an API handler which owns
 	// its own status row, see status.SetAPIServerMode
 	status.SetAPIServerMode()
+	// applies --env to the process environment once, so every later ReloadConfig and cliApp re-entry sees it,
+	// invalid config, including a bad --env value, is fatal, only ClickHouse connectivity is worth waiting for
+	cfg := config.GetConfigFromCli(cliCtx)
 	log.Debug().Msg("Wait for ClickHouse")
 	for {
-		cfg, err = config.LoadConfig(configPath)
-		if err != nil {
-			log.Error().Stack().Err(err).Send()
-			time.Sleep(5 * time.Second)
-			continue
-		}
 		ch := clickhouse.NewClickHouse(&cfg.ClickHouse)
 		if connErr := ch.Connect(); connErr != nil {
 			log.Error().Stack().Err(connErr).Send()

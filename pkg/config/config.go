@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/google/shlex"
@@ -1123,7 +1124,11 @@ func GetConfigFromCli(ctx *cli.Command) *Config {
 	if err != nil {
 		log.Fatal().Stack().Err(err).Send()
 	}
-	RestoreEnvVars(oldEnvValues)
+	// --env stays in the process environment, so config reloads of long-lived `watch` and `server` see it with plain LoadConfig,
+	// only commands re-entered from the API server restore it, their own --env shall not leak into the server process
+	if ctx.Int("command-id") != status.NotFromAPI {
+		RestoreEnvVars(oldEnvValues)
+	}
 	// `restore`/`restore_remote` expose --rebind-replica-path-if-exists to override the config value per invocation.
 	// Only override when passed as true, so the flag's default `false` doesn't clobber a `true` from the config file.
 	// Bool is false for commands that don't declare the flag, so this is safe to evaluate for every command.
@@ -1273,10 +1278,13 @@ func OverrideEnvVars(ctx *cli.Command) map[string]oldEnvValues {
 
 		processEnvFromCli(func(envVariable []string) {
 			log.Info().Msgf("override %s=%s", envVariable[0], maskSensitiveEnvValue(envVariable[0], envVariable[1]))
-			oldValue, wasPresent := os.LookupEnv(envVariable[0])
-			oldValues[envVariable[0]] = oldEnvValues{
-				OldValue:   oldValue,
-				WasPresent: wasPresent,
+			// duplicated --env key, keep the value from before the first override, otherwise restore leaves the first override set
+			if _, alreadyOverridden := oldValues[envVariable[0]]; !alreadyOverridden {
+				oldValue, wasPresent := os.LookupEnv(envVariable[0])
+				oldValues[envVariable[0]] = oldEnvValues{
+					OldValue:   oldValue,
+					WasPresent: wasPresent,
+				}
 			}
 			if err := os.Setenv(envVariable[0], envVariable[1]); err != nil {
 				log.Warn().Msgf("can't override %s=%s, error: %v", envVariable[0], maskSensitiveEnvValue(envVariable[0], envVariable[1]), err)

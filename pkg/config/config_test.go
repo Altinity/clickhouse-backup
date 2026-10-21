@@ -237,13 +237,83 @@ func TestDisableEnvironmentOverride(t *testing.T) {
 		t.Fatalf("expected --env override %q, got %q", "from-cli", cfg.S3.Bucket)
 	}
 
-	// disable_environment_override: true ignores --env and doesn't touch the process environment
+	// disable_environment_override: true ignores --env and doesn't touch the process environment,
+	// the --env above stays in the process environment by design, see TestGetConfigFromCliKeepsEnvOverride
+	if err = os.Unsetenv("S3_BUCKET"); err != nil {
+		t.Fatalf("can't unset S3_BUCKET: %v", err)
+	}
 	writeConfig(true)
 	cfg = GetConfigFromCli(newCliContext("S3_BUCKET=from-cli"))
 	if cfg.S3.Bucket != "from-file" {
 		t.Fatalf("expected config file value %q, got %q", "from-file", cfg.S3.Bucket)
 	}
 	if _, present := os.LookupEnv("S3_BUCKET"); present {
+		t.Fatal("--env leaked into the process environment while disable_environment_override is enabled")
+	}
+}
+
+// TestGetConfigFromCliKeepsEnvOverride - `watch` and `server` reload config with plain LoadConfig on every iteration / API call,
+// --env stays in the process environment after GetConfigFromCli, so reloads keep it
+func TestGetConfigFromCliKeepsEnvOverride(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	writeConfig := func(disable bool) {
+		content := fmt.Sprintf("general:\n  remote_storage: \"s3\"\n  backups_to_keep_remote: 3\n  disable_environment_override: %v\ns3:\n  bucket: \"from-file\"\n", disable)
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatalf("can't write config file: %v", err)
+		}
+	}
+	// t.Setenv snapshots the ambient values and restores them after the test
+	resetEnv := func() {
+		for _, name := range []string{"REMOTE_STORAGE", "BACKUPS_TO_KEEP_REMOTE"} {
+			t.Setenv(name, "")
+			if err := os.Unsetenv(name); err != nil {
+				t.Fatalf("can't unset %s: %v", name, err)
+			}
+		}
+		t.Setenv("S3_BUCKET", "ambient")
+	}
+	// duplicated key, the last value wins
+	envArgs := []string{"--env", "REMOTE_STORAGE=none", "--env", "BACKUPS_TO_KEEP_REMOTE=7", "--env", "S3_BUCKET=first", "--env", "S3_BUCKET=last"}
+	ctx := parseTestFlags(t, append([]string{"--config", configPath}, envArgs...)...)
+	assertOverridden := func(cfg *Config, step string) {
+		t.Helper()
+		if cfg.General.RemoteStorage != "none" || cfg.General.BackupsToKeepRemote != 7 || cfg.S3.Bucket != "last" {
+			t.Fatalf("%s expected --env overrides, got remote_storage=%q backups_to_keep_remote=%d s3->bucket=%q", step, cfg.General.RemoteStorage, cfg.General.BackupsToKeepRemote, cfg.S3.Bucket)
+		}
+	}
+
+	resetEnv()
+	writeConfig(false)
+	assertOverridden(GetConfigFromCli(ctx), "GetConfigFromCli")
+	for i := 0; i < 2; i++ {
+		cfg, err := LoadConfig(GetConfigPath(ctx))
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+		assertOverridden(cfg, fmt.Sprintf("reload %d", i))
+	}
+
+	// commands re-entered from the API server restore the environment, their --env shall not leak into the server process
+	resetEnv()
+	cfg := GetConfigFromCli(parseTestFlags(t, append([]string{"--config", configPath, "--command-id", "5"}, envArgs...)...))
+	assertOverridden(cfg, "re-entered GetConfigFromCli")
+	for _, name := range []string{"REMOTE_STORAGE", "BACKUPS_TO_KEEP_REMOTE"} {
+		if _, present := os.LookupEnv(name); present {
+			t.Fatalf("--env %s of the re-entered command leaked into the process environment", name)
+		}
+	}
+	if got := os.Getenv("S3_BUCKET"); got != "ambient" {
+		t.Fatalf("expected ambient S3_BUCKET restored after duplicated --env, got %q", got)
+	}
+
+	// disable_environment_override: true ignores --env and doesn't touch the process environment
+	resetEnv()
+	writeConfig(true)
+	cfg = GetConfigFromCli(ctx)
+	if cfg.General.RemoteStorage != "s3" || cfg.General.BackupsToKeepRemote != 3 || cfg.S3.Bucket != "from-file" {
+		t.Fatalf("expected config file values with disable_environment_override, got remote_storage=%q backups_to_keep_remote=%d s3->bucket=%q", cfg.General.RemoteStorage, cfg.General.BackupsToKeepRemote, cfg.S3.Bucket)
+	}
+	if _, present := os.LookupEnv("REMOTE_STORAGE"); present {
 		t.Fatal("--env leaked into the process environment while disable_environment_override is enabled")
 	}
 }
@@ -274,6 +344,7 @@ func parseTestFlags(t *testing.T, args ...string) *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "config", Aliases: []string{"c"}, Value: DefaultConfigPath},
 			&cli.StringSliceFlag{Name: "environment-override", Aliases: []string{"env"}},
+			&cli.IntFlag{Name: "command-id", Value: -1},
 		},
 		Action: func(_ context.Context, c *cli.Command) error {
 			parsed = c
