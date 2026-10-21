@@ -146,3 +146,49 @@ func TestCloseReleasesStateFileAndIsIdempotent(t *testing.T) {
 		t.Fatalf("RemoveAll after Close: %v", err)
 	}
 }
+
+// TestNewStateCleansStateWhenConfigHashChanges verifies that reopening a state with a different
+// configHash param (the remote storage location changed between runs) discards already processed keys,
+// while reopening with the same configHash keeps them, see https://github.com/Altinity/clickhouse-backup/issues/1010
+func TestNewStateCleansStateWhenConfigHashChanges(t *testing.T) {
+	dir := t.TempDir()
+	const backupName = "test-backup"
+	if err := os.MkdirAll(filepath.Join(dir, "backup", backupName), 0755); err != nil {
+		t.Fatalf("failed to create state dir: %v", err)
+	}
+	params := func(configHash string) map[string]interface{} {
+		return map[string]interface{}{"tablePattern": "*", "configHash": configHash}
+	}
+	s := NewState(dir, backupName, "upload", params("old"))
+	if err := s.AppendToState("test-backup/shadow/db/t/default_all_1_1_0.tar", 1024); err != nil {
+		t.Fatalf("AppendToState: %v", err)
+	}
+	s.Close()
+
+	s = NewState(dir, backupName, "upload", params("old"))
+	if processed, _, err := s.IsAlreadyProcessed("test-backup/shadow/db/t/default_all_1_1_0.tar"); err != nil || !processed {
+		t.Fatalf("same configHash must keep the state, got processed=%v err=%v", processed, err)
+	}
+	s.Close()
+
+	s = NewState(dir, backupName, "upload", params("new"))
+	defer s.Close()
+	if processed, _, err := s.IsAlreadyProcessed("test-backup/shadow/db/t/default_all_1_1_0.tar"); err != nil || processed {
+		t.Fatalf("changed configHash must clean the state, got processed=%v err=%v", processed, err)
+	}
+	if s.GetParams()["configHash"] != "new" {
+		t.Fatalf("expected new params to be saved, got %#v", s.GetParams())
+	}
+}
+
+// TestChangedParams verifies that only differing keys are reported, including keys present on one side only,
+// see https://github.com/Altinity/clickhouse-backup/issues/1010
+func TestChangedParams(t *testing.T) {
+	changed := changedParams(
+		map[string]interface{}{"configHash": "a", "tablePattern": "*", "partitions": []interface{}{"p1"}, "needClean": "true.1"},
+		map[string]interface{}{"configHash": "a", "tablePattern": "*", "partitions": []string{"p1"}, "databaseMapping": []string{"db:db2"}},
+	)
+	if len(changed) != 2 || changed["needClean"] != "true.1 -> <nil>" || changed["databaseMapping"] != "<nil> -> [db:db2]" {
+		t.Fatalf("unexpected changed params: %#v", changed)
+	}
+}

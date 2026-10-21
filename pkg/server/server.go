@@ -79,21 +79,14 @@ var (
 
 // Run - expose CLI commands as REST API
 func Run(cliCtx *cli.Command, newCliApp func() *cli.Command, configPath string, clickhouseBackupVersion string) error {
-	var (
-		cfg *config.Config
-		err error
-	)
 	// from here on every re-entry into cliApp comes from an API handler which owns
 	// its own status row, see status.SetAPIServerMode
 	status.SetAPIServerMode()
+	// applies --env to the process environment once, so every later ReloadConfig and cliApp re-entry sees it,
+	// invalid config, including a bad --env value, is fatal, only ClickHouse connectivity is worth waiting for
+	cfg := config.GetConfigFromCli(cliCtx)
 	log.Debug().Msg("Wait for ClickHouse")
 	for {
-		cfg, err = config.LoadConfig(configPath)
-		if err != nil {
-			log.Error().Stack().Err(err).Send()
-			time.Sleep(5 * time.Second)
-			continue
-		}
 		ch := clickhouse.NewClickHouse(&cfg.ClickHouse)
 		if connErr := ch.Connect(); connErr != nil {
 			log.Error().Stack().Err(connErr).Send()
@@ -3133,6 +3126,7 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 					// the state stores only the download side params, see downloadTablesMetadata
 					metricsCommand = "restore_remote"
 					args = []string{"restore_remote", "--streaming"}
+					args = append(args, resumableRestoreMappingArgs(params)...)
 					if tablePattern := resumableStringParam(params, "tablePattern"); tablePattern != "" {
 						args = append(args, fmt.Sprintf("--tables=%s", tablePattern))
 					}
@@ -3189,6 +3183,7 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 						args = append(args, partitionsStr...)
 					}
 				case "restore":
+					args = append(args, resumableRestoreMappingArgs(params)...)
 					if tablePattern := resumableStringParam(params, "tablePattern"); tablePattern != "" {
 						args = append(args, fmt.Sprintf("--tables=%s", tablePattern))
 					}
@@ -3284,6 +3279,20 @@ func resumableStringSliceParam(params map[string]interface{}, key string) []stri
 		}
 	}
 	return result
+}
+
+// resumableRestoreMappingArgs returns --restore-database-mapping / --restore-table-mapping arguments stored in the resumable state params,
+// the mappings are part of the state config hash, so a resumed restore without them would discard the state and restore into the original tables,
+// see https://github.com/Altinity/clickhouse-backup/issues/1010
+func resumableRestoreMappingArgs(params map[string]interface{}) []string {
+	args := make([]string, 0)
+	for _, rule := range resumableStringSliceParam(params, "databaseMapping") {
+		args = append(args, fmt.Sprintf("--restore-database-mapping=%s", rule))
+	}
+	for _, rule := range resumableStringSliceParam(params, "tableMapping") {
+		args = append(args, fmt.Sprintf("--restore-table-mapping=%s", rule))
+	}
+	return args
 }
 
 func (api *APIServer) getQueryParameter(q url.Values, paramName string) (string, bool) {

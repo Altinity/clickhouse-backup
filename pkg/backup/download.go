@@ -329,11 +329,18 @@ func (b *Backuper) downloadTablesMetadata(ctx context.Context, backupName, comma
 		return nil, errors.Wrap(err, "MkdirAll localBackupDir")
 	}
 	if b.resume {
-		b.resumableState = resumable.NewState(b.GetStateDir(), backupName, command, map[string]interface{}{
+		params := map[string]interface{}{
+			"configHash":   resumableConfigHash(b.cfg, command),
 			"tablePattern": tablePattern,
 			"partitions":   partitions,
 			"schemaOnly":   schemaOnly,
-		})
+		}
+		// ResumeOperationsAfterRestart passes the mappings back to restore_remote --streaming
+		if command == "download_restore_streaming" {
+			params["databaseMapping"] = restoreMappingParam(b.cfg.General.RestoreDatabaseMapping)
+			params["tableMapping"] = restoreMappingParam(b.cfg.General.RestoreTableMapping)
+		}
+		b.resumableState = resumable.NewState(b.GetStateDir(), backupName, command, params)
 	}
 
 	log.Debug().Str("backup", backupName).Msgf("prepare table METADATA concurrent semaphore with concurrency=%d len(tablesForDownload)=%d", b.cfg.General.DownloadConcurrency, len(tablesForDownload))
