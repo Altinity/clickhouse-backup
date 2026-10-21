@@ -126,13 +126,26 @@ func TestDryRun(t *testing.T) {
 	defer func() {
 		_ = env.DockerExec("clickhouse-backup", "bash", "-ce", "pkill -f '[c]lickhouse-backup.*server' || true")
 	}()
-	time.Sleep(3 * time.Second)
 	// httpReq builds an HTTP request over bash /dev/tcp (same trick as fips_test.go), ancient
 	// ClickHouse images (1.1.54394) ship neither wget nor curl; HTTP/1.0 makes the server reply
 	// with Content-Length and close the connection, so `cat` reads headers+body to EOF
 	httpReq := func(method, path, body string) string {
 		return fmt.Sprintf(`exec 3<>/dev/tcp/localhost/7171; printf '%s %s HTTP/1.0\r\nContent-Length: %d\r\n\r\n' >&3; printf '%%s' '%s' >&3; cat <&3`,
 			method, path, len(body), body)
+	}
+	// a fixed sleep is not enough on loaded CI runners, poll until the API port accepts requests
+	serverReadyDeadline := time.Now().Add(60 * time.Second)
+	for {
+		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", httpReq("GET", "/backup/version", "")+" 2>&1")
+		if err == nil {
+			break
+		}
+		if time.Now().After(serverReadyDeadline) {
+			logOut, _ := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "tail -n 200 /tmp/clickhouse-backup-dry-run-server.log 2>&1 || true")
+			r.NoError(err, "clickhouse-backup server is not ready after 60s: %s\n/tmp/clickhouse-backup-dry-run-server.log tail:\n%s", out, logOut)
+		}
+		log.Warn().Err(err).Msgf("clickhouse-backup server is not ready yet, retry: %s", strings.TrimSpace(out))
+		time.Sleep(500 * time.Millisecond)
 	}
 	// apiDryRun POSTs a `dry_run=1` request and asserts the synchronously returned report,
 	// stderr is merged into the output so an HTTP error is visible in the assertion message
