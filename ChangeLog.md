@@ -1,3 +1,16 @@
+# vNEXT (unreleased)
+
+BREAKING CHANGES
+
+- ⚠️ **DO NOT downgrade to a pre-CAS binary if CAS data exists in your bucket.** The pre-CAS binary has no knowledge of the `cas/` skip prefix and will treat the CAS namespace as a broken v1 backup. The next `clean remote_broken` run, or `BackupsToKeepRemote` retention cron, will silently DELETE all CAS data. Recovery procedures: see [docs/cas-operator-runbook.md](docs/cas-operator-runbook.md) "Binary rollback procedure".
+- The `pkg/storage.RemoteStorage` interface gains two required methods: `PutFileAbsoluteIfAbsent(ctx, key, r, size) (created bool, err error)` and `PutFileIfAbsent(ctx, key, r, size) (created bool, err error)`. Any third-party `RemoteStorage` implementation must add these methods to compile. Implementors that don't support atomic create-only-if-absent should return `pkg/storage.ErrConditionalPutNotSupported`; CAS commands then refuse on those backends unless `cas.allow_unsafe_markers=true`.
+- The `pkg/storage.BackupDestination.BackupList` signature gains a fourth `skipPrefixes []string` parameter. External callers must pass `nil` (or the result of `cas.Config.SkipPrefixes()`) to compile. Internal callers in this repo are updated.
+- A v1 backup literally named `"cas"` will be silently filtered after upgrade (the default `cas.root_prefix` is `"cas/"`). Rename or move any such backup before upgrading. The new binary logs an ERROR for each skipped entry and rejects future creation of names that collide with the CAS skip-prefix.
+
+NEW FEATURES
+
+- add experimental Content-Addressable Storage (CAS) backups via new `cas-upload`, `cas-download`, `cas-restore`, `cas-delete`, `cas-verify`, `cas-prune`, `cas-status` commands. CAS deduplicates file content across backups (especially effective for mutated parts) and removes the incremental-chain dependency — every CAS backup is independently restorable. Available in CLI and REST API. Configure via new `cas:` config block; see [docs/cas-design.md](docs/cas-design.md) and [docs/cas-operator-runbook.md](docs/cas-operator-runbook.md). Object-disk and client-side-encryption tables not yet supported.
+
 # v2.8.2
 NEW FEATURES
 - add `clickhouse.skip_restore_non_sharded_replicated_tables` (env `CLICKHOUSE_SKIP_RESTORE_NON_SHARDED_REPLICATED_TABLES`, default `false`), `clickhouse.skip_check_non_sharded_replicated_tables_cluster` (env `CLICKHOUSE_SKIP_CHECK_NON_SHARDED_REPLICATED_TABLES_CLUSTER`, default `{cluster}`) and `clickhouse.always_sharded_macros` (env `CLICKHOUSE_ALWAYS_SHARDED_MACROS`, default `["shard"]`), when true `restore`, `restore_remote` and `restore --dry-run` restore the data of non-sharded replicated tables (ZooKeeper path in the backup DDL resolves to the same value on every shard, macro values are read with `cluster(..., system.macros)`, `{database}`, `{table}`, `{uuid}` are the same for the table everywhere) only on the first replica of the first shard of the cluster from `system.clusters`, every other node restores only their schema and gets the data through replication, so the same config works on every node, a macro listed as sharded with the same value on all shards is reported with a warning, such tables are never rebound to `default_replica_path`, not supported with `use_embedded_backup_restore` and `restore_cloud`, fix [#1181](https://github.com/Altinity/clickhouse-backup/issues/1181)
