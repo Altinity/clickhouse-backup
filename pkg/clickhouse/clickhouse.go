@@ -1493,12 +1493,31 @@ func (ch *ClickHouse) LogQuery(query string, args ...interface{}) string {
 	if !ch.Config.LogSQLQueries {
 		level = zerolog.DebugLevel
 	}
-	if len(args) > 0 {
-		log.WithLevel(level).Msg(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(fmt.Sprintf("%s with args %#v", query, args)))
-	} else {
-		log.WithLevel(level).Msg(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(query))
+	event := log.WithLevel(level)
+	if !event.Enabled() {
+		return query
 	}
+	msg := query
+	if len(args) > 0 {
+		msg = fmt.Sprintf("%s with args %#v", query, args)
+	}
+	event.Msg(maskURLCredentials(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(msg)))
 	return query
+}
+
+// urlPassParamRe matches the value of a `pass` / `password` query string parameter, the `system.backup_*` integration tables carry `api.password` as `pass=`
+var urlPassParamRe = regexp.MustCompile(`(?i)([?&](?:pass|password)=)[^&'"\s]*`)
+
+// urlUserInfoPassRe matches the password of `scheme://user:password@host`
+var urlUserInfoPassRe = regexp.MustCompile(`(://[^:/?#@'"\s]*:)[^@/?#'"\s]*@`)
+
+// maskURLCredentials replaces passwords inside URLs, such as the URL() table engine argument, before the query is logged
+func maskURLCredentials(s string) string {
+	if !strings.Contains(s, "://") {
+		return s
+	}
+	s = urlPassParamRe.ReplaceAllString(s, "${1}[MASKED]")
+	return urlUserInfoPassRe.ReplaceAllString(s, "${1}[MASKED]@")
 }
 
 func (ch *ClickHouse) IsDbAtomicOrReplicated(database string) (bool, error) {
