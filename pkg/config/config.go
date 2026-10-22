@@ -1047,7 +1047,7 @@ func DefaultConfig() *Config {
 			StorageClass:                string(s3types.StorageClassStandard),
 			Concurrency:                 int(downloadConcurrency + 1),
 			MaxPartsCount:               4000,
-			MultipartDownloadType:       "part",
+			MultipartDownloadType:       "range",
 			RetryMode:                   string(aws.RetryModeStandard),
 			ChunkSize:                   5 * 1024 * 1024,
 			DeleteConcurrency:           10,

@@ -472,31 +472,31 @@ func TestLoadConfigMultipartDownloadType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if cfg.S3.MultipartDownloadType != "part" {
-		t.Fatalf("expected omitted multipart_download_type to stay %q, got %q", "part", cfg.S3.MultipartDownloadType)
+	if cfg.S3.MultipartDownloadType != "range" {
+		t.Fatalf("expected omitted multipart_download_type to stay %q, got %q", "range", cfg.S3.MultipartDownloadType)
 	}
 
-	cfg, err = LoadConfig(writeConfig(omitted + "s3:\n  multipart_download_type: range\n"))
+	cfg, err = LoadConfig(writeConfig(omitted + "s3:\n  multipart_download_type: part\n"))
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if cfg.S3.MultipartDownloadType != "range" {
-		t.Fatalf("expected multipart_download_type %q, got %q", "range", cfg.S3.MultipartDownloadType)
+	if cfg.S3.MultipartDownloadType != "part" {
+		t.Fatalf("expected multipart_download_type %q, got %q", "part", cfg.S3.MultipartDownloadType)
 	}
 
-	t.Setenv("S3_MULTIPART_DOWNLOAD_TYPE", "range")
+	t.Setenv("S3_MULTIPART_DOWNLOAD_TYPE", "part")
 	cfg, err = LoadConfig(writeConfig(omitted))
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if cfg.S3.MultipartDownloadType != "range" {
-		t.Fatalf("expected S3_MULTIPART_DOWNLOAD_TYPE to override omitted yaml key to %q, got %q", "range", cfg.S3.MultipartDownloadType)
+	if cfg.S3.MultipartDownloadType != "part" {
+		t.Fatalf("expected S3_MULTIPART_DOWNLOAD_TYPE to override omitted yaml key to %q, got %q", "part", cfg.S3.MultipartDownloadType)
 	}
 }
 
 func TestValidateConfigErrors(t *testing.T) {
-	if got := DefaultConfig().S3.MultipartDownloadType; got != "part" {
-		t.Fatalf("expected default multipart_download_type %q, got %q", "part", got)
+	if got := DefaultConfig().S3.MultipartDownloadType; got != "range" {
+		t.Fatalf("expected default multipart_download_type %q, got %q", "range", got)
 	}
 	cases := []struct {
 		name    string
