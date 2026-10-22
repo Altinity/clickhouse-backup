@@ -11,6 +11,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
+	tmtypes "github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
@@ -181,6 +182,27 @@ func TestBuildHTTPTransport(t *testing.T) {
 	require.NotNil(t, transport.HTTP2)
 	assert.Equal(t, time.Duration(0), transport.HTTP2.SendPingTimeout)
 	assert.Equal(t, time.Duration(0), transport.HTTP2.WriteByteTimeout)
+}
+
+func TestMultipartDownloadObjectType(t *testing.T) {
+	cases := []struct {
+		kind string
+		want tmtypes.GetObjectType
+	}{
+		{"part", tmtypes.GetObjectParts},
+		{"PART", tmtypes.GetObjectParts},
+		{" part ", tmtypes.GetObjectParts},
+		{"range", tmtypes.GetObjectRanges},
+		{"RANGE", tmtypes.GetObjectRanges},
+		{" range ", tmtypes.GetObjectRanges},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("%q", tc.kind), func(t *testing.T) {
+			if got := multipartDownloadObjectType(tc.kind); got != tc.want {
+				t.Fatalf("multipartDownloadObjectType(%q) = %q, want %q", tc.kind, got, tc.want)
+			}
+		})
+	}
 }
 
 // TestS3CalculatePartSizeChunkSize https://github.com/Altinity/clickhouse-backup/issues/1142
