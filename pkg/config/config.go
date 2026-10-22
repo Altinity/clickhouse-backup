@@ -821,7 +821,7 @@ func ValidateConfig(cfg *Config) error {
 			cfg.S3.Concurrency,
 		)
 	}
-	if kind := strings.TrimSpace(cfg.S3.MultipartDownloadType); kind != "" && !strings.EqualFold(kind, "part") && !strings.EqualFold(kind, "range") {
+	if kind := strings.TrimSpace(cfg.S3.MultipartDownloadType); !strings.EqualFold(kind, "part") && !strings.EqualFold(kind, "range") {
 		return errors.Errorf("`multipart_download_type` %q is invalid, allowed values: part, range", cfg.S3.MultipartDownloadType)
 	}
 	if cfg.API.Secure {

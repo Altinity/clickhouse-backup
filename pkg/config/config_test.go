@@ -609,7 +609,7 @@ func TestValidateConfigErrors(t *testing.T) {
 		}, ""},
 		{"s3 multipart_download_type empty", func(cfg *Config) {
 			cfg.S3.MultipartDownloadType = ""
-		}, ""},
+		}, "`multipart_download_type`"},
 		{"s3 multipart_download_type banana", func(cfg *Config) {
 			cfg.S3.MultipartDownloadType = "banana"
 		}, "`multipart_download_type`"},

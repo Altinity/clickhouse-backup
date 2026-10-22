@@ -347,7 +347,7 @@ func (s *S3) enrichGetObjectParams(params *s3.GetObjectInput) {
 
 // multipartDownloadObjectType maps s3.multipart_download_type onto the transfer manager
 // download strategy. "part" keeps partNumber GETs, which fail with 412 on Ceph RGW (If-Match is the first
-// part ETag); empty, "range", and anything else request byte ranges (If-Match is the object ETag).
+// part ETag); "range" requests byte ranges (If-Match is the object ETag).
 func multipartDownloadObjectType(kind string) tmtypes.GetObjectType {
 	if strings.EqualFold(strings.TrimSpace(kind), "part") {
 		return tmtypes.GetObjectParts

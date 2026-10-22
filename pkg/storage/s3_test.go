@@ -189,7 +189,6 @@ func TestMultipartDownloadObjectType(t *testing.T) {
 		kind string
 		want tmtypes.GetObjectType
 	}{
-		{"", tmtypes.GetObjectRanges},
 		{"part", tmtypes.GetObjectParts},
 		{"PART", tmtypes.GetObjectParts},
 		{" part ", tmtypes.GetObjectParts},
