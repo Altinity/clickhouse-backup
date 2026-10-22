@@ -345,6 +345,16 @@ func (s *S3) enrichGetObjectParams(params *s3.GetObjectInput) {
 	params.RequestPayer = s.requestPayer()
 }
 
+// multipartDownloadObjectType maps s3.multipart_download_type onto the transfer manager
+// download strategy. "range" requests byte ranges (If-Match is the object ETag, which Ceph RGW accepts);
+// empty, "part", and anything else keep partNumber GETs.
+func multipartDownloadObjectType(kind string) tmtypes.GetObjectType {
+	if strings.EqualFold(strings.TrimSpace(kind), "range") {
+		return tmtypes.GetObjectRanges
+	}
+	return tmtypes.GetObjectParts
+}
+
 // calculatePartSize derives the multipart chunk size for a transfer of fullSize bytes,
 // honoring the configured ChunkSize/MaxPartsCount and clamping to [minPartSize, 5GB].
 func (s *S3) calculatePartSize(fullSize, minPartSize int64) int64 {
@@ -371,6 +381,7 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 		}
 
 		partSize := s.calculatePartSize(remoteSize, 5*1024*1024)
+		log.Debug().Msgf("S3->GetFileReaderWithLocalPath: multipart download %s type=%s partSize=%d", key, multipartDownloadObjectType(s.Config.MultipartDownloadType), partSize)
 
 		_, err = s.transferManager.DownloadObject(ctx, &transfermanager.DownloadObjectInput{
 			Bucket:   aws.String(s.Config.Bucket),
@@ -379,6 +390,7 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 		}, func(o *transfermanager.Options) {
 			o.Concurrency = s.Concurrency
 			o.PartSizeBytes = partSize
+			o.GetObjectType = multipartDownloadObjectType(s.Config.MultipartDownloadType)
 		})
 		if err != nil {
 			return nil, errors.Wrap(err, "S3 GetFileReaderWithLocalPath Download")

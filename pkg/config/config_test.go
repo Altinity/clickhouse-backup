@@ -459,7 +459,45 @@ func TestLoadConfigErrors(t *testing.T) {
 	})
 }
 
+func TestLoadConfigMultipartDownloadType(t *testing.T) {
+	writeConfig := func(content string) string {
+		configPath := filepath.Join(t.TempDir(), "config.yml")
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatalf("can't write config file: %v", err)
+		}
+		return configPath
+	}
+	omitted := "general:\n  remote_storage: \"none\"\n"
+	cfg, err := LoadConfig(writeConfig(omitted))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.S3.MultipartDownloadType != "part" {
+		t.Fatalf("expected omitted multipart_download_type to stay %q, got %q", "part", cfg.S3.MultipartDownloadType)
+	}
+
+	cfg, err = LoadConfig(writeConfig(omitted + "s3:\n  multipart_download_type: range\n"))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.S3.MultipartDownloadType != "range" {
+		t.Fatalf("expected multipart_download_type %q, got %q", "range", cfg.S3.MultipartDownloadType)
+	}
+
+	t.Setenv("S3_MULTIPART_DOWNLOAD_TYPE", "range")
+	cfg, err = LoadConfig(writeConfig(omitted))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.S3.MultipartDownloadType != "range" {
+		t.Fatalf("expected S3_MULTIPART_DOWNLOAD_TYPE to override omitted yaml key to %q, got %q", "range", cfg.S3.MultipartDownloadType)
+	}
+}
+
 func TestValidateConfigErrors(t *testing.T) {
+	if got := DefaultConfig().S3.MultipartDownloadType; got != "part" {
+		t.Fatalf("expected default multipart_download_type %q, got %q", "part", got)
+	}
 	cases := []struct {
 		name    string
 		mutate  func(cfg *Config)
@@ -556,6 +594,28 @@ func TestValidateConfigErrors(t *testing.T) {
 			cfg.S3.AllowMultipartDownload = true
 			cfg.S3.Concurrency = 1
 		}, "`allow_multipart_download` require `concurrency`"},
+		{"s3 multipart_download_type part", func(cfg *Config) {
+			cfg.S3.MultipartDownloadType = "part"
+		}, ""},
+		{"s3 multipart_download_type range", func(cfg *Config) {
+			cfg.S3.AllowMultipartDownload = true
+			cfg.S3.Concurrency = 2
+			cfg.S3.MultipartDownloadType = "range"
+		}, ""},
+		{"s3 multipart_download_type RANGE", func(cfg *Config) {
+			cfg.S3.AllowMultipartDownload = true
+			cfg.S3.Concurrency = 2
+			cfg.S3.MultipartDownloadType = "RANGE"
+		}, ""},
+		{"s3 multipart_download_type empty", func(cfg *Config) {
+			cfg.S3.MultipartDownloadType = ""
+		}, ""},
+		{"s3 multipart_download_type banana", func(cfg *Config) {
+			cfg.S3.MultipartDownloadType = "banana"
+		}, "`multipart_download_type`"},
+		{"s3 multipart_download_type parts", func(cfg *Config) {
+			cfg.S3.MultipartDownloadType = "parts"
+		}, "`multipart_download_type`"},
 		{"api secure without certificate", func(cfg *Config) {
 			cfg.API.Secure = true
 		}, "api.certificate_file must be defined"},
