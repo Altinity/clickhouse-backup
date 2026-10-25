@@ -1,3 +1,7 @@
+# v2.8.3
+BUG FIXES
+- `rebase` with `remote_storage: azblob` no longer fails with `BlobNotFound` for databases and tables whose names need encoding, such as `test-db` or the `.inner_id.` table of a materialized view, the server-side copy source URL is escaped now, fix [#1637](https://github.com/Altinity/clickhouse-backup/issues/1637)
+
 # v2.8.2
 NEW FEATURES
 - add `clickhouse.skip_restore_non_sharded_replicated_tables` (env `CLICKHOUSE_SKIP_RESTORE_NON_SHARDED_REPLICATED_TABLES`, default `false`), `clickhouse.skip_check_non_sharded_replicated_tables_cluster` (env `CLICKHOUSE_SKIP_CHECK_NON_SHARDED_REPLICATED_TABLES_CLUSTER`, default `{cluster}`) and `clickhouse.always_sharded_macros` (env `CLICKHOUSE_ALWAYS_SHARDED_MACROS`, default `["shard"]`), when true `restore`, `restore_remote` and `restore --dry-run` restore the data of non-sharded replicated tables (ZooKeeper path in the backup DDL resolves to the same value on every shard, macro values are read with `cluster(..., system.macros)`, `{database}`, `{table}`, `{uuid}` are the same for the table everywhere) only on the first replica of the first shard of the cluster from `system.clusters`, every other node restores only their schema and gets the data through replication, so the same config works on every node, a macro listed as sharded with the same value on all shards is reported with a warning, such tables are never rebound to `default_replica_path`, not supported with `use_embedded_backup_restore` and `restore_cloud`, fix [#1181](https://github.com/Altinity/clickhouse-backup/issues/1181)
