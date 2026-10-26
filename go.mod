@@ -29,7 +29,7 @@ require (
 	github.com/jolestar/go-commons-pool/v2 v2.1.2
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/klauspost/compress v1.20.3
-	github.com/klauspost/pgzip v1.2.7
+	github.com/klauspost/pgzip v1.3.0
 	github.com/mattn/go-shellwords v1.0.16
 	github.com/mholt/archives v0.1.5
 	github.com/moby/moby/api v1.56.1
