@@ -4,7 +4,7 @@ CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 source "${CUR_DIR}/init.sh"
 BACKUP_NAME=$1
 DIFF_FROM_REMOTE=${2:-}
-DIFF_FROM_REMOTE_CMD=""
+DIFF_FROM_REMOTE_CMD=()
 LOCAL_DISKS=$(eval "clickhouse client ${CLICKHOUSE_PARAMS} -q \"SELECT concat(name, ':', trim(TRAILING '/' FROM path)) FROM system.disks FORMAT TSVRaw\"  || clickhouse client ${CLICKHOUSE_PARAMS} -q \"SELECT concat('default:',replaceRegexpOne(metadata_path,'/metadata.*$','')) FROM system.tables WHERE database = 'system' AND metadata_path!='' LIMIT 1 FORMAT TSVRaw\"")
 for disk in $LOCAL_DISKS; do
   disk_name=$(echo $disk | cut -d ":" -f 1)
@@ -12,9 +12,9 @@ for disk in $LOCAL_DISKS; do
   if [[ -d "${disk_path}/backup/${BACKUP_NAME}/" ]]; then
     ssh -i "${BACKUP_SSH_KEY}" -p "${BACKUP_SSH_PORT}" -o "StrictHostKeyChecking no" "${BACKUP_REMOTE_SERVER}" mkdir -pv "${BACKUP_REMOTE_DIR}/${BACKUP_NAME}/${disk_name}"
     if [[ "" != "${DIFF_FROM_REMOTE}" ]]; then
-      DIFF_FROM_REMOTE_CMD="--link-dest=${BACKUP_REMOTE_DIR}/${DIFF_FROM_REMOTE}/${disk_name}"
+      DIFF_FROM_REMOTE_CMD=(--link-dest "${BACKUP_REMOTE_DIR}/${DIFF_FROM_REMOTE}/${disk_name}")
     fi
-    rsync -e "ssh -i ${BACKUP_SSH_KEY} -p ${BACKUP_SSH_PORT} -o 'StrictHostKeyChecking no'" -avzrPH ${DIFF_FROM_REMOTE_CMD} "${disk_path}/backup/${BACKUP_NAME}/" "${BACKUP_REMOTE_SERVER}:${BACKUP_REMOTE_DIR}/${BACKUP_NAME}/${disk_name}"
+    rsync -e "ssh -i ${BACKUP_SSH_KEY} -p ${BACKUP_SSH_PORT} -o 'StrictHostKeyChecking no'" -avzrPH ${DIFF_FROM_REMOTE_CMD[@]+"${DIFF_FROM_REMOTE_CMD[@]}"} "${disk_path}/backup/${BACKUP_NAME}/" "${BACKUP_REMOTE_SERVER}:${BACKUP_REMOTE_DIR}/${BACKUP_NAME}/${disk_name}"
   fi
 done
 
