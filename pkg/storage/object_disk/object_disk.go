@@ -803,7 +803,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 	case "s3", "gcs":
 		connection.Type = "s3"
 		s3cfg := config.S3Config{
-			Debug: cfg.S3.Debug, MaxPartsCount: cfg.S3.MaxPartsCount, ChunkSize: cfg.S3.ChunkSize, Concurrency: 1,
+			Debug: cfg.S3.Debug, MaxPartsCount: cfg.S3.MaxPartsCount, ChunkSize: cfg.S3.ChunkSize, Concurrency: 1, Timeout: cfg.S3.Timeout,
 		}
 		s3URL, err := url.Parse(creds.EndPoint)
 		if err != nil {
