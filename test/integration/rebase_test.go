@@ -210,7 +210,12 @@ func runRebaseScenario(t *testing.T, r *require.Assertions, env *TestEnvironment
 	r.Error(err, "rebase %s expected error, got: %s", fullBackup, out)
 	r.Contains(out, "nothing to rebase")
 
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", configFile, "rebase", inc2Backup)
+	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", configFile, "rebase", inc2Backup)
+	r.NoError(err, "rebase %s unexpected error: %s", inc2Backup, out)
+	// rebase parallelism and per table progress must be visible without log_level: debug
+	r.Contains(out, "rebase start")
+	r.Contains(out, "max_copy_object")
+	r.Contains(out, "rebase table finish")
 
 	// the rebased backup on remote storage must keep the chain data_format and lose `required_backup`,
 	// check via `list remote --format=json` (local metadata.json is unusable here - download clears
