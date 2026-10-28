@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -235,4 +237,33 @@ func TestS3CalculatePartSizeChunkSize(t *testing.T) {
 			assert.LessOrEqual(t, (fileSize+partSize-1)/partSize, tc.maxPartsCount)
 		})
 	}
+}
+
+// TestBuildHTTPTransportResponseHeaderTimeout - a server which accepted the request but never answers must not
+// hang the client forever, see https://github.com/Altinity/clickhouse-backup/issues/1645
+func TestBuildHTTPTransportResponseHeaderTimeout(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	defer server.Close()
+	defer close(release)
+
+	cfg := config.DefaultConfig().S3
+	assert.Equal(t, 30*time.Minute, buildHTTPTransport(&cfg).ResponseHeaderTimeout)
+	cfg.Timeout = "3000"
+	assert.Equal(t, 3000*time.Second, buildHTTPTransport(&cfg).ResponseHeaderTimeout)
+	cfg.Timeout = ""
+	assert.Equal(t, time.Duration(0), buildHTTPTransport(&cfg).ResponseHeaderTimeout)
+
+	cfg.Timeout = "1s"
+	client := &http.Client{Transport: buildHTTPTransport(&cfg)}
+	start := time.Now()
+	resp, err := client.Get(server.URL)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timeout awaiting response headers")
+	assert.Less(t, time.Since(start), 10*time.Second)
 }

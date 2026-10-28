@@ -1095,6 +1095,9 @@ func TestValidateConfigHTTPTimeouts(t *testing.T) {
 		{"invalid http2_send_ping_timeout", func(cfg *Config) { cfg.S3.HTTP2SendPingTimeout = "wrong" }, true},
 		{"invalid http2_ping_timeout", func(cfg *Config) { cfg.S3.HTTP2PingTimeout = "wrong" }, true},
 		{"invalid http2_write_byte_timeout", func(cfg *Config) { cfg.S3.HTTP2WriteByteTimeout = "wrong" }, true},
+		{"timeout as bare seconds", func(cfg *Config) { cfg.S3.Timeout = "3000" }, false},
+		{"timeout disabled", func(cfg *Config) { cfg.S3.Timeout = "" }, false},
+		{"invalid timeout", func(cfg *Config) { cfg.S3.Timeout = "wrong" }, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1109,5 +1112,25 @@ func TestValidateConfigHTTPTimeouts(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestParseDurationOrSeconds(t *testing.T) {
+	for value, expected := range map[string]time.Duration{
+		"3000": 3000 * time.Second,
+		"0":    0,
+		"30m":  30 * time.Minute,
+		"90s":  90 * time.Second,
+	} {
+		d, err := ParseDurationOrSeconds(value)
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", value, err)
+		}
+		if d != expected {
+			t.Fatalf("%s: expected %s, got %s", value, expected, d)
+		}
+	}
+	if _, err := ParseDurationOrSeconds("3000ms_wrong"); err == nil {
+		t.Fatalf("expected error, got nil")
 	}
 }

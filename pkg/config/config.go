@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -333,6 +334,9 @@ type S3Config struct {
 	HTTP2PingTimeout string `yaml:"http2_ping_timeout" envconfig:"S3_HTTP2_PING_TIMEOUT"`
 	// HTTP2WriteByteTimeout - http.HTTP2Config.WriteByteTimeout as a duration string, close the connection when a single write stalls for longer, empty or 0s disables it
 	HTTP2WriteByteTimeout string `yaml:"http2_write_byte_timeout" envconfig:"S3_HTTP2_WRITE_BYTE_TIMEOUT"`
+	// Timeout - http.Transport.ResponseHeaderTimeout as a duration string or a bare integer number of seconds, empty or 0 disables it,
+	// bounds requests which the server accepted but never answered (e.g. UploadPartCopy), see https://github.com/Altinity/clickhouse-backup/issues/1645
+	Timeout string `yaml:"timeout" envconfig:"S3_TIMEOUT"`
 }
 
 // COSConfig - cos settings section
@@ -689,6 +693,15 @@ func LoadConfig(configLocation string) (*Config, error) {
 	return cfg, nil
 }
 
+// ParseDurationOrSeconds - time.ParseDuration which also accepts a bare integer as seconds,
+// e.g. `s3: timeout: 3000` in configs written before the key was implemented
+func ParseDurationOrSeconds(value string) (time.Duration, error) {
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return time.Duration(seconds) * time.Second, nil
+	}
+	return time.ParseDuration(value)
+}
+
 func ValidateConfig(cfg *Config) error {
 	if cfg.General.RemoteStorage == "s3" {
 		if _, err := aws.ParseRetryMode(cfg.S3.RetryMode); err != nil {
@@ -705,6 +718,11 @@ func ValidateConfig(cfg *Config) error {
 			}
 			if _, err := time.ParseDuration(value); err != nil {
 				return errors.Wrapf(err, "invalid s3 %s", name)
+			}
+		}
+		if cfg.S3.Timeout != "" {
+			if _, err := ParseDurationOrSeconds(cfg.S3.Timeout); err != nil {
+				return errors.Wrap(err, "invalid s3 timeout")
 			}
 		}
 	}
@@ -1055,6 +1073,7 @@ func DefaultConfig() *Config {
 			HTTP2SendPingTimeout:        "30s",
 			HTTP2PingTimeout:            "15s",
 			HTTP2WriteByteTimeout:       "60s",
+			Timeout:                     "30m",
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
