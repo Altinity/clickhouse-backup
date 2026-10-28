@@ -176,16 +176,45 @@ func (b *Backuper) rebaseBackupRegular(ctx context.Context, backupMetadata *meta
 	if rebaseConcurrency < 1 {
 		rebaseConcurrency = 1
 	}
+	requiredBackupNames := make([]string, len(requiredBackups))
+	for i := range requiredBackups {
+		requiredBackupNames[i] = requiredBackups[i].BackupName
+	}
+	log.Info().Fields(map[string]interface{}{
+		"backup":             backupName,
+		"operation":          "rebase",
+		"required_backups":   strings.Join(requiredBackupNames, ","),
+		"tables":             len(backupMetadata.Tables),
+		"rebase_concurrency": rebaseConcurrency,
+		"max_copy_object":    rebaseConcurrency * rebaseConcurrency,
+	}).Msg("rebase start")
 	var copiedBytes, objectDiskBytes, metadataSizeDiff int64
 	rebaseGroup, rebaseCtx := errgroup.WithContext(ctx)
 	rebaseGroup.SetLimit(rebaseConcurrency)
-	for _, t := range backupMetadata.Tables {
+	for idx, t := range backupMetadata.Tables {
 		tableTitle := t
+		progress := fmt.Sprintf("%d/%d", idx+1, len(backupMetadata.Tables))
 		rebaseGroup.Go(func() error {
-			tableCopiedBytes, tableObjectDiskBytes, tableMetadataDiff, rebaseErr := b.rebaseTable(rebaseCtx, backupMetadata, requiredBackups, tableTitle, srcBucket, remotePath, disks)
+			startTable := time.Now()
+			log.Info().Fields(map[string]interface{}{
+				"backup":    backupName,
+				"operation": "rebase",
+				"table":     fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table),
+				"progress":  progress,
+			}).Msg("rebase table start")
+			tableCopiedBytes, tableObjectDiskBytes, tableMetadataDiff, rebaseErr := b.rebaseTable(rebaseCtx, backupMetadata, requiredBackups, tableTitle, srcBucket, remotePath, disks, rebaseConcurrency)
 			if rebaseErr != nil {
 				return rebaseErr
 			}
+			log.Info().Fields(map[string]interface{}{
+				"backup":           backupName,
+				"operation":        "rebase",
+				"table":            fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table),
+				"progress":         progress,
+				"duration":         utils.HumanizeDuration(time.Since(startTable)),
+				"copied_size":      utils.FormatBytes(uint64(tableCopiedBytes)),
+				"object_disk_size": utils.FormatBytes(uint64(tableObjectDiskBytes)),
+			}).Msg("rebase table finish")
 			atomic.AddInt64(&copiedBytes, tableCopiedBytes)
 			atomic.AddInt64(&objectDiskBytes, tableObjectDiskBytes)
 			atomic.AddInt64(&metadataSizeDiff, tableMetadataDiff)
@@ -255,13 +284,52 @@ func (b *Backuper) readRequiredBackupsChain(ctx context.Context, backupMetadata 
 }
 
 // rebaseTable - copy all Required parts for one table from the required backups chain,
-// remove `required` attribute, update `hash_of_all_files` and overwrite remote table metadata
-func (b *Backuper) rebaseTable(ctx context.Context, backupMetadata *metadata.BackupMetadata, requiredBackups []*metadata.BackupMetadata, tableTitle metadata.TableTitle, srcBucket, remotePath string, disks []clickhouse.Disk) (int64, int64, int64, error) {
+// remove `required` attribute, update `hash_of_all_files` and overwrite remote table metadata,
+// parts are resolved serially, every CopyObject runs in copyGroup bounded by rebaseConcurrency,
+// see https://github.com/Altinity/clickhouse-backup/issues/1648
+func (b *Backuper) rebaseTable(ctx context.Context, backupMetadata *metadata.BackupMetadata, requiredBackups []*metadata.BackupMetadata, tableTitle metadata.TableTitle, srcBucket, remotePath string, disks []clickhouse.Disk, rebaseConcurrency int) (int64, int64, int64, error) {
 	backupName := backupMetadata.BackupName
 	tm, oldMetadataSize, err := b.readRemoteTableMetadata(ctx, backupName, tableTitle)
 	if err != nil {
 		return 0, 0, 0, errors.Wrapf(err, "readRemoteTableMetadata(%s, `%s`.`%s`)", backupName, tableTitle.Database, tableTitle.Table)
 	}
+	copyCtx, cancelCopy := context.WithCancel(ctx)
+	defer cancelCopy()
+	copyGroup, copyCtx := errgroup.WithContext(copyCtx)
+	copyGroup.SetLimit(rebaseConcurrency)
+	copiedBytes, objectDiskBytes, changed, scheduleErr := b.rebaseScheduleTableParts(copyCtx, copyGroup, backupMetadata, requiredBackups, tm, tableTitle, srcBucket, remotePath, disks)
+	if scheduleErr != nil {
+		cancelCopy()
+	}
+	copyErr := copyGroup.Wait()
+	// scheduleErr cancels the copies, but a failed copy cancels copyCtx too, then scheduleErr is just `context canceled`
+	if scheduleErr != nil && (copyErr == nil || !errors.Is(scheduleErr, context.Canceled)) {
+		return 0, 0, 0, scheduleErr
+	}
+	if copyErr != nil {
+		return 0, 0, 0, errors.Wrapf(copyErr, "rebase `%s`.`%s`", tableTitle.Database, tableTitle.Table)
+	}
+	if !changed {
+		return 0, 0, 0, nil
+	}
+	newMetadataBody, err := json.MarshalIndent(tm, "", "\t")
+	if err != nil {
+		return 0, 0, 0, errors.Wrap(err, "can't marshal json")
+	}
+	remoteTableMetaFile := path.Join(backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
+	retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
+	if err = retry.RunCtx(ctx, func(ctx context.Context) error {
+		return b.dst.PutFile(ctx, remoteTableMetaFile, io.NopCloser(bytes.NewReader(newMetadataBody)), 0)
+	}); err != nil {
+		return 0, 0, 0, errors.Wrapf(err, "can't upload %s", remoteTableMetaFile)
+	}
+	return copiedBytes, objectDiskBytes, int64(len(newMetadataBody)) - oldMetadataSize, nil
+}
+
+// rebaseScheduleTableParts - find every Required part of tm in the required backups chain, schedule its copies into copyGroup
+// and update tm in place, returned sizes are the scheduled ones, they are valid only when copyGroup.Wait() returns nil
+func (b *Backuper) rebaseScheduleTableParts(ctx context.Context, copyGroup *errgroup.Group, backupMetadata *metadata.BackupMetadata, requiredBackups []*metadata.BackupMetadata, tm *metadata.TableMetadata, tableTitle metadata.TableTitle, srcBucket, remotePath string, disks []clickhouse.Disk) (int64, int64, bool, error) {
+	backupName := backupMetadata.BackupName
 	requiredTables := make(map[string]*metadata.TableMetadata, len(requiredBackups))
 	var copiedBytes, objectDiskBytes int64
 	changed := false
@@ -273,31 +341,31 @@ func (b *Backuper) rebaseTable(ctx context.Context, backupMetadata *metadata.Bac
 			partName := parts[i].Name
 			srcBackup, srcTable, srcDisk, findErr := b.findRequiredPartInChain(ctx, requiredBackups, requiredTables, tableTitle, partName)
 			if findErr != nil {
-				return 0, 0, 0, findErr
+				return 0, 0, false, findErr
 			}
 			if backupMetadata.DiskTypes[dstDisk] != srcBackup.DiskTypes[srcDisk] {
-				return 0, 0, 0, errors.Errorf(
+				return 0, 0, false, errors.Errorf(
 					"can't rebase `%s`.`%s` part %s: disk %s type %s in %s doesn't match disk %s type %s in %s",
 					tableTitle.Database, tableTitle.Table, partName,
 					srcDisk, srcBackup.DiskTypes[srcDisk], srcBackup.BackupName,
 					dstDisk, backupMetadata.DiskTypes[dstDisk], backupName,
 				)
 			}
-			partCopiedBytes, copyErr := b.rebaseCopyPart(ctx, backupMetadata, srcBackup, tm, tableTitle, srcBucket, remotePath, srcDisk, dstDisk, partName)
+			partCopiedBytes, copyErr := b.rebaseCopyPart(ctx, copyGroup, backupMetadata, srcBackup, tm, tableTitle, srcBucket, remotePath, srcDisk, dstDisk, partName)
 			if copyErr != nil {
-				return 0, 0, 0, copyErr
+				return 0, 0, false, copyErr
 			}
 			copiedBytes += partCopiedBytes
 			// part on an object disk keeps only small metadata files in shadow,
 			// real blobs live under `object_disk_path` and must be copied too
 			hasBlobs, blobsErr := b.partOnObjectDisk(dstDisk, backupMetadata.DiskTypes, disks)
 			if blobsErr != nil {
-				return 0, 0, 0, blobsErr
+				return 0, 0, false, blobsErr
 			}
 			if hasBlobs {
-				partBlobBytes, blobCopyErr := b.rebaseCopyPartObjectDiskBlobs(ctx, backupMetadata, srcBackup, tableTitle, srcBucket, srcDisk, dstDisk, partName)
+				partBlobBytes, blobCopyErr := b.rebaseCopyPartObjectDiskBlobs(ctx, copyGroup, backupMetadata, srcBackup, tableTitle, srcBucket, srcDisk, dstDisk, partName)
 				if blobCopyErr != nil {
-					return 0, 0, 0, blobCopyErr
+					return 0, 0, false, blobCopyErr
 				}
 				objectDiskBytes += partBlobBytes
 			}
@@ -317,21 +385,7 @@ func (b *Backuper) rebaseTable(ctx context.Context, backupMetadata *metadata.Bac
 			changed = true
 		}
 	}
-	if !changed {
-		return 0, 0, 0, nil
-	}
-	newMetadataBody, err := json.MarshalIndent(tm, "", "\t")
-	if err != nil {
-		return 0, 0, 0, errors.Wrap(err, "can't marshal json")
-	}
-	remoteTableMetaFile := path.Join(backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
-	retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
-	if err = retry.RunCtx(ctx, func(ctx context.Context) error {
-		return b.dst.PutFile(ctx, remoteTableMetaFile, io.NopCloser(bytes.NewReader(newMetadataBody)), 0)
-	}); err != nil {
-		return 0, 0, 0, errors.Wrapf(err, "can't upload %s", remoteTableMetaFile)
-	}
-	return copiedBytes, objectDiskBytes, int64(len(newMetadataBody)) - oldMetadataSize, nil
+	return copiedBytes, objectDiskBytes, changed, nil
 }
 
 // partOnObjectDisk - report whether parts on diskName store their data as object storage blobs under `object_disk_path`,
@@ -354,8 +408,8 @@ func (b *Backuper) partOnObjectDisk(diskName string, diskTypes map[string]string
 
 // rebaseCopyPartObjectDiskBlobs - shadow of a part on an object disk contains only small metadata files,
 // real blobs live under <object_disk_path>/<backup_name>/<disk_name>, parse the shadow metadata files
-// from srcBackup and copy every referenced blob into the rebased backup object disk path
-func (b *Backuper) rebaseCopyPartObjectDiskBlobs(ctx context.Context, backupMetadata, srcBackup *metadata.BackupMetadata, tableTitle metadata.TableTitle, srcBucket, srcDisk, dstDisk, partName string) (int64, error) {
+// from srcBackup and schedule copy of every referenced blob into the rebased backup object disk path
+func (b *Backuper) rebaseCopyPartObjectDiskBlobs(ctx context.Context, copyGroup *errgroup.Group, backupMetadata, srcBackup *metadata.BackupMetadata, tableTitle metadata.TableTitle, srcBucket, srcDisk, dstDisk, partName string) (int64, error) {
 	remoteObjectDiskPath, err := b.getObjectDiskPath()
 	if err != nil {
 		return 0, errors.Wrap(err, "getObjectDiskPath")
@@ -363,7 +417,8 @@ func (b *Backuper) rebaseCopyPartObjectDiskBlobs(ctx context.Context, backupMeta
 	dbAndTableDir := path.Join(common.TablePathEncode(tableTitle.Database), common.TablePathEncode(tableTitle.Table))
 	retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 	var copiedBytes int64
-	copyBlobs := func(ctx context.Context, fileName string, content io.Reader) error {
+	// walk ctx is canceled when Walk returns (S3.WalkAbsolute errgroup), scheduled copies must use ctx of copyGroup
+	copyBlobs := func(_ context.Context, fileName string, content io.Reader) error {
 		// fix https://github.com/Altinity/clickhouse-backup/issues/826
 		if strings.Contains(fileName, "frozen_metadata.txt") {
 			return nil
@@ -386,13 +441,17 @@ func (b *Backuper) rebaseCopyPartObjectDiskBlobs(ctx context.Context, backupMeta
 			}
 			srcObjKey := path.Join(remoteObjectDiskPath, srcBackup.BackupName, srcDisk, objPath)
 			dstObjKey := path.Join(remoteObjectDiskPath, backupMetadata.BackupName, dstDisk, objPath)
-			if copyErr := retry.RunCtx(ctx, func(ctx context.Context) error {
-				_, err := b.dst.CopyObject(ctx, storageObject.ObjectSize, srcBucket, srcObjKey, dstObjKey)
-				return err
-			}); copyErr != nil {
-				return errors.Wrapf(copyErr, "CopyObject %s -> %s", srcObjKey, dstObjKey)
-			}
-			copiedBytes += storageObject.ObjectSize
+			objSize := storageObject.ObjectSize
+			copyGroup.Go(func() error {
+				if copyErr := retry.RunCtx(ctx, func(ctx context.Context) error {
+					_, err := b.dst.CopyObject(ctx, objSize, srcBucket, srcObjKey, dstObjKey)
+					return err
+				}); copyErr != nil {
+					return errors.Wrapf(copyErr, "CopyObject %s -> %s", srcObjKey, dstObjKey)
+				}
+				return nil
+			})
+			copiedBytes += objSize
 		}
 		return nil
 	}
@@ -453,8 +512,8 @@ func (b *Backuper) findRequiredPartInChain(ctx context.Context, requiredBackups 
 	return nil, nil, "", errors.Errorf("`%s`.`%s` part %s not found in the whole required backups chain", tableTitle.Database, tableTitle.Table, partName)
 }
 
-// rebaseCopyPart - copy one part data from srcBackup into backupMetadata.BackupName via server-side CopyObject with retries
-func (b *Backuper) rebaseCopyPart(ctx context.Context, backupMetadata, srcBackup *metadata.BackupMetadata, tm *metadata.TableMetadata, tableTitle metadata.TableTitle, srcBucket, remotePath, srcDisk, dstDisk, partName string) (int64, error) {
+// rebaseCopyPart - schedule copy of one part data from srcBackup into backupMetadata.BackupName via server-side CopyObject with retries
+func (b *Backuper) rebaseCopyPart(ctx context.Context, copyGroup *errgroup.Group, backupMetadata, srcBackup *metadata.BackupMetadata, tm *metadata.TableMetadata, tableTitle metadata.TableTitle, srcBucket, remotePath, srcDisk, dstDisk, partName string) (int64, error) {
 	dbAndTableDir := path.Join(common.TablePathEncode(tableTitle.Database), common.TablePathEncode(tableTitle.Table))
 	retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 	if backupMetadata.DataFormat != DirectoryFormat {
@@ -467,12 +526,15 @@ func (b *Backuper) rebaseCopyPart(ctx context.Context, backupMetadata, srcBackup
 		if err != nil {
 			return 0, errors.Wrapf(err, "`%s`.`%s` part %s expected in %s, only backups uploaded with `upload_by_part: true` can be rebased, StatFile", tableTitle.Database, tableTitle.Table, partName, srcRemote)
 		}
-		if err = retry.RunCtx(ctx, func(ctx context.Context) error {
-			_, copyErr := b.dst.CopyObject(ctx, srcFile.Size(), srcBucket, path.Join(remotePath, srcRemote), path.Join(remotePath, dstRemote))
-			return copyErr
-		}); err != nil {
-			return 0, errors.Wrapf(err, "CopyObject %s -> %s", srcRemote, dstRemote)
-		}
+		copyGroup.Go(func() error {
+			if err := retry.RunCtx(ctx, func(ctx context.Context) error {
+				_, copyErr := b.dst.CopyObject(ctx, srcFile.Size(), srcBucket, path.Join(remotePath, srcRemote), path.Join(remotePath, dstRemote))
+				return copyErr
+			}); err != nil {
+				return errors.Wrapf(err, "CopyObject %s -> %s", srcRemote, dstRemote)
+			}
+			return nil
+		})
 		if tm.Files == nil {
 			tm.Files = map[string][]string{}
 		}
@@ -484,7 +546,8 @@ func (b *Backuper) rebaseCopyPart(ctx context.Context, backupMetadata, srcBackup
 	dstPartPrefix := path.Join(backupMetadata.BackupName, "shadow", dbAndTableDir, dstDisk, partName)
 	var copiedBytes int64
 	filesFound := false
-	if err := b.dst.Walk(ctx, srcPartPrefix+"/", true, func(ctx context.Context, f storage.RemoteFile) error {
+	// walk ctx is canceled when Walk returns (S3.WalkAbsolute errgroup), scheduled copies must use ctx of copyGroup
+	if err := b.dst.Walk(ctx, srcPartPrefix+"/", true, func(_ context.Context, f storage.RemoteFile) error {
 		// azblob hierarchical namespace emits zero-size marker entries, same filter as RemoveBackupRemote
 		if f.Size() == 0 && f.LastModified().IsZero() {
 			return nil
@@ -492,13 +555,17 @@ func (b *Backuper) rebaseCopyPart(ctx context.Context, backupMetadata, srcBackup
 		filesFound = true
 		srcRemote := path.Join(srcPartPrefix, f.Name())
 		dstRemote := path.Join(dstPartPrefix, f.Name())
-		if copyErr := retry.RunCtx(ctx, func(ctx context.Context) error {
-			_, err := b.dst.CopyObject(ctx, f.Size(), srcBucket, path.Join(remotePath, srcRemote), path.Join(remotePath, dstRemote))
-			return err
-		}); copyErr != nil {
-			return errors.Wrapf(copyErr, "CopyObject %s -> %s", srcRemote, dstRemote)
-		}
-		copiedBytes += f.Size()
+		fileSize := f.Size()
+		copyGroup.Go(func() error {
+			if copyErr := retry.RunCtx(ctx, func(ctx context.Context) error {
+				_, err := b.dst.CopyObject(ctx, fileSize, srcBucket, path.Join(remotePath, srcRemote), path.Join(remotePath, dstRemote))
+				return err
+			}); copyErr != nil {
+				return errors.Wrapf(copyErr, "CopyObject %s -> %s", srcRemote, dstRemote)
+			}
+			return nil
+		})
+		copiedBytes += fileSize
 		return nil
 	}); err != nil {
 		return 0, errors.Wrapf(err, "Walk %s", srcPartPrefix)

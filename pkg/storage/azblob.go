@@ -436,6 +436,12 @@ func blobItemToFile(b *container.BlobItem, prefix string) *azureBlobFile {
 	}
 }
 
+// azblobCopySource - Azure decodes the copy source path, so keys with literal `%` (TablePathEncode names in shadow paths)
+// must be escaped, otherwise CopyObject fails with BlobNotFound
+func azblobCopySource(schema, host, srcBucket, srcKey string) string {
+	return (&url.URL{Scheme: schema, Host: host, Path: path.Join("/", srcBucket, srcKey)}).String()
+}
+
 // CopyObject server-side copy from srcBucket/srcKey to a.Config.Container/dstKey, both keys are absolute inside the container
 func (a *AzureBlob) CopyObject(ctx context.Context, _ int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	a.logf("AZBLOB->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, a.Config.Container, dstKey)
@@ -444,10 +450,7 @@ func (a *AzureBlob) CopyObject(ctx context.Context, _ int64, srcBucket, srcKey, 
 	if strings.HasSuffix(endpoint, "core.windows.net") || !strings.HasPrefix(endpoint, "blob.") {
 		endpoint = "blob." + endpoint
 	}
-	srcURLString := fmt.Sprintf("%s://%s.%s/%s/%s", a.Config.EndpointSchema, a.Config.AccountName, endpoint, strings.Trim(srcBucket, "/"), strings.Trim(srcKey, "/"))
-	if _, err := url.Parse(srcURLString); err != nil {
-		return 0, errors.Wrap(err, "AzureBlob CopyObject url.Parse")
-	}
+	srcURLString := azblobCopySource(a.Config.EndpointSchema, a.Config.AccountName+"."+endpoint, srcBucket, srcKey)
 
 	destinationBlob := a.Container.NewBlobClient(dstKey)
 

@@ -12,8 +12,12 @@ NEW FEATURES
 - add experimental Content-Addressable Storage (CAS) backups via new `cas-upload`, `cas-download`, `cas-restore`, `cas-delete`, `cas-verify`, `cas-prune`, `cas-status` commands. CAS deduplicates file content across backups (especially effective for mutated parts) and removes the incremental-chain dependency — every CAS backup is independently restorable. Available in CLI and REST API. Configure via new `cas:` config block; see [docs/cas-design.md](docs/cas-design.md) and [docs/cas-operator-runbook.md](docs/cas-operator-runbook.md). Object-disk and client-side-encryption tables not yet supported.
 
 # v2.8.3
+IMPROVEMENTS
+- `rebase` copies parts, archives and object disk blobs of one table in parallel, previously every `CopyObject` inside a table ran strictly one by one and `general.rebase_concurrency` limited only the number of tables, now it also limits parallel `CopyObject` requests per table, so up to `rebase_concurrency^2` copies are in flight, `rebase` logs the required backups chain, `rebase_concurrency` and `max_copy_object` on start and `rebase table start` / `rebase table finish` with `progress`, `duration`, `copied_size` and `object_disk_size` for each table at `info` level, fix [#1648](https://github.com/Altinity/clickhouse-backup/issues/1648)
+
 BUG FIXES
 - `s3.allow_multipart_download` now uses byte-range GETs by default, new `s3.multipart_download_type` (env `S3_MULTIPART_DOWNLOAD_TYPE`, default `range`): `range` requests byte ranges of `chunk_size` with `If-Match` set to the multipart object ETag, `part` keeps the previous partNumber GETs, which send the first part ETag as `If-Match` and get HTTP 412 PreconditionFailed on Ceph RGW (Hetzner Object Storage) from part 2 on (each part has its own ETag); the setting applies only when multipart download actually runs (`allow_multipart_download: true` and `download_max_bytes_per_second: 0`), fix [#1632](https://github.com/Altinity/clickhouse-backup/issues/1632)
+- `rebase` with `remote_storage: azblob` no longer fails with `BlobNotFound` for databases and tables whose names need encoding, such as `test-db` or the `.inner_id.` table of a materialized view, the server-side copy source URL is escaped now, fix [#1637](https://github.com/Altinity/clickhouse-backup/issues/1637)
 
 # v2.8.2
 NEW FEATURES

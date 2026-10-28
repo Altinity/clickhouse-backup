@@ -102,6 +102,7 @@ type GeneralConfig struct {
 	// see https://github.com/Altinity/clickhouse-backup/issues/1454
 	FileTransferConcurrency int `yaml:"file_transfer_concurrency" envconfig:"FILE_TRANSFER_CONCURRENCY"`
 	// RebaseConcurrency - how many tables process in parallel during `rebase` command execution
+	// and how many CopyObject requests run in parallel inside each table, see https://github.com/Altinity/clickhouse-backup/issues/1648
 	RebaseConcurrency uint8 `yaml:"rebase_concurrency" envconfig:"REBASE_CONCURRENCY"`
 	// RebaseBeforeRemoveOldRemote - when `backups_to_keep_remote` deletion is blocked by `required_backup` links from kept backups,
 	// rebase the oldest kept increment (same as the `rebase` command), so the whole out-of-window chain becomes deletable;
