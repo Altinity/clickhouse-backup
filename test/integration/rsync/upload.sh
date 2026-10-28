@@ -14,7 +14,7 @@ for disk in $LOCAL_DISKS; do
     if [[ "" != "${DIFF_FROM_REMOTE}" ]]; then
       DIFF_FROM_REMOTE_CMD=(--link-dest "${BACKUP_REMOTE_DIR}/${DIFF_FROM_REMOTE}/${disk_name}")
     fi
-    rsync -e "ssh -i ${BACKUP_SSH_KEY} -p ${BACKUP_SSH_PORT} -o 'StrictHostKeyChecking no'" -avzrPH ${DIFF_FROM_REMOTE_CMD[@]+"${DIFF_FROM_REMOTE_CMD[@]}"} "${disk_path}/backup/${BACKUP_NAME}/" "${BACKUP_REMOTE_SERVER}:${BACKUP_REMOTE_DIR}/${BACKUP_NAME}/${disk_name}"
+    rsync -e "ssh -i ${BACKUP_SSH_KEY} -p ${BACKUP_SSH_PORT} -o 'StrictHostKeyChecking no'" -savzrPH ${DIFF_FROM_REMOTE_CMD[@]+"${DIFF_FROM_REMOTE_CMD[@]}"} "${disk_path}/backup/${BACKUP_NAME}/" "${BACKUP_REMOTE_SERVER}:${BACKUP_REMOTE_DIR}/${BACKUP_NAME}/${disk_name}"
   fi
 done
 
