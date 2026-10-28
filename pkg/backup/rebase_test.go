@@ -46,6 +46,8 @@ type rebaseRemoteMock struct {
 	files  map[string][]byte
 	errs   map[string]error
 	copied map[string]string // dstKey -> srcKey
+	// copyDelay - duration of every CopyObject call, to measure copy parallelism
+	copyDelay time.Duration
 }
 
 func (m *rebaseRemoteMock) Kind() string { return m.kind }
@@ -80,6 +82,9 @@ func (m *rebaseRemoteMock) Walk(ctx context.Context, prefix string, _ bool, fn f
 	if err := m.errs["Walk "+prefix]; err != nil {
 		return err
 	}
+	// same as S3.WalkAbsolute, ctx passed into fn is canceled when Walk returns
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	m.mu.Lock()
 	names := make([]string, 0)
 	for key := range m.files {
@@ -114,13 +119,17 @@ func (m *rebaseRemoteMock) PutFile(_ context.Context, key string, r io.ReadClose
 	return nil
 }
 
-func (m *rebaseRemoteMock) CopyObject(_ context.Context, srcSize int64, _, srcKey, dstKey string) (int64, error) {
+func (m *rebaseRemoteMock) CopyObject(ctx context.Context, srcSize int64, _, srcKey, dstKey string) (int64, error) {
 	if err := m.errs["CopyObject "+srcKey]; err != nil {
 		return 0, err
 	}
 	m.mu.Lock()
 	m.copied[dstKey] = srcKey
 	m.mu.Unlock()
+	time.Sleep(m.copyDelay)
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	return srcSize, nil
 }
 
@@ -156,6 +165,8 @@ type rebaseFixture struct {
 	inc2  *metadata.BackupMetadata
 	chain []*metadata.BackupMetadata
 	table metadata.TableTitle
+	// concurrency - rebase_concurrency passed into rebaseTable
+	concurrency int
 }
 
 func (f *rebaseFixture) putBackupMeta(t *testing.T, bm *metadata.BackupMetadata) {
@@ -178,7 +189,7 @@ func (f *rebaseFixture) setDiskType(diskType string) {
 
 func (f *rebaseFixture) rebaseTable(t *testing.T) (int64, int64, int64, error) {
 	t.Helper()
-	return f.b.rebaseTable(context.Background(), f.inc2, f.chain, f.table, "mock-bucket", "", nil)
+	return f.b.rebaseTable(context.Background(), f.inc2, f.chain, f.table, "mock-bucket", "", nil, f.concurrency)
 }
 
 func newRebaseFixture(t *testing.T, dataFormat string) *rebaseFixture {
@@ -220,6 +231,8 @@ func newRebaseFixture(t *testing.T, dataFormat string) *rebaseFixture {
 		inc1:  newBackupMeta("inc1", "full"),
 		inc2:  newBackupMeta("inc2", "inc1"),
 		table: table,
+
+		concurrency: 4,
 	}
 	f.chain = []*metadata.BackupMetadata{f.inc1, f.full}
 
@@ -443,25 +456,36 @@ func TestRebaseTableNothingRequired(t *testing.T) {
 
 // TestRebaseTableObjectDiskBlobs - parts on an object disk keep only small metadata files in
 // shadow, the referenced blobs under `object_disk_path` must be copied too (directory data_format,
-// the archive branch needs a real compressed stream and stays covered by test/integration)
+// the archive branch needs a real compressed stream and stays covered by test/integration),
+// copies inside one table run in parallel bounded by rebase_concurrency, https://github.com/Altinity/clickhouse-backup/issues/1648
 func TestRebaseTableObjectDiskBlobs(t *testing.T) {
-	f := newRebaseFixture(t, DirectoryFormat)
-	f.setDiskType("s3")
-	// object disk metadata VersionRelativePath: version, count+total, size+path per object, refcount;
-	// zero-size objects must be skipped, frozen_metadata.txt must not be parsed as blob metadata
-	f.mock.files[rebasePartKey("full", "part_full", "data.bin")] = []byte("2\n2\t10\n10\txyz/blob1\n0\txyz/blob0\n0\n")
-	f.mock.files[rebasePartKey("full", "part_full", "frozen_metadata.txt")] = []byte("not blob metadata")
-	f.mock.files[rebasePartKey("inc1", "part_inc1", "data.bin")] = []byte("2\n1\t7\n7\tabc/blob2\n0\n")
+	durations := map[int]time.Duration{}
+	for _, concurrency := range []int{1, 4} {
+		f := newRebaseFixture(t, DirectoryFormat)
+		f.setDiskType("s3")
+		f.concurrency = concurrency
+		f.mock.copyDelay = 50 * time.Millisecond
+		// object disk metadata VersionRelativePath: version, count+total, size+path per object, refcount;
+		// zero-size objects must be skipped, frozen_metadata.txt must not be parsed as blob metadata
+		f.mock.files[rebasePartKey("full", "part_full", "data.bin")] = []byte("2\n5\t40\n10\txyz/blob1\n0\txyz/blob0\n10\txyz/blob3\n10\txyz/blob4\n10\txyz/blob5\n0\n")
+		f.mock.files[rebasePartKey("full", "part_full", "frozen_metadata.txt")] = []byte("not blob metadata")
+		f.mock.files[rebasePartKey("inc1", "part_inc1", "data.bin")] = []byte("2\n1\t7\n7\tabc/blob2\n0\n")
 
-	_, objectDiskBytes, _, err := f.rebaseTable(t)
-	require.NoError(t, err)
-	require.Equal(t, int64(10+7), objectDiskBytes)
+		start := time.Now()
+		_, objectDiskBytes, _, err := f.rebaseTable(t)
+		durations[concurrency] = time.Since(start)
+		require.NoError(t, err)
+		require.Equal(t, int64(40+7), objectDiskBytes)
 
-	require.Equal(t, rebasePartKey("full", "part_full", "data.bin"), f.mock.copied[rebasePartKey("inc2", "part_full", "data.bin")])
-	require.Equal(t, "disks-cold/full/default/xyz/blob1", f.mock.copied["disks-cold/inc2/default/xyz/blob1"])
-	require.Equal(t, "disks-cold/inc1/default/abc/blob2", f.mock.copied["disks-cold/inc2/default/abc/blob2"])
-	_, blob0Copied := f.mock.copied["disks-cold/inc2/default/xyz/blob0"]
-	require.False(t, blob0Copied, "zero-size storage objects must be skipped")
+		require.Equal(t, rebasePartKey("full", "part_full", "data.bin"), f.mock.copied[rebasePartKey("inc2", "part_full", "data.bin")])
+		for _, blob := range []string{"xyz/blob1", "xyz/blob3", "xyz/blob4", "xyz/blob5"} {
+			require.Equal(t, "disks-cold/full/default/"+blob, f.mock.copied["disks-cold/inc2/default/"+blob])
+		}
+		require.Equal(t, "disks-cold/inc1/default/abc/blob2", f.mock.copied["disks-cold/inc2/default/abc/blob2"])
+		_, blob0Copied := f.mock.copied["disks-cold/inc2/default/xyz/blob0"]
+		require.False(t, blob0Copied, "zero-size storage objects must be skipped")
+	}
+	require.Lessf(t, durations[4], durations[1], "rebase_concurrency=4 must be faster than serial copy, durations: %v", durations)
 }
 
 func TestRebaseTableErrors(t *testing.T) {
@@ -588,6 +612,8 @@ func TestRebaseTableErrors(t *testing.T) {
 			mutate: func(t *testing.T, f *rebaseFixture) {
 				f.setDiskType("s3")
 				f.mock.files[rebasePartKey("full", "part_full", "data.bin")] = []byte("2\n1\t10\n10\txyz/blob1\n0\n")
+				// copies are asynchronous, part_inc1 is scheduled too and must not fail by itself
+				f.mock.files[rebasePartKey("inc1", "part_inc1", "data.bin")] = []byte("2\n1\t7\n7\tabc/blob2\n0\n")
 				f.mock.errs["CopyObject disks-cold/full/default/xyz/blob1"] = mockErr
 			},
 			wantErr: "CopyObject disks-cold/full/default/xyz/blob1",
