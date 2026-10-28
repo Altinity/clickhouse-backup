@@ -4,8 +4,8 @@
 #
 # IMPORTANT: ``s3.endpoint`` is intentionally *unset* here.
 #
-# ``clickhouse-backup-fips`` calls ``os.Setenv("AWS_USE_FIPS_ENDPOINT", "true")``
-# at startup (see ``cmd/clickhouse-backup/main.go``); the AWS SDK Go v2
+# ``clickhouse-backup-fips`` sets ``AWS_USE_FIPS_ENDPOINT=true`` at startup unless it
+# is already set (see ``setDefaultFIPSEndpoint`` in ``cmd/clickhouse-backup/main.go``); the AWS SDK Go v2
 # endpoint rule engine then refuses to combine that with a custom
 # ``s3.endpoint`` and aborts with::
 #

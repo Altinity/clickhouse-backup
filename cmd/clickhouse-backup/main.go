@@ -1374,6 +1374,19 @@ func disableSliceFlagSeparator(cmd *cli.Command) {
 	}
 }
 
+// setDefaultFIPSEndpoint makes FIPS builds resolve AWS FIPS endpoints by default, but keeps an explicit
+// AWS_USE_FIPS_ENDPOINT, because the AWS SDK refuses a custom s3.endpoint (MinIO, Ceph, other S3-compatible
+// storage) with "A custom endpoint cannot be combined with FIPS" when it is true. The variable only selects
+// s3-fips.* hostnames; the FIPS 140-3 crypto module is unaffected.
+func setDefaultFIPSEndpoint(version string) {
+	if !strings.HasSuffix(version, "fips") {
+		return
+	}
+	if _, isSet := os.LookupEnv("AWS_USE_FIPS_ENDPOINT"); !isSet {
+		_ = os.Setenv("AWS_USE_FIPS_ENDPOINT", "true")
+	}
+}
+
 func main() {
 	log.Logger = log_helper.SetupLogger(os.Stderr)
 	//log.Logger = zerolog.New(os.Stdout).With().Timestamp().Caller().Logger()
@@ -1385,9 +1398,7 @@ func main() {
 		return
 	}
 	// @todo add GCS and Azure support when resolve https://github.com/googleapis/google-cloud-go/issues/8169 and https://github.com/Azure/azure-sdk-for-go/issues/21047
-	if strings.HasSuffix(version, "fips") {
-		_ = os.Setenv("AWS_USE_FIPS_ENDPOINT", "true")
-	}
+	setDefaultFIPSEndpoint(version)
 	cli.VersionPrinter = func(c *cli.Command) {
 		fmt.Println("Version:\t", c.Root().Version)
 		fmt.Println("Git Commit:\t", gitCommit)
