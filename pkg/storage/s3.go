@@ -165,6 +165,13 @@ func buildHTTPTransport(cfg *config.S3Config) *http.Transport {
 		h2Config.WriteByteTimeout = d
 	}
 	transport.HTTP2 = &h2Config
+	// TCP keepalive is answered by the S3 frontend even when the request behind it is lost, so without a
+	// deadline a request the server accepted but never answered (e.g. UploadPartCopy) waits in
+	// persistConn.roundTrip forever. ResponseHeaderTimeout doesn't cut long request/response bodies,
+	// and the SDK retries the timeout error, see https://github.com/Altinity/clickhouse-backup/issues/1645
+	if d, parseErr := config.ParseDurationOrSeconds(cfg.Timeout); parseErr == nil {
+		transport.ResponseHeaderTimeout = d
+	}
 	return transport
 }
 

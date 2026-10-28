@@ -469,6 +469,7 @@ s3:
   http2_send_ping_timeout: 30s        # S3_HTTP2_SEND_PING_TIMEOUT, PING the peer when no frame was received on the connection for that long, empty or 0s disables the health check
   http2_ping_timeout: 15s             # S3_HTTP2_PING_TIMEOUT, close the connection when the PING response doesn't arrive in time
   http2_write_byte_timeout: 60s       # S3_HTTP2_WRITE_BYTE_TIMEOUT, close the connection when a single write stalls for longer, in-flight requests fail and are retried on a fresh connection, empty or 0s disables it
+  timeout: 30m                        # S3_TIMEOUT, http.Transport.ResponseHeaderTimeout as a duration string or a bare integer number of seconds, empty or 0 disables it; fails and retries requests which the server accepted but never answered (e.g. UploadPartCopy during server-side copy of object disk data), doesn't cut long uploads/downloads, see https://github.com/Altinity/clickhouse-backup/issues/1645
 
   # S3_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
