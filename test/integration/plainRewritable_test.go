@@ -273,8 +273,10 @@ func (env *TestEnvironment) runPlainRewritableHybridScenario(t *testing.T, r *re
 // plain_rewritable (25.11+).
 func TestPlainRewritableHybridS3(t *testing.T) {
 	version := os.Getenv("CLICKHOUSE_VERSION")
-	if compareVersion(version, "24.8") < 0 {
-		t.Skipf("Test requires ClickHouse >= 24.8 (plain_rewritable disks), current %s", version)
+	// before 25.4 ALTER TABLE MOVE|ATTACH PARTITION|PART is rejected for a table with a plain_rewritable disk in its
+	// storage policy, https://github.com/ClickHouse/ClickHouse/commit/b2a1123c13e
+	if compareVersion(version, "25.4") < 0 {
+		t.Skipf("Test requires ClickHouse >= 25.4 (MOVE and ATTACH PART on a storage policy with plain_rewritable disks), current %s", version)
 	}
 
 	env, r := NewTestEnvironment(t)

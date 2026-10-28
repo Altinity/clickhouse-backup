@@ -2730,6 +2730,18 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 	backupTable.Database = origDatabase
 	backupTable.Table = origTable
 
+	attachParts := !replicatedCopyToDetached || !strings.Contains(dstTable.Engine, "Replicated")
+	// before 25.4 ClickHouse rejects ATTACH PART for a table whose storage policy has a plain/plain_rewritable disk,
+	// wherever its parts are, https://github.com/ClickHouse/ClickHouse/commit/b2a1123c13e, ATTACH TABLE works there
+	if attachParts && b.isTableOnPlainDisks(&dstTable, disks) && len(b.filterOutPlainDiskParts(backupMetadata, backupTable).Parts) > 0 {
+		version, versionErr := b.ch.GetVersion(ctx)
+		if versionErr != nil {
+			return errors.Wrap(versionErr, "restoreDataRegularByParts: b.ch.GetVersion")
+		}
+		if version < 25004000 {
+			return errors.Errorf("ClickHouse %d rejects ATTACH PART for `%s`.`%s`, its storage policy has plain/plain_rewritable disks, ClickHouse 25.4+ is required, or set clickhouse.restore_as_attach: true (CLICKHOUSE_RESTORE_AS_ATTACH=true)", version, dstTable.Database, dstTable.Name)
+		}
+	}
 	if err := b.prepareRequiredPartsForRestore(ctx, backupName, backupMetadata, backupTable, diskMap, disks); err != nil {
 		return errors.Wrapf(err, "can't prepare required data parts '%s.%s'", backupTable.Database, backupTable.Table)
 	}
@@ -2754,7 +2766,7 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 	}
 	log.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Str("database", backupTable.Database).Str("table", backupTable.Table).Msg("download object_disks finish")
 	// Skip ATTACH PART for Replicated*MergeTree tables if replicatedCopyToDetached is true
-	if !replicatedCopyToDetached || !strings.Contains(dstTable.Engine, "Replicated") {
+	if attachParts {
 		attachTable := metadata.TableMetadata{
 			Database: dstTable.Database,
 			Table:    dstTable.Name,
