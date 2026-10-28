@@ -1,6 +1,7 @@
 # v2.8.3
 BUG FIXES
 - `s3.allow_multipart_download` now uses byte-range GETs by default, new `s3.multipart_download_type` (env `S3_MULTIPART_DOWNLOAD_TYPE`, default `range`): `range` requests byte ranges of `chunk_size` with `If-Match` set to the multipart object ETag, `part` keeps the previous partNumber GETs, which send the first part ETag as `If-Match` and get HTTP 412 PreconditionFailed on Ceph RGW (Hetzner Object Storage) from part 2 on (each part has its own ETag); the setting applies only when multipart download actually runs (`allow_multipart_download: true` and `download_max_bytes_per_second: 0`), fix [#1632](https://github.com/Altinity/clickhouse-backup/issues/1632)
+- `rebase` with `remote_storage: azblob` no longer fails with `BlobNotFound` for databases and tables whose names need encoding, such as `test-db` or the `.inner_id.` table of a materialized view, the server-side copy source URL is escaped now, fix [#1637](https://github.com/Altinity/clickhouse-backup/issues/1637)
 
 # v2.8.2
 NEW FEATURES
