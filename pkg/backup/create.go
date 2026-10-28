@@ -1158,22 +1158,17 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		}
 		return nil, nil, nil, nil, nil, nil, nil
 	}
-	// ALTER TABLE FREEZE/UNFREEZE are not supported for plain_rewritable disks
-	// (see checkAlterPartitionIsPossible in ClickHouse MergeTreeData.cpp), backup such tables
-	// from the live data with merges stopped instead
-	tableOnPlainDisks, plainDisksErr := b.isTableDataOnPlainDisks(ctx, table, diskList)
-	if plainDisksErr != nil {
-		return nil, nil, nil, nil, nil, nil, plainDisksErr
-	}
-	if tableOnPlainDisks {
-		if err := b.ch.QueryContext(ctx, fmt.Sprintf("SYSTEM STOP MERGES `%s`.`%s`", table.Database, table.Name)); err != nil {
-			return nil, nil, nil, nil, nil, nil, errors.Wrap(err, "SYSTEM STOP MERGES")
+	// ALTER TABLE FREEZE/UNFREEZE are rejected for a table whose storage policy has plain/plain_rewritable disks
+	// (see checkAlterPartitionIsPossible in ClickHouse MergeTreeData.cpp), snapshot such a table from the live
+	// data with merges and moves stopped instead
+	var plainSnapshot *plainPolicySnapshot
+	if b.isTableOnPlainDisks(table, diskList) {
+		snapshot, snapshotErr := b.snapshotTableOnPlainDisks(ctx, table, diskList, shadowBackupUUID, partitionsIdsMap)
+		defer b.releasePlainPolicySnapshot(snapshot)
+		if snapshotErr != nil {
+			return nil, nil, nil, nil, nil, nil, snapshotErr
 		}
-		defer func() {
-			if err := b.ch.Query(fmt.Sprintf("SYSTEM START MERGES `%s`.`%s`", table.Database, table.Name)); err != nil {
-				log.Warn().Msgf("can't SYSTEM START MERGES `%s`.`%s`: %v", table.Database, table.Name, err)
-			}
-		}()
+		plainSnapshot = snapshot
 	} else if err := b.ch.FreezeTable(ctx, table, shadowBackupUUID); err != nil {
 		return nil, nil, nil, nil, nil, nil, errors.Wrap(err, "b.ch.FreezeTable")
 	}
@@ -1200,10 +1195,10 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		default:
 			// plain/plain_rewritable disks have no local shadow, the live parts are enumerated in the bucket
 			if b.isDiskPlain(disk) {
-				if !tableOnPlainDisks {
+				if plainSnapshot == nil {
 					continue
 				}
-				plainParts, plainSize, plainErr := b.uploadPlainDiskParts(ctx, backupName, table, disk, partitionsIdsMap)
+				plainParts, plainSize, plainErr := b.uploadPlainDiskParts(ctx, backupName, table, disk, plainSnapshot.parts)
 				if plainErr != nil {
 					return nil, nil, nil, nil, nil, nil, errors.Wrap(plainErr, "b.uploadPlainDiskParts")
 				}
@@ -1389,11 +1384,22 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 			}
 		}
 	}
-	// Unfreeze to unlock data on S3 disks, https://github.com/Altinity/clickhouse-backup/issues/423
-	// UNFREEZE is not supported for plain_rewritable disks and nothing was frozen there
-	if version > 21004000 && !tableOnPlainDisks {
+	if plainSnapshot != nil {
+		// UNFREEZE is rejected for such a table as FREEZE is and the shadow holds our own hardlinks: remove them
+		// directly, best effort, a leftover shadow is removed again by cleanOwnFreezes at the end of create
+		for _, disk := range diskList {
+			if disk.IsBackup || b.isDiskPlain(disk) {
+				continue
+			}
+			shadowPath := path.Join(disk.Path, "shadow", shadowBackupUUID)
+			if err := os.RemoveAll(shadowPath); err != nil {
+				logger.Warn().Msgf("can't remove shadow %s: %v", shadowPath, err)
+			}
+		}
+	} else if version > 21004000 {
+		// Unfreeze to unlock data on S3 disks, https://github.com/Altinity/clickhouse-backup/issues/423
 		if err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` UNFREEZE WITH NAME '%s'", table.Database, table.Name, shadowBackupUUID)); err != nil {
-			if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81") || strings.Contains(err.Error(), "code: 218")) && b.cfg.ClickHouse.IgnoreNotExistsErrorDuringFreeze {
+			if b.ch.IsIgnorableNotExistsError(err) {
 				logger.Warn().Msgf("can't unfreeze table: %v", err)
 			}
 		}
@@ -1679,61 +1685,217 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 	return size, brokenParts, nil
 }
 
-// isTableDataOnPlainDisks returns true when the table data lives on plain/plain_rewritable disks.
-// Tables on plain disks are backed up without FREEZE, so mixing plain and non-plain disks in one storage
-// policy is not supported (non-plain parts would be lost), such tables are rejected here.
-func (b *Backuper) isTableDataOnPlainDisks(ctx context.Context, table *clickhouse.Table, diskList []clickhouse.Disk) (bool, error) {
-	onPlainDisk := false
+// activePart is the row of system.parts clickhouse-backup needs to snapshot a part without FREEZE
+type activePart struct {
+	Name     string `ch:"name"`
+	DiskName string `ch:"disk_name"`
+	Path     string `ch:"path"`
+}
+
+// plainPolicySnapshot takes the place of FREEZE for a table whose storage policy has plain/plain_rewritable disks:
+// the active parts of the local disks are hardlinked into shadow by linkLocalPartsToShadow, the parts of the plain
+// disks are copied from the bucket by uploadPlainDiskParts, both with merges and moves of the table stopped until
+// releasePlainPolicySnapshot
+type plainPolicySnapshot struct {
+	table *clickhouse.Table
+	// parts are the active parts to back up, on local and plain disks, after the --partitions and
+	// freeze_by_part_where filters
+	parts []activePart
+	// stopped lists the background operations of the table stopped for the snapshot, in SYSTEM STOP syntax
+	stopped []string
+}
+
+// isTableOnPlainDisks tells whether the table must be backed up without FREEZE: ClickHouse rejects ALTER TABLE
+// FREEZE for a table whose storage policy has any plain/plain_rewritable disk, wherever its parts are
+// (checkAlterPartitionIsPossible checks every disk of the policy)
+func (b *Backuper) isTableOnPlainDisks(table *clickhouse.Table, diskList []clickhouse.Disk) bool {
 	for _, disk := range diskList {
 		if b.isDiskPlain(disk) && plainDiskTableRelPath(table.DataPaths, disk) != "" {
-			onPlainDisk = true
-			break
+			return true
 		}
 	}
-	if !onPlainDisk {
-		return false, nil
+	return false
+}
+
+// snapshotTableOnPlainDisks takes the snapshot of a table which can't be frozen, see plainPolicySnapshot. The replica
+// is synced first when sync_replicated_tables asks for it, the way FreezeTable does, and before merges are stopped:
+// SYSTEM SYNC REPLICA waits for the queued merges. A table dropped in between is skipped with an empty snapshot when
+// ignore_not_exists_error_during_freeze is set, the way FreezeTable skips it. The returned snapshot is never nil, the
+// caller releases it on error too, to start the background operations stopped so far
+func (b *Backuper) snapshotTableOnPlainDisks(ctx context.Context, table *clickhouse.Table, diskList []clickhouse.Disk, shadowBackupUUID string, partitionsIdsMap common.EmptyMap) (*plainPolicySnapshot, error) {
+	snapshot := &plainPolicySnapshot{table: table}
+	b.ch.SyncReplicatedTable(ctx, table)
+	// a merge would replace the parts right under the hardlinks and the bucket copy, a TTL or a manual move between
+	// the volumes would remove the part from its disk the same way, whichever disk the parts are on right now
+	for _, background := range []string{"MERGES", "MOVES"} {
+		if err := b.ch.QueryContext(ctx, fmt.Sprintf("SYSTEM STOP %s `%s`.`%s`", background, table.Database, table.Name)); err != nil {
+			if b.ch.IsIgnorableNotExistsError(err) {
+				log.Warn().Msgf("can't SYSTEM STOP %s `%s`.`%s`: %v", background, table.Database, table.Name, err)
+				return snapshot, nil
+			}
+			return snapshot, errors.Wrapf(err, "SYSTEM STOP %s", background)
+		}
+		snapshot.stopped = append(snapshot.stopped, background)
 	}
-	// data paths list every disk of the table storage policy, system.parts.disk_name tells where the parts really are
-	var partDisks []struct {
-		DiskName string `ch:"disk_name"`
+	parts, err := b.getPlainPolicyParts(ctx, table, diskList, partitionsIdsMap)
+	if err != nil {
+		return snapshot, err
 	}
-	if err := b.ch.SelectContext(ctx, &partDisks, "SELECT DISTINCT disk_name FROM system.parts WHERE database=? AND `table`=? AND active", table.Database, table.Name); err != nil {
-		return false, errors.Wrap(err, "isTableDataOnPlainDisks: select disk_name from system.parts")
+	snapshot.parts = parts
+	if err = b.linkLocalPartsToShadow(ctx, table, diskList, shadowBackupUUID, parts); err != nil {
+		return snapshot, errors.Wrap(err, "b.linkLocalPartsToShadow")
 	}
-	for _, partDisk := range partDisks {
-		disk := b.findDiskByName(diskList, partDisk.DiskName)
-		if disk == nil || !b.isDiskPlain(*disk) {
-			return false, errors.Errorf("`%s`.`%s` have parts on both plain and non-plain (%s) disks, such storage policies are not supported for backup", table.Database, table.Name, partDisk.DiskName)
+	return snapshot, nil
+}
+
+// releasePlainPolicySnapshot starts the background operations stopped by snapshotTableOnPlainDisks
+func (b *Backuper) releasePlainPolicySnapshot(snapshot *plainPolicySnapshot) {
+	for _, background := range snapshot.stopped {
+		if err := b.ch.Query(fmt.Sprintf("SYSTEM START %s `%s`.`%s`", background, snapshot.table.Database, snapshot.table.Name)); err != nil {
+			log.Warn().Msgf("can't SYSTEM START %s `%s`.`%s`: %v", background, snapshot.table.Database, snapshot.table.Name, err)
 		}
 	}
-	return true, nil
+}
+
+// getPlainPolicyParts lists the active parts of a table backed up without FREEZE in one system.parts query, the list
+// is shared by linkLocalPartsToShadow and uploadPlainDiskParts. freeze_by_part_where applies to it the way it
+// applies to FREEZE PARTITION, see FreezeTableByParts
+func (b *Backuper) getPlainPolicyParts(ctx context.Context, table *clickhouse.Table, diskList []clickhouse.Disk, partitionsIdsMap common.EmptyMap) ([]activePart, error) {
+	query := "SELECT name, disk_name, path FROM system.parts WHERE database=? AND `table`=? AND active"
+	if b.cfg.ClickHouse.FreezeByPart && b.cfg.ClickHouse.FreezeByPartWhere != "" {
+		query += " " + b.cfg.ClickHouse.FreezeByPartWhere
+	}
+	var parts []activePart
+	if err := b.ch.SelectContext(ctx, &parts, query, table.Database, table.Name); err != nil {
+		return nil, errors.Wrap(err, "getPlainPolicyParts: select active parts")
+	}
+	return b.filterPlainPolicyParts(table, parts, diskList, partitionsIdsMap)
+}
+
+// filterPlainPolicyParts keeps the parts of the requested partitions and checks that every one of them lives on a
+// disk which can be snapshotted without FREEZE: a plain disk, or a disk with complete local files. A part on any
+// other disk is rejected: an object disk with local metadata protects its blobs with the hardlink counter inside the
+// metadata files, which only FREEZE maintains. A cache disk over such a disk is reported by system.parts under its
+// own name while GetDisks lists it under the underlying disk name, so an unknown disk name is the same case
+func (b *Backuper) filterPlainPolicyParts(table *clickhouse.Table, parts []activePart, diskList []clickhouse.Disk, partitionsIdsMap common.EmptyMap) ([]activePart, error) {
+	filtered := make([]activePart, 0, len(parts))
+	for _, part := range parts {
+		if len(partitionsIdsMap) != 0 && !filesystemhelper.IsPartInPartition(part.Name, partitionsIdsMap) {
+			continue
+		}
+		disk := b.findDiskByName(diskList, part.DiskName)
+		if disk == nil {
+			return nil, errors.Errorf("`%s`.`%s` have parts on plain disks and on disk %s which is not a local disk of system.disks (a cache disk over object storage is listed under the underlying disk name), only local disks are supported next to plain disks in one storage policy", table.Database, table.Name, part.DiskName)
+		}
+		if !b.isDiskPlain(*disk) && !b.isDiskLocal(*disk, diskList) {
+			return nil, errors.Errorf("`%s`.`%s` have parts on plain disks and on disk %s of type %s, only local disks are supported next to plain disks in one storage policy", table.Database, table.Name, disk.Name, disk.Type)
+		}
+		filtered = append(filtered, part)
+	}
+	return filtered, nil
+}
+
+// partPathOnDisk returns the path of a part relative to the root of its disk. system.parts.path starts with
+// system.disks.path as clickhouse-server reports it (Disk.RawPath), while Disk.Path is where clickhouse-backup sees
+// the same disk once disk_mapping is applied, so the result is joined to Disk.Path for any local access
+func partPathOnDisk(partPath string, disk clickhouse.Disk) (string, error) {
+	diskRawPath := disk.RawPath
+	if diskRawPath == "" {
+		diskRawPath = disk.Path
+	}
+	diskRawPath = strings.TrimSuffix(diskRawPath, "/") + "/"
+	if !strings.HasPrefix(partPath, diskRawPath) {
+		return "", errors.Errorf("part path %s is outside of disk %s path %s", partPath, disk.Name, diskRawPath)
+	}
+	return strings.TrimPrefix(partPath, diskRawPath), nil
+}
+
+// prepareShadowDir creates <disk>/shadow/<uuid> for the hardlinks of linkLocalPartsToShadow. <disk>/shadow is shared
+// with clickhouse-server, which stats shadow/increment.txt on every FREEZE, so when clickhouse-backup runs as root
+// both directories get the owner of the server data path, as the directories FREEZE creates have it, otherwise
+// FREEZE of every table on the server fails with Permission denied. An existing <disk>/shadow is chowned too, which
+// repairs a directory left to root by an earlier run
+func (b *Backuper) prepareShadowDir(shadowDir string, diskList []clickhouse.Disk) error {
+	for _, dir := range []string{path.Dir(shadowDir), shadowDir} {
+		if err := filesystemhelper.Mkdir(dir, b.ch, diskList); err != nil {
+			return errors.Wrapf(err, "filesystemhelper.Mkdir %s", dir)
+		}
+	}
+	return nil
+}
+
+// linkLocalPartsToShadow takes the place of FREEZE for the local disks of a table on a plain storage policy: it
+// hardlinks every part of parts which lives on a local disk into <disk>/shadow/<shadowBackupUUID>/<part path on disk>,
+// the layout FREEZE produces and MoveShadowToBackup reads. The caller stopped merges and moves of the table, so a
+// part can disappear only by DROP PARTITION, such a part is skipped as FREEZE would skip it
+func (b *Backuper) linkLocalPartsToShadow(ctx context.Context, table *clickhouse.Table, diskList []clickhouse.Disk, shadowBackupUUID string, parts []activePart) error {
+	linked := 0
+	shadowReady := map[string]struct{}{}
+	for _, part := range parts {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		disk := b.findDiskByName(diskList, part.DiskName)
+		if disk == nil {
+			return errors.Errorf("linkLocalPartsToShadow: disk %s of part %s is absent in system.disks", part.DiskName, part.Name)
+		}
+		if b.isDiskPlain(*disk) || b.shouldSkipByDiskNameOrType(*disk) {
+			continue
+		}
+		relPartPath, err := partPathOnDisk(part.Path, *disk)
+		if err != nil {
+			return errors.Wrap(err, "linkLocalPartsToShadow")
+		}
+		shadowDir := path.Join(disk.Path, "shadow", shadowBackupUUID)
+		if _, ready := shadowReady[disk.Name]; !ready {
+			if err = b.prepareShadowDir(shadowDir, diskList); err != nil {
+				return errors.Wrap(err, "linkLocalPartsToShadow")
+			}
+			shadowReady[disk.Name] = struct{}{}
+		}
+		srcPartPath := path.Join(disk.Path, relPartPath)
+		shadowPartPath := path.Join(shadowDir, relPartPath)
+		if err = filesystemhelper.HardlinkPart(srcPartPath, shadowPartPath); err != nil {
+			// only a part which is gone as a whole is skipped, a file missing inside a live part is an error
+			_, statErr := os.Stat(srcPartPath)
+			if !os.IsNotExist(errors.Cause(err)) || !os.IsNotExist(statErr) {
+				return errors.Wrapf(err, "linkLocalPartsToShadow: part %s", part.Name)
+			}
+			log.Warn().Str("database", table.Database).Str("table", table.Name).Str("part", part.Name).Msg("part removed during backup, skipped")
+			if removeErr := os.RemoveAll(shadowPartPath); removeErr != nil {
+				return errors.Wrapf(removeErr, "linkLocalPartsToShadow: os.RemoveAll %s", shadowPartPath)
+			}
+			continue
+		}
+		linked++
+	}
+	log.Debug().Str("database", table.Database).Str("table", table.Name).Int("parts", linked).Msg("local parts hardlinked to shadow")
+	return nil
 }
 
 // uploadPlainDiskParts enumerates the live data parts of a plain/plain_rewritable disk on the bucket
 // level (FREEZE is not supported for such disks and they have no local metadata files at all) and
 // server-side copies every data object of the active parts into the backup destination under its
 // logical path: <object_disk_path>/<backupName>/<diskName>/shadow/<db>/<table>/<partName>/<file...>.
-// The caller stops merges for the table before calling this function.
-func (b *Backuper) uploadPlainDiskParts(ctx context.Context, backupName string, table *clickhouse.Table, disk clickhouse.Disk, partitionsIdsMap common.EmptyMap) ([]metadata.Part, int64, error) {
+// activeParts is the snapshot of the active parts of the table, listed with merges and moves already stopped by
+// the caller.
+func (b *Backuper) uploadPlainDiskParts(ctx context.Context, backupName string, table *clickhouse.Table, disk clickhouse.Disk, activeParts []activePart) ([]metadata.Part, int64, error) {
 	// table data path relative to the disk root, checked BEFORE any bucket access:
 	// most tables have no data on this disk at all
 	tableRelPath := plainDiskTableRelPath(table.DataPaths, disk)
 	if tableRelPath == "" {
 		return nil, 0, nil
 	}
-	// snapshot of the active parts on this disk, merges are already stopped by the caller
-	var activeParts []struct {
-		Name string `ch:"name"`
-	}
-	if err := b.ch.SelectContext(ctx, &activeParts, "SELECT name FROM system.parts WHERE database=? AND `table`=? AND disk_name=? AND active", table.Database, table.Name, disk.Name); err != nil {
-		return nil, 0, errors.Wrap(err, "uploadPlainDiskParts: select active parts")
-	}
-	if len(activeParts) == 0 {
-		return nil, 0, nil
-	}
 	activePartsMap := make(map[string]struct{}, len(activeParts))
 	for _, p := range activeParts {
-		activePartsMap[p.Name] = struct{}{}
+		if p.DiskName == disk.Name {
+			activePartsMap[p.Name] = struct{}{}
+		}
+	}
+	if len(activePartsMap) == 0 {
+		return nil, 0, nil
 	}
 	if err := object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, disk.Name); err != nil {
 		return nil, 0, errors.Wrap(err, "object_disk.InitCredentialsAndConnections")
@@ -1766,11 +1928,9 @@ func (b *Backuper) uploadPlainDiskParts(ctx context.Context, backupName string, 
 	var isCopyFailed atomic.Bool
 	for relPath, plainFile := range tree {
 		partName := strings.SplitN(relPath, "/", 2)[0]
-		// only active data parts, this also filters detached/, tmp_* and table-level files like format_version.txt
+		// only active data parts of the requested partitions, this also filters detached/, tmp_* and table-level
+		// files like format_version.txt
 		if _, active := activePartsMap[partName]; !active {
-			continue
-		}
-		if len(partitionsIdsMap) != 0 && !filesystemhelper.IsPartInPartition(partName, partitionsIdsMap) {
 			continue
 		}
 		srcKey := path.Join(srcDiskConnection.GetRemotePath(), plainFile.RemoteKey)

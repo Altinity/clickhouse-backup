@@ -330,6 +330,18 @@ func plainDiskTableRelPath(dataPaths []string, disk clickhouse.Disk) string {
 	return ""
 }
 
+// isDiskLocal returns true for a disk whose parts are complete local files, which a hardlink snapshots: a local
+// disk, or an encrypted disk over a local one (an encrypted disk over object storage keeps metadata files only)
+func (b *Backuper) isDiskLocal(disk clickhouse.Disk, disks []clickhouse.Disk) bool {
+	switch disk.Type {
+	case "local":
+		return true
+	case "encrypted":
+		return !b.isDiskTypeEncryptedObject(disk, disks)
+	}
+	return false
+}
+
 func (b *Backuper) isDiskTypeEncryptedObject(disk clickhouse.Disk, disks []clickhouse.Disk) bool {
 	if disk.Type != "encrypted" {
 		return false

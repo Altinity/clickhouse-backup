@@ -1,6 +1,8 @@
 package filesystemhelper
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -98,5 +100,53 @@ func TestIsSkipProjections(t *testing.T) {
 				t.Errorf("IsSkipProjections() = %v, want %v", result, tt.expectedResult)
 			}
 		})
+	}
+}
+
+func TestHardlinkPart(t *testing.T) {
+	srcPart := filepath.Join(t.TempDir(), "store", "abc", "abcdef", "all_1_1_0")
+	files := map[string]string{
+		"checksums.txt":               "checksums",
+		"data.bin":                    "data",
+		"delete-on-destroy.txt":       "",
+		"txn_version.txt":             "txn",
+		"metadata_version.txt":        "0",
+		"p.proj/checksums.txt":        "projection checksums",
+		"p.proj/metadata_version.txt": "0",
+	}
+	for name, content := range files {
+		filePath := filepath.Join(srcPart, name)
+		if err := os.MkdirAll(filepath.Dir(filePath), 0750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filePath, []byte(content), 0640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dstPart := filepath.Join(t.TempDir(), "shadow", "uuid", "store", "abc", "abcdef", "all_1_1_0")
+	if err := HardlinkPart(srcPart+"/", dstPart); err != nil {
+		t.Fatalf("HardlinkPart: %v", err)
+	}
+	for _, name := range []string{"checksums.txt", "data.bin", "p.proj/checksums.txt", "p.proj/metadata_version.txt"} {
+		srcInfo, err := os.Stat(filepath.Join(srcPart, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		dstInfo, err := os.Stat(filepath.Join(dstPart, name))
+		if err != nil {
+			t.Fatalf("%s is not linked: %v", name, err)
+		}
+		if !os.SameFile(srcInfo, dstInfo) {
+			t.Errorf("%s is not a hardlink of the source", name)
+		}
+	}
+	for _, name := range []string{"delete-on-destroy.txt", "txn_version.txt", "metadata_version.txt"} {
+		if _, err := os.Stat(filepath.Join(dstPart, name)); !os.IsNotExist(err) {
+			t.Errorf("%s must be excluded from the snapshot, stat error: %v", name, err)
+		}
+	}
+	err := HardlinkPart(filepath.Join(t.TempDir(), "all_2_2_0"), filepath.Join(t.TempDir(), "dst"))
+	if !os.IsNotExist(err) {
+		t.Errorf("a missing part must return a not-exist error, got %v", err)
 	}
 }

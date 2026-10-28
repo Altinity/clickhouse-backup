@@ -489,6 +489,17 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3_plain_rewri
           </s3_plain_rewritable_only>
         </volumes>
       </s3_plain_rewritable_only>
+      <!-- hot local volume and cold plain_rewritable volume, FREEZE is rejected for such tables -->
+      <s3_plain_rewritable_hybrid>
+        <volumes>
+          <hot>
+            <disk>default</disk>
+          </hot>
+          <cold>
+            <disk>disk_s3_plain_rewritable</disk>
+          </cold>
+        </volumes>
+      </s3_plain_rewritable_hybrid>
     </policies>
   </storage_configuration>
 </clickhouse>
