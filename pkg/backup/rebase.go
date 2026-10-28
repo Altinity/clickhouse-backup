@@ -176,16 +176,45 @@ func (b *Backuper) rebaseBackupRegular(ctx context.Context, backupMetadata *meta
 	if rebaseConcurrency < 1 {
 		rebaseConcurrency = 1
 	}
+	requiredBackupNames := make([]string, len(requiredBackups))
+	for i := range requiredBackups {
+		requiredBackupNames[i] = requiredBackups[i].BackupName
+	}
+	log.Info().Fields(map[string]interface{}{
+		"backup":             backupName,
+		"operation":          "rebase",
+		"required_backups":   strings.Join(requiredBackupNames, ","),
+		"tables":             len(backupMetadata.Tables),
+		"rebase_concurrency": rebaseConcurrency,
+		"max_copy_object":    rebaseConcurrency * rebaseConcurrency,
+	}).Msg("rebase start")
 	var copiedBytes, objectDiskBytes, metadataSizeDiff int64
 	rebaseGroup, rebaseCtx := errgroup.WithContext(ctx)
 	rebaseGroup.SetLimit(rebaseConcurrency)
-	for _, t := range backupMetadata.Tables {
+	for idx, t := range backupMetadata.Tables {
 		tableTitle := t
+		progress := fmt.Sprintf("%d/%d", idx+1, len(backupMetadata.Tables))
 		rebaseGroup.Go(func() error {
+			startTable := time.Now()
+			log.Info().Fields(map[string]interface{}{
+				"backup":    backupName,
+				"operation": "rebase",
+				"table":     fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table),
+				"progress":  progress,
+			}).Msg("rebase table start")
 			tableCopiedBytes, tableObjectDiskBytes, tableMetadataDiff, rebaseErr := b.rebaseTable(rebaseCtx, backupMetadata, requiredBackups, tableTitle, srcBucket, remotePath, disks, rebaseConcurrency)
 			if rebaseErr != nil {
 				return rebaseErr
 			}
+			log.Info().Fields(map[string]interface{}{
+				"backup":           backupName,
+				"operation":        "rebase",
+				"table":            fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table),
+				"progress":         progress,
+				"duration":         utils.HumanizeDuration(time.Since(startTable)),
+				"copied_size":      utils.FormatBytes(uint64(tableCopiedBytes)),
+				"object_disk_size": utils.FormatBytes(uint64(tableObjectDiskBytes)),
+			}).Msg("rebase table finish")
 			atomic.AddInt64(&copiedBytes, tableCopiedBytes)
 			atomic.AddInt64(&objectDiskBytes, tableObjectDiskBytes)
 			atomic.AddInt64(&metadataSizeDiff, tableMetadataDiff)
