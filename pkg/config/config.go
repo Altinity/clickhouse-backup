@@ -302,6 +302,7 @@ type S3Config struct {
 	Concurrency             int               `yaml:"concurrency" envconfig:"S3_CONCURRENCY"`
 	MaxPartsCount           int64             `yaml:"max_parts_count" envconfig:"S3_MAX_PARTS_COUNT"`
 	AllowMultipartDownload  bool              `yaml:"allow_multipart_download" envconfig:"S3_ALLOW_MULTIPART_DOWNLOAD"`
+	MultipartDownloadType   string            `yaml:"multipart_download_type" envconfig:"S3_MULTIPART_DOWNLOAD_TYPE"`
 	ObjectLabels            map[string]string `yaml:"object_labels" envconfig:"S3_OBJECT_LABELS"`
 	RequestPayer            string            `yaml:"request_payer" envconfig:"S3_REQUEST_PAYER"`
 	CheckSumAlgorithm       string            `yaml:"check_sum_algorithm" envconfig:"S3_CHECKSUM_ALGORITHM"`
@@ -839,6 +840,9 @@ func ValidateConfig(cfg *Config) error {
 			cfg.S3.Concurrency,
 		)
 	}
+	if kind := strings.TrimSpace(cfg.S3.MultipartDownloadType); !strings.EqualFold(kind, "part") && !strings.EqualFold(kind, "range") {
+		return errors.Errorf("`multipart_download_type` %q is invalid, allowed values: part, range", cfg.S3.MultipartDownloadType)
+	}
 	if cfg.API.Secure {
 		if cfg.API.CertificateFile == "" {
 			return errors.New("api.certificate_file must be defined")
@@ -1062,6 +1066,7 @@ func DefaultConfig() *Config {
 			StorageClass:                string(s3types.StorageClassStandard),
 			Concurrency:                 int(downloadConcurrency + 1),
 			MaxPartsCount:               4000,
+			MultipartDownloadType:       "range",
 			RetryMode:                   string(aws.RetryModeStandard),
 			ChunkSize:                   5 * 1024 * 1024,
 			DeleteConcurrency:           10,
