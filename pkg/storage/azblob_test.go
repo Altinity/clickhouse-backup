@@ -7,6 +7,22 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestAzblobCopySource https://github.com/Altinity/clickhouse-backup/issues/1637
+func TestAzblobCopySource(t *testing.T) {
+	tests := []struct {
+		srcBucket string
+		srcKey    string
+		want      string
+	}{
+		{"container", "backup/shadow/db/table/default_part.tar", "https://acc.blob.core.windows.net/container/backup/shadow/db/table/default_part.tar"},
+		{"container", "backup/shadow/test%2Ddb/t/default_all_1_1_0.tar", "https://acc.blob.core.windows.net/container/backup/shadow/test%252Ddb/t/default_all_1_1_0.tar"},
+		{"/container/", "/backup/shadow/db#1/part name.tar", "https://acc.blob.core.windows.net/container/backup/shadow/db%231/part%20name.tar"},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, azblobCopySource("https", "acc.blob.core.windows.net", tt.srcBucket, tt.srcKey))
+	}
+}
+
 // TestAzureBlobCalculateBlockSize https://github.com/Altinity/clickhouse-backup/issues/1142
 func TestAzureBlobCalculateBlockSize(t *testing.T) {
 	const mib = int64(1024 * 1024)

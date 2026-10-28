@@ -141,14 +141,17 @@ func TestRebaseCOS(t *testing.T) {
 // (guards against the `--env <REMOTE>_COMPRESSION_FORMAT=...` override in createExtraArgs silently
 // degrading to the config file default); createExtraArgs are appended to every create_remote call
 // so the whole chain is uploaded in the same data_format, as `rebase` requires.
-func runRebaseScenario(t *testing.T, r *require.Assertions, env *TestEnvironment, dbName, configFile, objectDiskPolicy, expectedDataFormat string, createExtraArgs ...string) {
-	tables := []string{"t1"}
+// Database and table names contain characters encoded by common.TablePathEncode (like `test-db` or `.inner_id.<uuid>`),
+// so remote keys passed to CopyObject contain literal `%`, see https://github.com/Altinity/clickhouse-backup/issues/1637
+func runRebaseScenario(t *testing.T, r *require.Assertions, env *TestEnvironment, backupPrefix, configFile, objectDiskPolicy, expectedDataFormat string, createExtraArgs ...string) {
+	dbName := backupPrefix + "-#$.ДБ"
+	tables := []string{".t1-#$.Таблица"}
 	if objectDiskPolicy != "" {
-		tables = append(tables, "t2_"+objectDiskPolicy)
+		tables = append(tables, ".t2-#$.Таблица_"+objectDiskPolicy)
 	}
-	fullBackup := dbName + "_full"
-	inc1Backup := dbName + "_inc1"
-	inc2Backup := dbName + "_inc2"
+	fullBackup := backupPrefix + "_full"
+	inc1Backup := backupPrefix + "_inc1"
+	inc2Backup := backupPrefix + "_inc2"
 
 	// deferred (not t.Cleanup) so it unwinds before the caller's `defer env.Cleanup(t, r)`,
 	// while the ClickHouse connection is still open: a mid-scenario `require` failure calls
@@ -165,20 +168,20 @@ func runRebaseScenario(t *testing.T, r *require.Assertions, env *TestEnvironment
 	defer cleanupScenario()
 	cleanupScenario()
 
-	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
-	for _, table := range tables {
+	env.queryWithNoError(t, r, "CREATE DATABASE `"+dbName+"`")
+	for i, table := range tables {
 		policySettings := ""
-		if table != "t1" {
+		if i > 0 {
 			policySettings = fmt.Sprintf(" SETTINGS storage_policy='%s'", objectDiskPolicy)
 		}
-		env.queryWithNoError(t, r, "CREATE TABLE "+dbName+"."+table+" (id UInt64, v String) ENGINE=MergeTree() ORDER BY id"+policySettings)
+		env.queryWithNoError(t, r, "CREATE TABLE `"+dbName+"`.`"+table+"` (id UInt64, v String) ENGINE=MergeTree() ORDER BY id"+policySettings)
 		// keep part names stable between backups, so unchanged parts get `required` attribute in increments
-		env.queryWithNoError(t, r, "SYSTEM STOP MERGES "+dbName+"."+table)
+		env.queryWithNoError(t, r, "SYSTEM STOP MERGES `"+dbName+"`.`"+table+"`")
 	}
 
 	insertRound := func(offset int, payload string) {
 		for _, table := range tables {
-			env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO %s.%s SELECT number+%d, '%s' FROM numbers(100)", dbName, table, offset, payload))
+			env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO `%s`.`%s` SELECT number+%d, '%s' FROM numbers(100)", dbName, table, offset, payload))
 		}
 	}
 
@@ -207,7 +210,12 @@ func runRebaseScenario(t *testing.T, r *require.Assertions, env *TestEnvironment
 	r.Error(err, "rebase %s expected error, got: %s", fullBackup, out)
 	r.Contains(out, "nothing to rebase")
 
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", configFile, "rebase", inc2Backup)
+	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", configFile, "rebase", inc2Backup)
+	r.NoError(err, "rebase %s unexpected error: %s", inc2Backup, out)
+	// rebase parallelism and per table progress must be visible without log_level: debug
+	r.Contains(out, "rebase start")
+	r.Contains(out, "max_copy_object")
+	r.Contains(out, "rebase table finish")
 
 	// the rebased backup on remote storage must keep the chain data_format and lose `required_backup`,
 	// check via `list remote --format=json` (local metadata.json is unusable here - download clears
@@ -255,11 +263,11 @@ func runRebaseScenario(t *testing.T, r *require.Assertions, env *TestEnvironment
 		dropSuffix = " NO DELAY"
 	}
 	for _, table := range tables {
-		env.queryWithNoError(t, r, "DROP TABLE "+dbName+"."+table+dropSuffix)
+		env.queryWithNoError(t, r, "DROP TABLE `"+dbName+"`.`"+table+"`"+dropSuffix)
 	}
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", configFile, "restore_remote", "--rm", inc2Backup)
 	for _, table := range tables {
-		env.checkCount(r, 1, 300, "SELECT count() FROM "+dbName+"."+table)
+		env.checkCount(r, 1, 300, "SELECT count() FROM `"+dbName+"`.`"+table+"`")
 	}
 
 	// downloaded table metadata must not contain `required` parts anymore

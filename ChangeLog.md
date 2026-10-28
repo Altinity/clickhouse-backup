@@ -2,8 +2,12 @@
 NEW FEATURES
 - support tables with local and `plain_rewritable` disks in one storage policy: ClickHouse rejects FREEZE for them, so `create` hardlinks the local parts into `shadow` the way FREEZE does and copies the parts of the plain disks from the bucket, with merges and moves of the table stopped (needs `SYSTEM MERGES` and `SYSTEM MOVES` grants, moves are now stopped for every table on a storage policy with plain disks), plain disks in `skip_disks` are skipped, `clickhouse.disk_mapping` is applied to the part paths, `sync_replicated_tables`, `freeze_by_part_where` and `ignore_not_exists_error_during_freeze` apply to such tables as they apply to FREEZE, parts on object disks with local metadata (including `cache` and `encrypted` wrappers over them) next to plain disks are rejected
 
+IMPROVEMENTS
+- `rebase` copies parts, archives and object disk blobs of one table in parallel, previously every `CopyObject` inside a table ran strictly one by one and `general.rebase_concurrency` limited only the number of tables, now it also limits parallel `CopyObject` requests per table, so up to `rebase_concurrency^2` copies are in flight, `rebase` logs the required backups chain, `rebase_concurrency` and `max_copy_object` on start and `rebase table start` / `rebase table finish` with `progress`, `duration`, `copied_size` and `object_disk_size` for each table at `info` level, fix [#1648](https://github.com/Altinity/clickhouse-backup/issues/1648)
+
 BUG FIXES
 - `s3.allow_multipart_download` now uses byte-range GETs by default, new `s3.multipart_download_type` (env `S3_MULTIPART_DOWNLOAD_TYPE`, default `range`): `range` requests byte ranges of `chunk_size` with `If-Match` set to the multipart object ETag, `part` keeps the previous partNumber GETs, which send the first part ETag as `If-Match` and get HTTP 412 PreconditionFailed on Ceph RGW (Hetzner Object Storage) from part 2 on (each part has its own ETag); the setting applies only when multipart download actually runs (`allow_multipart_download: true` and `download_max_bytes_per_second: 0`), fix [#1632](https://github.com/Altinity/clickhouse-backup/issues/1632)
+- `rebase` with `remote_storage: azblob` no longer fails with `BlobNotFound` for databases and tables whose names need encoding, such as `test-db` or the `.inner_id.` table of a materialized view, the server-side copy source URL is escaped now, fix [#1637](https://github.com/Altinity/clickhouse-backup/issues/1637)
 
 # v2.8.2
 NEW FEATURES
