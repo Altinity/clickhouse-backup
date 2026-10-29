@@ -160,6 +160,28 @@ func TestCredentialsFromDiskArgs_XMLAndSQLParity(t *testing.T) {
 			},
 		},
 		{
+			// https://github.com/Altinity/clickhouse-backup/issues/1562
+			name: "antalya cas object_storage",
+			diskXML: `
+				<type>object_storage</type>
+				<object_storage_type>s3</object_storage_type>
+				<metadata_type>cas</metadata_type>
+				<endpoint>http://minio:9000/clickhouse/disk_cas/</endpoint>
+				<access_key_id>access_key</access_key_id>
+				<secret_access_key>it_is_my_super_secret_key</secret_access_key>
+				<cas_server_root_id>replica1</cas_server_root_id>
+			`,
+			args: map[string]string{
+				"type":                "object_storage",
+				"object_storage_type": "s3",
+				"metadata_type":       "cas",
+				"endpoint":            "http://minio:9000/clickhouse/disk_cas/",
+				"access_key_id":       "access_key",
+				"secret_access_key":   "it_is_my_super_secret_key",
+				"cas_server_root_id":  "replica1",
+			},
+		},
+		{
 			name: "s3 without keys uses environment",
 			diskXML: `
 				<type>s3</type>

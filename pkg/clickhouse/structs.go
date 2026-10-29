@@ -60,6 +60,12 @@ func (d Disk) IsPlain() bool {
 	return d.MetadataType == "plain" || d.MetadataType == "plain_rewritable"
 }
 
+// IsCAS returns true for Antalya content-addressed disks (metadata_type=cas), parts live in the object storage pool
+// without local VFS metadata files, https://github.com/Altinity/clickhouse-backup/issues/1562
+func (d Disk) IsCAS() bool {
+	return d.MetadataType == "cas"
+}
+
 // Database - Clickhouse system.databases struct
 type Database struct {
 	Name   string `ch:"name"`
