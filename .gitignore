@@ -29,3 +29,5 @@ __pycache__/
 *.py[cod]
 test/testflows/clickhouse_backup/configs/backup_*/
 pyrightconfig.json
+docs/clickhouse-backup-v2-design-state.md
+docs/superpowers/
