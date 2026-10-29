@@ -465,6 +465,43 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 	return parts, size, checksums, nil
 }
 
+// frozenPartExcludedFiles are the files ClickHouse removes from the FREEZE snapshot of a part,
+// see DataPartStorageOnDiskBase::freeze
+var frozenPartExcludedFiles = map[string]struct{}{
+	"delete-on-destroy.txt": {},
+	"txn_version.txt":       {},
+	"metadata_version.txt":  {},
+}
+
+// HardlinkPart takes the snapshot of a part on a local disk the way ALTER TABLE FREEZE does: it hardlinks every
+// file of srcPartPath into dstPartPath, keeping subdirectories (projections), without frozenPartExcludedFiles.
+// dstPartPath, its missing parents and its subdirectories are created as the current user: MoveShadowToBackup
+// recreates them in the backup anyway and the caller removes them with the snapshot. The shadow root above them is
+// shared with clickhouse-server, the caller creates it with the owner the server expects, see
+// backup.Backuper.prepareShadowDir. A missing srcPartPath is returned as a not-exist error, a file excluded from
+// the snapshot which disappears between the directory listing and its stat is ignored
+func HardlinkPart(srcPartPath, dstPartPath string) error {
+	srcPartPath = strings.TrimSuffix(srcPartPath, "/")
+	return filepath.Walk(srcPartPath, func(filePath string, info os.FileInfo, err error) error {
+		relativePath := strings.TrimPrefix(strings.TrimPrefix(filePath, srcPartPath), "/")
+		_, excluded := frozenPartExcludedFiles[relativePath]
+		if err != nil {
+			if excluded && os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		dstFilePath := filepath.Join(dstPartPath, relativePath)
+		if info.IsDir() {
+			return os.MkdirAll(dstFilePath, 0750)
+		}
+		if !info.Mode().IsRegular() || excluded {
+			return nil
+		}
+		return os.Link(filePath, dstFilePath)
+	})
+}
+
 // LinkPartFromShadow walks shadowPath and hard-links (or renames for older CH)
 // every file that belongs to partName into backupPartsPath. Used to back up a
 // part that was initially marked Required against --diff-from-remote by name

@@ -3,12 +3,15 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/require"
 )
@@ -157,4 +160,130 @@ func TestPlainRewritableAzure(t *testing.T) {
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
 	env.runPlainRewritableScenario(t, r, "config-azblob.yml", "test_plain_rewritable_azure", "azure_plain_rewritable_only")
+}
+
+// runPlainRewritableHybridScenario backs up a table of the s3_plain_rewritable_hybrid policy with partition 0 moved to
+// the plain_rewritable volume, checks that merges and moves of the table work again after create and that the
+// backup metadata lists the local parts and, unless skipPlainDisk put the plain disk into skip_disks, the plain
+// ones. With checkRestore the table is then dropped, restored and its row count verified, restore into
+// plain_rewritable needs ClickHouse 25.11+.
+func (env *TestEnvironment) runPlainRewritableHybridScenario(t *testing.T, r *require.Assertions, dbName string, skipPlainDisk, checkRestore bool) {
+	backupName := fmt.Sprintf("%s_%d", dbName, rand.Int())
+	tableName := "data"
+	backupEnv := ""
+	if skipPlainDisk {
+		backupEnv = "CLICKHOUSE_SKIP_DISKS=disk_s3_plain_rewritable "
+	}
+
+	env.queryWithNoError(t, r, "DROP DATABASE IF EXISTS "+dbName+" SYNC")
+	defer func() {
+		if t.Failed() {
+			if dropErr := env.ch.Query("DROP DATABASE IF EXISTS " + dbName + " SYNC"); dropErr != nil {
+				t.Logf("deferred DROP DATABASE %s: %v", dbName, dropErr)
+			}
+		}
+	}()
+	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
+	env.queryWithNoError(t, r, fmt.Sprintf(
+		"CREATE TABLE %s.%s (id UInt64, payload String) ENGINE=MergeTree() PARTITION BY id %% 4 ORDER BY id SETTINGS storage_policy='s3_plain_rewritable_hybrid'",
+		dbName, tableName,
+	))
+	env.queryWithNoError(t, r, fmt.Sprintf(
+		"INSERT INTO %s.%s SELECT number, repeat('x', 128) FROM numbers(1000)",
+		dbName, tableName,
+	))
+	env.queryWithNoError(t, r, fmt.Sprintf("ALTER TABLE %s.%s MOVE PARTITION ID '0' TO VOLUME 'cold'", dbName, tableName))
+	env.checkCount(r, 1, 1, fmt.Sprintf(
+		"SELECT count() FROM (SELECT DISTINCT disk_name FROM system.parts WHERE database='%s' AND table='%s' AND active AND disk_name='disk_s3_plain_rewritable')",
+		dbName, tableName,
+	))
+
+	// without <disk>/shadow create makes it for the hardlinks of the local parts, as root in the clickhouse-backup
+	// container: the directory is shared with clickhouse-server and must get its owner, see the FREEZE check below
+	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-rf", "/var/lib/clickhouse/shadow")
+
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce",
+		backupEnv+"clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create_remote --tables="+dbName+".* "+backupName)
+	log.Debug().Msg(out)
+	r.NoError(err, out)
+
+	// SYSTEM STOP MERGES / STOP MOVES of create are undone: an OPTIMIZE and a move succeed
+	env.queryWithNoError(t, r, fmt.Sprintf("OPTIMIZE TABLE %s.%s PARTITION ID '1' FINAL", dbName, tableName))
+	env.queryWithNoError(t, r, fmt.Sprintf("ALTER TABLE %s.%s MOVE PARTITION ID '1' TO VOLUME 'cold'", dbName, tableName))
+
+	// clickhouse-server stats shadow/increment.txt on every FREEZE: a shadow directory left to root by create would
+	// fail the FREEZE of every table on the server with Permission denied
+	frozenTable := "frozen_after_create"
+	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE %s.%s (id UInt64) ENGINE=MergeTree() ORDER BY id", dbName, frozenTable))
+	env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO %s.%s SELECT number FROM numbers(10)", dbName, frozenTable))
+	env.queryWithNoError(t, r, fmt.Sprintf("ALTER TABLE %s.%s FREEZE WITH NAME '%s'", dbName, frozenTable, backupName))
+	env.queryWithNoError(t, r, fmt.Sprintf("ALTER TABLE %s.%s UNFREEZE WITH NAME '%s'", dbName, frozenTable, backupName))
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE %s.%s SYNC", dbName, frozenTable))
+
+	// the local parts of partitions 1..3 come from the hardlinked shadow of the default disk, the parts of
+	// partition 0 from the bucket of the plain disk
+	metaOut, metaErr := env.DockerExecOut("clickhouse-backup", "cat",
+		fmt.Sprintf("/var/lib/clickhouse/backup/%s/metadata/%s/%s.json", backupName, dbName, tableName))
+	r.NoError(metaErr, "can't read table metadata json: %s", metaOut)
+	var tableMeta metadata.TableMetadata
+	r.NoError(json.Unmarshal([]byte(metaOut), &tableMeta), "can't parse table metadata json: %s", metaOut)
+	r.NotEmpty(tableMeta.Parts["default"], "local parts must be in the backup: %s", metaOut)
+	if skipPlainDisk {
+		r.Empty(tableMeta.Parts["disk_s3_plain_rewritable"], "the skipped plain disk must not be in the backup: %s", metaOut)
+	} else {
+		r.NotEmpty(tableMeta.Parts["disk_s3_plain_rewritable"], "plain disk parts must be in the backup: %s", metaOut)
+	}
+	for diskName, diskParts := range tableMeta.Parts {
+		for _, p := range diskParts {
+			if strings.SplitN(p.Name, "_", 2)[0] == "0" {
+				r.Equal("disk_s3_plain_rewritable", diskName, "partition 0 was moved to the plain disk: %s", metaOut)
+			}
+		}
+	}
+
+	if !checkRestore {
+		fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{dbName}, false, true, true, "config-s3.yml")
+		return
+	}
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c",
+		"/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE %s.%s SYNC", dbName, tableName))
+	env.queryWithNoError(t, r, "DROP DATABASE "+dbName+" SYNC")
+
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce",
+		backupEnv+"clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore_remote "+backupName)
+	log.Debug().Msg(out)
+	r.NoError(err, out)
+
+	expectedColdRows := uint64(250)
+	if skipPlainDisk {
+		expectedColdRows = 0
+	}
+	env.checkCount(r, 1, 750+expectedColdRows, fmt.Sprintf("SELECT count() FROM %s.%s", dbName, tableName))
+	env.checkCount(r, 1, expectedColdRows, fmt.Sprintf("SELECT count() FROM %s.%s WHERE id %% 4 = 0 SETTINGS empty_result_for_aggregation_by_empty_set=0", dbName, tableName))
+
+	fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{dbName}, false, true, true, "config-s3.yml")
+}
+
+// TestPlainRewritableHybridS3 verifies a table whose storage policy keeps a hot volume on a local disk and a cold
+// volume on a plain_rewritable disk (s3_plain_rewritable_hybrid in dynamic_settings.sh). ClickHouse rejects FREEZE for
+// such a table, so create hardlinks the local parts with merges and moves stopped and copies the plain parts from
+// the bucket. With the plain disk in skip_disks only the local parts (partitions 1..3, 750 rows) are backed up and
+// restored; without it the whole table is backed up on every version, and comes back on restore into
+// plain_rewritable (25.11+).
+func TestPlainRewritableHybridS3(t *testing.T) {
+	version := os.Getenv("CLICKHOUSE_VERSION")
+	// before 25.4 ALTER TABLE MOVE|ATTACH PARTITION|PART is rejected for a table with a plain_rewritable disk in its
+	// storage policy, https://github.com/ClickHouse/ClickHouse/commit/b2a1123c13e
+	if compareVersion(version, "25.4") < 0 {
+		t.Skipf("Test requires ClickHouse >= 25.4 (MOVE and ATTACH PART on a storage policy with plain_rewritable disks), current %s", version)
+	}
+
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+
+	env.runPlainRewritableHybridScenario(t, r, "test_plain_rewritable_hybrid", true, true)
+	env.runPlainRewritableHybridScenario(t, r, "test_plain_rewritable_hybrid", false, compareVersion(version, "25.11") >= 0)
+	env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3_plain_rewritable")
 }

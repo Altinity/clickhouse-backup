@@ -1009,6 +1009,32 @@ func (ch *ClickHouse) FreezeTableByParts(ctx context.Context, table *Table, name
 	return nil
 }
 
+// IsIgnorableNotExistsError reports whether err says the table or its database is gone (codes 60 UNKNOWN_TABLE,
+// 81 UNKNOWN_DATABASE, 218 TABLE_IS_DROPPED) and `ignore_not_exists_error_during_freeze` tells to skip such a
+// table, dropped concurrently with the backup, instead of failing
+func (ch *ClickHouse) IsIgnorableNotExistsError(err error) bool {
+	if err == nil || !ch.Config.IgnoreNotExistsErrorDuringFreeze {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "code: 60") || strings.Contains(msg, "code: 81") || strings.Contains(msg, "code: 218")
+}
+
+// SyncReplicatedTable runs SYSTEM SYNC REPLICA for a Replicated table when `sync_replicated_tables` asks for it,
+// so the snapshot taken right after it holds the parts the replica fetched so far. Best effort: a failed sync
+// only produces a warning
+func (ch *ClickHouse) SyncReplicatedTable(ctx context.Context, table *Table) {
+	if !strings.HasPrefix(table.Engine, "Replicated") || !ch.Config.SyncReplicatedTables {
+		return
+	}
+	query := fmt.Sprintf("SYSTEM SYNC REPLICA `%s`.`%s`;", table.Database, table.Name)
+	if err := ch.QueryContext(ctx, query); err != nil {
+		log.Warn().Msgf("can't sync replica: %v", err)
+	} else {
+		log.Debug().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Msg("replica synced")
+	}
+}
+
 // FreezeTable - freeze all partitions for table
 // This way available for ClickHouse since v19.1
 func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string) error {
@@ -1016,14 +1042,7 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 	if err != nil {
 		return errors.Wrap(err, "FreezeTable: get version")
 	}
-	if strings.HasPrefix(table.Engine, "Replicated") && ch.Config.SyncReplicatedTables {
-		query := fmt.Sprintf("SYSTEM SYNC REPLICA `%s`.`%s`;", table.Database, table.Name)
-		if err := ch.QueryContext(ctx, query); err != nil {
-			log.Warn().Msgf("can't sync replica: %v", err)
-		} else {
-			log.Debug().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Msg("replica synced")
-		}
-	}
+	ch.SyncReplicatedTable(ctx, table)
 	if version < 19001005 || ch.Config.FreezeByPart {
 		return ch.FreezeTableByParts(ctx, table, name)
 	}
@@ -1033,7 +1052,7 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 	}
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE %s;", table.Database, table.Name, withNameQuery)
 	if err := ch.QueryContext(ctx, query); err != nil {
-		if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81") || strings.Contains(err.Error(), "code: 218")) && ch.Config.IgnoreNotExistsErrorDuringFreeze {
+		if ch.IsIgnorableNotExistsError(err) {
 			log.Warn().Msgf("can't freeze table: %v", err)
 			return nil
 		}

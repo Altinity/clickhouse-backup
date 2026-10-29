@@ -1,4 +1,7 @@
 # v2.8.3
+NEW FEATURES
+- support tables with local and `plain_rewritable` disks in one storage policy: ClickHouse rejects FREEZE for them, so `create` hardlinks the local parts into `shadow` the way FREEZE does and copies the parts of the plain disks from the bucket, with merges and moves of the table stopped (needs `SYSTEM MERGES` and `SYSTEM MOVES` grants, moves are now stopped for every table on a storage policy with plain disks), plain disks in `skip_disks` are skipped, `clickhouse.disk_mapping` is applied to the part paths, `sync_replicated_tables`, `freeze_by_part_where` and `ignore_not_exists_error_during_freeze` apply to such tables as they apply to FREEZE, parts on object disks with local metadata (including `cache` and `encrypted` wrappers over them) next to plain disks are rejected
+
 IMPROVEMENTS
 - `rebase` copies parts, archives and object disk blobs of one table in parallel, previously every `CopyObject` inside a table ran strictly one by one and `general.rebase_concurrency` limited only the number of tables, now it also limits parallel `CopyObject` requests per table, so up to `rebase_concurrency^2` copies are in flight, `rebase` logs the required backups chain, `rebase_concurrency` and `max_copy_object` on start and `rebase table start` / `rebase table finish` with `progress`, `duration`, `copied_size` and `object_disk_size` for each table at `info` level, fix [#1648](https://github.com/Altinity/clickhouse-backup/issues/1648)
 
