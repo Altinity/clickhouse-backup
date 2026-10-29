@@ -425,7 +425,8 @@ func (b *Backuper) downloadEpilogue(ctx context.Context, backupName string, remo
 		return err
 	}
 	for _, disk := range disks {
-		if disk.IsBackup {
+		// a regular backup writes nothing to embedded_backup_disk, https://github.com/Altinity/clickhouse-backup/issues/1653
+		if b.isEmbedded && disk.IsBackup {
 			if err = filesystemhelper.Chown(path.Join(disk.Path, backupName), b.ch, disks, true); err != nil {
 				return errors.Wrap(err, "Chown backup disk")
 			}
