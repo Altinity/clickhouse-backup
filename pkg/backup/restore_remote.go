@@ -96,8 +96,14 @@ func (b *Backuper) RestoreFromRemote(backupName, tablePattern string, databaseMa
 			if ctxErr != nil {
 				return pkgerrors.Wrap(ctxErr, "RestoreFromRemote GetContextWithCancel")
 			}
+			// Download closes clickhouse connection on return
+			if err := b.ch.Connect(); err != nil {
+				cancel()
+				return pkgerrors.Wrap(err, "can't connect to clickhouse")
+			}
 			funcErr := b.addFunctionsToDryRunReport(ctx, b.DryRunResult, b.DryRunResult.backupFunctions, dropExists)
 			cancel()
+			b.ch.Close()
 			if funcErr != nil {
 				return pkgerrors.Wrap(funcErr, "addFunctionsToDryRunReport")
 			}

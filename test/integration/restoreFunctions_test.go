@@ -70,7 +70,7 @@ func TestRestoreFunctionsKeepExisting(t *testing.T) {
 	r.Contains(functionQuery(incFunc), "x + 100")
 	r.Contains(functionQuery(doubleFunc), "x * 2")
 	env.checkCount(r, 1, 100, "SELECT count() FROM "+dbName+".t")
-	env.checkCount(r, 1, 9900, "SELECT sum(y) FROM "+dbName+".mv")
+	env.checkCount(r, 1, 100, "SELECT count() FROM "+dbName+".mv WHERE y = x * 2")
 
 	// restore --dry-run from local backup, --rm replaces changed function
 	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", cfg, "restore", "--dry-run", "--rm", "--tables="+dbName+".*", backupName)
@@ -93,7 +93,7 @@ func TestRestoreFunctionsKeepExisting(t *testing.T) {
 	log.Debug().Msg(out)
 	r.NoError(err, out)
 	env.checkCount(r, 1, 100, "SELECT count() FROM "+dbName+".t")
-	env.checkCount(r, 1, 9900, "SELECT sum(y) FROM "+dbName+".mv")
+	env.checkCount(r, 1, 100, "SELECT count() FROM "+dbName+".mv WHERE y = x * 2")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", cfg, "delete", "local", backupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", cfg, "delete", "remote", backupName)
