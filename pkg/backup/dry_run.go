@@ -3,6 +3,7 @@ package backup
 import (
 	"encoding/json"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/rs/zerolog/log"
 )
@@ -34,6 +35,11 @@ type DryRunReport struct {
 	// SkippedDataTables is restore only, non-sharded replicated tables whose data is restored on another node,
 	// https://github.com/Altinity/clickhouse-backup/issues/1181
 	SkippedDataTables []string `json:"skipped_data_tables,omitempty"`
+	// Functions is restore only, function name -> create, replace, keep_existing or skip_identical,
+	// https://github.com/Altinity/clickhouse-backup/issues/1636
+	Functions map[string]string `json:"functions,omitempty"`
+	// backupFunctions is filled by download dry-run, restore_remote --dry-run plans functions restore with it
+	backupFunctions []metadata.FunctionsMeta
 }
 
 // JSONString marshals the report for the `result` field of a status row, it returns
@@ -94,6 +100,9 @@ func (b *Backuper) setDryRunResult(r *DryRunReport) {
 	}
 	if len(r.SkippedDataTables) > 0 {
 		fields["skipped_data_tables"] = r.SkippedDataTables
+	}
+	if len(r.Functions) > 0 {
+		fields["functions"] = r.Functions
 	}
 	log.Info().Fields(fields).Msgf("dry-run: would process %d tables, %s data", r.TableCount, utils.FormatBytes(r.TotalSize))
 }

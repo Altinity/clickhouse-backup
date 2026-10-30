@@ -38,6 +38,12 @@ func (b *Backuper) dryRunRestore(ctx context.Context, backupName string, backupM
 		setTotalAndReport()
 		return nil
 	}
+	// https://github.com/Altinity/clickhouse-backup/issues/1636
+	if schemaOnly || schemaOnly == dataOnly {
+		if err := b.addFunctionsToDryRunReport(ctx, report, backupMetadata.Functions, dropExists); err != nil {
+			return err
+		}
+	}
 	if tablePattern == "" {
 		tablePattern = "*"
 	}
@@ -117,5 +123,21 @@ func (b *Backuper) dryRunRestore(ctx context.Context, backupName string, backupM
 		}
 	}
 	setTotalAndReport()
+	return nil
+}
+
+// addFunctionsToDryRunReport shows what restore would do with each function from backup,
+// https://github.com/Altinity/clickhouse-backup/issues/1636
+func (b *Backuper) addFunctionsToDryRunReport(ctx context.Context, report *DryRunReport, backupFunctions []metadata.FunctionsMeta, dropExists bool) error {
+	plan, err := b.functionsRestorePlan(ctx, backupFunctions, dropExists)
+	if err != nil {
+		return err
+	}
+	for _, p := range plan {
+		if report.Functions == nil {
+			report.Functions = make(map[string]string, len(plan))
+		}
+		report.Functions[p.Function.Name] = p.Action
+	}
 	return nil
 }

@@ -82,7 +82,7 @@ func (b *Backuper) collectRemoteTablesForDryRun(ctx context.Context, backupName 
 // backup directory, without writing table metadata and without resumable state,
 // https://github.com/Altinity/clickhouse-backup/issues/1012
 func (b *Backuper) dryRunDownload(ctx context.Context, remoteBackup storage.Backup, disks []clickhouse.Disk, tablesForDownload []metadata.TableTitle, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, hardlinkExistsFiles bool) error {
-	report := &DryRunReport{Command: "download", BackupName: remoteBackup.BackupName}
+	report := &DryRunReport{Command: "download", BackupName: remoteBackup.BackupName, backupFunctions: remoteBackup.Functions}
 	// same conditions as the real download below
 	if rbacOnly || rbacOnly == configsOnly == namedCollectionsOnly == false {
 		report.RBACSize = remoteBackup.RBACSize

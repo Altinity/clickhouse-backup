@@ -134,13 +134,6 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 			return errors.Wrap(restoreErr, "RestoreData")
 		}
 	}
-	// do not create UDF when use --data, --rbac-only, --configs-only flags, https://github.com/Altinity/clickhouse-backup/issues/697
-	if (schemaOnly || (schemaOnly == dataOnly)) && !b.embeddedClusterWorkerSkipsDDL() {
-		if funcErr := b.restoreFunctions(ctx, backupMetadata); funcErr != nil {
-			return errors.Wrap(funcErr, "restoreFunctions")
-		}
-	}
-
 	//clean partially downloaded requiredBackup
 	if backupMetadata.RequiredBackup != "" {
 		if err = b.cleanPartialRequiredBackup(ctx, disks, backupMetadata.BackupName); err != nil {
@@ -486,6 +479,13 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 		}
 	}
 
+	// do not create UDF when use --data, --rbac-only, --configs-only flags, https://github.com/Altinity/clickhouse-backup/issues/697
+	// create UDF before tables, DEFAULT expressions and materialized views could use it, https://github.com/Altinity/clickhouse-backup/issues/1636
+	if (schemaOnly || (schemaOnly == dataOnly)) && !b.embeddedClusterWorkerSkipsDDL() {
+		if err = b.restoreFunctions(ctx, backupMetadata, dropExists); err != nil {
+			return nil, errors.Wrap(err, "restoreFunctions")
+		}
+	}
 	if schemaOnly || dropExists || (schemaOnly == dataOnly) {
 		// Safety check: prevent accidental data loss when restore_schema_on_cluster is set
 		// via config but RESTORE_SCHEMA_ON_CLUSTER env var is empty, and --rm/--drop is not provided.
@@ -529,32 +529,6 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 	result.dataTablesForRestore = dataTablesForRestore
 	result.existingTablesSnapshot = existingTablesSnapshot
 	return result, nil
-}
-
-func (b *Backuper) restoreFunctions(ctx context.Context, backupMetadata metadata.BackupMetadata) error {
-	// https://github.com/Altinity/clickhouse-backup/issues/1123
-	onCluster := b.cfg.General.RestoreSchemaOnCluster
-	if onCluster != "" && len(backupMetadata.Functions) > 0 {
-		configFile, doc, configErr := b.ch.ParseXML(ctx, "config.xml")
-		if configErr != nil {
-			return errors.Wrapf(configErr, "can't parse %s", configFile)
-		}
-		userDefinedKeeperPathNode := doc.SelectElement("//user_defined_zookeeper_path")
-		if userDefinedKeeperPathNode != nil {
-			userDefinedKeeperPath := strings.Trim(userDefinedKeeperPathNode.InnerText(), " \t\r\n")
-			if userDefinedKeeperPath != "" {
-				log.Warn().Msgf("%s contains <user_defined_zookeeper_path>%s</user_defined_zookeeper_path> ON CLUSTER '%s' will ignored during functions restore", configFile, userDefinedKeeperPath, onCluster)
-				onCluster = ""
-			}
-		}
-	}
-
-	for _, function := range backupMetadata.Functions {
-		if funcErr := b.ch.CreateUserDefinedFunction(function.Name, function.CreateQuery, onCluster); funcErr != nil {
-			return errors.Wrap(funcErr, "CreateUserDefinedFunction")
-		}
-	}
-	return nil
 }
 
 func (b *Backuper) getTablesForRestoreLocal(ctx context.Context, backupName string, metadataPath string, tablePattern string, dropTable bool, partitions []string) (ListOfTables, map[metadata.TableTitle][]string, error) {

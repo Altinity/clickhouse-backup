@@ -1629,14 +1629,11 @@ func (ch *ClickHouse) GetUserDefinedFunctions(ctx context.Context) ([]Function, 
 	return allFunctions, nil
 }
 
-func (ch *ClickHouse) CreateUserDefinedFunction(name string, query string, cluster string) error {
-	dropQuery := fmt.Sprintf("DROP FUNCTION IF EXISTS `%s`", name)
+// CreateUserDefinedFunction runs `CREATE OR REPLACE FUNCTION` or `CREATE FUNCTION IF NOT EXISTS` query without DROP before,
+// DROP makes function unavailable between DROP and CREATE, https://github.com/Altinity/clickhouse-backup/issues/1636
+func (ch *ClickHouse) CreateUserDefinedFunction(query string, cluster string) error {
 	if cluster != "" {
-		dropQuery += fmt.Sprintf(" ON CLUSTER '%s'", cluster)
 		query = strings.Replace(query, " AS ", fmt.Sprintf(" ON CLUSTER '%s' AS ", cluster), 1)
-	}
-	if err := ch.Query(dropQuery); err != nil {
-		return errors.Wrap(err, "CreateUserDefinedFunction: drop existing")
 	}
 	if err := ch.Query(query); err != nil {
 		return errors.Wrap(err, "CreateUserDefinedFunction: create function")
