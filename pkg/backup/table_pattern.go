@@ -357,6 +357,14 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 	for i := 0; i < len(*originTables); i++ {
 		originTable := (*originTables)[i]
 		if targetDB, isMapped := dbMapRule[originTable.Database]; isMapped {
+			// Preserve the backup-side names before they are overwritten with the target,
+			// so the embedded RESTORE path can emit `RESTORE TABLE <origin> AS <target>`.
+			if originTable.OriginalDatabase == "" {
+				originTable.OriginalDatabase = originTable.Database
+			}
+			if originTable.OriginalTable == "" {
+				originTable.OriginalTable = originTable.Table
+			}
 			// substitute database in the table create query
 			var substitution string
 
@@ -455,6 +463,15 @@ func changeTableQueryToAdjustTableMapping(originTables *ListOfTables, tableMapRu
 		originTable := (*originTables)[i]
 		_, targetDatabase, targetTable, isMapped := lookupTableMapping(tableMapRule, originTable.Database, originTable.Table)
 		if isMapped {
+			// Preserve the backup-side names before they are overwritten with the target,
+			// so the embedded RESTORE path can emit `RESTORE TABLE <origin> AS <target>`.
+			// db-mapping runs first, so guard OriginalDatabase to keep the true origin.
+			if originTable.OriginalDatabase == "" {
+				originTable.OriginalDatabase = originTable.Database
+			}
+			if originTable.OriginalTable == "" {
+				originTable.OriginalTable = originTable.Table
+			}
 			// substitute table in the table create query
 			var substitution string
 
