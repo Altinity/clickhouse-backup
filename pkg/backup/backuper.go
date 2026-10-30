@@ -373,6 +373,13 @@ func (b *Backuper) checkDisksConsistency(disks []clickhouse.Disk) error {
 		if b.isDiskPlain(disk) {
 			continue
 		}
+		// cas disks have no local filesystem presence either, only embedded BACKUP/RESTORE can read and write their parts
+		if disk.IsCAS() {
+			if !b.cfg.ClickHouse.UseEmbeddedBackupRestore {
+				problems = append(problems, fmt.Sprintf("disk %q (type %q, metadata_type %q) has no local files, set clickhouse.use_embedded_backup_restore: true", disk.Name, disk.Type, disk.MetadataType))
+			}
+			continue
+		}
 		// clickhouse-server started with a relative `<path>`: without disk_mapping we can't know the server
 		// working directory, resolving it against our own cwd would hardlink parts into the wrong tree,
 		// fix https://github.com/Altinity/clickhouse-backup/issues/1121

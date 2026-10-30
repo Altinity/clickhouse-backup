@@ -28,6 +28,7 @@ func TestCheckDisksConsistency(t *testing.T) {
 	testcases := []struct {
 		name      string
 		skipDisks []string
+		embedded  bool
 		disks     func(t *testing.T) []clickhouse.Disk
 		wantErr   string // substring; "" means no error
 	}{
@@ -119,6 +120,26 @@ func TestCheckDisksConsistency(t *testing.T) {
 			wantErr: `set clickhouse.disk_mapping["default"]`,
 		},
 		{
+			name:     "cas disk without local path is fine for embedded backup (issue #1562)",
+			embedded: true,
+			disks: func(t *testing.T) []clickhouse.Disk {
+				return []clickhouse.Disk{
+					{Name: "default", Type: "local", Path: mkLocalDisk(t, "store")},
+					{Name: "cas", Type: "s3", MetadataType: "cas", Path: "/non/existent/cas_prefix/"},
+				}
+			},
+		},
+		{
+			name: "cas disk requires embedded backup (issue #1562)",
+			disks: func(t *testing.T) []clickhouse.Disk {
+				return []clickhouse.Disk{
+					{Name: "default", Type: "local", Path: mkLocalDisk(t, "store")},
+					{Name: "cas", Type: "s3", MetadataType: "cas", Path: "/non/existent/cas_prefix/"},
+				}
+			},
+			wantErr: "use_embedded_backup_restore: true",
+		},
+		{
 			name: "disk path is a file not a directory",
 			disks: func(t *testing.T) []clickhouse.Disk {
 				root := t.TempDir()
@@ -136,7 +157,8 @@ func TestCheckDisksConsistency(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{
 				ClickHouse: config.ClickHouseConfig{
-					SkipDisks: tc.skipDisks,
+					SkipDisks:                tc.skipDisks,
+					UseEmbeddedBackupRestore: tc.embedded,
 				},
 			}
 			b := NewBackuper(cfg)
