@@ -90,6 +90,24 @@ func (b *Backuper) RestoreFromRemote(backupName, tablePattern string, databaseMa
 	// https://github.com/Altinity/clickhouse-backup/issues/1012
 	if b.DryRun && b.DryRunResult != nil {
 		b.DryRunResult.Command = "restore_remote"
+		// https://github.com/Altinity/clickhouse-backup/issues/1636
+		if (schemaOnly || schemaOnly == dataOnly) && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+			ctx, cancel, ctxErr := status.Current.GetContextWithCancel(commandId)
+			if ctxErr != nil {
+				return pkgerrors.Wrap(ctxErr, "RestoreFromRemote GetContextWithCancel")
+			}
+			// Download closes clickhouse connection on return
+			if err := b.ch.Connect(); err != nil {
+				cancel()
+				return pkgerrors.Wrap(err, "can't connect to clickhouse")
+			}
+			funcErr := b.addFunctionsToDryRunReport(ctx, b.DryRunResult, b.DryRunResult.backupFunctions, dropExists)
+			cancel()
+			b.ch.Close()
+			if funcErr != nil {
+				return pkgerrors.Wrap(funcErr, "addFunctionsToDryRunReport")
+			}
+		}
 		b.setDryRunResult(b.DryRunResult)
 		return nil
 	}
@@ -296,11 +314,6 @@ func (b *Backuper) restoreFromRemoteStreaming(backupName, tablePattern string, d
 			if err != nil {
 				return err
 			}
-		}
-	}
-	if !prologue.done && (schemaOnly || (schemaOnly == dataOnly)) {
-		if funcErr := b.restoreFunctions(ctx, prologue.backupMetadata); funcErr != nil {
-			return pkgerrors.Wrap(funcErr, "restoreFunctions")
 		}
 	}
 	// RemoveBackupLocal replaces and closes b.dst when object disks present, so the download destination is put back
