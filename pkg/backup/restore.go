@@ -1779,7 +1779,7 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, backupM
 	}
 	var restoreErr error
 	if b.isEmbedded {
-		restoreErr = b.restoreSchemaEmbedded(ctx, backupName, backupMetadata, disks, tablesForRestore, version)
+		restoreErr = b.restoreSchemaEmbedded(ctx, backupName, backupMetadata, disks, tablesForRestore, databaseEnginesForRestore, version)
 	} else {
 		restoreErr = b.restoreSchemaRegular(ctx, tablesForRestore, databaseEnginesForRestore, version, schemaAsAttach)
 	}
@@ -1828,7 +1828,7 @@ var UUIDWithMergeTreeRE = regexp.MustCompile(`^(.+)(UUID)(\s+)'([^']+)'(.+)({uui
 
 var emptyReplicatedMergeTreeRE = regexp.MustCompile(`(?m)Replicated(MergeTree|ReplacingMergeTree|SummingMergeTree|AggregatingMergeTree|CollapsingMergeTree|VersionedCollapsingMergeTree|GraphiteMergeTree)\s*(\(([^']*)\)|(\w+))(.*)`)
 
-func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, disks []clickhouse.Disk, tablesForRestore ListOfTables, version int) error {
+func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, disks []clickhouse.Disk, tablesForRestore ListOfTables, databaseEnginesForRestore map[string]string, version int) error {
 	var err error
 	if tablesForRestore == nil || len(tablesForRestore) == 0 {
 		if !b.cfg.General.AllowEmptyBackups {
@@ -1849,6 +1849,24 @@ func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string,
 		// the initiator issues RESTORE ... ON CLUSTER for every node once all workers fixed their metadata
 		log.Info().Msgf("--%s: %s metadata fixed, skip RESTORE SQL", embeddedOnClusterWorkerFlag, b.embeddedClusterPrefix)
 		return nil
+	}
+	// RESTORE ... AS doesn't create mapped target database which is absent in backup, create it like restoreSchemaRegular does,
+	// https://github.com/Altinity/clickhouse-backup/issues/1658
+	isDatabaseCreated := common.EmptyMap{}
+	for _, schema := range tablesForRestore {
+		if _, isCreated := isDatabaseCreated[schema.Database]; isCreated || schema.OriginalDatabase == "" || schema.OriginalDatabase == schema.Database {
+			continue
+		}
+		var createDbErr error
+		if version > 20008000 && databaseEnginesForRestore[schema.Database] != "" {
+			createDbErr = b.ch.CreateDatabaseWithEngine(schema.Database, databaseEnginesForRestore[schema.Database], b.cfg.General.RestoreSchemaOnCluster, version)
+		} else {
+			createDbErr = b.ch.CreateDatabase(schema.Database, b.cfg.General.RestoreSchemaOnCluster)
+		}
+		if createDbErr != nil {
+			return errors.Wrapf(createDbErr, "can't create database '%s'", schema.Database)
+		}
+		isDatabaseCreated[schema.Database] = struct{}{}
 	}
 	return b.restoreEmbedded(ctx, backupName, true, false, version, tablesForRestore, nil)
 }
@@ -3701,6 +3719,28 @@ func (b *Backuper) changeTablePatternFromRestoreMapping(tablePattern, objType st
 	return tablePattern
 }
 
+// embeddedRestoreObjectSQL builds the "<kind> `db`.`table`" (optionally "... AS `db`.`table`")
+// prefix for one object in an embedded RESTORE statement. When restore-database-mapping or
+// restore-table-mapping has rewritten the table to a new location, OriginalDatabase/
+// OriginalTable still hold the names as they exist INSIDE the backup, so we address the object
+// by its original name and rename it with AS to the target. Without the AS clause the native
+// RESTORE looks up the (target) name inside the backup and fails with
+// "code: 605 Table ... not found in backup".
+func embeddedRestoreObjectSQL(kind string, t *metadata.TableMetadata) string {
+	originDB := t.Database
+	if t.OriginalDatabase != "" {
+		originDB = t.OriginalDatabase
+	}
+	originTable := t.Table
+	if t.OriginalTable != "" {
+		originTable = t.OriginalTable
+	}
+	if originDB != t.Database || originTable != t.Table {
+		return fmt.Sprintf("%s `%s`.`%s` AS `%s`.`%s`", kind, originDB, originTable, t.Database, t.Table)
+	}
+	return fmt.Sprintf("%s `%s`.`%s`", kind, t.Database, t.Table)
+}
+
 func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, schemaOnly, dataOnly bool, version int, tablesForRestore ListOfTables, partitionsNameList map[metadata.TableTitle][]string) error {
 	tablesSQL := ""
 	l := len(tablesForRestore)
@@ -3710,11 +3750,7 @@ func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, schem
 			if strings.Contains(t.Query, " DICTIONARY ") {
 				kind = "DICTIONARY"
 			}
-			if newDb, isMapped := b.cfg.General.RestoreDatabaseMapping[t.Database]; isMapped {
-				tablesSQL += fmt.Sprintf("%s `%s`.`%s` AS `%s`.`%s`", kind, t.Database, t.Table, newDb, t.Table)
-			} else {
-				tablesSQL += fmt.Sprintf("%s `%s`.`%s`", kind, t.Database, t.Table)
-			}
+			tablesSQL += embeddedRestoreObjectSQL(kind, t)
 
 			if strings.Contains(t.Query, " VIEW ") {
 				kind = "VIEW"
