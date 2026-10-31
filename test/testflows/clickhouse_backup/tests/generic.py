@@ -1,7 +1,9 @@
 import itertools
+import os
 
 from clickhouse_backup.requirements.requirements import *
 from clickhouse_backup.tests.common import *
+from clickhouse_backup.tests.embedded_on_cluster import MINIO_URL, MINIO_BUCKET, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
 from clickhouse_backup.tests.steps import *
 
 
@@ -436,6 +438,78 @@ def encrypted_storage(self):
     """Test clickhouse-backup working with encrypted storage.
     """
     storage_types_outline(policy_name="encrypted_policy")
+
+
+@TestScenario
+@Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_CLI_RestoreRemote("1.0"),
+)
+def embedded_restore_mapping(self):
+    """Embedded restore_remote with --restore-database-mapping / --restore-table-mapping
+    restores into the target without touching the source, https://github.com/Altinity/clickhouse-backup/issues/1658.
+    """
+    # BACKUP TO S3(...) is production ready since 23.3, same gate as tests/embedded_on_cluster.py
+    if os.environ.get("CLICKHOUSE_VERSION", "26.8") < "23.3":
+        skip("embedded BACKUP/RESTORE to S3 needs ClickHouse 23.3+")
+    clickhouse = self.context.nodes[0]
+    backup = self.context.backup
+    backup_name = "embedded_restore_mapping"
+
+    with open(self.context.backup_config_origin) as f:
+        s3_path = yaml.safe_load(f)["s3"]["path"]
+
+    try:
+        with Given("I configure clickhouse-backup for embedded backups to minio"):
+            config_modifier(fields={
+                "general": {"remote_storage": "s3"},
+                "s3": {
+                    "access_key": MINIO_ACCESS_KEY,
+                    "secret_key": MINIO_SECRET_KEY,
+                    "endpoint": MINIO_URL,
+                    "bucket": MINIO_BUCKET,
+                    "region": "us-west-2",
+                    "object_disk_path": f"{s3_path}_embedded_disk",
+                },
+                "clickhouse": {
+                    # ValidateConfig requires clickhouse.timeout >= 240m with use_embedded_backup_restore
+                    "timeout": "4h",
+                    "use_embedded_backup_restore": True,
+                    "embedded_backup_disk": "",
+                },
+            })
+
+        with And("I create a source table with 10 rows"):
+            clickhouse.query("CREATE DATABASE IF NOT EXISTS emb_src")
+            clickhouse.query("CREATE TABLE emb_src.t (id UInt64) ENGINE=MergeTree ORDER BY id")
+            clickhouse.query("INSERT INTO emb_src.t SELECT number FROM numbers(10)")
+
+        with When("I create an embedded remote backup"):
+            backup.cmd(f"clickhouse-backup create_remote --tables=emb_src.t {backup_name}")
+            backup.cmd(f"clickhouse-backup delete local {backup_name}")
+
+        with And("I restore it with --restore-database-mapping"):
+            backup.cmd(f"clickhouse-backup restore_remote --tables=emb_src.t "
+                       f"--restore-database-mapping=emb_src:emb_dst {backup_name}")
+            backup.cmd(f"clickhouse-backup delete local {backup_name}")
+
+        with And("I restore it with --restore-table-mapping"):
+            backup.cmd(f"clickhouse-backup restore_remote --tables=emb_src.t "
+                       f"--restore-table-mapping=emb_src.t:emb_dst.t_copy {backup_name}")
+
+        with Then("both targets and the untouched source have 10 rows"):
+            for table in ("emb_dst.t", "emb_dst.t_copy", "emb_src.t"):
+                with By(f"check {table}"):
+                    assert clickhouse.query(f"SELECT count() FROM {table}").output.strip() == "10", error()
+
+    finally:
+        with Finally("I remove the backup and the databases"):
+            backup.cmd(f"clickhouse-backup delete remote {backup_name}", exitcode=None)
+            backup.cmd(f"clickhouse-backup delete local {backup_name}", exitcode=None)
+            clickhouse.query("DROP DATABASE IF EXISTS emb_src SYNC", no_checks=True)
+            clickhouse.query("DROP DATABASE IF EXISTS emb_dst SYNC", no_checks=True)
+
+        with And("I restore the original config"):
+            config_modifier()
 
 
 @TestFeature
