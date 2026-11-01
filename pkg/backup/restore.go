@@ -1850,8 +1850,15 @@ func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string,
 		log.Info().Msgf("--%s: %s metadata fixed, skip RESTORE SQL", embeddedOnClusterWorkerFlag, b.embeddedClusterPrefix)
 		return nil
 	}
-	// RESTORE ... AS doesn't create mapped target database which is absent in backup, create it like restoreSchemaRegular does,
-	// https://github.com/Altinity/clickhouse-backup/issues/1658
+	if err = b.createMappedDatabasesForEmbedded(tablesForRestore, databaseEnginesForRestore, version); err != nil {
+		return err
+	}
+	return b.restoreEmbedded(ctx, backupName, true, false, version, tablesForRestore, nil)
+}
+
+// createMappedDatabasesForEmbedded - RESTORE ... AS doesn't create mapped target database which is absent in backup,
+// create it like restoreSchemaRegular does, https://github.com/Altinity/clickhouse-backup/issues/1658
+func (b *Backuper) createMappedDatabasesForEmbedded(tablesForRestore ListOfTables, databaseEnginesForRestore map[string]string, version int) error {
 	isDatabaseCreated := common.EmptyMap{}
 	for _, schema := range tablesForRestore {
 		if _, isCreated := isDatabaseCreated[schema.Database]; isCreated || schema.OriginalDatabase == "" || schema.OriginalDatabase == schema.Database {
@@ -1868,7 +1875,7 @@ func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string,
 		}
 		isDatabaseCreated[schema.Database] = struct{}{}
 	}
-	return b.restoreEmbedded(ctx, backupName, true, false, version, tablesForRestore, nil)
+	return nil
 }
 
 func (b *Backuper) fixEmbeddedMetadataRemote(ctx context.Context, backupName string, chVersion int) error {

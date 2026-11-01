@@ -126,7 +126,7 @@ def regression(self, local, stress=False, fips=True, fips_godebug="only"):
             self.context.backup_api_port = cluster.get_mapped_port("clickhouse_backup", 7171)
 
             # Second backup server bound to clickhouse2, used by the embedded
-            # BACKUP/RESTORE ON CLUSTER suite (tests/embedded_on_cluster.py).
+            # BACKUP/RESTORE ON CLUSTER suite (tests/embedded.py).
             self.context.backup2 = self.context.cluster.node("clickhouse_backup2")
             self.context.backup2_api_port = cluster.get_mapped_port("clickhouse_backup2", 7171)
 
@@ -158,7 +158,7 @@ def regression(self, local, stress=False, fips=True, fips_godebug="only"):
             Scenario(run=load("clickhouse_backup.tests.generic", "generic"))
             Scenario(run=load("clickhouse_backup.tests.views", "views"))
             Scenario(run=load("clickhouse_backup.tests.config_rbac", "config_rbac"))
-            Scenario(run=load("clickhouse_backup.tests.embedded_on_cluster", "embedded_on_cluster"))
+            Scenario(run=load("clickhouse_backup.tests.embedded", "embedded"))
             Scenario(run=load("clickhouse_backup.tests.replicated_database", "replicated_database"))
             Scenario(run=load("clickhouse_backup.tests.non_sharded_replicated", "non_sharded_replicated"))
             Scenario(run=load("clickhouse_backup.tests.watch", "watch"))
