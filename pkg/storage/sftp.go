@@ -17,6 +17,7 @@ import (
 	libSFTP "github.com/pkg/sftp"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // SFTP Implement RemoteStorage
@@ -64,6 +65,18 @@ func (sftp *SFTP) Connect(_ context.Context) error {
 		User:            sftp.Config.Username,
 		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	}
+	if sftp.Config.KnownHosts != "" {
+		hostKeyCallback, err := knownhosts.New(sftp.Config.KnownHosts)
+		if err != nil {
+			return errors.Wrap(err, "SFTP Connect knownhosts.New")
+		}
+		hostKeyAlgorithms, err := knownHostsAlgorithms(sftp.Config.KnownHosts)
+		if err != nil {
+			return errors.Wrap(err, "SFTP Connect read known_hosts")
+		}
+		sftpConfig.HostKeyCallback = hostKeyCallback
+		sftpConfig.HostKeyAlgorithms = hostKeyAlgorithms
 	}
 	addr := fmt.Sprintf("%s:%d", sftp.Config.Address, sftp.Config.Port)
 	sftp.Debug("[SFTP_DEBUG] try connect to tcp://%s", addr)
@@ -605,4 +618,41 @@ func (file *sftpFile) LastModified() time.Time {
 
 func (file *sftpFile) Name() string {
 	return file.name
+}
+
+// knownHostsAlgorithms returns the host key algorithms for the key types in a
+// known_hosts file, so the server offers a key the file can verify instead of
+// failing with "key mismatch" on a different key type.
+func knownHostsAlgorithms(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	algorithms := make([]string, 0)
+	add := func(algorithm string) {
+		if !seen[algorithm] {
+			seen[algorithm] = true
+			algorithms = append(algorithms, algorithm)
+		}
+	}
+	for len(data) > 0 {
+		var key ssh.PublicKey
+		_, _, key, _, data, err = ssh.ParseKnownHosts(data)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if key.Type() == ssh.KeyAlgoRSA {
+			add(ssh.KeyAlgoRSASHA512)
+			add(ssh.KeyAlgoRSASHA256)
+		}
+		add(key.Type())
+	}
+	if len(algorithms) == 0 {
+		return nil, errors.Errorf("no host keys in %s", path)
+	}
+	return algorithms, nil
 }
