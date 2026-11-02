@@ -2,7 +2,7 @@ import os
 
 from clickhouse_backup.requirements.requirements import *
 from clickhouse_backup.tests.common import *
-from clickhouse_backup.tests.embedded_on_cluster import MINIO_URL, MINIO_BUCKET, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
+from clickhouse_backup.tests.embedded import MINIO_URL, MINIO_BUCKET, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
 from clickhouse_backup.tests.steps import *
 
 CLUSTER = "replicated_cluster"

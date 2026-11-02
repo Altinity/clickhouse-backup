@@ -29,6 +29,15 @@ type TableMetadata struct {
 	HashOfAllFiles       map[string]string  `json:"hash_of_all_files,omitempty"`
 	// KafkaKeeper - keeper state of Kafka engine table with `kafka_keeper_path` setting, see https://github.com/Altinity/clickhouse-backup/issues/1120
 	KafkaKeeper *KafkaKeeperMetadata `json:"kafka_keeper,omitempty"`
+    // OriginalDatabase / OriginalTable hold the pre-mapping names as they exist INSIDE the
+    // backup, captured when restore-database-mapping / restore-table-mapping rewrites the
+    // in-memory table list (Database/Table are overwritten with the target names at that
+    // point). The embedded RESTORE path needs the originals to emit `RESTORE TABLE <origin>
+    // AS <target> FROM Disk(...)`; without them it asks ClickHouse for the target name inside
+    // the backup and fails with "code: 605 Table ... not found in backup". Restore-time only;
+    // never serialized into backup metadata.
+    OriginalDatabase string `json:"-"`
+    OriginalTable    string `json:"-"`
 }
 
 // KafkaKeeperMetadata - persistent znodes under `kafka_keeper_path` dumped while the Kafka table was detached

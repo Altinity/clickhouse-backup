@@ -92,3 +92,75 @@ func TestAddTableToListIfNotExistsOrEnrichQueryAndParts(t *testing.T) {
 	assert.Contains(t, result[0].Parts, "default", "non-empty Parts must not be overwritten")
 	assert.NotContains(t, result[0].Parts, "other")
 }
+
+// TestChangeTableQueryToAdjustDatabaseMappingPreservesOrigin verifies that rewriting the
+// in-memory table list for restore-database-mapping records the backup-side name in
+// OriginalDatabase before Database is overwritten with the target. The embedded RESTORE path
+// relies on this to build `RESTORE TABLE <origin> AS <target>`.
+func TestChangeTableQueryToAdjustDatabaseMappingPreservesOrigin(t *testing.T) {
+	tables := ListOfTables{
+		{Database: "default", Table: "synth_events",
+			Query: "CREATE TABLE default.synth_events (id UInt64) ENGINE=MergeTree ORDER BY id"},
+	}
+	err := changeTableQueryToAdjustDatabaseMapping(&tables, map[string]string{"default": "restore_test"})
+	assert.NoError(t, err)
+	assert.Equal(t, "restore_test", tables[0].Database, "Database must be rewritten to the target")
+	assert.Equal(t, "synth_events", tables[0].Table, "Table name is unchanged by database mapping")
+	assert.Equal(t, "default", tables[0].OriginalDatabase, "OriginalDatabase must hold the backup-side name")
+	assert.Equal(t, "synth_events", tables[0].OriginalTable, "OriginalTable must hold the backup-side name")
+}
+
+// TestChangeTableQueryToAdjustTableMappingPreservesOrigin covers the table-mapping variant.
+func TestChangeTableQueryToAdjustTableMappingPreservesOrigin(t *testing.T) {
+	tables := ListOfTables{
+		{Database: "default", Table: "synth_events",
+			Query: "CREATE TABLE default.synth_events (id UInt64) ENGINE=MergeTree ORDER BY id"},
+	}
+	err := changeTableQueryToAdjustTableMapping(&tables, map[string]string{"default.synth_events": "restore_test.events_copy"})
+	assert.NoError(t, err)
+	assert.Equal(t, "restore_test", tables[0].Database)
+	assert.Equal(t, "events_copy", tables[0].Table)
+	assert.Equal(t, "default", tables[0].OriginalDatabase, "OriginalDatabase must hold the backup-side name")
+	assert.Equal(t, "synth_events", tables[0].OriginalTable, "OriginalTable must hold the backup-side name")
+}
+
+// TestEmbeddedRestoreObjectSQL is the core of the code:605 fix: embedded RESTORE must address
+// the object by its original (backup-side) name and rename it to the target with AS.
+func TestEmbeddedRestoreObjectSQL(t *testing.T) {
+	cases := []struct {
+		name string
+		kind string
+		tm   *metadata.TableMetadata
+		want string
+	}{
+		{
+			name: "no mapping",
+			kind: "TABLE",
+			tm:   &metadata.TableMetadata{Database: "default", Table: "synth_events"},
+			want: "TABLE `default`.`synth_events`",
+		},
+		{
+			name: "database mapping",
+			kind: "TABLE",
+			tm:   &metadata.TableMetadata{Database: "restore_test", Table: "synth_events", OriginalDatabase: "default", OriginalTable: "synth_events"},
+			want: "TABLE `default`.`synth_events` AS `restore_test`.`synth_events`",
+		},
+		{
+			name: "table mapping (db + table)",
+			kind: "TABLE",
+			tm:   &metadata.TableMetadata{Database: "restore_test", Table: "events_copy", OriginalDatabase: "default", OriginalTable: "synth_events"},
+			want: "TABLE `default`.`synth_events` AS `restore_test`.`events_copy`",
+		},
+		{
+			name: "dictionary with database mapping",
+			kind: "DICTIONARY",
+			tm:   &metadata.TableMetadata{Database: "restore_test", Table: "dict_x", OriginalDatabase: "demo_src", OriginalTable: "dict_x"},
+			want: "DICTIONARY `demo_src`.`dict_x` AS `restore_test`.`dict_x`",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, embeddedRestoreObjectSQL(tc.kind, tc.tm))
+		})
+	}
+}
