@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/cas"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"github.com/pkg/errors"
 
@@ -218,7 +219,7 @@ func (b *Backuper) uploadPrologue(ctx context.Context, backupName, diffFrom, dif
 		}
 	}()
 
-	remoteBackups, err := b.dst.BackupList(ctx, false, "")
+	remoteBackups, err := b.dst.BackupList(ctx, false, "", b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return nil, errors.Wrap(err, "b.dst.BackupList return error")
 	}
@@ -545,7 +546,7 @@ func (b *Backuper) RemoveOldBackupsRemote(ctx context.Context) error {
 		return nil
 	}
 	start := time.Now()
-	backupList, err := b.dst.BackupList(ctx, true, "")
+	backupList, err := b.dst.BackupList(ctx, true, "", b.cfg.CAS.SkipPrefixes())
 	if err != nil {
 		return errors.Wrap(err, "BackupList")
 	}
@@ -660,6 +661,9 @@ func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, 
 	}
 	if diffFrom != "" && diffFromRemote != "" {
 		return errors.New("choose setup only `--diff-from-remote` or `--diff-from`, not both")
+	}
+	if cas.NameCollidesWithCASPrefix(backupName, b.cfg.CAS) {
+		return fmt.Errorf("backup name %q collides with the CAS skip-prefix %q; choose a different name to prevent this backup from being silently skipped by v1 list/retention operations", backupName, backupName+"/")
 	}
 	if b.cfg.GetCompressionFormat() == "none" && !b.cfg.General.UploadByPart {
 		return errors.Errorf("%s->`compression_format`=%s incompatible with general->upload_by_part=%v", b.cfg.General.RemoteStorage, b.cfg.GetCompressionFormat(), b.cfg.General.UploadByPart)

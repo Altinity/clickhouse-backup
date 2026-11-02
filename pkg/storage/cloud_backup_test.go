@@ -140,7 +140,7 @@ func TestBackupListDetectsCloudBackup(t *testing.T) {
 	}}
 	ctx := context.Background()
 
-	backups, err := bd.BackupList(ctx, true, "")
+	backups, err := bd.BackupList(ctx, true, "", nil)
 	require.NoError(t, err)
 	byName := map[string]Backup{}
 	for _, b := range backups {
@@ -163,7 +163,7 @@ func TestBackupListDetectsCloudBackup(t *testing.T) {
 
 	// fast path used by restore_remote / download, cache is removed to exercise the direct read
 	require.NoError(t, bd.writeMetadataCacheFile(ctx, map[string]Backup{}))
-	backups, err = bd.BackupList(ctx, true, "cloud")
+	backups, err = bd.BackupList(ctx, true, "cloud", nil)
 	require.NoError(t, err)
 	require.Len(t, backups, 1)
 	assert.Equal(t, CloudBackupDataFormat, backups[0].DataFormat)
@@ -171,17 +171,17 @@ func TestBackupListDetectsCloudBackup(t *testing.T) {
 
 	// metadata.json uploaded after a list cached the backup as cloud (embedded create_remote in progress)
 	bd.RemoteStorage.(*memRemoteStorage).files["cloud/metadata.json"] = `{"backup_name":"cloud","data_format":"embedded","data_size":30}`
-	backups, err = bd.BackupList(ctx, true, "cloud")
+	backups, err = bd.BackupList(ctx, true, "cloud", nil)
 	require.NoError(t, err)
 	require.Len(t, backups, 1)
 	assert.Equal(t, "embedded", backups[0].DataFormat)
-	backups, err = bd.BackupList(ctx, true, "")
+	backups, err = bd.BackupList(ctx, true, "", nil)
 	require.NoError(t, err)
 	for _, b := range backups {
 		assert.NotEqual(t, CloudBackupDataFormat, b.DataFormat, b.BackupName)
 	}
 
-	backups, err = bd.BackupList(ctx, true, "broken")
+	backups, err = bd.BackupList(ctx, true, "broken", nil)
 	require.NoError(t, err)
 	require.Len(t, backups, 1)
 	assert.Equal(t, "broken (can't stat metadata.json)", backups[0].Broken)
@@ -254,7 +254,7 @@ func TestBackupListCloudBaseBackup(t *testing.T) {
 			`<base_backup>S3(&apos;https://s3.us-east-1.amazonaws.com/bucket/full&apos;, &apos;KEY&apos;, &apos;SECRET&apos;)</base_backup><base_backup_uuid>u1</base_backup_uuid>` +
 			`<contents><file><name>metadata/default/t.sql</name><size>10</size><use_base>true</use_base></file></contents></config>`,
 	}}}
-	backups, err := bd.BackupList(context.Background(), true, "")
+	backups, err := bd.BackupList(context.Background(), true, "", nil)
 	require.NoError(t, err)
 	require.Len(t, backups, 1)
 	assert.Equal(t, CloudBackupDataFormat, backups[0].DataFormat)
