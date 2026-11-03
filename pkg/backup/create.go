@@ -366,33 +366,44 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	createBackupWorkingGroup.SetLimit(max(b.cfg.ClickHouse.MaxConnections, 1))
 
 	var tableMetas []metadata.TableTitle
+	createOneTableAndAccount := func(tableIdx int, table clickhouse.Table) error {
+		tableMeta, tableBackupSize, createOneTableErr := b.createOneTable(createCtx, backupName, backupPath, &table, tablesDiffFromRemote, partitionsIdMap, allInProgressMutations, kafkaKeeper, skipProjections, disks, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, version)
+		if createOneTableErr != nil {
+			return createOneTableErr
+		}
+		atomic.AddInt64(&brokenParts, tableBackupSize.brokenParts)
+		atomic.AddInt64(&totalParts, tableBackupSize.totalParts)
+		atomic.AddUint64(&backupDataSize, tableBackupSize.dataSize)
+		atomic.AddUint64(&backupObjectDiskSize, tableBackupSize.objectDiskSize)
+		atomic.AddUint64(&backupMetadataSize, tableBackupSize.metadataSize)
+		if tableMeta != nil {
+			metaMutex.Lock()
+			tableMetas = append(tableMetas, metadata.TableTitle{
+				Database: tableMeta.Database,
+				Table:    tableMeta.Table,
+			})
+			metaMutex.Unlock()
+		}
+		log.Info().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Str("progress", fmt.Sprintf("%d/%d", tableIdx+1, len(tables))).Msg("done")
+		return nil
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/1651
+	serialFreezeIdx := serialFreezeTableIndex(tables, doBackupData, b.DefaultDataPath)
+	if serialFreezeIdx >= 0 {
+		log.Info().Msgf("%s doesn't exist yet, run the first FREEZE serially", path.Join(b.DefaultDataPath, "shadow", shadowIncrementFile))
+		if serialErr := createOneTableAndAccount(serialFreezeIdx, tables[serialFreezeIdx]); serialErr != nil {
+			return errors.Wrap(serialErr, "first serial createBackupLocal return error")
+		}
+	}
 	for tableIdx, tableItem := range tables {
 		//to avoid race condition
 		table := tableItem
-		if table.Skip {
+		if table.Skip || tableIdx == serialFreezeIdx {
 			continue
 		}
 		idx := tableIdx
 		createBackupWorkingGroup.Go(func() error {
-			tableMeta, tableBackupSize, createOneTableErr := b.createOneTable(createCtx, backupName, backupPath, &table, tablesDiffFromRemote, partitionsIdMap, allInProgressMutations, kafkaKeeper, skipProjections, disks, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, version)
-			if createOneTableErr != nil {
-				return createOneTableErr
-			}
-			atomic.AddInt64(&brokenParts, tableBackupSize.brokenParts)
-			atomic.AddInt64(&totalParts, tableBackupSize.totalParts)
-			atomic.AddUint64(&backupDataSize, tableBackupSize.dataSize)
-			atomic.AddUint64(&backupObjectDiskSize, tableBackupSize.objectDiskSize)
-			atomic.AddUint64(&backupMetadataSize, tableBackupSize.metadataSize)
-			if tableMeta != nil {
-				metaMutex.Lock()
-				tableMetas = append(tableMetas, metadata.TableTitle{
-					Database: tableMeta.Database,
-					Table:    tableMeta.Table,
-				})
-				metaMutex.Unlock()
-			}
-			log.Info().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Str("progress", fmt.Sprintf("%d/%d", idx+1, len(tables))).Msg("done")
-			return nil
+			return createOneTableAndAccount(idx, table)
 		})
 	}
 	wgWaitErr := createBackupWorkingGroup.Wait()
@@ -2067,4 +2078,23 @@ func (b *Backuper) createTableMetadata(metadataPath string, table metadata.Table
 	}
 	log.Debug().Msgf("%s created", metadataFile)
 	return uint64(len(metadataBody)), nil
+}
+
+// serialFreezeTableIndex returns the index of the table whose FREEZE must run before the parallel workers start, or -1.
+// On a fresh clickhouse-server `shadow/increment.txt` doesn't exist, and concurrent first FREEZE queries race on creating it,
+// the loser fails with code 32 "File .../shadow/increment.txt is empty", see https://github.com/Altinity/clickhouse-backup/issues/1651
+// When the file can't be checked (clickhouse-backup runs on another host) we treat it as missing, the cost is one serial FREEZE.
+func serialFreezeTableIndex(tables []clickhouse.Table, doBackupData bool, defaultDataPath string) int {
+	if !doBackupData {
+		return -1
+	}
+	if _, err := os.Stat(path.Join(defaultDataPath, "shadow", shadowIncrementFile)); err == nil {
+		return -1
+	}
+	for idx, table := range tables {
+		if !table.Skip && table.BackupType == clickhouse.ShardBackupFull {
+			return idx
+		}
+	}
+	return -1
 }
