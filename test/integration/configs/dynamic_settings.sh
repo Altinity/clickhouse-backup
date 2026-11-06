@@ -283,20 +283,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
               </s3_only_encrypted>
           </volumes>
       </s3_only_encrypted>
-    </policies>
-  </storage_configuration>
-</yandex>
-EOT
-
-fi
-fi
-
-# local, object and encrypted disks in one policy, parts moved between disks of different types, https://github.com/Altinity/clickhouse-backup/issues/1663
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
-cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_mixed_types.xml
-<yandex>
-  <storage_configuration>
-    <policies>
+      <!-- local, object and encrypted disks in one policy, parts moved between disks of different types, https://github.com/Altinity/clickhouse-backup/issues/1663
+           lives here because replaceStorageDiskNameForReBalance renames disk_s3 in this file -->
       <mixed_disk_types>
         <volumes>
           <hot_volume>
@@ -318,6 +306,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_mixed_types.xm
   </storage_configuration>
 </yandex>
 EOT
+
+fi
 fi
 
 # embedded local backup configuration
