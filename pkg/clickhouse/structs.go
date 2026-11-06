@@ -47,6 +47,7 @@ type Disk struct {
 	FreeSpace       uint64   `ch:"free_space"`
 	TotalSpace      uint64   `ch:"total_space"`
 	StoragePolicies []string `ch:"storage_policies"`
+	IsEncrypted     uint8    `ch:"is_encrypted"`
 	IsBackup        bool
 	// RawPath - `system.disks.path` as reported by clickhouse-server, before GetDisks rewrites it: the
 	// bucket key prefix of plain/plain_rewritable disks becomes a pseudo local path, a relative local path

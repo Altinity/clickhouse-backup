@@ -448,6 +448,7 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 			FreeSpacePresent         uint64 `ch:"is_free_space_present"`
 			StoragePolicyPresent     uint64 `ch:"is_storage_policy_present"`
 			CachePathPresent         uint64 `ch:"is_cache_path_present"`
+			IsEncryptedPresent       uint64 `ch:"is_encrypted_present"`
 		}
 		diskFields := make([]DiskFields, 0)
 		if err := ch.SelectContext(ctx, &diskFields,
@@ -456,7 +457,8 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 				"countIf(name='metadata_type') AS is_metadata_type_present, "+
 				"countIf(name='free_space') AS is_free_space_present, "+
 				"countIf(name='disks') AS is_storage_policy_present, "+
-				"countIf(name='cache_path') AS is_cache_path_present "+
+				"countIf(name='cache_path') AS is_cache_path_present, "+
+				"countIf(name='is_encrypted') AS is_encrypted_present "+
 				"FROM system.columns WHERE database='system' AND table IN ('disks','storage_policies') ",
 		); err != nil {
 			return nil, errors.Wrap(err, "getDisksFromSystemDisks: query disk fields")
@@ -486,6 +488,11 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		if len(diskFields) > 0 && diskFields[0].MetadataTypePresent > 0 {
 			diskMetadataTypeSQL = "any(lower(d.metadata_type))"
 		}
+		// 22.9+ reports the underlying disk type for encrypted disks, older versions report type='encrypted'
+		diskIsEncryptedSQL := "toUInt8(0)"
+		if len(diskFields) > 0 && diskFields[0].IsEncryptedPresent > 0 {
+			diskIsEncryptedSQL = "max(d.is_encrypted)"
+		}
 		// a plain/plain_rewritable disk reports a bucket key prefix instead of a local path and the prefix is
 		// empty for a disk in the bucket root, `d.path` is not an identity for such disks, group them by name
 		// to avoid collapsing several different plain disks into one row
@@ -507,9 +514,9 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		}
 		var result []Disk
 		query := fmt.Sprintf(
-			"SELECT d.path AS path, %s AS name, %s AS type, %s AS metadata_type, %s AS free_space, %s AS total_space, %s AS storage_policies "+
+			"SELECT d.path AS path, %s AS name, %s AS type, %s AS metadata_type, %s AS free_space, %s AS total_space, %s AS storage_policies, %s AS is_encrypted "+
 				"FROM system.disks AS d %s GROUP BY %s",
-			diskNameSQL, diskTypeSQL, diskMetadataTypeSQL, diskFreeSpaceSQL, diskTotalSpaceSQL, storagePoliciesSQL, joinStoragePoliciesSQL, groupBySQL,
+			diskNameSQL, diskTypeSQL, diskMetadataTypeSQL, diskFreeSpaceSQL, diskTotalSpaceSQL, storagePoliciesSQL, diskIsEncryptedSQL, joinStoragePoliciesSQL, groupBySQL,
 		)
 		if err := ch.SelectContext(ctx, &result, query); err != nil {
 			return nil, errors.Wrap(err, "getDisksFromSystemDisks: select disks")

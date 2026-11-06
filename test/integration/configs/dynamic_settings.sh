@@ -283,6 +283,25 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
               </s3_only_encrypted>
           </volumes>
       </s3_only_encrypted>
+      <!-- local, object and encrypted disks in one policy, parts moved between disks of different types, https://github.com/Altinity/clickhouse-backup/issues/1663
+           lives here because replaceStorageDiskNameForReBalance renames disk_s3 in this file -->
+      <mixed_disk_types>
+        <volumes>
+          <hot_volume>
+            <disk>default</disk>
+          </hot_volume>
+          <cold_volume>
+            <disk>hdd1</disk>
+          </cold_volume>
+          <s3_volume>
+            <disk>disk_s3</disk>
+          </s3_volume>
+          <encrypted_volume>
+            <disk>hdd3_encrypted</disk>
+          </encrypted_volume>
+        </volumes>
+        <move_factor>0</move_factor>
+      </mixed_disk_types>
     </policies>
   </storage_configuration>
 </yandex>

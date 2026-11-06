@@ -1242,7 +1242,7 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 			}
 			var diffTableMetadata metadata.TableMetadata
 			if tablesDiffFromRemote != nil {
-				diffTableMetadata = tablesDiffFromRemote[metadata.TableTitle{Database: table.Database, Table: table.Name}]
+				diffTableMetadata = diffTableMetadataForDisk(tablesDiffFromRemote[metadata.TableTitle{Database: table.Database, Table: table.Name}], disk, diskList)
 			}
 			// If partitionsIdsMap is not empty, only parts in this partition will back up.
 			start := time.Now()
@@ -1411,6 +1411,23 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		"database":  table.Database,
 	}).Msg("done")
 	return disksToPartsMap, realSize, objectDiskSize, checksums, hashOfAllFiles, brokenParts, nil
+}
+
+// diffTableMetadataForDisk - diff source parts which can be referenced as Required from disk, parts on other
+// disks are added under disk.Name when both disks are compatible, see isCrossDiskReuseCompatible and
+// https://github.com/Altinity/clickhouse-backup/issues/1663
+func diffTableMetadataForDisk(diffTable metadata.TableMetadata, disk clickhouse.Disk, diskList []clickhouse.Disk) metadata.TableMetadata {
+	if len(diffTable.Parts) == 0 {
+		return diffTable
+	}
+	diskParts := append([]metadata.Part{}, diffTable.Parts[disk.Name]...)
+	for i, d := range diskList {
+		if d.Name != disk.Name && isCrossDiskReuseCompatible(&diskList[i], &disk) {
+			diskParts = append(diskParts, diffTable.Parts[d.Name]...)
+		}
+	}
+	diffTable.Parts = map[string][]metadata.Part{disk.Name: diskParts}
+	return diffTable
 }
 
 // listShadowParts walks a frozen shadow directory and lists data-part directories, mirroring the

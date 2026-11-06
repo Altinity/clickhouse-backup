@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 
@@ -131,4 +132,38 @@ func TestNewPostUploadError(t *testing.T) {
 		assert.ErrorIs(t, err, stepErr)
 		assert.Contains(t, err.Error(), stepErr.Error())
 	}
+}
+
+// https://github.com/Altinity/clickhouse-backup/issues/1663
+func TestMarkDuplicatedPartsMovedBetweenDisks(t *testing.T) {
+	b := &Backuper{}
+	backup := &metadata.BackupMetadata{RequiredBackup: "full"}
+	disks := []clickhouse.Disk{{Name: "default", Type: "local"}, {Name: "hdd1", Type: "local"}, {Name: "disk_s3", Type: "s3"}, {Name: "hdd3_encrypted", Type: "local", IsEncrypted: 1}}
+	existsTable := &metadata.TableMetadata{
+		Parts:          map[string][]metadata.Part{"default": {{Name: "0_1_1_0"}, {Name: "1_2_2_0"}, {Name: "2_3_3_0"}, {Name: "3_4_4_0"}, {Name: "4_5_5_0"}}},
+		HashOfAllFiles: map[string]string{"0_1_1_0": "h0", "1_2_2_0": "h1", "2_3_3_0": "h2", "3_4_4_0": "h3", "4_5_5_0": "h4"},
+	}
+	newTable := &metadata.TableMetadata{
+		Parts: map[string][]metadata.Part{
+			"default":        {{Name: "0_1_1_0"}},
+			"hdd1":           {{Name: "1_2_2_0"}, {Name: "4_5_5_0"}},
+			"disk_s3":        {{Name: "2_3_3_0"}},
+			"hdd3_encrypted": {{Name: "3_4_4_0"}},
+		},
+		HashOfAllFiles: map[string]string{"0_1_1_0": "h0", "1_2_2_0": "h1", "2_3_3_0": "h2", "3_4_4_0": "h3", "4_5_5_0": "changed"},
+	}
+	b.markDuplicatedParts(backup, existsTable, newTable, disks, false)
+	required := map[string]bool{}
+	for _, parts := range newTable.Parts {
+		for _, p := range parts {
+			required[p.Name] = p.Required
+		}
+	}
+	require.Equal(t, map[string]bool{
+		"0_1_1_0": true,  // same disk
+		"1_2_2_0": true,  // local -> local
+		"2_3_3_0": false, // local -> s3
+		"3_4_4_0": false, // local -> encrypted
+		"4_5_5_0": false, // local -> local, content changed
+	}, required)
 }

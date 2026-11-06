@@ -42,7 +42,7 @@ func TestFIPS(t *testing.T) {
 	env.InstallDebIfNotExists(r, "clickhouse", "ca-certificates", "curl", "gettext-base", "binutils", "bsdmainutils", "dnsutils", "git")
 	env.DockerExecNoError(r, "clickhouse", "update-ca-certificates")
 	r.NoError(env.DockerCP("configs/config-s3-fips.yml", "clickhouse:/etc/clickhouse-backup/config.yml.fips-template"))
-	env.DockerExecNoError(r, "clickhouse", "git", "clone", "--depth", "1", "--branch", "v3.2rc3", "https://github.com/drwetter/testssl.sh.git", "/opt/testssl")
+	env.DockerExecNoError(r, "clickhouse", "git", "clone", "--depth", "1", "--branch", "v3.2rc3", "https://github.com/testssl/testssl.sh.git", "/opt/testssl")
 	env.DockerExecNoError(r, "clickhouse", "chmod", "+x", "/opt/testssl/testssl.sh")
 
 	// P0: Verify binary version contains -fips suffix

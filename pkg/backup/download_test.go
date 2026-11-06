@@ -552,3 +552,25 @@ func TestSkipMissingPartNoSuchUpload(t *testing.T) {
 		}
 	}
 }
+
+// https://github.com/Altinity/clickhouse-backup/issues/1663
+func TestIsCrossDiskDownloadIncompatible(t *testing.T) {
+	b := &Backuper{}
+	disks := []clickhouse.Disk{{Name: "default", Type: "local"}, {Name: "hdd1", Type: "local"}, {Name: "disk_s3", Type: "s3"}, {Name: "disk_s3_2", Type: "s3"}, {Name: "hdd3_encrypted", Type: "local", IsEncrypted: 1}}
+	requiredBackup := &metadata.BackupMetadata{DiskTypes: map[string]string{"removed_local": "local", "removed_s3": "s3"}}
+	for _, tc := range []struct {
+		requiredDisk, disk string
+		incompatible       bool
+	}{
+		{"hdd1", "default", false},
+		{"disk_s3", "default", true},
+		{"default", "disk_s3", true},
+		{"hdd3_encrypted", "default", true},
+		{"disk_s3", "disk_s3_2", false},
+		{"removed_local", "default", false},
+		{"removed_s3", "default", true},
+		{"removed_unknown_type", "default", false},
+	} {
+		require.Equal(t, tc.incompatible, b.isCrossDiskDownloadIncompatible(disks, requiredBackup, tc.requiredDisk, tc.disk), "%s -> %s", tc.requiredDisk, tc.disk)
+	}
+}
