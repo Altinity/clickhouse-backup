@@ -59,7 +59,7 @@ func TestEmbeddedS3URLRewrittenMetadata(t *testing.T) {
 	backupName := "embedded_url_1668"
 	configFile := "config-s3-embedded-url.yml"
 	// ReplicatedMergeTree() without parameters is allowed only in Replicated database when default_replica_path contains {uuid}
-	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName+" ENGINE=Replicated('/clickhouse/databases/{database}', '{shard}', '{replica}')")
+	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName+" ENGINE=Replicated('/clickhouse/databases/"+dbName+"', '{shard}', '{replica}')")
 	defer func() { r.NoError(env.dropDatabase(dbName, true)) }()
 	defer fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, nil, false, false, false, configFile)
 	// ReplicatedMergeTree() without parameters and MATERIALIZED VIEW without EMPTY, fixEmbeddedMetadataSQLQuery rewrites both

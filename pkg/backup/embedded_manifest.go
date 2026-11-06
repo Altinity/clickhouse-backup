@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
+
 	"github.com/go-faster/city"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
@@ -69,6 +71,27 @@ func (b *Backuper) updateEmbeddedRemoteManifest(ctx context.Context, backupName 
 		}
 	}); err != nil {
 		return err
+	}
+	// fixEmbeddedMetadataRemote rewrites only files which it finds under the backup path, ClickHouse 24.3 BACKUP to
+	// AzureBlobStorage puts files to the container root instead
+	metadataDirs := map[string]struct{}{}
+	for dataFile := range sqlFiles {
+		metadataDirs[dataFile[:strings.Index(dataFile, "metadata/")+len("metadata")]] = struct{}{}
+	}
+	existingFiles := map[string]struct{}{}
+	for metadataDir := range metadataDirs {
+		if err = b.dst.WalkAbsolute(ctx, path.Join(backupPath, metadataDir), true, func(ctx context.Context, fInfo storage.RemoteFile) error {
+			existingFiles[path.Join(metadataDir, fInfo.Name())] = struct{}{}
+			return nil
+		}); err != nil {
+			return errors.Wrapf(err, "WalkAbsolute %s", path.Join(backupPath, metadataDir))
+		}
+	}
+	for dataFile := range sqlFiles {
+		if _, exists := existingFiles[dataFile]; !exists {
+			log.Debug().Msgf("%s not found in %s, skip", dataFile, backupPath)
+			delete(sqlFiles, dataFile)
+		}
 	}
 
 	changed := map[string]embeddedManifestFile{}
