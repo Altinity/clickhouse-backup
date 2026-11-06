@@ -1840,7 +1840,9 @@ func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string,
 	if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 		err = b.fixEmbeddedMetadataLocal(ctx, backupName, backupMetadata, disks, version)
 	} else {
-		err = b.fixEmbeddedMetadataRemote(ctx, backupName, version)
+		if err = b.fixEmbeddedMetadataRemote(ctx, backupName, version); err == nil && !b.EmbeddedOnClusterWorker {
+			err = b.updateEmbeddedRemoteManifest(ctx, backupName)
+		}
 	}
 	if err != nil {
 		return errors.Wrap(err, "fixEmbeddedMetadata")
@@ -2004,11 +2006,11 @@ func (b *Backuper) fixEmbeddedMetadataSQLQuery(ctx context.Context, sqlBytes []b
 			sqlQuery = UUIDWithMergeTreeRE.ReplaceAllString(sqlQuery, "$1$2$3'$4'$5$4$7")
 		} else {
 			log.Warn().Msgf("%s contains `{uuid}` macro, will replace to `{database}/{table}` see https://github.com/ClickHouse/ClickHouse/issues/42709 for details", filePath)
-			database, err := url.QueryUnescape(filePathParts[len(filePathParts)-3])
+			database, err := url.QueryUnescape(filePathParts[len(filePathParts)-2])
 			if err != nil {
 				return "", false, errors.Wrap(err, "QueryUnescape database")
 			}
-			table, err := url.QueryUnescape(filePathParts[len(filePathParts)-2])
+			table, err := url.QueryUnescape(strings.TrimSuffix(filePathParts[len(filePathParts)-1], ".sql"))
 			if err != nil {
 				return "", false, errors.Wrap(err, "QueryUnescape table")
 			}
@@ -2027,11 +2029,11 @@ func (b *Backuper) fixEmbeddedMetadataSQLQuery(ctx context.Context, sqlBytes []b
 		if err != nil {
 			return "", false, errors.Wrap(err, "GetPreprocessedXMLSettings for replica")
 		}
-		database, err := url.QueryUnescape(filePathParts[len(filePathParts)-3])
+		database, err := url.QueryUnescape(filePathParts[len(filePathParts)-2])
 		if err != nil {
 			return "", false, errors.Wrap(err, "QueryUnescape database")
 		}
-		table, err := url.QueryUnescape(filePathParts[len(filePathParts)-2])
+		table, err := url.QueryUnescape(strings.TrimSuffix(filePathParts[len(filePathParts)-1], ".sql"))
 		if err != nil {
 			return "", false, errors.Wrap(err, "QueryUnescape table")
 		}

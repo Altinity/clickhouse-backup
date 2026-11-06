@@ -19,6 +19,7 @@ require (
 	github.com/djherbis/buffer v1.2.0
 	github.com/djherbis/nio/v3 v3.0.1
 	github.com/eapache/go-resiliency v1.7.0
+	github.com/go-faster/city v1.0.1
 	github.com/go-faster/errors v0.8.0
 	github.com/go-zookeeper/zk v1.0.4
 	github.com/gocarina/gocsv v0.0.0-20261012193826-401c25af6907
@@ -102,7 +103,6 @@ require (
 	github.com/envoyproxy/go-control-plane/envoy v1.40.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
-	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.6 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect

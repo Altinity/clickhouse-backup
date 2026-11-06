@@ -1034,3 +1034,11 @@ fi
 # {version} macro for path/object_disk_path isolation is bind-mounted as
 # config.d/macros_version.xml by containers.go writeMacrosVersionXML, because
 # this script runs only in advanced mode while old versions need it too
+
+# since 26.10 clickhouse-server refuses to start when a disk definition contains elements which nothing reads (code 137)
+if [[ "$CLICKHOUSE_VERSION" == "head" || "${CLICKHOUSE_VERSION}" =~ ^26\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[7-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
+  # bind-mounted macros_version.xml can't be renamed by sed -i, so edit only the files which contain these elements
+  for f in $(grep -l -E '<(cache_enabled|send_metadata)>' /etc/clickhouse-server/config.d/*.xml); do
+    sed -i -e '/<cache_enabled>/d' -e '/<send_metadata>/d' "$f"
+  done
+fi
