@@ -105,7 +105,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 					Database: table.Database,
 					Table:    table.Table,
 				}]; diffExists {
-					b.markDuplicatedParts(backupMetadata, &diffTable, table, checkLocalPart)
+					b.markDuplicatedParts(backupMetadata, &diffTable, table, disks, checkLocalPart)
 				}
 				tableDataSize, tableParts, unknownParts := b.estimateUploadDataSize(table, disks)
 				report.DataSize += tableDataSize
@@ -334,7 +334,7 @@ func (b *Backuper) uploadOneTable(ctx context.Context, backupName string, delete
 			Database: table.Database,
 			Table:    table.Table,
 		}]; diffExists {
-			b.markDuplicatedParts(backupMetadata, &diffTable, table, checkLocalPart)
+			b.markDuplicatedParts(backupMetadata, &diffTable, table, disks, checkLocalPart)
 		}
 	}
 	log.Info().Fields(map[string]interface{}{
@@ -1086,53 +1086,70 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 	return info.Size(), nil
 }
 
-func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTable *metadata.TableMetadata, newTable *metadata.TableMetadata, checkLocal bool) {
-	for disk, newParts := range newTable.Parts {
-		if _, diskExists := existsTable.Parts[disk]; diskExists {
-			if len(existsTable.Parts[disk]) == 0 {
-				continue
-			}
-			existsPartsMap := common.EmptyMap{}
-			for _, p := range existsTable.Parts[disk] {
-				existsPartsMap[p.Name] = struct{}{}
-			}
-			for i := range newParts {
-				name := newParts[i].Name
-				if _, partExists := existsPartsMap[name]; !partExists {
-					continue
-				}
-				// Name matched in the diff backup — verify content fingerprint
-				// before treating the part as a duplicate. Prefer
-				// hash_of_all_files; fall back to legacy checksums; if neither
-				// side has any fingerprint, accept the name match.
-				// See https://github.com/Altinity/clickhouse-backup/issues/1307
-				if diffHash, ok := existsTable.HashOfAllFiles[name]; ok {
-					newHash := newTable.HashOfAllFiles[name]
-					if newHash == "" || diffHash != newHash {
-						log.Debug().Msgf("part %s.%s/%s name matched diff backup %s but hash_of_all_files mismatch (%q vs %q), will be re-uploaded", existsTable.Database, existsTable.Table, name, backup.RequiredBackup, diffHash, newHash)
-						continue
-					}
-				} else if diffCksum, ok := existsTable.Checksums[name]; ok {
-					newCksum, newOk := newTable.Checksums[name]
-					if !newOk || diffCksum != newCksum {
-						log.Debug().Msgf("part %s.%s/%s name matched diff backup %s but checksums mismatch (%d vs %d), will be re-uploaded", existsTable.Database, existsTable.Table, name, backup.RequiredBackup, diffCksum, newCksum)
-						continue
-					}
-				}
-				if checkLocal {
-					dbAndTablePath := path.Join(common.TablePathEncode(existsTable.Database), common.TablePathEncode(existsTable.Table))
-					existsPath := path.Join(b.DiskToPathMap[disk], "backup", backup.RequiredBackup, "shadow", dbAndTablePath, disk, name)
-					newPath := path.Join(b.DiskToPathMap[disk], "backup", backup.BackupName, "shadow", dbAndTablePath, disk, name)
-
-					if err := filesystemhelper.IsDuplicatedParts(existsPath, newPath); err != nil {
-						log.Debug().Msgf("part '%s' and '%s' must be the same: %v", existsPath, newPath, err)
-						continue
-					}
-				}
-				newParts[i].Required = true
-			}
+func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTable *metadata.TableMetadata, newTable *metadata.TableMetadata, disks []clickhouse.Disk, checkLocal bool) {
+	// part name -> disk in the diff backup, a part lives on exactly one disk
+	existsPartDisks := map[string]string{}
+	for disk, parts := range existsTable.Parts {
+		for _, p := range parts {
+			existsPartDisks[p.Name] = disk
 		}
 	}
+	for disk, newParts := range newTable.Parts {
+		for i := range newParts {
+			name := newParts[i].Name
+			existsDisk, partExists := existsPartDisks[name]
+			if !partExists {
+				continue
+			}
+			// a part moved between disks (TTL TO VOLUME, MOVE PARTITION) keeps name and hash_of_all_files,
+			// reuse it only when both disks store the same bytes in the backup, checkLocal compares inodes
+			// which never match across disks, see https://github.com/Altinity/clickhouse-backup/issues/1663
+			if existsDisk != disk && (checkLocal || !isCrossDiskReuseCompatible(b.findDiskByName(disks, existsDisk), b.findDiskByName(disks, disk))) {
+				continue
+			}
+			// Name matched in the diff backup — verify content fingerprint
+			// before treating the part as a duplicate. Prefer
+			// hash_of_all_files; fall back to legacy checksums; if neither
+			// side has any fingerprint, accept the name match.
+			// See https://github.com/Altinity/clickhouse-backup/issues/1307
+			if diffHash, ok := existsTable.HashOfAllFiles[name]; ok {
+				newHash := newTable.HashOfAllFiles[name]
+				if newHash == "" || diffHash != newHash {
+					log.Debug().Msgf("part %s.%s/%s name matched diff backup %s but hash_of_all_files mismatch (%q vs %q), will be re-uploaded", existsTable.Database, existsTable.Table, name, backup.RequiredBackup, diffHash, newHash)
+					continue
+				}
+			} else if diffCksum, ok := existsTable.Checksums[name]; ok {
+				newCksum, newOk := newTable.Checksums[name]
+				if !newOk || diffCksum != newCksum {
+					log.Debug().Msgf("part %s.%s/%s name matched diff backup %s but checksums mismatch (%d vs %d), will be re-uploaded", existsTable.Database, existsTable.Table, name, backup.RequiredBackup, diffCksum, newCksum)
+					continue
+				}
+			}
+			if checkLocal {
+				dbAndTablePath := path.Join(common.TablePathEncode(existsTable.Database), common.TablePathEncode(existsTable.Table))
+				existsPath := path.Join(b.DiskToPathMap[disk], "backup", backup.RequiredBackup, "shadow", dbAndTablePath, disk, name)
+				newPath := path.Join(b.DiskToPathMap[disk], "backup", backup.BackupName, "shadow", dbAndTablePath, disk, name)
+
+				if err := filesystemhelper.IsDuplicatedParts(existsPath, newPath); err != nil {
+					log.Debug().Msgf("part '%s' and '%s' must be the same: %v", existsPath, newPath, err)
+					continue
+				}
+			}
+			newParts[i].Required = true
+		}
+	}
+}
+
+// isCrossDiskReuseCompatible - a part moved between two disks can be referenced from the diff backup
+// only when both disks keep plain part files: object disks keep object metadata files instead of data,
+// encrypted disks keep ciphertext, while hash_of_all_files is the same for all of them
+func isCrossDiskReuseCompatible(existsDisk, newDisk *clickhouse.Disk) bool {
+	return existsDisk != nil && newDisk != nil && isPlainLocalDisk(existsDisk) && isPlainLocalDisk(newDisk)
+}
+
+// isPlainLocalDisk - 22.9+ reports the underlying type for encrypted disks, so is_encrypted is checked too
+func isPlainLocalDisk(disk *clickhouse.Disk) bool {
+	return disk.Type == "local" && disk.IsEncrypted == 0
 }
 
 func (b *Backuper) ReadBackupMetadataLocal(ctx context.Context, backupName string) (*metadata.BackupMetadata, error) {

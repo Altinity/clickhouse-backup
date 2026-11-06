@@ -291,6 +291,35 @@ EOT
 fi
 fi
 
+# local, object and encrypted disks in one policy, parts moved between disks of different types, https://github.com/Altinity/clickhouse-backup/issues/1663
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
+cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_mixed_types.xml
+<yandex>
+  <storage_configuration>
+    <policies>
+      <mixed_disk_types>
+        <volumes>
+          <hot_volume>
+            <disk>default</disk>
+          </hot_volume>
+          <cold_volume>
+            <disk>hdd1</disk>
+          </cold_volume>
+          <s3_volume>
+            <disk>disk_s3</disk>
+          </s3_volume>
+          <encrypted_volume>
+            <disk>hdd3_encrypted</disk>
+          </encrypted_volume>
+        </volumes>
+        <move_factor>0</move_factor>
+      </mixed_disk_types>
+    </policies>
+  </storage_configuration>
+</yandex>
+EOT
+fi
+
 # embedded local backup configuration
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9] || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 

@@ -2869,6 +2869,11 @@ func (b *Backuper) findRequiredPartLocal(ctx context.Context, backupName string,
 			if requiredPart.Required {
 				return b.findRequiredPartLocal(ctx, requiredBackup.RequiredBackup, *requiredTable, requiredDisk, requiredPart, activeDisk, dbAndTableDir, diskMap, disks)
 			}
+			// a part moved between disks is referenced from another disk, hardlink can't cross filesystems,
+			// download it from remote, see https://github.com/Altinity/clickhouse-backup/issues/1663
+			if requiredActiveDisk != activeDisk {
+				return "", false, nil
+			}
 			diskPath, exists := diskMap[requiredActiveDisk]
 			if !exists {
 				return "", false, errors.Errorf("disk %s not found in diskMap", requiredActiveDisk)

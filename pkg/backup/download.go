@@ -1971,7 +1971,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 							return nil
 						}
 					}
-					tableRemoteFiles, findErr := b.findDiffBackupFilesRemote(downloadDiffCtx, remoteBackup, requiredBackup, requiredTable, table, diskForDownload, partForDownload)
+					tableRemoteFiles, findErr := b.findDiffBackupFilesRemote(downloadDiffCtx, remoteBackup, requiredBackup, requiredTable, table, disks, diskForDownload, partForDownload)
 					if findErr != nil {
 						return errors.Wrap(findErr, "findDiffBackupFilesRemote")
 					}
@@ -2118,7 +2118,7 @@ func (b *Backuper) checkNewPath(newPath string, part metadata.Part) error {
 	return nil
 }
 
-func (b *Backuper) findDiffBackupFilesRemote(ctx context.Context, backup metadata.BackupMetadata, requiredBackup *metadata.BackupMetadata, requiredTable *metadata.TableMetadata, table metadata.TableMetadata, disk string, part metadata.Part) (map[string]string, error) {
+func (b *Backuper) findDiffBackupFilesRemote(ctx context.Context, backup metadata.BackupMetadata, requiredBackup *metadata.BackupMetadata, requiredTable *metadata.TableMetadata, table metadata.TableMetadata, disks []clickhouse.Disk, disk string, part metadata.Part) (map[string]string, error) {
 	log.Debug().Fields(map[string]interface{}{"database": table.Database, "table": table.Table, "part": part.Name, "logger": "findDiffBackupFilesRemote"}).Msg("start")
 	var err error
 	if requiredBackup == nil {
@@ -2136,7 +2136,7 @@ func (b *Backuper) findDiffBackupFilesRemote(ctx context.Context, backup metadat
 	}
 
 	// recursive find if part in RequiredBackup also Required
-	tableRemoteFiles, found, err := b.findDiffRecursive(ctx, requiredBackup, table, requiredTable, part, disk)
+	tableRemoteFiles, found, err := b.findDiffRecursive(ctx, requiredBackup, table, requiredTable, disks, part, disk)
 	if found {
 		return tableRemoteFiles, nil
 	}
@@ -2150,7 +2150,7 @@ func (b *Backuper) findDiffBackupFilesRemote(ctx context.Context, backup metadat
 
 	// try to find part on other disks
 	for requiredDisk := range requiredBackup.Disks {
-		if requiredDisk != disk {
+		if requiredDisk != disk && !b.isCrossDiskDownloadIncompatible(disks, requiredBackup, requiredDisk, disk) {
 			tableRemoteFiles, err, found = b.findDiffOnePart(ctx, requiredBackup, table, disk, requiredDisk, part)
 			if found {
 				return tableRemoteFiles, nil
@@ -2160,6 +2160,9 @@ func (b *Backuper) findDiffBackupFilesRemote(ctx context.Context, backup metadat
 	// find one or multiple big files, disk_X.tar files by part.Name
 	tableRemoteFiles = make(map[string]string)
 	for requiredDisk, requiredParts := range requiredTable.Parts {
+		if requiredDisk != disk && b.isCrossDiskDownloadIncompatible(disks, requiredBackup, requiredDisk, disk) {
+			continue
+		}
 		for _, requiredPart := range requiredParts {
 			if part.Name == requiredPart.Name {
 				localTableDir := path.Join(b.DiskToPathMap[disk], "backup", requiredBackup.BackupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table), disk)
@@ -2177,7 +2180,23 @@ func (b *Backuper) findDiffBackupFilesRemote(ctx context.Context, backup metadat
 	return nil, errors.Errorf("%s.%s %s not found on %s and all required backups sequence", table.Database, table.Table, part.Name, requiredBackup.BackupName)
 }
 
-func (b *Backuper) findDiffRecursive(ctx context.Context, requiredBackup *metadata.BackupMetadata, table metadata.TableMetadata, requiredTable *metadata.TableMetadata, part metadata.Part, disk string) (map[string]string, bool, error) {
+// isCrossDiskDownloadIncompatible - a part stored on requiredDisk of the required backup can't be downloaded
+// into disk when only one of them is a plain local disk, files differ: object metadata or ciphertext against
+// data files, see https://github.com/Altinity/clickhouse-backup/issues/1663. A required disk absent in
+// system.disks (rebalance) is described by the required backup disk_types, unknown type is not filtered
+func (b *Backuper) isCrossDiskDownloadIncompatible(disks []clickhouse.Disk, requiredBackup *metadata.BackupMetadata, requiredDisk, disk string) bool {
+	currentDisk := b.findDiskByName(disks, disk)
+	requiredDiskInfo := b.findDiskByName(disks, requiredDisk)
+	if requiredDiskInfo == nil && requiredBackup.DiskTypes[requiredDisk] != "" {
+		requiredDiskInfo = &clickhouse.Disk{Name: requiredDisk, Type: requiredBackup.DiskTypes[requiredDisk]}
+	}
+	if currentDisk == nil || requiredDiskInfo == nil {
+		return false
+	}
+	return isPlainLocalDisk(currentDisk) != isPlainLocalDisk(requiredDiskInfo)
+}
+
+func (b *Backuper) findDiffRecursive(ctx context.Context, requiredBackup *metadata.BackupMetadata, table metadata.TableMetadata, requiredTable *metadata.TableMetadata, disks []clickhouse.Disk, part metadata.Part, disk string) (map[string]string, bool, error) {
 	log.Debug().Fields(map[string]interface{}{"database": table.Database, "table": table.Table, "part": part.Name, "logger": "findDiffRecursive"}).Msg("start")
 	found := false
 	for _, requiredParts := range requiredTable.Parts {
@@ -2186,7 +2205,7 @@ func (b *Backuper) findDiffRecursive(ctx context.Context, requiredBackup *metada
 				found = true
 				if requiredPart.Required {
 					// pass nil, nil to fetch the next level of the backup chain (requiredBackup.RequiredBackup)
-					tableRemoteFiles, err := b.findDiffBackupFilesRemote(ctx, *requiredBackup, nil, nil, table, disk, part)
+					tableRemoteFiles, err := b.findDiffBackupFilesRemote(ctx, *requiredBackup, nil, nil, table, disks, disk, part)
 					if err != nil {
 						found = false
 						log.Warn().Msgf("try find %s.%s %s recursive return err: %v", table.Database, table.Table, part.Name, err)
