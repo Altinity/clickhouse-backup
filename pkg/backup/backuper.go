@@ -170,12 +170,9 @@ func (b *Backuper) initDisksPathsAndBackupDestination(ctx context.Context, disks
 	diskMap := map[string]string{}
 	for _, disk := range disks {
 		diskMap[disk.Name] = disk.Path
-		if b.cfg.ClickHouse.UseEmbeddedBackupRestore && (disk.IsBackup || disk.Name == b.cfg.ClickHouse.EmbeddedBackupDisk) {
-			b.EmbeddedBackupDataPath = disk.Path
-		}
 	}
-	if b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.EmbeddedBackupDataPath == "" {
-		b.EmbeddedBackupDataPath = b.DefaultDataPath
+	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
+		b.EmbeddedBackupDataPath = b.embeddedBackupDataPath(disks)
 	}
 	b.DiskToPathMap = diskMap
 	if b.cfg.General.RemoteStorage != "none" && b.cfg.General.RemoteStorage != "custom" {
@@ -206,6 +203,31 @@ func (b *Backuper) CalculateMaxSize(ctx context.Context) error {
 		b.cfg.General.MaxFileSize = maxFileSize
 	}
 	return nil
+}
+
+// embeddedBackupDataPath returns the local path where embedded BACKUP keeps backups, regardless of use_embedded_backup_restore
+func (b *Backuper) embeddedBackupDataPath(disks []clickhouse.Disk) string {
+	embeddedPath := ""
+	for _, disk := range disks {
+		if disk.IsBackup || disk.Name == b.cfg.ClickHouse.EmbeddedBackupDisk {
+			embeddedPath = disk.Path
+		}
+	}
+	if embeddedPath == "" {
+		embeddedPath = b.DefaultDataPath
+	}
+	return embeddedPath
+}
+
+// setEmbeddedBackupDataPathByTags reports whether the backup is embedded by its metadata tags and resolves
+// EmbeddedBackupDataPath for it, backup created with --env CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE=1 is read
+// by its `embedded` tag regardless of the config, https://github.com/Altinity/clickhouse-backup/issues/1671
+func (b *Backuper) setEmbeddedBackupDataPathByTags(tags string, disks []clickhouse.Disk) bool {
+	isEmbedded := strings.Contains(tags, "embedded")
+	if isEmbedded && b.EmbeddedBackupDataPath == "" {
+		b.EmbeddedBackupDataPath = b.embeddedBackupDataPath(disks)
+	}
+	return isEmbedded
 }
 
 func (b *Backuper) getLocalBackupDataPathForTable(backupName string, disk string, dbAndTablePath string) string {
@@ -363,7 +385,9 @@ func (b *Backuper) isDiskTypeEncryptedObject(disk clickhouse.Disk, disks []click
 // It guards against silently producing schema-only backups / partial restores (issue #1037) when
 // clickhouse.host is remote or the server data volumes are not mounted into the clickhouse-backup
 // container. Disk paths already have disk_mapping applied by GetDisks.
-func (b *Backuper) checkDisksConsistency(disks []clickhouse.Disk) error {
+// isEmbeddedBackup is true when upload/download/restore read a backup with `embedded` in metadata tags,
+// create relies on use_embedded_backup_restore only, https://github.com/Altinity/clickhouse-backup/issues/1671
+func (b *Backuper) checkDisksConsistency(disks []clickhouse.Disk, isEmbeddedBackup bool) error {
 	var problems []string
 	for _, disk := range disks {
 		if disk.IsBackup || b.shouldSkipByDiskNameOrType(disk) {
@@ -375,7 +399,7 @@ func (b *Backuper) checkDisksConsistency(disks []clickhouse.Disk) error {
 		}
 		// cas disks have no local filesystem presence either, only embedded BACKUP/RESTORE can read and write their parts
 		if disk.IsCAS() {
-			if !b.cfg.ClickHouse.UseEmbeddedBackupRestore {
+			if !b.cfg.ClickHouse.UseEmbeddedBackupRestore && !isEmbeddedBackup {
 				problems = append(problems, fmt.Sprintf("disk %q (type %q, metadata_type %q) has no local files, set clickhouse.use_embedded_backup_restore: true", disk.Name, disk.Type, disk.MetadataType))
 			}
 			continue

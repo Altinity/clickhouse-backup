@@ -181,7 +181,7 @@ func (b *Backuper) RemoveBackupLocalOnCluster(ctx context.Context, backupName st
 	if err = b.RemoveBackupLocal(ctx, backupName, nil, force); err != nil {
 		return err
 	}
-	if clusterName != "" && b.embeddedClusterInitiator() {
+	if clusterName != "" && b.embeddedClusterInitiator(true) {
 		return b.deleteLocalOnEmbeddedClusterWorkers(ctx, backupName)
 	}
 	return nil

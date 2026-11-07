@@ -154,7 +154,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	}
 	// BACKUP ... ON CLUSTER already wrote the shards/N/replicas/M data of every node, now each worker node describes its
 	// own part with clickhouse-backup metadata, https://github.com/Altinity/clickhouse-backup/issues/928
-	if b.embeddedClusterInitiator() && !b.skipEmbeddedClusterFanOut && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+	if b.embeddedClusterInitiator(false) && !b.skipEmbeddedClusterFanOut && !rbacOnly && !configsOnly && !namedCollectionsOnly {
 		if err := b.runEmbeddedClusterWorkers(ctx, embeddedClusterCreateWorkerCommand("create", backupName, diffFromRemote, tablePattern, partitions, schemaOnly, skipCheckPartsColumns, false)); err != nil {
 			return errors.Wrap(err, "embedded ON CLUSTER workers")
 		}
@@ -238,7 +238,7 @@ func (b *Backuper) createPrologue(ctx context.Context, tablePattern string, part
 	}
 	doBackupData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
 	if doBackupData {
-		if err = b.checkDisksConsistency(disks); err != nil {
+		if err = b.checkDisksConsistency(disks, false); err != nil {
 			return nil, err
 		}
 	}
