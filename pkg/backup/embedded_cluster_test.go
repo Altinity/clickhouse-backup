@@ -25,9 +25,15 @@ func TestEmbeddedClusterCreateWorkerCommand(t *testing.T) {
 }
 
 func TestEmbeddedClusterRestoreWorkerCommand(t *testing.T) {
-	command := embeddedClusterRestoreWorkerCommand("restore", "b", "db.*", []string{"db:db2"}, []string{"t:t2"}, []string{"p1"}, false, true, true, true, true, true)
+	command := embeddedClusterRestoreWorkerCommand("restore", "b", "", "db.*", []string{"db:db2"}, []string{"t:t2"}, []string{"p1"}, false, true, true, true, true, true)
 	assert.Equal(t, `restore --tables="db.*" --restore-database-mapping="db:db2" --restore-table-mapping="t:t2" --partitions="p1" --data --rm --ignore-dependencies --restore-schema-as-attach --skip-empty-tables --embedded-on-cluster-worker "b"`, command)
-	assert.Equal(t, `restore_remote --schema --embedded-on-cluster-worker "b"`, embeddedClusterRestoreWorkerCommand("restore_remote", "b", "", nil, nil, nil, true, false, false, false, false, false))
+	assert.Equal(t, `restore_remote --schema --embedded-on-cluster-worker "b"`, embeddedClusterRestoreWorkerCommand("restore_remote", "b", "", "", nil, nil, nil, true, false, false, false, false, false))
+	// initiator reads an embedded backup without use_embedded_backup_restore, https://github.com/Altinity/clickhouse-backup/issues/1671
+	command = embeddedClusterRestoreWorkerCommand("restore_remote", "b", "CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE=1", "", nil, nil, nil, false, false, false, false, false, false)
+	assert.Equal(t, `restore_remote --env="CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE=1" --embedded-on-cluster-worker "b"`, command)
+	args, err := shlex.Split(command)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"restore_remote", "--env=CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE=1", "--embedded-on-cluster-worker", "b"}, args)
 }
 
 func TestShlexQuote(t *testing.T) {
@@ -75,7 +81,7 @@ func TestEmbeddedOnClusterWorkerValidation(t *testing.T) {
 	b.ch.BreakConnectOnError = true
 	// the flag is a no-op when unset, whatever the config is
 	require.NoError(t, b.validateEmbeddedOnClusterWorker())
-	assert.False(t, b.embeddedClusterInitiator())
+	assert.False(t, b.embeddedClusterInitiator(false))
 
 	b.EmbeddedOnClusterWorker = true
 	require.Error(t, b.validateEmbeddedOnClusterWorker())
@@ -84,16 +90,27 @@ func TestEmbeddedOnClusterWorkerValidation(t *testing.T) {
 	cfg.ClickHouse.UseEmbeddedBackupRestoreCluster = "{cluster}"
 	require.NoError(t, b.validateEmbeddedOnClusterWorker())
 	// a worker never drives other nodes
-	assert.False(t, b.embeddedClusterInitiator())
+	assert.False(t, b.embeddedClusterInitiator(false))
 	assert.False(t, b.embeddedClusterWorkerSkipsDDL())
 	cfg.General.RestoreSchemaOnCluster = "{cluster}"
 	assert.True(t, b.embeddedClusterWorkerSkipsDDL())
 
 	b.EmbeddedOnClusterWorker = false
-	assert.True(t, b.embeddedClusterInitiator())
+	assert.True(t, b.embeddedClusterInitiator(false))
 	assert.False(t, b.embeddedClusterWorkerSkipsDDL())
 	b.DryRun = true
-	assert.False(t, b.embeddedClusterInitiator())
+	assert.False(t, b.embeddedClusterInitiator(false))
+	b.DryRun = false
+
+	// restore/delete of an embedded backup drive the workers by the backup tags without use_embedded_backup_restore,
+	// the workers get the config flag through --env, https://github.com/Altinity/clickhouse-backup/issues/1671
+	assert.Equal(t, "", b.embeddedClusterWorkerEnv())
+	cfg.ClickHouse.UseEmbeddedBackupRestore = false
+	assert.False(t, b.embeddedClusterInitiator(false))
+	assert.True(t, b.embeddedClusterInitiator(true))
+	assert.Equal(t, "CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE=1", b.embeddedClusterWorkerEnv())
+	cfg.ClickHouse.UseEmbeddedBackupRestoreCluster = ""
+	assert.False(t, b.embeddedClusterInitiator(true))
 }
 
 func TestEmbeddedClusterTagsAndLayout(t *testing.T) {

@@ -26,12 +26,14 @@ import (
 
 func (b *Backuper) RestoreFromRemote(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, streaming bool, version string, commandId int) error {
 	// ClickHouse Cloud / native BACKUP layout is restored via restore_cloud, https://github.com/Altinity/clickhouse-backup/issues/1574
+	remoteTags := ""
 	if !b.EmbeddedOnClusterWorker {
 		ctx, cancel, ctxErr := status.Current.GetContextWithCancel(commandId)
 		if ctxErr != nil {
 			return pkgerrors.Wrap(ctxErr, "RestoreFromRemote GetContextWithCancel")
 		}
-		cloudPrefix, detectErr := b.remoteCloudBackupPrefix(ctx, backupName)
+		cloudPrefix, tags, detectErr := b.remoteCloudBackupPrefix(ctx, backupName)
+		remoteTags = tags
 		cancel()
 		if detectErr != nil {
 			return pkgerrors.Wrap(detectErr, "RestoreFromRemote remoteCloudBackupPrefix")
@@ -57,12 +59,12 @@ func (b *Backuper) RestoreFromRemote(backupName, tablePattern string, databaseMa
 	b.skipEmbeddedClusterFanOut = true
 	// every node of RESTORE ... ON CLUSTER reads its own shards/N/replicas/M part, so the workers download and fix it
 	// before the initiator issues the RESTORE SQL, https://github.com/Altinity/clickhouse-backup/issues/928
-	if b.embeddedClusterInitiator() && !streaming && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+	if b.embeddedClusterInitiator(strings.Contains(remoteTags, "embedded")) && !streaming && !rbacOnly && !configsOnly && !namedCollectionsOnly {
 		ctx, cancel, ctxErr := status.Current.GetContextWithCancel(commandId)
 		if ctxErr != nil {
 			return pkgerrors.Wrap(ctxErr, "RestoreFromRemote GetContextWithCancel")
 		}
-		workerErr := b.runEmbeddedClusterWorkers(ctx, embeddedClusterRestoreWorkerCommand("restore_remote", backupName, tablePattern, databaseMapping, tableMapping, partitions, schemaOnly, dataOnly, dropExists, ignoreDependencies, schemaAsAttach, skipEmptyTables))
+		workerErr := b.runEmbeddedClusterWorkers(ctx, embeddedClusterRestoreWorkerCommand("restore_remote", backupName, b.embeddedClusterWorkerEnv(), tablePattern, databaseMapping, tableMapping, partitions, schemaOnly, dataOnly, dropExists, ignoreDependencies, schemaAsAttach, skipEmptyTables))
 		cancel()
 		if workerErr != nil {
 			return pkgerrors.Wrap(workerErr, "embedded ON CLUSTER workers")
@@ -208,11 +210,6 @@ func (b *Backuper) restoreFromRemoteStreaming(backupName, tablePattern string, d
 	if err := b.initDisksPathsAndBackupDestination(ctx, disks, ""); err != nil {
 		return pkgerrors.Wrap(err, "initDisksPathsAndBackupDestination")
 	}
-	if doDownloadData {
-		if err := b.checkDisksConsistency(disks); err != nil {
-			return err
-		}
-	}
 	defer func() {
 		if err := b.dst.Close(ctx); err != nil {
 			log.Warn().Msgf("can't close BackupDestination error: %v", err)
@@ -226,6 +223,11 @@ func (b *Backuper) restoreFromRemoteStreaming(backupName, tablePattern string, d
 	defer backupManifest.Close()
 	if strings.Contains(remoteBackup.Tags, "embedded") {
 		return pkgerrors.Errorf("restore_remote --streaming is not supported for embedded backup '%s'", backupName)
+	}
+	if doDownloadData {
+		if err := b.checkDisksConsistency(disks, false); err != nil {
+			return err
+		}
 	}
 
 	if !schemaOnly && !b.cfg.General.DownloadByPart && remoteBackup.RequiredBackup != "" {

@@ -169,6 +169,45 @@ def restore_remote_on_cluster(self):
 
 @TestScenario
 @Requirements(
+    RQ_SRS_013_ClickHouse_BackupUtility_EmbeddedBackup_OnCluster("1.0"),
+    RQ_SRS_013_ClickHouse_BackupUtility_EmbeddedBackup_OnCluster_Worker("1.0"),
+)
+def restore_remote_on_cluster_by_backup_tags(self):
+    """restore_remote of an embedded backup without use_embedded_backup_restore still drives every shard,
+    embedded mode is taken from the backup tags, https://github.com/Altinity/clickhouse-backup/issues/1671
+    """
+    ch1, ch2 = self.context.nodes
+    url = self.context.url
+    backup_name = self.context.backup_name
+    command = f"restore_remote --env=CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE=false {backup_name}"
+
+    with Given("I drop the table on every shard and remove local backups on every node"):
+        ch1.query(f"DROP TABLE IF EXISTS default.{TABLE} ON CLUSTER {CLUSTER} SYNC")
+        # delete local on the initiator removes the local backup on clickhouse2 too
+        self.context.backup.cmd(f"clickhouse-backup delete local {backup_name}")
+        self.context.backup2.cmd(f"test -d /var/lib/clickhouse/backup/{backup_name}", exitcode=1)
+
+    with When("I issue restore_remote on the initiator with use_embedded_backup_restore disabled"):
+        post_action(url=url, command=command)
+
+    with Then("the operation finishes successfully"):
+        row = wait_action(url=url, command=command)
+        assert row["status"] == "success", error(row)
+
+    with And("the worker on clickhouse2 gets use_embedded_backup_restore through --env and finishes"):
+        r = ch2.query(f"SELECT status, error FROM system.backup_actions "
+                      f"WHERE command LIKE 'restore_remote --env=_CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE=1_ {WORKER_FLAG} %{backup_name}%' "
+                      f"ORDER BY start DESC LIMIT 1 FORMAT TSVRaw").output
+        assert r.startswith("success"), error(r)
+
+    with And("row counts on every shard match the originals"):
+        for node in (ch1, ch2):
+            with By(f"check {node.name}"):
+                assert row_count(node) == self.context.expected_rows[node.name], error()
+
+
+@TestScenario
+@Requirements(
     RQ_SRS_013_ClickHouse_BackupUtility_EmbeddedBackup_OnCluster_DeleteLocal("1.0"),
 )
 def delete_local_on_cluster(self):
@@ -347,7 +386,7 @@ def embedded_on_cluster(self):
             for node in (ch1, ch2):
                 wait_integration_tables(node=node)
 
-        for scenario in (create_remote_on_cluster, restore_remote_on_cluster, delete_local_on_cluster, worker_unavailable):
+        for scenario in (create_remote_on_cluster, restore_remote_on_cluster, restore_remote_on_cluster_by_backup_tags, delete_local_on_cluster, worker_unavailable):
             Scenario(run=scenario)
 
     finally:

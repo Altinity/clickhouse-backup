@@ -769,23 +769,25 @@ func (b *Backuper) restoreCloudExec(ctx context.Context, sql, what string, secre
 // remoteCloudBackupPrefix returns the key prefix of backupName inside the bucket/container when the remote backup has
 // ClickHouse Cloud / native BACKUP layout (`.backup` without metadata.json), empty string for a regular backup,
 // https://github.com/Altinity/clickhouse-backup/issues/1574
-func (b *Backuper) remoteCloudBackupPrefix(ctx context.Context, backupName string) (string, error) {
+// tags of a regular remote backup are returned too, restore_remote decides embedded ON CLUSTER fan-out by them,
+// https://github.com/Altinity/clickhouse-backup/issues/1671
+func (b *Backuper) remoteCloudBackupPrefix(ctx context.Context, backupName string) (prefix string, tags string, err error) {
 	if b.cfg.General.RemoteStorage == "none" || b.cfg.General.RemoteStorage == "custom" {
-		return "", nil
+		return "", "", nil
 	}
 	if !b.ch.IsOpen {
 		if err := b.ch.Connect(); err != nil {
-			return "", errors.Wrap(err, "can't connect to clickhouse")
+			return "", "", errors.Wrap(err, "can't connect to clickhouse")
 		}
 		defer b.ch.Close()
 	}
 	// NewBackupDestination resolves macros in s3->path / azblob->path of b.cfg in place
 	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
 	if err != nil {
-		return "", errors.Wrap(err, "NewBackupDestination")
+		return "", "", errors.Wrap(err, "NewBackupDestination")
 	}
 	if err = bd.Connect(ctx); err != nil {
-		return "", errors.Wrap(err, "bd.Connect")
+		return "", "", errors.Wrap(err, "bd.Connect")
 	}
 	defer func() {
 		if closeErr := bd.Close(ctx); closeErr != nil {
@@ -794,18 +796,21 @@ func (b *Backuper) remoteCloudBackupPrefix(ctx context.Context, backupName strin
 	}()
 	backupList, err := bd.BackupList(ctx, true, backupName)
 	if err != nil {
-		return "", errors.Wrap(err, "bd.BackupList")
+		return "", "", errors.Wrap(err, "bd.BackupList")
 	}
-	if len(backupList) != 1 || backupList[0].DataFormat != storage.CloudBackupDataFormat {
-		return "", nil
+	if len(backupList) != 1 {
+		return "", "", nil
+	}
+	if backupList[0].DataFormat != storage.CloudBackupDataFormat {
+		return "", backupList[0].Tags, nil
 	}
 	switch b.cfg.General.RemoteStorage {
 	case "s3":
-		return path.Join(b.cfg.S3.Path, backupName), nil
+		return path.Join(b.cfg.S3.Path, backupName), "", nil
 	case "azblob":
-		return path.Join(b.cfg.AzureBlob.Path, backupName), nil
+		return path.Join(b.cfg.AzureBlob.Path, backupName), "", nil
 	}
-	return "", errors.Errorf("'%s' has ClickHouse Cloud / native BACKUP layout, restore_remote supports it only with `remote_storage: s3` or `remote_storage: azblob`, got `%s`, use restore_cloud with s3 or azblob config section", backupName, b.cfg.General.RemoteStorage)
+	return "", "", errors.Errorf("'%s' has ClickHouse Cloud / native BACKUP layout, restore_remote supports it only with `remote_storage: s3` or `remote_storage: azblob`, got `%s`, use restore_cloud with s3 or azblob config section", backupName, b.cfg.General.RemoteStorage)
 }
 
 // cloudUnsupportedRestoreRemoteOptions - restore_remote options which restore_cloud can't apply, restore fails

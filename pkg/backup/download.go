@@ -129,11 +129,6 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if err := b.initDisksPathsAndBackupDestination(ctx, disks, ""); err != nil {
 		return errors.Wrap(err, "initDisksPathsAndBackupDestination")
 	}
-	if !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
-		if err := b.checkDisksConsistency(disks); err != nil {
-			return err
-		}
-	}
 	defer func() {
 		if err := b.dst.Close(ctx); err != nil {
 			log.Warn().Msgf("can't close BackupDestination error: %v", err)
@@ -145,6 +140,12 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		return err
 	}
 	defer backupManifest.Close()
+	isEmbeddedBackup := b.setEmbeddedBackupDataPathByTags(remoteBackup.Tags, disks)
+	if !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+		if err := b.checkDisksConsistency(disks, isEmbeddedBackup); err != nil {
+			return err
+		}
+	}
 
 	// report what would be downloaded before the first side effect, no local directories, no table
 	// metadata files, no resumable state, https://github.com/Altinity/clickhouse-backup/issues/1012
