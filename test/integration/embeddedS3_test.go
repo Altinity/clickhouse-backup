@@ -45,6 +45,37 @@ func TestEmbeddedS3(t *testing.T) {
 	//runMainIntegrationScenario(t, "EMBEDDED_S3_PLAIN", "config-s3-plain-embedded.yml")
 }
 
+// TestEmbeddedS3URLRewrittenMetadata restore rewrites .sql in the bucket, since 26.9 ClickHouse checks the object size
+// against the .backup manifest, https://github.com/Altinity/clickhouse-backup/issues/1668
+func TestEmbeddedS3URLRewrittenMetadata(t *testing.T) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "24.3") < 0 {
+		t.Skip("embedded backup to S3 URL requires ClickHouse 24.3 or newer")
+	}
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 0, time.Second, time.Minute)
+
+	dbName := "test_embedded_url_1668"
+	backupName := "embedded_url_1668"
+	configFile := "config-s3-embedded-url.yml"
+	// ReplicatedMergeTree() without parameters is allowed only in Replicated database when default_replica_path contains {uuid}
+	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName+" ENGINE=Replicated('/clickhouse/databases/"+dbName+"', '{shard}', '{replica}')")
+	defer func() { r.NoError(env.dropDatabase(dbName, true)) }()
+	defer fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, nil, false, false, false, configFile)
+	// ReplicatedMergeTree() without parameters and MATERIALIZED VIEW without EMPTY, fixEmbeddedMetadataSQLQuery rewrites both
+	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+".t (id UInt64) ENGINE=ReplicatedMergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "CREATE TABLE "+dbName+".mv_dst (id UInt64) ENGINE=ReplicatedMergeTree() ORDER BY id")
+	env.queryWithNoError(t, r, "CREATE MATERIALIZED VIEW "+dbName+".mv TO "+dbName+".mv_dst AS SELECT id FROM "+dbName+".t")
+	env.queryWithNoError(t, r, "INSERT INTO "+dbName+".t SELECT number FROM numbers(100)")
+
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+configFile, "create_remote", "--tables="+dbName+".*", backupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+configFile, "delete", "local", backupName)
+	r.NoError(env.dropDatabase(dbName, false))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+configFile, "restore_remote", "--rm", backupName)
+	env.checkCount(r, 1, 100, "SELECT count() FROM "+dbName+".t")
+	env.checkCount(r, 1, 100, "SELECT count() FROM "+dbName+".mv_dst")
+}
+
 func TestEmbeddedS3Cleanup(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") < 0 {
 		t.Skip("native backup cleanup requires ClickHouse 23.3 or newer")
