@@ -2017,9 +2017,13 @@ func (b *Backuper) createBackupMetadata(ctx context.Context, backupMetaFile, bac
 		return ctx.Err()
 	default:
 		diskMetadataTypes := map[string]string{}
+		diskEncrypted := map[string]bool{}
 		for _, d := range disks {
 			if d.IsPlain() {
 				diskMetadataTypes[d.Name] = d.MetadataType
+			}
+			if d.IsEncrypted == 1 {
+				diskEncrypted[d.Name] = true
 			}
 		}
 		backupMetadata := metadata.BackupMetadata{
@@ -2028,6 +2032,7 @@ func (b *Backuper) createBackupMetadata(ctx context.Context, backupMetaFile, bac
 			Disks:                   diskMap,
 			DiskTypes:               diskTypes,
 			DiskMetadataTypes:       diskMetadataTypes,
+			DiskEncrypted:           diskEncrypted,
 			ClickhouseBackupVersion: version,
 			CreationDate:            time.Now(),
 			Tags:                    tags,

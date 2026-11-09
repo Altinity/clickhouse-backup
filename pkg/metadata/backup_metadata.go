@@ -33,6 +33,9 @@ type BackupMetadata struct {
 	Functions               []FunctionsMeta   `json:"functions"`
 	DataFormat              string            `json:"data_format"`
 	RequiredBackup          string            `json:"required_backup,omitempty"`
+	// DiskEncrypted - disks with system.disks.is_encrypted=1, 22.9+ reports the underlying type in disk_types
+	// for an encrypted disk, so `local` can't tell ciphertext from plain part files without it, "disk_name": true
+	DiskEncrypted map[string]bool `json:"disk_encrypted,omitempty"`
 }
 
 // IsPlainDisk returns true when the disk had metadata_type=plain or plain_rewritable at backup time,
