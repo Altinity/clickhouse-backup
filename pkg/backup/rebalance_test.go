@@ -41,7 +41,7 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 	t.Run("rule1 live part on the same disk", func(t *testing.T) {
 		tm := newTestTableMetadata(map[string][]metadata.Part{"hdd1": {{Name: "all_1_1_0", Size: 10}}})
 		liveParts := map[string]livePart{"all_1_1_0": {Name: "all_1_1_0", DiskName: "hdd1", Path: "/hdd1_data/data/db/t/all_1_1_0/"}}
-		moves, err := computeTableRebalancePlan(tm, localTypes, liveParts, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, liveParts, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
 		require.NoError(t, err)
 		require.Empty(t, moves)
 	})
@@ -49,7 +49,7 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 	t.Run("rule2 live part on other disk produces hardlink move", func(t *testing.T) {
 		tm := newTestTableMetadata(map[string][]metadata.Part{"hdd1": {{Name: "all_1_1_0", Size: 10}}})
 		liveParts := map[string]livePart{"all_1_1_0": {Name: "all_1_1_0", DiskName: "hdd2", Path: "/hdd2_data/data/db/t/all_1_1_0/"}}
-		moves, err := computeTableRebalancePlan(tm, localTypes, liveParts, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, liveParts, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
 		require.NoError(t, err)
 		require.Equal(t, []partMove{{
 			PartName: "all_1_1_0", SrcDisk: "hdd1", PhysicalSrcDisk: "hdd1", DstDisk: "hdd2",
@@ -60,7 +60,7 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 	t.Run("rule1 respects RebalancedDisk redirect from previous download", func(t *testing.T) {
 		tm := newTestTableMetadata(map[string][]metadata.Part{"dead_disk": {{Name: "all_1_1_0", RebalancedDisk: "hdd2", Size: 10}}})
 		liveParts := map[string]livePart{"all_1_1_0": {Name: "all_1_1_0", DiskName: "hdd2", Path: "/hdd2_data/data/db/t/all_1_1_0/"}}
-		moves, err := computeTableRebalancePlan(tm, localTypes, liveParts, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, liveParts, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
 		require.NoError(t, err)
 		require.Empty(t, moves)
 	})
@@ -68,7 +68,7 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 	t.Run("rule2 physical source follows RebalancedDisk redirect", func(t *testing.T) {
 		tm := newTestTableMetadata(map[string][]metadata.Part{"dead_disk": {{Name: "all_1_1_0", RebalancedDisk: "hdd2", Size: 10}}})
 		liveParts := map[string]livePart{"all_1_1_0": {Name: "all_1_1_0", DiskName: "hdd1", Path: "/hdd1_data/data/db/t/all_1_1_0/"}}
-		moves, err := computeTableRebalancePlan(tm, localTypes, liveParts, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, liveParts, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
 		require.NoError(t, err)
 		require.Len(t, moves, 1)
 		require.Equal(t, "dead_disk", moves[0].SrcDisk)
@@ -79,7 +79,7 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 
 	t.Run("required parts skipped", func(t *testing.T) {
 		tm := newTestTableMetadata(map[string][]metadata.Part{"dead_disk": {{Name: "all_1_1_0", Required: true}}})
-		moves, err := computeTableRebalancePlan(tm, localTypes, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
 		require.NoError(t, err)
 		require.Empty(t, moves)
 	})
@@ -88,7 +88,7 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 		tm := newTestTableMetadata(map[string][]metadata.Part{"s3disk": {{Name: "all_1_1_0", Size: 10}}})
 		liveParts := map[string]livePart{"all_1_1_0": {Name: "all_1_1_0", DiskName: "hdd1", Path: "/hdd1_data/data/db/t/all_1_1_0/"}}
 		backupObjectDisks := map[string]struct{}{"s3disk": {}}
-		moves, err := computeTableRebalancePlan(tm, localTypes, liveParts, "jbod", jbodDisks, backupObjectDisks, newTestRebalanceInfo(), noSizeResolver(t))
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, liveParts, "jbod", jbodDisks, backupObjectDisks, newTestRebalanceInfo(), noSizeResolver(t))
 		require.NoError(t, err)
 		require.Empty(t, moves)
 	})
@@ -98,7 +98,7 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 		liveParts := map[string]livePart{"all_1_1_0": {Name: "all_1_1_0", DiskName: "hdd2", Path: "/hdd2_data/data/db/t/all_1_1_0/"}}
 		info := newTestRebalanceInfo()
 		info.skipDisks["hdd1"] = struct{}{}
-		moves, err := computeTableRebalancePlan(tm, localTypes, liveParts, "jbod", jbodDisks, nil, info, noSizeResolver(t))
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, liveParts, "jbod", jbodDisks, nil, info, noSizeResolver(t))
 		require.NoError(t, err)
 		require.Empty(t, moves)
 	})
@@ -106,7 +106,7 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 	t.Run("live part on object disk with valid source disk stays", func(t *testing.T) {
 		tm := newTestTableMetadata(map[string][]metadata.Part{"hdd1": {{Name: "all_1_1_0", Size: 10}}})
 		liveParts := map[string]livePart{"all_1_1_0": {Name: "all_1_1_0", DiskName: "s3disk", Path: "/s3disk/store/xxx/all_1_1_0/"}}
-		moves, err := computeTableRebalancePlan(tm, localTypes, liveParts, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, liveParts, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
 		require.NoError(t, err)
 		require.Empty(t, moves)
 	})
@@ -117,7 +117,7 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 		info := newTestRebalanceInfo()
 		info.effectiveFree["hdd1"] = 500
 		info.effectiveFree["hdd2"] = 100
-		moves, err := computeTableRebalancePlan(tm, localTypes, liveParts, "jbod", jbodDisks, nil, info, noSizeResolver(t))
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, liveParts, "jbod", jbodDisks, nil, info, noSizeResolver(t))
 		require.NoError(t, err)
 		require.Len(t, moves, 1)
 		require.False(t, moves[0].HardlinkFromLive)
@@ -127,7 +127,7 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 
 	t.Run("rule3 valid disk with equal free space stays", func(t *testing.T) {
 		tm := newTestTableMetadata(map[string][]metadata.Part{"hdd1": {{Name: "all_1_1_0", Size: 10}}})
-		moves, err := computeTableRebalancePlan(tm, localTypes, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
 		require.NoError(t, err)
 		require.Empty(t, moves)
 	})
@@ -137,7 +137,7 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 		info := newTestRebalanceInfo()
 		info.effectiveFree["hdd1"] = 100
 		info.effectiveFree["hdd2"] = 500
-		moves, err := computeTableRebalancePlan(tm, localTypes, nil, "jbod", jbodDisks, nil, info, noSizeResolver(t))
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, nil, "jbod", jbodDisks, nil, info, noSizeResolver(t))
 		require.NoError(t, err)
 		require.Len(t, moves, 1)
 		require.False(t, moves[0].HardlinkFromLive)
@@ -146,26 +146,54 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 		require.Equal(t, uint64(490), info.effectiveFree["hdd2"])
 	})
 
+	// https://github.com/Altinity/clickhouse-backup/issues/1670
+	t.Run("rule3 plain part never lands on an encrypted disk", func(t *testing.T) {
+		tm := newTestTableMetadata(map[string][]metadata.Part{"hdd1": {{Name: "all_1_1_0", Size: 10}}})
+		info := newTestRebalanceInfo()
+		info.liveEncrypted = map[string]bool{"hdd2": true}
+		info.effectiveFree["hdd1"] = 100
+		info.effectiveFree["hdd2"] = 500
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, nil, "jbod", jbodDisks, nil, info, noSizeResolver(t))
+		require.NoError(t, err)
+		require.Empty(t, moves)
+	})
+
+	t.Run("rule3 part of a removed encrypted disk lands only on an encrypted disk", func(t *testing.T) {
+		tm := newTestTableMetadata(map[string][]metadata.Part{"dead_disk": {{Name: "all_1_1_0", Size: 10}}})
+		info := newTestRebalanceInfo()
+		info.liveEncrypted = map[string]bool{"hdd2": true}
+		info.effectiveFree["hdd1"] = 500
+		info.effectiveFree["hdd2"] = 100
+		moves, err := computeTableRebalancePlan(tm, localTypes, map[string]bool{"dead_disk": true}, nil, "jbod", jbodDisks, nil, info, noSizeResolver(t))
+		require.NoError(t, err)
+		require.Len(t, moves, 1)
+		require.Equal(t, "hdd2", moves[0].DstDisk)
+		require.Equal(t, "invalid_backup_disk", moves[0].Reason)
+
+		_, err = computeTableRebalancePlan(tm, localTypes, map[string]bool{"dead_disk": true}, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
+		require.ErrorContains(t, err, "no disk with type `local`, encrypted=true")
+	})
+
 	t.Run("rule3 valid disk stays when the target is not roomier after landing", func(t *testing.T) {
 		tm := newTestTableMetadata(map[string][]metadata.Part{"hdd1": {{Name: "all_1_1_0", Size: 10}}})
 		info := newTestRebalanceInfo()
 		info.effectiveFree["hdd1"] = 100
 		info.effectiveFree["hdd2"] = 105
-		moves, err := computeTableRebalancePlan(tm, localTypes, nil, "jbod", jbodDisks, nil, info, noSizeResolver(t))
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, nil, "jbod", jbodDisks, nil, info, noSizeResolver(t))
 		require.NoError(t, err)
 		require.Empty(t, moves)
 	})
 
 	t.Run("rule3 valid disk stays without error when no disk fits", func(t *testing.T) {
 		tm := newTestTableMetadata(map[string][]metadata.Part{"hdd1": {{Name: "all_1_1_0", Size: 5000}}})
-		moves, err := computeTableRebalancePlan(tm, localTypes, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
 		require.NoError(t, err)
 		require.Empty(t, moves)
 	})
 
 	t.Run("rule3 disk not in policy is invalid", func(t *testing.T) {
 		tm := newTestTableMetadata(map[string][]metadata.Part{"default": {{Name: "all_1_1_0", Size: 10}}})
-		moves, err := computeTableRebalancePlan(tm, localTypes, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
 		require.NoError(t, err)
 		require.Len(t, moves, 1)
 		require.Equal(t, "invalid_backup_disk", moves[0].Reason)
@@ -179,7 +207,7 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 		info := newTestRebalanceInfo()
 		info.effectiveFree["hdd1"] = 500
 		info.effectiveFree["hdd2"] = 450
-		moves, err := computeTableRebalancePlan(tm, localTypes, nil, "jbod", jbodDisks, nil, info, noSizeResolver(t))
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, nil, "jbod", jbodDisks, nil, info, noSizeResolver(t))
 		require.NoError(t, err)
 		require.Len(t, moves, 2)
 		require.Equal(t, "hdd1", moves[0].DstDisk)
@@ -190,7 +218,7 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 
 	t.Run("rule3 no disk with enough free space returns error", func(t *testing.T) {
 		tm := newTestTableMetadata(map[string][]metadata.Part{"dead_disk": {{Name: "all_1_1_0", Size: 5000}}})
-		moves, err := computeTableRebalancePlan(tm, localTypes, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "all_1_1_0")
 		require.Nil(t, moves)
@@ -199,7 +227,7 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 	t.Run("rule3 destination disk type must match backup disk type", func(t *testing.T) {
 		tm := newTestTableMetadata(map[string][]metadata.Part{"dead_disk": {{Name: "all_1_1_0", Size: 10}}})
 		diskTypes := map[string]string{"dead_disk": "s3"}
-		_, err := computeTableRebalancePlan(tm, diskTypes, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
+		_, err := computeTableRebalancePlan(tm, diskTypes, nil, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), noSizeResolver(t))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "type `s3`")
 	})
@@ -213,7 +241,7 @@ func TestComputeTableRebalancePlan(t *testing.T) {
 			resolved = true
 			return 42
 		}
-		moves, err := computeTableRebalancePlan(tm, localTypes, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), resolver)
+		moves, err := computeTableRebalancePlan(tm, localTypes, nil, nil, "jbod", jbodDisks, nil, newTestRebalanceInfo(), resolver)
 		require.NoError(t, err)
 		require.True(t, resolved)
 		require.Len(t, moves, 1)
@@ -228,7 +256,7 @@ func TestChooseRebalanceDstDisk(t *testing.T) {
 		info := newTestRebalanceInfo()
 		info.effectiveFree["hdd1"] = 100
 		info.effectiveFree["hdd2"] = 200
-		disk, err := chooseRebalanceDstDisk("local", 50, policyDisks, info)
+		disk, err := chooseRebalanceDstDisk("local", false, 50, policyDisks, info)
 		require.NoError(t, err)
 		require.Equal(t, "hdd2", disk)
 	})
@@ -237,7 +265,7 @@ func TestChooseRebalanceDstDisk(t *testing.T) {
 		info := newTestRebalanceInfo()
 		info.effectiveFree["hdd1"] = 200
 		info.effectiveFree["hdd2"] = 200
-		disk, err := chooseRebalanceDstDisk("local", 50, policyDisks, info)
+		disk, err := chooseRebalanceDstDisk("local", false, 50, policyDisks, info)
 		require.NoError(t, err)
 		require.Equal(t, "hdd1", disk)
 	})
@@ -247,14 +275,14 @@ func TestChooseRebalanceDstDisk(t *testing.T) {
 		info.effectiveFree["s3disk"] = 100000
 		info.skipDisks["hdd2"] = struct{}{}
 		info.effectiveFree["hdd2"] = 100000
-		disk, err := chooseRebalanceDstDisk("local", 50, policyDisks, info)
+		disk, err := chooseRebalanceDstDisk("local", false, 50, policyDisks, info)
 		require.NoError(t, err)
 		require.Equal(t, "hdd1", disk)
 	})
 
 	t.Run("no fit returns error", func(t *testing.T) {
 		info := newTestRebalanceInfo()
-		_, err := chooseRebalanceDstDisk("local", 100000, policyDisks, info)
+		_, err := chooseRebalanceDstDisk("local", false, 100000, policyDisks, info)
 		require.Error(t, err)
 	})
 }
