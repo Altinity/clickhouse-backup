@@ -22,10 +22,17 @@ func TestDeleteFilesUsesNativePrefixAndPreservesPartialErrors(t *testing.T) {
 	var mu sync.Mutex
 	present := map[string]bool{"native/a": true, "native/b": true}
 	denyB := true
-	var calls int
+	var calls, singleCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Query().Has("versioning") {
 			_, _ = w.Write([]byte(`<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>`))
+			return
+		}
+		if r.Method == http.MethodDelete {
+			mu.Lock()
+			singleCalls++
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		if r.Method != http.MethodPost || !r.URL.Query().Has("delete") {
@@ -83,6 +90,15 @@ func TestDeleteFilesUsesNativePrefixAndPreservesPartialErrors(t *testing.T) {
 	mu.Lock()
 	require.Empty(t, present)
 	require.Equal(t, 2, calls)
+	mu.Unlock()
+	// ClickHouse's support_batch_delete=false maps to this credential type,
+	// while the connection still uses the S3 client for single deletes.
+	DisksCredentials.Store(disk, ObjectStorageCredentials{Type: "gcs"})
+	defer DisksCredentials.Delete(disk)
+	require.NoError(t, DeleteFiles(ctx, disk, []string{"a", "b"}))
+	mu.Lock()
+	require.Equal(t, 2, calls, "do not send batches when the disk disables them")
+	require.Equal(t, 2, singleCalls)
 	mu.Unlock()
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()

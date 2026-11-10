@@ -1054,8 +1054,13 @@ func DeleteFiles(ctx context.Context, diskName string, remotePaths []string) err
 		return errors.Errorf("%s not present in object_disk.DisksConnections", diskName)
 	}
 	remoteStorage := connection.GetRemoteStorage()
-	if batchDeleter, ok := remoteStorage.(storage.BatchDeleter); ok {
-		return batchDeleter.DeleteKeysBatch(ctx, remotePaths)
+	// The gcs credential type also represents support_batch_delete=false on
+	// an S3-compatible disk. Keep its explicitly selected single-delete path.
+	credentials, knownCredentials := DisksCredentials.Load(diskName)
+	if !knownCredentials || credentials.Type != "gcs" {
+		if batchDeleter, ok := remoteStorage.(storage.BatchDeleter); ok {
+			return batchDeleter.DeleteKeysBatch(ctx, remotePaths)
+		}
 	}
 	for _, remotePath := range remotePaths {
 		if err := ctx.Err(); err != nil {

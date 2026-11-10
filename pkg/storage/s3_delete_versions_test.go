@@ -14,7 +14,7 @@ import (
 )
 
 func TestS3DeleteBatchVersioned(t *testing.T) {
-	for _, outcome := range []string{"present", "already_absent", "listing_denied"} {
+	for _, outcome := range []string{"present", "already_absent", "listing_denied", "versioning_denied"} {
 		t.Run(outcome, func(t *testing.T) {
 			var mu sync.Mutex
 			var deleted []string
@@ -22,6 +22,11 @@ func TestS3DeleteBatchVersioned(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case r.Method == http.MethodGet && r.URL.Query().Has("versioning"):
+					if outcome == "versioning_denied" {
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code><Message>denied</Message></Error>`))
+						return
+					}
 					_, _ = w.Write([]byte(`<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Enabled</Status></VersioningConfiguration>`))
 				case r.Method == http.MethodGet && r.URL.Query().Has("versions"):
 					if outcome == "listing_denied" {
@@ -76,6 +81,10 @@ func TestS3DeleteBatchVersioned(t *testing.T) {
 			if outcome == "present" {
 				require.Equal(t, 1, deleteCalls)
 				require.ElementsMatch(t, []string{"native/a:v1", "native/a:marker", "native/b:v1", "native/b:marker"}, deleted)
+			} else if outcome == "versioning_denied" {
+				require.Equal(t, 1, deleteCalls)
+				require.ElementsMatch(t, []string{"native/a:", "native/b:"}, deleted,
+					"keep the existing key-only deletion behavior without version permissions")
 			} else {
 				require.Zero(t, deleteCalls, "do not add a delete marker for absent objects or after a version-list error")
 				require.Empty(t, deleted)
