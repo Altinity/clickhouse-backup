@@ -507,7 +507,7 @@ func (b *Backuper) saveLocalBackupMetadata(backupName string, backupMetadata met
 func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownload ListOfTables, disks []clickhouse.Disk, remoteBackup storage.Backup) error {
 	var disksByStoragePolicyAndType map[string]map[string][]clickhouse.Disk
 	assignedParts := map[string]int{}
-	filterDisksByTypeAndStoragePolicies := func(disk string, diskType string, disks []clickhouse.Disk, remoteBackup storage.Backup, t metadata.TableMetadata) (string, []clickhouse.Disk, error) {
+	filterDisksByTypeAndStoragePolicies := func(disk string, diskTypeKey string, disks []clickhouse.Disk, remoteBackup storage.Backup, t metadata.TableMetadata) (string, []clickhouse.Disk, error) {
 		_, ok := remoteBackup.DiskTypes[disk]
 		if !ok {
 			return "", nil, errors.Errorf("disk: %s not found in disk_types section %#v in %s/metadata.json", disk, remoteBackup.DiskTypes, remoteBackup.BackupName)
@@ -516,20 +516,20 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 		if len(disksByStoragePolicyAndType) == 0 {
 			disksByStoragePolicyAndType = b.splitDisksByTypeAndStoragePolicy(disks)
 		}
-		if _, isTypeExists := disksByStoragePolicyAndType[diskType]; !isTypeExists {
-			return "", nil, errors.Errorf("disk: %s, diskType: %s not found in system.disks, check `SELECT * FROM system.disks` and `SELECT * FROM system.storage_policies` on the destination server", disk, diskType)
+		if _, isTypeExists := disksByStoragePolicyAndType[diskTypeKey]; !isTypeExists {
+			return "", nil, errors.Errorf("disk: %s, diskType: %s not found in system.disks, check `SELECT * FROM system.disks` and `SELECT * FROM system.storage_policies` on the destination server", disk, diskTypeKey)
 		}
-		filteredDisks, isPolicyExists := disksByStoragePolicyAndType[diskType][storagePolicy]
+		filteredDisks, isPolicyExists := disksByStoragePolicyAndType[diskTypeKey][storagePolicy]
 		if !isPolicyExists || len(filteredDisks) == 0 {
-			return "", nil, errors.Errorf("storagePolicy: %s with diskType: %s not found in system.disks, check `SELECT * FROM system.storage_policies` and `SELECT * FROM system.disks` on the destination server", storagePolicy, diskType)
+			return "", nil, errors.Errorf("storagePolicy: %s with diskType: %s not found in system.disks, check `SELECT * FROM system.storage_policies` and `SELECT * FROM system.disks` on the destination server", storagePolicy, diskTypeKey)
 		}
 		return storagePolicy, filteredDisks, nil
 	}
 
-	updateDiskFreeSize := func(downloadDisk, diskType, storagePolicy string, newFreeSpace uint64) {
-		for dIdx := range disksByStoragePolicyAndType[diskType][storagePolicy] {
-			if disksByStoragePolicyAndType[diskType][storagePolicy][dIdx].Name == downloadDisk {
-				disksByStoragePolicyAndType[diskType][storagePolicy][dIdx].FreeSpace = newFreeSpace
+	updateDiskFreeSize := func(downloadDisk, diskTypeKey, storagePolicy string, newFreeSpace uint64) {
+		for dIdx := range disksByStoragePolicyAndType[diskTypeKey][storagePolicy] {
+			if disksByStoragePolicyAndType[diskTypeKey][storagePolicy][dIdx].Name == downloadDisk {
+				disksByStoragePolicyAndType[diskTypeKey][storagePolicy][dIdx].FreeSpace = newFreeSpace
 			}
 		}
 	}
@@ -567,7 +567,9 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 			// enabling distribution across JBOD disks under the same storage policy
 			if _, diskExists := b.DiskToPathMap[disk]; (!diskExists || b.cfg.ClickHouse.ForceRebalance) && disk != b.cfg.ClickHouse.EmbeddedBackupDisk {
 				diskType := remoteBackup.DiskTypes[disk]
-				storagePolicy, filteredDisks, err := filterDisksByTypeAndStoragePolicies(disk, diskType, disks, remoteBackup, *t)
+				// encrypted parts are ciphertext, they can be placed only on an encrypted disk and vice versa
+				diskTypeKey := rebalanceDiskTypeKey(diskType, remoteBackup.DiskEncrypted[disk])
+				storagePolicy, filteredDisks, err := filterDisksByTypeAndStoragePolicies(disk, diskTypeKey, disks, remoteBackup, *t)
 				if err != nil {
 					return errors.Wrap(err, "filterDisksByTypeAndStoragePolicies")
 				}
@@ -601,7 +603,7 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 					tableMetadataAfterDownload[i].Parts[disk][j].RebalancedDisk = downloadDisk
 					isRebalanced = true
 					if !isObjectDisk {
-						updateDiskFreeSize(downloadDisk, diskType, storagePolicy, newFreeSpace)
+						updateDiskFreeSize(downloadDisk, diskTypeKey, storagePolicy, newFreeSpace)
 					}
 					//re-balance file depend on part
 					if len(t.Files) > 0 {
@@ -2190,6 +2192,9 @@ func (b *Backuper) isCrossDiskDownloadIncompatible(disks []clickhouse.Disk, requ
 	requiredDiskInfo := b.findDiskByName(disks, requiredDisk)
 	if requiredDiskInfo == nil && requiredBackup.DiskTypes[requiredDisk] != "" {
 		requiredDiskInfo = &clickhouse.Disk{Name: requiredDisk, Type: requiredBackup.DiskTypes[requiredDisk]}
+		if requiredBackup.DiskEncrypted[requiredDisk] {
+			requiredDiskInfo.IsEncrypted = 1
+		}
 	}
 	if currentDisk == nil || requiredDiskInfo == nil {
 		return false
@@ -2430,18 +2435,28 @@ func (b *Backuper) splitDisksByTypeAndStoragePolicy(disks []clickhouse.Disk) map
 	disksByTypeAndPolicy := map[string]map[string][]clickhouse.Disk{}
 	for _, d := range disks {
 		if !d.IsBackup {
-			if _, typeExists := disksByTypeAndPolicy[d.Type]; !typeExists {
-				disksByTypeAndPolicy[d.Type] = map[string][]clickhouse.Disk{}
+			typeKey := rebalanceDiskTypeKey(d.Type, d.IsEncrypted == 1)
+			if _, typeExists := disksByTypeAndPolicy[typeKey]; !typeExists {
+				disksByTypeAndPolicy[typeKey] = map[string][]clickhouse.Disk{}
 			}
 			for _, policy := range d.StoragePolicies {
-				if _, policyExists := disksByTypeAndPolicy[d.Type][policy]; !policyExists {
-					disksByTypeAndPolicy[d.Type][policy] = []clickhouse.Disk{}
+				if _, policyExists := disksByTypeAndPolicy[typeKey][policy]; !policyExists {
+					disksByTypeAndPolicy[typeKey][policy] = []clickhouse.Disk{}
 				}
-				disksByTypeAndPolicy[d.Type][policy] = append(disksByTypeAndPolicy[d.Type][policy], d)
+				disksByTypeAndPolicy[typeKey][policy] = append(disksByTypeAndPolicy[typeKey][policy], d)
 			}
 		}
 	}
 	return disksByTypeAndPolicy
+}
+
+// rebalanceDiskTypeKey - 22.9+ reports the underlying type for an encrypted disk, so an encrypted disk
+// is grouped apart from plain disks of the same type, https://github.com/Altinity/clickhouse-backup/issues/1670
+func rebalanceDiskTypeKey(diskType string, isEncrypted bool) string {
+	if isEncrypted {
+		return diskType + " (encrypted)"
+	}
+	return diskType
 }
 
 // getDownloadDiskForNonExistsDisk - https://github.com/Altinity/clickhouse-backup/issues/561

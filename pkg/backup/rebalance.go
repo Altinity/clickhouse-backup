@@ -51,6 +51,7 @@ type partMove struct {
 // effectiveFree is reduced while planning Rule 3 copies so several parts don't overbook one disk
 type rebalanceDisksInfo struct {
 	liveTypes     map[string]string   // live disk name -> disk type
+	liveEncrypted map[string]bool     // live disks with system.disks.is_encrypted=1, type is the underlying one on 22.9+
 	objectDisks   map[string]struct{} // live disks with object or encrypted-over-object type
 	skipDisks     map[string]struct{} // live disks matched by clickhouse->skip_disks / skip_disk_types
 	effectiveFree map[string]uint64   // max(0, unreserved_space - keep_free_space)
@@ -202,6 +203,12 @@ func (b *Backuper) Rebalance(backupName string, tablePattern string, dryRun bool
 		for d := range dstDisksUsed {
 			localBackup.Disks[d] = b.DiskToPathMap[d]
 			localBackup.DiskTypes[d] = info.liveTypes[d]
+			if info.liveEncrypted[d] {
+				if localBackup.DiskEncrypted == nil {
+					localBackup.DiskEncrypted = map[string]bool{}
+				}
+				localBackup.DiskEncrypted[d] = true
+			}
 		}
 		backupMetaFile := path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")
 		if err = localBackup.BackupMetadata.Save(backupMetaFile); err != nil {
@@ -260,6 +267,7 @@ func (b *Backuper) buildRebalanceDisksInfo(ctx context.Context, disks []clickhou
 	}
 	info := &rebalanceDisksInfo{
 		liveTypes:     map[string]string{},
+		liveEncrypted: map[string]bool{},
 		objectDisks:   map[string]struct{}{},
 		skipDisks:     map[string]struct{}{},
 		effectiveFree: map[string]uint64{},
@@ -269,6 +277,9 @@ func (b *Backuper) buildRebalanceDisksInfo(ctx context.Context, disks []clickhou
 			continue
 		}
 		info.liveTypes[d.Name] = d.Type
+		if d.IsEncrypted == 1 {
+			info.liveEncrypted[d.Name] = true
+		}
 		if b.isDiskTypeObject(d.Type) || b.isDiskTypeEncryptedObject(d, disks) {
 			info.objectDisks[d.Name] = struct{}{}
 		}
@@ -339,7 +350,7 @@ func (b *Backuper) planTableRebalance(ctx context.Context, tm *metadata.TableMet
 		}
 		return size
 	}
-	return computeTableRebalancePlan(tm, localBackup.DiskTypes, liveParts, policyName, policyDisks, backupObjectDisks, info, resolvePartSize)
+	return computeTableRebalancePlan(tm, localBackup.DiskTypes, localBackup.DiskEncrypted, liveParts, policyName, policyDisks, backupObjectDisks, info, resolvePartSize)
 }
 
 // getLiveParts - active parts of the table from system.parts keyed by part name
@@ -358,7 +369,7 @@ func (b *Backuper) getLiveParts(ctx context.Context, database, table string) (ma
 
 // computeTableRebalancePlan - pure planning logic, mutates info.effectiveFree for Rule 3 allocations,
 // resolvePartSize is called only for parts created before Part.Size was introduced (#1268)
-func computeTableRebalancePlan(tm *metadata.TableMetadata, backupDiskTypes map[string]string, liveParts map[string]livePart, policyName string, policyDisks map[string]struct{}, backupObjectDisks map[string]struct{}, info *rebalanceDisksInfo, resolvePartSize func(physicalSrcDisk, partName string) uint64) ([]partMove, error) {
+func computeTableRebalancePlan(tm *metadata.TableMetadata, backupDiskTypes map[string]string, backupDiskEncrypted map[string]bool, liveParts map[string]livePart, policyName string, policyDisks map[string]struct{}, backupObjectDisks map[string]struct{}, info *rebalanceDisksInfo, resolvePartSize func(physicalSrcDisk, partName string) uint64) ([]partMove, error) {
 	srcDisks := make([]string, 0, len(tm.Parts))
 	for srcDisk := range tm.Parts {
 		srcDisks = append(srcDisks, srcDisk)
@@ -417,7 +428,13 @@ func computeTableRebalancePlan(tm *metadata.TableMetadata, backupDiskTypes map[s
 			if srcDiskType == "" {
 				srcDiskType = "local"
 			}
-			dstDisk, err := chooseRebalanceDstDisk(srcDiskType, size, policyDisks, info)
+			// the shadow files of an encrypted disk are ciphertext, they are copied as is, so the destination
+			// disk shall have the same encryption, https://github.com/Altinity/clickhouse-backup/issues/1670
+			srcEncrypted := backupDiskEncrypted[physicalSrcDisk]
+			if srcLive {
+				srcEncrypted = info.liveEncrypted[physicalSrcDisk]
+			}
+			dstDisk, err := chooseRebalanceDstDisk(srcDiskType, srcEncrypted, size, policyDisks, info)
 			if err != nil {
 				// a part on a still valid disk stays there when no better disk fits it
 				if srcValid {
@@ -446,11 +463,11 @@ func computeTableRebalancePlan(tm *metadata.TableMetadata, backupDiskTypes map[s
 
 // chooseRebalanceDstDisk - the policy disk of the same type with maximum effective free space,
 // ties are broken by name to keep planning deterministic
-func chooseRebalanceDstDisk(diskType string, size uint64, policyDisks map[string]struct{}, info *rebalanceDisksInfo) (string, error) {
+func chooseRebalanceDstDisk(diskType string, isEncrypted bool, size uint64, policyDisks map[string]struct{}, info *rebalanceDisksInfo) (string, error) {
 	bestDisk := ""
 	var bestFree uint64
 	for d := range policyDisks {
-		if info.liveTypes[d] != diskType {
+		if info.liveTypes[d] != diskType || info.liveEncrypted[d] != isEncrypted {
 			continue
 		}
 		if _, isObject := info.objectDisks[d]; isObject {
@@ -468,7 +485,7 @@ func chooseRebalanceDstDisk(diskType string, size uint64, policyDisks map[string
 		}
 	}
 	if bestDisk == "" {
-		return "", errors.Errorf("no disk with type `%s` and %s free space (unreserved_space - keep_free_space) found", diskType, utils.FormatBytes(size))
+		return "", errors.Errorf("no disk with type `%s`, encrypted=%v and %s free space (unreserved_space - keep_free_space) found", diskType, isEncrypted, utils.FormatBytes(size))
 	}
 	return bestDisk, nil
 }

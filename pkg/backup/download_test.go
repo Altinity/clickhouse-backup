@@ -278,6 +278,54 @@ func TestReBalanceTablesMetadataIfDiskNotExists_SameFilesystemDisks(t *testing.T
 	}
 }
 
+// parts of a removed encrypted disk are ciphertext, they can be re-balanced only to an encrypted disk,
+// parts of a removed plain disk only to a plain disk, https://github.com/Altinity/clickhouse-backup/issues/1670
+func TestReBalanceTablesMetadataIfDiskNotExists_EncryptedDisks(t *testing.T) {
+	fb := Backuper{
+		DiskToPathMap: map[string]string{"hdd1": "/hdd1_data", "hdd4_encrypted": "/hdd4_data"},
+		cfg:           &config.Config{},
+	}
+	const totalSpace = 100 * 1024 * 1024 * 1024
+	disks := []clickhouse.Disk{
+		{Name: "hdd1", Path: "/hdd1_data", Type: "local", FreeSpace: 10 * 1024 * 1024 * 1024, TotalSpace: totalSpace, StoragePolicies: []string{"default"}},
+		{Name: "hdd4_encrypted", Path: "/hdd4_data", Type: "local", IsEncrypted: 1, FreeSpace: 90 * 1024 * 1024 * 1024, TotalSpace: totalSpace, StoragePolicies: []string{"default"}},
+	}
+	table := metadata.TableMetadata{
+		Parts: map[string][]metadata.Part{
+			"hdd2":           {{Name: "202401_1_1_0"}, {Name: "202402_2_2_0"}},
+			"hdd3_encrypted": {{Name: "202403_3_3_0"}, {Name: "202404_4_4_0"}},
+		},
+		Database:   "default",
+		Table:      "test",
+		Query:      "CREATE TABLE default.test(id UInt64) ENGINE=MergeTree() ORDER BY id",
+		TotalBytes: 4 * 8192,
+		LocalFile:  "/dev/null",
+	}
+	backup := storage.Backup{BackupMetadata: metadata.BackupMetadata{
+		BackupName:    "test",
+		DataFormat:    "directory",
+		DiskTypes:     map[string]string{"hdd2": "local", "hdd3_encrypted": "local"},
+		DiskEncrypted: map[string]bool{"hdd3_encrypted": true},
+	}}
+	require.NoError(t, fb.reBalanceTablesMetadataIfDiskNotExists(ListOfTables{&table}, disks, backup))
+	for _, p := range table.Parts["hdd2"] {
+		assert.Equal(t, "hdd1", p.RebalancedDisk, p.Name)
+	}
+	for _, p := range table.Parts["hdd3_encrypted"] {
+		assert.Equal(t, "hdd4_encrypted", p.RebalancedDisk, p.Name)
+	}
+
+	// no encrypted disk on the destination server, parts of an encrypted disk can't be placed anywhere
+	for d := range table.Parts {
+		for j := range table.Parts[d] {
+			table.Parts[d][j].RebalancedDisk = ""
+		}
+	}
+	err := fb.reBalanceTablesMetadataIfDiskNotExists(ListOfTables{&table}, disks[:1], backup)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "diskType: local (encrypted) not found in system.disks")
+}
+
 func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	invalidRemoteBackup := remoteBackup
 	invalidRemoteBackup.DataFormat = DirectoryFormat
@@ -557,7 +605,10 @@ func TestSkipMissingPartNoSuchUpload(t *testing.T) {
 func TestIsCrossDiskDownloadIncompatible(t *testing.T) {
 	b := &Backuper{}
 	disks := []clickhouse.Disk{{Name: "default", Type: "local"}, {Name: "hdd1", Type: "local"}, {Name: "disk_s3", Type: "s3"}, {Name: "disk_s3_2", Type: "s3"}, {Name: "hdd3_encrypted", Type: "local", IsEncrypted: 1}}
-	requiredBackup := &metadata.BackupMetadata{DiskTypes: map[string]string{"removed_local": "local", "removed_s3": "s3"}}
+	requiredBackup := &metadata.BackupMetadata{
+		DiskTypes:     map[string]string{"removed_local": "local", "removed_s3": "s3", "removed_encrypted": "local"},
+		DiskEncrypted: map[string]bool{"removed_encrypted": true},
+	}
 	for _, tc := range []struct {
 		requiredDisk, disk string
 		incompatible       bool
@@ -569,6 +620,8 @@ func TestIsCrossDiskDownloadIncompatible(t *testing.T) {
 		{"disk_s3", "disk_s3_2", false},
 		{"removed_local", "default", false},
 		{"removed_s3", "default", true},
+		{"removed_encrypted", "default", true},
+		{"removed_encrypted", "hdd3_encrypted", false},
 		{"removed_unknown_type", "default", false},
 	} {
 		require.Equal(t, tc.incompatible, b.isCrossDiskDownloadIncompatible(disks, requiredBackup, tc.requiredDisk, tc.disk), "%s -> %s", tc.requiredDisk, tc.disk)
