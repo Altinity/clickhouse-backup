@@ -519,6 +519,7 @@ sftp:
   password: ""                 # SFTP_PASSWORD
   port: 22                     # SFTP_PORT
   key: ""                      # SFTP_KEY
+  known_hosts: ""              # SFTP_KNOWN_HOSTS, path to OpenSSH known_hosts file; when set, the server host key is verified against it, when empty host key is not checked
   path: ""                     # SFTP_PATH, `system.macros` values can be applied as {macro_name}
   object_disk_path: ""         # SFTP_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   concurrency: 1               # SFTP_CONCURRENCY, default: (download_concurrency * 3)
