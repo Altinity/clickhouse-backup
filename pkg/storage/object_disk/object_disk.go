@@ -805,6 +805,9 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		connection.Type = "s3"
 		s3cfg := config.S3Config{
 			Debug: cfg.S3.Debug, MaxPartsCount: cfg.S3.MaxPartsCount, ChunkSize: cfg.S3.ChunkSize, Concurrency: 1, Timeout: cfg.S3.Timeout,
+			DeleteConcurrency:           max(1, cfg.S3.DeleteConcurrency),
+			DeleteBatchMinSize:          cfg.S3.DeleteBatchMinSize,
+			DeleteBatchFallbackToSingle: cfg.S3.DeleteBatchFallbackToSingle,
 		}
 		s3URL, err := url.Parse(creds.EndPoint)
 		if err != nil {
@@ -909,10 +912,11 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 	case "azblob":
 		connection.Type = "azure_blob_storage"
 		azureCfg := config.AzureBlobConfig{
-			Timeout:       cfg.AzureBlob.Timeout,
-			MaxBuffers:    cfg.AzureBlob.MaxBuffers,
-			MaxPartsCount: cfg.AzureBlob.MaxPartsCount,
-			ChunkSize:     cfg.AzureBlob.ChunkSize,
+			Timeout:           cfg.AzureBlob.Timeout,
+			MaxBuffers:        cfg.AzureBlob.MaxBuffers,
+			MaxPartsCount:     cfg.AzureBlob.MaxPartsCount,
+			ChunkSize:         cfg.AzureBlob.ChunkSize,
+			DeleteConcurrency: max(1, cfg.AzureBlob.DeleteConcurrency),
 		}
 		azureURL, err := url.Parse(creds.EndPoint)
 		if err != nil {
@@ -1033,6 +1037,40 @@ func DeleteFile(ctx context.Context, diskName, remotePath string) error {
 	}
 	remoteStorage := connection.GetRemoteStorage()
 	return remoteStorage.DeleteFile(ctx, remotePath)
+}
+
+// DeleteFiles uses the native disk's own bucket and prefix, not the backup
+// catalog's object_disk_path. Partial batch failures must reach the caller so
+// it keeps the catalog needed to retry the remaining native objects.
+func DeleteFiles(ctx context.Context, diskName string, remotePaths []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(remotePaths) == 0 {
+		return nil
+	}
+	connection, exists := DisksConnections.Load(diskName)
+	if !exists {
+		return errors.Errorf("%s not present in object_disk.DisksConnections", diskName)
+	}
+	remoteStorage := connection.GetRemoteStorage()
+	// The gcs credential type also represents support_batch_delete=false on
+	// an S3-compatible disk. Keep its explicitly selected single-delete path.
+	credentials, knownCredentials := DisksCredentials.Load(diskName)
+	if !knownCredentials || credentials.Type != "gcs" {
+		if batchDeleter, ok := remoteStorage.(storage.BatchDeleter); ok {
+			return batchDeleter.DeleteKeysBatch(ctx, remotePaths)
+		}
+	}
+	for _, remotePath := range remotePaths {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := remoteStorage.DeleteFile(ctx, remotePath); err != nil && !storage.IsNotFoundErr(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 /*
