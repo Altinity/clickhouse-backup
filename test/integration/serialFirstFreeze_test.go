@@ -49,5 +49,5 @@ func TestSerialFirstFreezeOnFreshServer(t *testing.T) {
 			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "remote", backupName)
 		}
 	}
-	env.queryWithNoError(t, r, "DROP DATABASE IF EXISTS "+dbName+" SYNC")
+	r.NoError(env.dropDatabase(dbName, true))
 }
