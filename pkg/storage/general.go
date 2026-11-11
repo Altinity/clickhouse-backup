@@ -600,10 +600,11 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		return 0, errors.Wrap(getArchiveReaderErr, "DownloadCompressedStream getArchiveReader")
 	}
 	// Extract into a temporary directory inside localPath and move the result into place only after
-	// the whole archive was read. A failed or cancelled download then leaves no half-extracted part
-	// directory behind, which a later `download` of an incremental backup would hard-link as if it
-	// were complete, see https://github.com/Altinity/clickhouse-backup/issues/1633
-	extractRoot, mkTmpErr := os.MkdirTemp(localPath, ".tmp_extract_")
+	// the whole archive was read. A failed or cancelled download then leaves nothing of this archive
+	// behind, see https://github.com/Altinity/clickhouse-backup/issues/1633. Completeness is per archive:
+	// with upload_by_part=true a part directory appears only complete, with upload_by_part=false one part
+	// can span several archives and its directory is complete only after all of them were downloaded.
+	extractRoot, mkTmpErr := os.MkdirTemp(localPath, ExtractTempDirPrefix)
 	if mkTmpErr != nil {
 		return 0, errors.Wrap(mkTmpErr, "DownloadCompressedStream MkdirTemp")
 	}
@@ -677,26 +678,76 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		}
 		return 0, errors.Wrap(extractErr, "DownloadCompressedStream Extract")
 	}
+	// a cancellation after the last read must not publish anything and report success
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return 0, errors.Wrap(ctxErr, "DownloadCompressedStream before moveExtractedIntoPlace")
+	}
 	if moveErr := moveExtractedIntoPlace(extractRoot, localPath); moveErr != nil {
 		return 0, errors.Wrap(moveErr, "DownloadCompressedStream moveExtractedIntoPlace")
 	}
 	return downloadedBytes, nil
 }
 
-// moveExtractedIntoPlace renames every top-level entry of extractRoot into localPath.
-// An entry which already exists in localPath is a leftover of an earlier attempt and is replaced.
+// ExtractTempDirPrefix is the name prefix of the temporary directory DownloadCompressedStream extracts into,
+// a killed download (SIGKILL, OOM) leaves it behind, Backuper removes such leftovers before a download starts
+const ExtractTempDirPrefix = ".tmp_extract_"
+
+// moveExtractedIntoPlace merges every entry of extractRoot into localPath. It never replaces an existing
+// directory: with upload_by_part=false one part directory can span several archives which are extracted
+// concurrently into the same localPath. A directory missing in localPath is moved with one atomic rename,
+// an existing one is merged file by file, an existing file is replaced atomically by rename.
+// A failure in the middle leaves already moved files in place, they are complete files of this archive,
+// the archive is not marked as downloaded in the resumable state and a retry merges it again.
 func moveExtractedIntoPlace(extractRoot, localPath string) error {
 	entries, err := os.ReadDir(extractRoot)
 	if err != nil {
 		return errors.Wrapf(err, "can't read %s", extractRoot)
 	}
 	for _, entry := range entries {
-		dst := filepath.Join(localPath, entry.Name())
-		if err = os.RemoveAll(dst); err != nil {
-			return errors.Wrapf(err, "can't remove old %s", dst)
+		if err = mergeIntoPlace(filepath.Join(extractRoot, entry.Name()), filepath.Join(localPath, entry.Name())); err != nil {
+			return err
 		}
-		if err = os.Rename(filepath.Join(extractRoot, entry.Name()), dst); err != nil {
-			return errors.Wrapf(err, "can't move %s into %s", entry.Name(), localPath)
+	}
+	return nil
+}
+
+func mergeIntoPlace(src, dst string) error {
+	srcInfo, err := os.Lstat(src)
+	if err != nil {
+		return errors.Wrapf(err, "can't stat %s", src)
+	}
+	dstInfo, dstErr := os.Lstat(dst)
+	if dstErr != nil && !os.IsNotExist(dstErr) {
+		return errors.Wrapf(dstErr, "can't stat %s", dst)
+	}
+	if dstErr == nil {
+		if srcInfo.IsDir() && dstInfo.IsDir() {
+			return mergeDirIntoPlace(src, dst)
+		}
+		if srcInfo.IsDir() != dstInfo.IsDir() {
+			if err = os.RemoveAll(dst); err != nil {
+				return errors.Wrapf(err, "can't remove %s", dst)
+			}
+		}
+	}
+	if err = os.Rename(src, dst); err != nil {
+		// a concurrent download of another archive of the same part moved its directory first
+		if dstInfo, dstErr = os.Lstat(dst); srcInfo.IsDir() && dstErr == nil && dstInfo.IsDir() {
+			return mergeDirIntoPlace(src, dst)
+		}
+		return errors.Wrapf(err, "can't move %s to %s", src, dst)
+	}
+	return nil
+}
+
+func mergeDirIntoPlace(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return errors.Wrapf(err, "can't read %s", src)
+	}
+	for _, entry := range entries {
+		if err = mergeIntoPlace(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
+			return err
 		}
 	}
 	return nil
