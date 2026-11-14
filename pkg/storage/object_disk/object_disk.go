@@ -380,7 +380,10 @@ func credentialsFromDiskArgs(ctx context.Context, ch *clickhouse.ClickHouse, ver
 		diskType = objectStorageType
 		if metadataType, metadataTypeExists := get("metadata_type"); metadataTypeExists {
 			// cas - Antalya content-addressed disk, same connection settings, https://github.com/Altinity/clickhouse-backup/issues/1562
-			if metadataType != "local" && metadataType != "plain" && metadataType != "plain_rewritable" && metadataType != "cas" {
+			// content_addressed is the storage_configuration spelling, contentaddressed is lower(system.disks.metadata_type)
+			// https://github.com/Altinity/clickhouse-backup/issues/1478
+			if metadataType != "local" && metadataType != "plain" && metadataType != "plain_rewritable" &&
+				metadataType != "cas" && metadataType != "content_addressed" && metadataType != "contentaddressed" {
 				return creds, false, errors.Errorf("%s, unsupported <metadata_type>%s</metadata_type>", source, metadataType)
 			}
 		}

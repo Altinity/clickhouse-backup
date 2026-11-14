@@ -416,8 +416,8 @@ func metadataPathFromRaw(rawMetadataPath, serverRoot string) string {
 	return path.Join("/", metadataPath)
 }
 
-// normalizeDiskMetadataType - `system.disks.metadata_type` contains enum names (`Local`, `Plain`, `PlainRewritable`),
-// normalize lowered values to config-style spelling; when the column absent (old versions), infer from literal disk type
+// normalizeDiskMetadataType - `system.disks.metadata_type` contains enum names (`Local`, `Plain`, `PlainRewritable`, `ContentAddressed`),
+// normalize lowered values to config-style spelling (`contentaddressed` and `content_addressed` become `cas`); when the column absent (old versions), infer from literal disk type
 // the same way as ClickHouse RegisterDiskObjectStorage.cpp does
 func normalizeDiskMetadataType(metadataType, diskType string) string {
 	switch metadataType {
@@ -425,6 +425,9 @@ func normalizeDiskMetadataType(metadataType, diskType string) string {
 		return "plain_rewritable"
 	case "staticweb":
 		return "web"
+	case "content_addressed", "contentaddressed":
+		// Antalya CAS disk: config spelling and lowercased system.disks enum, https://github.com/Altinity/clickhouse-backup/issues/1478
+		return "cas"
 	case "":
 		if strings.Contains(diskType, "plain") && strings.Contains(diskType, "rewritable") {
 			return "plain_rewritable"
@@ -483,7 +486,7 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		if len(diskFields) > 0 && diskFields[0].ObjectStorageTypePresent > 0 {
 			diskTypeSQL = "any(lower(if(d.type='ObjectStorage',d.object_storage_type,d.type)))"
 		}
-		// system.disks.metadata_type contains enum names such as `Local`, `Plain`, `PlainRewritable`
+		// system.disks.metadata_type contains enum names such as `Local`, `Plain`, `PlainRewritable`, `ContentAddressed`
 		diskMetadataTypeSQL := "''"
 		if len(diskFields) > 0 && diskFields[0].MetadataTypePresent > 0 {
 			diskMetadataTypeSQL = "any(lower(d.metadata_type))"

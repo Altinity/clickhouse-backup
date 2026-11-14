@@ -1,6 +1,7 @@
 # v2.8.4
 BUG FIXES
 - `download`, `restore`, `restore_remote` and `upload` of an embedded backup take embedded mode from the `embedded` tag in the backup metadata instead of `clickhouse.use_embedded_backup_restore`, previously a backup created with `--env CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE=1` failed with `disk "cas" ... has no local files, set clickhouse.use_embedded_backup_restore: true` on Antalya CAS disks unless the override was repeated for every command, and without CAS disks the embedded backup path was not resolved; with `use_embedded_backup_restore_cluster` set, `restore`, `restore_remote` and `delete local` of an embedded backup drive the other nodes of the cluster the same way and pass `--env CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE=1` to the worker commands, `create` still relies on the config only, fix [#1671](https://github.com/Altinity/clickhouse-backup/issues/1671)
+- `<metadata_type>content_addressed</metadata_type>` is accepted as the Antalya CAS disk (`contentaddressed` from `system.disks` too), `create` no longer fails with `unsupported <metadata_type>content_addressed</metadata_type>` while reading `storage_configuration`, fix [#1478](https://github.com/Altinity/clickhouse-backup/issues/1478)
 
 # v2.8.3
 NEW FEATURES

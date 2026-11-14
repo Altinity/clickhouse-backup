@@ -389,3 +389,26 @@ func TestResolveServerRoot(t *testing.T) {
 		})
 	}
 }
+
+// TestNormalizeDiskMetadataType - Antalya writes content_addressed in storage_configuration and
+// ContentAddressed in system.disks; both are the cas disk, https://github.com/Altinity/clickhouse-backup/issues/1478
+func TestNormalizeDiskMetadataType(t *testing.T) {
+	testcases := []struct {
+		metadataType string
+		diskType     string
+		expected     string
+	}{
+		{metadataType: "content_addressed", diskType: "s3", expected: "cas"},
+		{metadataType: "contentaddressed", diskType: "s3", expected: "cas"},
+		{metadataType: "cas", diskType: "s3", expected: "cas"},
+		{metadataType: "plainrewritable", diskType: "s3", expected: "plain_rewritable"},
+		{metadataType: "staticweb", diskType: "s3", expected: "web"},
+		{metadataType: "local", diskType: "s3", expected: "local"},
+		{metadataType: "plain", diskType: "s3", expected: "plain"},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.metadataType, func(t *testing.T) {
+			assert.Equal(t, tc.expected, normalizeDiskMetadataType(tc.metadataType, tc.diskType))
+		})
+	}
+}
