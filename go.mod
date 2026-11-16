@@ -14,7 +14,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.5.5
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.9
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.9
-	github.com/aws/smithy-go v1.28.8
+	github.com/aws/smithy-go v1.28.9
 	github.com/buger/jsonparser v1.6.1
 	github.com/djherbis/buffer v1.2.1
 	github.com/djherbis/nio/v3 v3.0.1
