@@ -599,6 +599,19 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 	if getArchiveReaderErr != nil {
 		return 0, errors.Wrap(getArchiveReaderErr, "DownloadCompressedStream getArchiveReader")
 	}
+	// Extract into a temporary directory inside localPath and move the result into place only after
+	// the whole archive was read. A failed or cancelled download then leaves no half-extracted part
+	// directory behind, which a later `download` of an incremental backup would hard-link as if it
+	// were complete, see https://github.com/Altinity/clickhouse-backup/issues/1633
+	extractRoot, mkTmpErr := os.MkdirTemp(localPath, ".tmp_extract_")
+	if mkTmpErr != nil {
+		return 0, errors.Wrap(mkTmpErr, "DownloadCompressedStream MkdirTemp")
+	}
+	defer func() {
+		if rmErr := os.RemoveAll(extractRoot); rmErr != nil {
+			log.Warn().Msgf("can't remove %s: %v", extractRoot, rmErr)
+		}
+	}()
 	if extractErr := z.Extract(ctx, bufReader, func(ctx context.Context, file archives.FileInfo) error {
 		src, openErr := file.Open()
 		if openErr != nil {
@@ -611,7 +624,7 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		// Only extract regular files and directories. Symlink/hardlink entries
 		// in a crafted archive could point outside the destination directory.
 		if header.Typeflag == tar.TypeDir {
-			dirPath, dirErr := safeExtractPath(localPath, header.Name)
+			dirPath, dirErr := safeExtractPath(extractRoot, header.Name)
 			if dirErr != nil {
 				return dirErr
 			}
@@ -623,7 +636,7 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
 			return errors.Errorf("archive entry %q is not a regular file (typeflag %q), refusing to extract", header.Name, string(header.Typeflag))
 		}
-		extractFile, extractErr := safeExtractPath(localPath, header.Name)
+		extractFile, extractErr := safeExtractPath(extractRoot, header.Name)
 		if extractErr != nil {
 			return extractErr
 		}
@@ -664,7 +677,29 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		}
 		return 0, errors.Wrap(extractErr, "DownloadCompressedStream Extract")
 	}
+	if moveErr := moveExtractedIntoPlace(extractRoot, localPath); moveErr != nil {
+		return 0, errors.Wrap(moveErr, "DownloadCompressedStream moveExtractedIntoPlace")
+	}
 	return downloadedBytes, nil
+}
+
+// moveExtractedIntoPlace renames every top-level entry of extractRoot into localPath.
+// An entry which already exists in localPath is a leftover of an earlier attempt and is replaced.
+func moveExtractedIntoPlace(extractRoot, localPath string) error {
+	entries, err := os.ReadDir(extractRoot)
+	if err != nil {
+		return errors.Wrapf(err, "can't read %s", extractRoot)
+	}
+	for _, entry := range entries {
+		dst := filepath.Join(localPath, entry.Name())
+		if err = os.RemoveAll(dst); err != nil {
+			return errors.Wrapf(err, "can't remove old %s", dst)
+		}
+		if err = os.Rename(filepath.Join(extractRoot, entry.Name()), dst); err != nil {
+			return errors.Wrapf(err, "can't move %s into %s", entry.Name(), localPath)
+		}
+	}
+	return nil
 }
 
 // WalkCompressedStream streams a remote archive and calls handler for every file inside,
