@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/filesystemhelper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
@@ -271,36 +272,52 @@ func (b *Backuper) createAndUploadStreaming(ctx context.Context, backupName, dif
 		uploadDone <- uploadGroup.Wait()
 	}()
 
+	createOneTableAndQueue := func(tableIdx int, table clickhouse.Table) error {
+		tableMeta, tableBackupSize, createOneTableErr := b.createOneTable(createCtx, backupName, backupPath, &table, tablesDiffFromRemote, p.partitionsIdMap, allInProgressMutations, kafkaKeeper, skipProjections, p.disks, p.doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, version)
+		if createOneTableErr != nil {
+			return createOneTableErr
+		}
+		atomic.AddInt64(&brokenParts, tableBackupSize.brokenParts)
+		atomic.AddInt64(&totalParts, tableBackupSize.totalParts)
+		atomic.AddUint64(&backupDataSize, tableBackupSize.dataSize)
+		atomic.AddUint64(&backupObjectDiskSize, tableBackupSize.objectDiskSize)
+		atomic.AddUint64(&backupMetadataSize, tableBackupSize.metadataSize)
+		log.Info().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Str("progress", fmt.Sprintf("%d/%d", tableIdx+1, len(p.tables))).Msg("done")
+		if tableMeta == nil {
+			return nil
+		}
+		select {
+		case tablesToUpload <- tableMeta:
+			return nil
+		case <-createCtx.Done():
+			return createCtx.Err()
+		}
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/1651
+	var serialErr error
+	serialFreezeIdx := b.serialFreezeTableIndex(p.tables, p.disks, p.doBackupData)
+	if serialFreezeIdx >= 0 {
+		serialTable := p.tables[serialFreezeIdx]
+		log.Info().Msgf("%s is missing or empty, back up %s.%s before the other tables to create it with a single FREEZE", path.Join(b.DefaultDataPath, "shadow", shadowIncrementFile), serialTable.Database, serialTable.Name)
+		if serialErr = createOneTableAndQueue(serialFreezeIdx, serialTable); serialErr != nil {
+			serialErr = errors.Wrapf(serialErr, "serial FREEZE of %s.%s", serialTable.Database, serialTable.Name)
+		}
+	}
 	for tableIdx, tableItem := range p.tables {
 		//to avoid race condition
 		table := tableItem
-		if table.Skip {
+		if serialErr != nil || table.Skip || tableIdx == serialFreezeIdx {
 			continue
 		}
 		idx := tableIdx
 		createGroup.Go(func() error {
-			tableMeta, tableBackupSize, createOneTableErr := b.createOneTable(createCtx, backupName, backupPath, &table, tablesDiffFromRemote, p.partitionsIdMap, allInProgressMutations, kafkaKeeper, skipProjections, p.disks, p.doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, version)
-			if createOneTableErr != nil {
-				return createOneTableErr
-			}
-			atomic.AddInt64(&brokenParts, tableBackupSize.brokenParts)
-			atomic.AddInt64(&totalParts, tableBackupSize.totalParts)
-			atomic.AddUint64(&backupDataSize, tableBackupSize.dataSize)
-			atomic.AddUint64(&backupObjectDiskSize, tableBackupSize.objectDiskSize)
-			atomic.AddUint64(&backupMetadataSize, tableBackupSize.metadataSize)
-			log.Info().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Str("progress", fmt.Sprintf("%d/%d", idx+1, len(p.tables))).Msg("done")
-			if tableMeta == nil {
-				return nil
-			}
-			select {
-			case tablesToUpload <- tableMeta:
-				return nil
-			case <-createCtx.Done():
-				return createCtx.Err()
-			}
+			return createOneTableAndQueue(idx, table)
 		})
 	}
 	createErr := createGroup.Wait()
+	if createErr == nil {
+		createErr = serialErr
+	}
 	// all tables are frozen, Kafka tables can consume again
 	attachErr := attachKafkaTables()
 	if createErr != nil {

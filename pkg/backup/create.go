@@ -366,33 +366,45 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	createBackupWorkingGroup.SetLimit(max(b.cfg.ClickHouse.MaxConnections, 1))
 
 	var tableMetas []metadata.TableTitle
+	createOneTableAndAccount := func(tableIdx int, table clickhouse.Table) error {
+		tableMeta, tableBackupSize, createOneTableErr := b.createOneTable(createCtx, backupName, backupPath, &table, tablesDiffFromRemote, partitionsIdMap, allInProgressMutations, kafkaKeeper, skipProjections, disks, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, version)
+		if createOneTableErr != nil {
+			return createOneTableErr
+		}
+		atomic.AddInt64(&brokenParts, tableBackupSize.brokenParts)
+		atomic.AddInt64(&totalParts, tableBackupSize.totalParts)
+		atomic.AddUint64(&backupDataSize, tableBackupSize.dataSize)
+		atomic.AddUint64(&backupObjectDiskSize, tableBackupSize.objectDiskSize)
+		atomic.AddUint64(&backupMetadataSize, tableBackupSize.metadataSize)
+		if tableMeta != nil {
+			metaMutex.Lock()
+			tableMetas = append(tableMetas, metadata.TableTitle{
+				Database: tableMeta.Database,
+				Table:    tableMeta.Table,
+			})
+			metaMutex.Unlock()
+		}
+		log.Info().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Str("progress", fmt.Sprintf("%d/%d", tableIdx+1, len(tables))).Msg("done")
+		return nil
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/1651
+	serialFreezeIdx := b.serialFreezeTableIndex(tables, disks, doBackupData)
+	if serialFreezeIdx >= 0 {
+		serialTable := tables[serialFreezeIdx]
+		log.Info().Msgf("%s is missing or empty, back up %s.%s before the other tables to create it with a single FREEZE", path.Join(b.DefaultDataPath, "shadow", shadowIncrementFile), serialTable.Database, serialTable.Name)
+		if serialErr := createOneTableAndAccount(serialFreezeIdx, serialTable); serialErr != nil {
+			return errors.Wrapf(serialErr, "serial FREEZE of %s.%s", serialTable.Database, serialTable.Name)
+		}
+	}
 	for tableIdx, tableItem := range tables {
 		//to avoid race condition
 		table := tableItem
-		if table.Skip {
+		if table.Skip || tableIdx == serialFreezeIdx {
 			continue
 		}
 		idx := tableIdx
 		createBackupWorkingGroup.Go(func() error {
-			tableMeta, tableBackupSize, createOneTableErr := b.createOneTable(createCtx, backupName, backupPath, &table, tablesDiffFromRemote, partitionsIdMap, allInProgressMutations, kafkaKeeper, skipProjections, disks, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, version)
-			if createOneTableErr != nil {
-				return createOneTableErr
-			}
-			atomic.AddInt64(&brokenParts, tableBackupSize.brokenParts)
-			atomic.AddInt64(&totalParts, tableBackupSize.totalParts)
-			atomic.AddUint64(&backupDataSize, tableBackupSize.dataSize)
-			atomic.AddUint64(&backupObjectDiskSize, tableBackupSize.objectDiskSize)
-			atomic.AddUint64(&backupMetadataSize, tableBackupSize.metadataSize)
-			if tableMeta != nil {
-				metaMutex.Lock()
-				tableMetas = append(tableMetas, metadata.TableTitle{
-					Database: tableMeta.Database,
-					Table:    tableMeta.Table,
-				})
-				metaMutex.Unlock()
-			}
-			log.Info().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Str("progress", fmt.Sprintf("%d/%d", idx+1, len(tables))).Msg("done")
-			return nil
+			return createOneTableAndAccount(idx, table)
 		})
 	}
 	wgWaitErr := createBackupWorkingGroup.Wait()
@@ -1152,7 +1164,7 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		return nil, nil, nil, nil, nil, nil, errors.New("backupName is not defined")
 	}
 
-	if !strings.HasSuffix(table.Engine, "MergeTree") && table.Engine != "MaterializedMySQL" && table.Engine != "MaterializedPostgreSQL" {
+	if !isFreezeEngine(table.Engine) {
 		if table.Engine != "MaterializedView" {
 			logger.Warn().Str("engine", table.Engine).Msg("supports only schema backup")
 		}
@@ -2089,4 +2101,56 @@ func (b *Backuper) createTableMetadata(metadataPath string, table metadata.Table
 	}
 	log.Debug().Msgf("%s created", metadataFile)
 	return uint64(len(metadataBody)), nil
+}
+
+// isFreezeEngine reports whether create backs up the data of a table with this engine, other engines are schema only
+func isFreezeEngine(engine string) bool {
+	return strings.HasSuffix(engine, "MergeTree") || engine == "MaterializedMySQL" || engine == "MaterializedPostgreSQL"
+}
+
+// serialFreezeTableIndex returns the index of the table to back up before the parallel workers start, or -1.
+// Every FREEZE increments the counter in `<path>/shadow/increment.txt` (CounterInFile in ClickHouse, one file for all disks),
+// on a fresh clickhouse-server the file doesn't exist and concurrent first FREEZE queries race on creating it: the loser reads
+// the file created but not written yet and fails with code 32 "File .../shadow/increment.txt is empty", see https://github.com/Altinity/clickhouse-backup/issues/1651
+// An empty file left by a killed server fails every next FREEZE the same way, it is removed here, so the next FREEZE recreates it.
+// Only a table which really runs ALTER TABLE ... FREEZE is chosen, the smallest one, ALTER TABLE ... FREEZE increments the counter
+// even for an empty table, with freeze_by_part an empty table runs no FREEZE PARTITION at all, so it has to have data.
+// When the file can't be checked (clickhouse-backup runs on another host) it is treated as missing, the cost is one serial table.
+func (b *Backuper) serialFreezeTableIndex(tables []clickhouse.Table, disks []clickhouse.Disk, doBackupData bool) int {
+	if !doBackupData {
+		return -1
+	}
+	serialIdx := -1
+	for idx := range tables {
+		table := &tables[idx]
+		if table.Skip || table.BackupType != clickhouse.ShardBackupFull || !isFreezeEngine(table.Engine) || b.isTableOnPlainDisks(table, disks) {
+			continue
+		}
+		if b.cfg.ClickHouse.FreezeByPart && table.TotalBytes == 0 {
+			continue
+		}
+		if serialIdx < 0 || table.TotalBytes < tables[serialIdx].TotalBytes {
+			serialIdx = idx
+		}
+	}
+	if serialIdx < 0 {
+		return -1
+	}
+	incrementFile := path.Join(b.DefaultDataPath, "shadow", shadowIncrementFile)
+	fileInfo, err := os.Stat(incrementFile)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Debug().Msgf("can't check %s: %v", incrementFile, err)
+		}
+		return serialIdx
+	}
+	if fileInfo.Size() > 0 {
+		return -1
+	}
+	if removeErr := os.Remove(incrementFile); removeErr != nil {
+		log.Warn().Msgf("%s is empty, every FREEZE will fail with code 32, can't remove it: %v", incrementFile, removeErr)
+	} else {
+		log.Warn().Msgf("%s was empty, removed it, clickhouse-server will recreate it on the next FREEZE", incrementFile)
+	}
+	return serialIdx
 }
