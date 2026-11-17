@@ -375,11 +375,13 @@ type FTPConfig struct {
 
 // SFTPConfig - sftp settings section
 type SFTPConfig struct {
-	Address           string `yaml:"address" envconfig:"SFTP_ADDRESS"`
-	Port              uint   `yaml:"port" envconfig:"SFTP_PORT"`
-	Username          string `yaml:"username" envconfig:"SFTP_USERNAME"`
-	Password          string `yaml:"password" envconfig:"SFTP_PASSWORD"`
-	Key               string `yaml:"key" envconfig:"SFTP_KEY"`
+	Address  string `yaml:"address" envconfig:"SFTP_ADDRESS"`
+	Port     uint   `yaml:"port" envconfig:"SFTP_PORT"`
+	Username string `yaml:"username" envconfig:"SFTP_USERNAME"`
+	Password string `yaml:"password" envconfig:"SFTP_PASSWORD"`
+	Key      string `yaml:"key" envconfig:"SFTP_KEY"`
+	// KnownHosts - path to an OpenSSH known_hosts file; when set, the server host key is verified against it (otherwise host keys are not checked)
+	KnownHosts        string `yaml:"known_hosts" envconfig:"SFTP_KNOWN_HOSTS"`
 	Path              string `yaml:"path" envconfig:"SFTP_PATH"`
 	ObjectDiskPath    string `yaml:"object_disk_path" envconfig:"SFTP_OBJECT_DISK_PATH"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"SFTP_COMPRESSION_FORMAT"`

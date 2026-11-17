@@ -59,7 +59,7 @@ func (b *Backuper) CreateToRemote(backupName string, deleteSource bool, diffFrom
 	// https://github.com/Altinity/clickhouse-backup/issues/928
 	var workerHosts []embeddedClusterHost
 	workerCommand := embeddedClusterCreateWorkerCommand("create_remote", backupName, diffFromRemote, tablePattern, partitions, schemaOnly, skipCheckPartsColumns, deleteSource)
-	if b.embeddedClusterInitiator() && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+	if b.embeddedClusterInitiator(false) && !rbacOnly && !configsOnly && !namedCollectionsOnly {
 		if workerHosts, err = b.startEmbeddedClusterWorkers(ctx, workerCommand); err != nil {
 			return errors.Wrap(err, "embedded ON CLUSTER workers")
 		}

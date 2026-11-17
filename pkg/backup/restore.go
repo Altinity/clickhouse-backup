@@ -94,8 +94,8 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 
 	// every node of RESTORE ... ON CLUSTER reads its own shards/N/replicas/M/metadata/*.sql, so the workers fix them
 	// before the initiator issues the RESTORE SQL, https://github.com/Altinity/clickhouse-backup/issues/928
-	if b.embeddedClusterInitiator() && !b.skipEmbeddedClusterFanOut && !rbacOnly && !configsOnly && !namedCollectionsOnly {
-		if err := b.runEmbeddedClusterWorkers(ctx, embeddedClusterRestoreWorkerCommand("restore", backupName, tablePattern, databaseMapping, tableMapping, partitions, schemaOnly, dataOnly, dropExists, ignoreDependencies, schemaAsAttach, skipEmptyTables)); err != nil {
+	if !b.skipEmbeddedClusterFanOut && !rbacOnly && !configsOnly && !namedCollectionsOnly && b.embeddedClusterInitiator(b.isLocalBackupEmbedded(ctx, backupName)) {
+		if err := b.runEmbeddedClusterWorkers(ctx, embeddedClusterRestoreWorkerCommand("restore", backupName, b.embeddedClusterWorkerEnv(), tablePattern, databaseMapping, tableMapping, partitions, schemaOnly, dataOnly, dropExists, ignoreDependencies, schemaAsAttach, skipEmptyTables)); err != nil {
 			return errors.Wrap(err, "embedded ON CLUSTER workers")
 		}
 	}
@@ -257,11 +257,6 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 	if err != nil {
 		return nil, errors.Wrap(err, "ch.GetDisks")
 	}
-	if doRestoreData {
-		if err = b.checkDisksConsistency(disks); err != nil {
-			return nil, err
-		}
-	}
 	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
 	if err != nil {
 		log.Warn().Msgf("%v", err)
@@ -284,6 +279,10 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 	} else if err != nil {
 		return nil, errors.Wrap(err, "ch.GetEmbeddedBackupPath")
 	}
+	// backup could be created with --env CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE=1, https://github.com/Altinity/clickhouse-backup/issues/1671
+	if !b.cfg.ClickHouse.UseEmbeddedBackupRestore {
+		backupMetafileLocalPaths = append(backupMetafileLocalPaths, path.Join(b.embeddedBackupDataPath(disks), backupName, "metadata.json"))
+	}
 	for _, metadataPath := range backupMetafileLocalPaths {
 		backupMetadataBody, err = os.ReadFile(metadataPath)
 		if err == nil {
@@ -297,7 +296,12 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 	if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
 		return nil, errors.Wrap(err, "unmarshal backup metadata")
 	}
-	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
+	b.isEmbedded = b.setEmbeddedBackupDataPathByTags(backupMetadata.Tags, disks)
+	if doRestoreData {
+		if err = b.checkDisksConsistency(disks, b.isEmbedded); err != nil {
+			return nil, err
+		}
+	}
 	if b.isEmbedded {
 		if err = b.resolveEmbeddedClusterShardReplica(ctx); err != nil {
 			return nil, errors.Wrap(err, "resolveEmbeddedClusterShardReplica")
@@ -390,7 +394,7 @@ func (b *Backuper) restorePrologue(ctx context.Context, backupName, tablePattern
 		switch {
 		case backupMetadata.RequiredBackup != "":
 			dstReason = fmt.Sprintf("backup requires %s", backupMetadata.RequiredBackup)
-		case b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.cfg.ClickHouse.EmbeddedBackupDisk == "":
+		case b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "":
 			dstReason = "embedded backup without `embedded_backup_disk`"
 		case doRestoreData:
 			dstReason = b.objectDiskRestoreReason(disks, backupMetadata)

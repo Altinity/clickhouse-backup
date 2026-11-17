@@ -154,7 +154,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	}
 	// BACKUP ... ON CLUSTER already wrote the shards/N/replicas/M data of every node, now each worker node describes its
 	// own part with clickhouse-backup metadata, https://github.com/Altinity/clickhouse-backup/issues/928
-	if b.embeddedClusterInitiator() && !b.skipEmbeddedClusterFanOut && !rbacOnly && !configsOnly && !namedCollectionsOnly {
+	if b.embeddedClusterInitiator(false) && !b.skipEmbeddedClusterFanOut && !rbacOnly && !configsOnly && !namedCollectionsOnly {
 		if err := b.runEmbeddedClusterWorkers(ctx, embeddedClusterCreateWorkerCommand("create", backupName, diffFromRemote, tablePattern, partitions, schemaOnly, skipCheckPartsColumns, false)); err != nil {
 			return errors.Wrap(err, "embedded ON CLUSTER workers")
 		}
@@ -238,7 +238,7 @@ func (b *Backuper) createPrologue(ctx context.Context, tablePattern string, part
 	}
 	doBackupData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
 	if doBackupData {
-		if err = b.checkDisksConsistency(disks); err != nil {
+		if err = b.checkDisksConsistency(disks, false); err != nil {
 			return nil, err
 		}
 	}
@@ -2017,9 +2017,13 @@ func (b *Backuper) createBackupMetadata(ctx context.Context, backupMetaFile, bac
 		return ctx.Err()
 	default:
 		diskMetadataTypes := map[string]string{}
+		diskEncrypted := map[string]bool{}
 		for _, d := range disks {
 			if d.IsPlain() {
 				diskMetadataTypes[d.Name] = d.MetadataType
+			}
+			if d.IsEncrypted == 1 {
+				diskEncrypted[d.Name] = true
 			}
 		}
 		backupMetadata := metadata.BackupMetadata{
@@ -2028,6 +2032,7 @@ func (b *Backuper) createBackupMetadata(ctx context.Context, backupMetaFile, bac
 			Disks:                   diskMap,
 			DiskTypes:               diskTypes,
 			DiskMetadataTypes:       diskMetadataTypes,
+			DiskEncrypted:           diskEncrypted,
 			ClickhouseBackupVersion: version,
 			CreationDate:            time.Now(),
 			Tags:                    tags,

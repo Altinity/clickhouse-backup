@@ -29,8 +29,10 @@ func TestCheckDisksConsistency(t *testing.T) {
 		name      string
 		skipDisks []string
 		embedded  bool
-		disks     func(t *testing.T) []clickhouse.Disk
-		wantErr   string // substring; "" means no error
+		// embeddedBackup emulates `embedded` in backup metadata.json tags without the config flag
+		embeddedBackup bool
+		disks          func(t *testing.T) []clickhouse.Disk
+		wantErr        string // substring; "" means no error
 	}{
 		{
 			name: "local disk with store marker",
@@ -140,6 +142,16 @@ func TestCheckDisksConsistency(t *testing.T) {
 			wantErr: "use_embedded_backup_restore: true",
 		},
 		{
+			name:           "cas disk is fine when backup metadata has embedded tag without config flag (issue #1671)",
+			embeddedBackup: true,
+			disks: func(t *testing.T) []clickhouse.Disk {
+				return []clickhouse.Disk{
+					{Name: "default", Type: "local", Path: mkLocalDisk(t, "store")},
+					{Name: "cas", Type: "s3", MetadataType: "cas", Path: "/non/existent/cas_prefix/"},
+				}
+			},
+		},
+		{
 			name: "disk path is a file not a directory",
 			disks: func(t *testing.T) []clickhouse.Disk {
 				root := t.TempDir()
@@ -162,7 +174,7 @@ func TestCheckDisksConsistency(t *testing.T) {
 				},
 			}
 			b := NewBackuper(cfg)
-			err := b.checkDisksConsistency(tc.disks(t))
+			err := b.checkDisksConsistency(tc.disks(t), tc.embeddedBackup)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("expected no error, got %v", err)

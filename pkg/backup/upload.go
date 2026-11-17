@@ -199,17 +199,19 @@ type uploadPrologueResult struct {
 // on success b.dst is connected and the caller is responsible for closing it
 func (b *Backuper) uploadPrologue(ctx context.Context, backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly bool) (result *uploadPrologueResult, err error) {
 	var disks []clickhouse.Disk
-	if _, disks, err = b.getLocalBackup(ctx, backupName, nil); err != nil {
+	var localBackup *LocalBackup
+	if localBackup, disks, err = b.getLocalBackup(ctx, backupName, nil); err != nil {
 		return nil, errors.Wrap(err, "can't find local backup")
 	}
 	if !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
-		if err = b.checkDisksConsistency(disks); err != nil {
+		if err = b.checkDisksConsistency(disks, strings.Contains(localBackup.Tags, "embedded")); err != nil {
 			return nil, err
 		}
 	}
 	if initErr := b.initDisksPathsAndBackupDestination(ctx, disks, backupName); initErr != nil {
 		return nil, errors.Wrap(initErr, "initDisksPathsAndBackupDestination")
 	}
+	b.setEmbeddedBackupDataPathByTags(localBackup.Tags, disks)
 	defer func() {
 		if err != nil {
 			if closeErr := b.dst.Close(ctx); closeErr != nil {
@@ -227,7 +229,7 @@ func (b *Backuper) uploadPrologue(ctx context.Context, backupName, diffFrom, dif
 		if backupName == remoteBackups[i].BackupName {
 			// the nodes of an embedded ON CLUSTER backup share one remote backup folder: a worker joins it, and the initiator
 			// can see it as broken (no metadata.json yet) while the workers upload in parallel, https://github.com/Altinity/clickhouse-backup/issues/928
-			if b.EmbeddedOnClusterWorker || (remoteBackups[i].Broken != "" && b.embeddedClusterInitiator()) {
+			if b.EmbeddedOnClusterWorker || (remoteBackups[i].Broken != "" && b.embeddedClusterInitiator(strings.Contains(localBackup.Tags, "embedded"))) {
 				continue
 			}
 			backupExistsOnRemote = true

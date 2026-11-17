@@ -89,6 +89,16 @@ XML
 	env.checkCount(r, 1, totalRows, fmt.Sprintf("SELECT count() FROM %s.%s", dbName, tableName))
 	env.checkCount(r, 1, 0, fmt.Sprintf("SELECT count() FROM system.parts WHERE database='%s' AND `table`='%s' AND active AND disk_name NOT IN ('cas','cas_cache') SETTINGS empty_result_for_aggregation_by_empty_set=0", dbName, tableName))
 
+	// embedded tag in backup metadata must be enough for download / restore without use_embedded_backup_restore, https://github.com/Altinity/clickhouse-backup/issues/1671
+	env.queryWithNoError(t, r, fmt.Sprintf("DROP TABLE %s.%s SYNC", dbName, tableName))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", configFile, "delete", "local", backupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", configFile, "--env", "CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE=false", "download", "--tables="+dbName+".*", backupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", configFile, "--env", "CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE=false", "restore", "--tables="+dbName+".*", backupName)
+	env.checkCount(r, 1, totalRows, fmt.Sprintf("SELECT count() FROM %s.%s", dbName, tableName))
+	env.checkCount(r, 1, 0, fmt.Sprintf("SELECT count() FROM system.parts WHERE database='%s' AND `table`='%s' AND active AND disk_name NOT IN ('cas','cas_cache') SETTINGS empty_result_for_aggregation_by_empty_set=0", dbName, tableName))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", configFile, "delete", "remote", backupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", configFile, "--env", "CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE=false", "upload", backupName)
+
 	fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{dbName}, false, true, true, "config-s3-embedded.yml")
 	env.DockerExecNoError(r, "clickhouse", "rm", "-f", "/etc/clickhouse-server/config.d/zz_antalya_cas_disk.xml")
 	env.ch.Close()

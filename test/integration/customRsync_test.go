@@ -10,7 +10,7 @@ func TestCustomRsync(t *testing.T) {
 	env.uploadSSHKeys(r, "clickhouse-backup")
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
 	env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
-	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL --retry 5 --retry-delay 5 --retry-connrefused \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", "yq --version || { curl -fsSL --retry 10 --retry-delay 5 --retry-connrefused \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq.tmp && chmod +x /usr/bin/yq.tmp && /usr/bin/yq.tmp --version && mv -f /usr/bin/yq.tmp /usr/bin/yq; }")
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "jq", "openssh-client", "rsync")
 	// the OpenSSH 10 linuxserver sshd (CH>=23.3) ships without rsync; rsync-over-ssh
 	// needs the binary on the server side too (panubo already bundles it)

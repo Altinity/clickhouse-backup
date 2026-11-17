@@ -115,8 +115,9 @@ func embeddedClusterCreateWorkerCommand(command, backupName, diffFromRemote, tab
 
 // embeddedClusterRestoreWorkerCommand renders `restore`/`restore_remote` for a worker node, rbac/configs/named
 // collections stay on the initiator
-func embeddedClusterRestoreWorkerCommand(command, backupName, tablePattern string, databaseMapping, tableMapping, partitions []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, schemaAsAttach, skipEmptyTables bool) string {
+func embeddedClusterRestoreWorkerCommand(command, backupName, env, tablePattern string, databaseMapping, tableMapping, partitions []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, schemaAsAttach, skipEmptyTables bool) string {
 	return newWorkerCommand(command).
+		value("env", env).
 		value("tables", tablePattern).
 		values("restore-database-mapping", databaseMapping).
 		values("restore-table-mapping", tableMapping).
@@ -164,9 +165,27 @@ func (b *Backuper) validateEmbeddedOnClusterWorker() error {
 }
 
 // embeddedClusterInitiator reports whether this run drives the worker nodes: embedded ON CLUSTER mode, not a worker
-// itself and not a dry-run
-func (b *Backuper) embeddedClusterInitiator() bool {
-	return b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.cfg.ClickHouse.UseEmbeddedBackupRestoreCluster != "" && !b.EmbeddedOnClusterWorker && !b.DryRun
+// itself and not a dry-run, isEmbeddedBackup is true when restore/delete read a backup with `embedded` in tags,
+// create relies on use_embedded_backup_restore only, https://github.com/Altinity/clickhouse-backup/issues/1671
+func (b *Backuper) embeddedClusterInitiator(isEmbeddedBackup bool) bool {
+	return (b.cfg.ClickHouse.UseEmbeddedBackupRestore || isEmbeddedBackup) && b.cfg.ClickHouse.UseEmbeddedBackupRestoreCluster != "" && !b.EmbeddedOnClusterWorker && !b.DryRun
+}
+
+// isLocalBackupEmbedded reports whether the local backup has `embedded` in tags, false when it can't be found,
+// restore reports a missing backup itself
+func (b *Backuper) isLocalBackupEmbedded(ctx context.Context, backupName string) bool {
+	localBackup, _, err := b.getLocalBackup(ctx, backupName, nil)
+	return err == nil && strings.Contains(localBackup.Tags, "embedded")
+}
+
+// embeddedClusterWorkerEnv is the --env of worker commands, a worker validates use_embedded_backup_restore at start before
+// it reads the backup tags, so the initiator which reads an embedded backup without the config flag passes it explicitly,
+// https://github.com/Altinity/clickhouse-backup/issues/1671
+func (b *Backuper) embeddedClusterWorkerEnv() string {
+	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
+		return ""
+	}
+	return "CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE=1"
 }
 
 // embeddedClusterWorkerSkipsDDL reports whether the node local DDL (CREATE DATABASE, DROP TABLE, UDF) is left to the
