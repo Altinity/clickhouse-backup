@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -10,6 +11,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -166,4 +168,44 @@ func TestMarkDuplicatedPartsMovedBetweenDisks(t *testing.T) {
 		"3_4_4_0": false, // local -> encrypted
 		"4_5_5_0": false, // local -> local, content changed
 	}, required)
+}
+
+type postUploadStatMock struct {
+	storage.RemoteStorage
+	attempts int
+	errors   []error
+}
+
+func (m *postUploadStatMock) StatFile(_ context.Context, key string) (storage.RemoteFile, error) {
+	m.attempts++
+	if m.attempts <= len(m.errors) {
+		return nil, m.errors[m.attempts-1]
+	}
+	return rebaseMockFile{name: key, size: 42}, nil
+}
+
+func TestStatUploadedFile(t *testing.T) {
+	missing := storage.NewErrNotFound("backup.tar")
+	for _, tc := range []struct {
+		name     string
+		errors   []error
+		wantErr  error
+		attempts int
+	}{
+		{"visible after retry", []error{missing}, nil, 2},
+		{"budget exhausted", []error{missing, missing, missing}, missing, 3},
+		{"canceled", []error{context.Canceled}, context.Canceled, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := NewBackuper(&config.Config{General: config.GeneralConfig{RetriesOnFailure: 2}})
+			remote := &postUploadStatMock{errors: tc.errors}
+			b.dst = &storage.BackupDestination{RemoteStorage: remote}
+			file, err := b.statUploadedFile(context.Background(), "backup.tar")
+			require.ErrorIs(t, err, tc.wantErr)
+			require.Equal(t, tc.attempts, remote.attempts)
+			if tc.wantErr == nil {
+				require.EqualValues(t, 42, file.Size())
+			}
+		})
+	}
 }

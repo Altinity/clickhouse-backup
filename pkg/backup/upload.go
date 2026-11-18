@@ -737,6 +737,18 @@ func (b *Backuper) uploadNamedCollections(ctx context.Context, backupName string
 	return b.uploadBackupRelatedDir(ctx, namedCollectionsBackupPath, namedCollectionsGlobPattern, remoteNamedCollectionsArchive)
 }
 
+// statUploadedFile verifies an archive without repeating a successful upload.
+func (b *Backuper) statUploadedFile(ctx context.Context, key string) (storage.RemoteFile, error) {
+	retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), postUploadStatClassifier{b})
+	var file storage.RemoteFile
+	err := retry.RunCtx(ctx, func(ctx context.Context) error {
+		var err error
+		file, err = b.dst.StatFile(ctx, key)
+		return err
+	})
+	return file, err
+}
+
 func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelatedDir, localFilesGlobPattern, destinationRemote string) (uint64, error) {
 	if _, err := os.Stat(localBackupRelatedDir); os.IsNotExist(err) {
 		return 0, nil
@@ -782,19 +794,15 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 		return uint64(remoteUploadedBytes), nil
 	}
 	retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
-	var remoteUploaded storage.RemoteFile
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
-		var uploadErr error
-		if uploadErr = b.dst.UploadCompressedStream(ctx, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.UploadMaxBytesPerSecond); uploadErr != nil {
-			return errors.Wrapf(uploadErr, "can't uploadBackupRelatedDir compressed %s", destinationRemote)
-		}
-		if remoteUploaded, uploadErr = b.dst.StatFile(ctx, destinationRemote); uploadErr != nil {
-			return errors.Wrapf(uploadErr, "can't check uploadBackupRelatedDir destinationRemote: %s, error", destinationRemote)
-		}
-		return nil
+		return b.dst.UploadCompressedStream(ctx, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.UploadMaxBytesPerSecond)
 	})
 	if err != nil {
-		return 0, errors.Wrap(err, "uploadBackupRelatedDir")
+		return 0, errors.Wrapf(err, "can't uploadBackupRelatedDir compressed %s", destinationRemote)
+	}
+	remoteUploaded, err := b.statUploadedFile(ctx, destinationRemote)
+	if err != nil {
+		return 0, errors.Wrapf(err, "can't check uploadBackupRelatedDir destinationRemote: %s, error", destinationRemote)
 	}
 	if b.resume {
 		if err = b.resumableState.AppendToState(destinationRemote, remoteUploaded.Size()); err != nil {
@@ -952,12 +960,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 						return errors.Wrap(err, "can't upload")
 					}
 
-					var remoteFile storage.RemoteFile
-					retry = retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
-					err = retry.RunCtx(ctx, func(ctx context.Context) error {
-						remoteFile, err = b.dst.StatFile(ctx, remoteDataFile)
-						return err
-					})
+					remoteFile, err := b.statUploadedFile(ctx, remoteDataFile)
 					if err != nil {
 						return errors.Wrapf(err, "can't check uploaded remoteDataFile: %s, error", remoteDataFile)
 					}
