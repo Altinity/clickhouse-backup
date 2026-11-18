@@ -806,6 +806,16 @@ func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []c
 		return errors.Wrap(err, "restoreRBACResolveAllConflicts")
 	}
 
+	// both local directory and in keeper. Ignore duplicate RBAC objects
+	// https://github.com/Altinity/clickhouse-backup/issues/1666
+	if hasLocalUserDirectory != hasReplicatedUserDirectory {
+		duplicatedSQLFiles, findErr := b.findRBACSQLFilesDuplicatedInKeeperDump(sqlFiles, jsonLFiles)
+		if findErr != nil {
+			return errors.Wrap(findErr, "findRBACSQLFilesDuplicatedInKeeperDump")
+		}
+		ignoredSQLFiles = append(ignoredSQLFiles, duplicatedSQLFiles...)
+	}
+
 	if hasLocalUserDirectory {
 		// https://github.com/Altinity/clickhouse-backup/issues/1013
 		skipPatterns := append([]string{"*.jsonl"}, ignoredSQLFiles...)

@@ -15,7 +15,8 @@ import (
 
 // TestRBACInactiveLocalDirectory - `*.sql` left in the access path after a switch from `local_directory`
 // to `replicated` user directory are not read by clickhouse-server, they shall not be backed up,
-// otherwise restore writes every RBAC object twice,
+// otherwise restore writes every RBAC object twice, a backup which already contains them
+// shall be restored from the keeper dump only,
 // https://github.com/Altinity/clickhouse-backup/issues/1666
 func TestRBACInactiveLocalDirectory(t *testing.T) {
 	chVersion := os.Getenv("CLICKHOUSE_VERSION")
@@ -161,36 +162,49 @@ func TestRBACInactiveLocalDirectory(t *testing.T) {
 	r.Contains(out, ".jsonl")
 	r.NotContains(out, ".sql")
 
-	for _, q := range dropRBACQueries {
-		env.queryWithNoError(t, r, q)
-	}
-	checkAllRBACObjects(false, 30*time.Second)
-
-	log.Debug().Msg("restore RBAC, every object shall be restored once")
-	// config-s3.yml `restart_command` ends with `sql:SYSTEM SHUTDOWN`, replace it with a no-op,
-	// ReplicatedAccessStorage keeper watches shall apply the change without restart
-	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_RESTART_COMMAND='exec:true' clickhouse-backup -c "+config+" restore --rbac-only "+backupName)
-	log.Debug().Msg(out)
-	r.NoError(err, "%s\nunexpected RBAC error: %v", out, err)
-	r.Contains(out, "RBAC successfully restored")
-	checkAllRBACObjects(true, 60*time.Second)
-
-	var uuidNodes uint64
-	r.NoError(env.ch.SelectSingleRowNoCtx(&uuidNodes, rbacUuidNodesQuery))
-	r.Equal(uint64(len(rbacNames)), uuidNodes, "expect %d /clickhouse/access/uuid znodes, one per restored RBAC object", len(rbacNames))
-
-	// ReplicatedAccessStorage refreshes asynchronously, retry with backoff
-	for attempt := 1; attempt <= 10; attempt++ {
-		out, err = env.DockerExecOut("clickhouse", "clickhouse-client", "--user", "test.rbac-name", "--password", "live_password", "-q", "SELECT 1")
-		if err == nil {
-			break
+	// restoreRBACOnce - drop RBAC objects, restore them from the backup, every object shall be restored once from the keeper dump
+	restoreRBACOnce := func() string {
+		for _, q := range dropRBACQueries {
+			env.queryWithNoError(t, r, q)
 		}
-		log.Warn().Msgf("login test.rbac-name attempt %d failed: %v, output: %s, retrying", attempt, err, out)
-		time.Sleep(time.Duration(attempt) * time.Second)
+		checkAllRBACObjects(false, 30*time.Second)
+
+		// config-s3.yml `restart_command` ends with `sql:SYSTEM SHUTDOWN`, replace it with a no-op,
+		// ReplicatedAccessStorage keeper watches shall apply the change without restart
+		restoreOut, restoreErr := env.DockerExecOut("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_RESTART_COMMAND='exec:true' clickhouse-backup -c "+config+" restore --rbac-only "+backupName)
+		log.Debug().Msg(restoreOut)
+		r.NoError(restoreErr, "%s\nunexpected RBAC error: %v", restoreOut, restoreErr)
+		r.Contains(restoreOut, "RBAC successfully restored")
+		checkAllRBACObjects(true, 60*time.Second)
+
+		var uuidNodes uint64
+		r.NoError(env.ch.SelectSingleRowNoCtx(&uuidNodes, rbacUuidNodesQuery))
+		r.Equal(uint64(len(rbacNames)), uuidNodes, "expect %d /clickhouse/access/uuid znodes, one per restored RBAC object", len(rbacNames))
+
+		// ReplicatedAccessStorage refreshes asynchronously, retry with backoff
+		var loginOut string
+		var loginErr error
+		for attempt := 1; attempt <= 10; attempt++ {
+			loginOut, loginErr = env.DockerExecOut("clickhouse", "clickhouse-client", "--user", "test.rbac-name", "--password", "live_password", "-q", "SELECT 1")
+			if loginErr == nil {
+				break
+			}
+			log.Warn().Msgf("login test.rbac-name attempt %d failed: %v, output: %s, retrying", attempt, loginErr, loginOut)
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+		r.NoError(loginErr, "%s\nexpect login with live_password success: %v", loginOut, loginErr)
+		loginOut, loginErr = env.DockerExecOut("clickhouse", "clickhouse-client", "--user", "test.rbac-name", "--password", "inactive_password", "-q", "SELECT 1")
+		r.Error(loginErr, "%s\nexpect login with inactive_password fail, user shall not be restored from inactive *.sql", loginOut)
+		return restoreOut
 	}
-	r.NoError(err, "%s\nexpect login with live_password success: %v", out, err)
-	out, err = env.DockerExecOut("clickhouse", "clickhouse-client", "--user", "test.rbac-name", "--password", "inactive_password", "-q", "SELECT 1")
-	r.Error(err, "%s\nexpect login with inactive_password fail, user shall not be restored from inactive *.sql", out)
+
+	log.Debug().Msg("restore RBAC from the backup without inactive *.sql")
+	restoreRBACOnce()
+
+	log.Debug().Msg("restore RBAC from the backup with inactive *.sql next to the keeper dump, as create stored it before")
+	env.DockerExecNoError(r, "clickhouse-backup", append(append([]string{"cp", "-v"}, inactiveSQLFiles...), "/var/lib/clickhouse/backup/"+backupName+"/access/")...)
+	out = restoreRBACOnce()
+	r.Contains(out, "will restore only keeper dump copy")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", backupName)
 	env.DockerExecNoError(r, "clickhouse", append([]string{"rm", "-fv"}, inactiveSQLFiles...)...)

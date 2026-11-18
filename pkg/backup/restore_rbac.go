@@ -121,6 +121,54 @@ func (b *Backuper) convertLocalSQLToKeeper(backupAccessPath string, ignoredSQLFi
 	return converted, nil
 }
 
+// findRBACSQLFilesDuplicatedInKeeperDump - returns base names of backup access `<uuid>.sql` files with RBAC objects,
+// which have the same kind and name as the objects in the `<user_directory>.jsonl` keeper dumps of the same backup,
+// `create --rbac` stored `*.sql` left in the access path after a switch from `local_directory`
+// to `replicated` user directory next to the keeper dump, which contains the live objects,
+// look https://github.com/Altinity/clickhouse-backup/issues/1666
+func (b *Backuper) findRBACSQLFilesDuplicatedInKeeperDump(sqlFiles, jsonLFiles []string) ([]string, error) {
+	duplicatedSQLFiles := make([]string, 0)
+	if len(sqlFiles) == 0 || len(jsonLFiles) == 0 {
+		return duplicatedSQLFiles, nil
+	}
+	type rbacObject struct {
+		kind string
+		name string
+	}
+	keeperObjects := make(map[rbacObject]string)
+	for _, jsonLFile := range jsonLFiles {
+		walkErr := keeper.WalkDumpFile(jsonLFile, func(node keeper.DumpNode) error {
+			if !strings.HasPrefix(node.Path, "uuid/") || len(node.Value) == 0 {
+				return nil
+			}
+			kind, name, detectErr := b.detectRBACObject(string(node.Value))
+			if detectErr != nil {
+				return errors.Wrapf(detectErr, "detectRBACObject %s", node.Path)
+			}
+			keeperObjects[rbacObject{kind: kind, name: name}] = filepath.Base(jsonLFile)
+			return nil
+		})
+		if walkErr != nil {
+			return nil, errors.Wrapf(walkErr, "findRBACSQLFilesDuplicatedInKeeperDump(%s)", jsonLFile)
+		}
+	}
+	for _, sqlFile := range sqlFiles {
+		sql, readErr := os.ReadFile(sqlFile)
+		if readErr != nil {
+			return nil, errors.Wrapf(readErr, "can't read %s", sqlFile)
+		}
+		kind, name, detectErr := b.detectRBACObject(string(sql))
+		if detectErr != nil {
+			return nil, errors.Wrapf(detectErr, "detectRBACObject %s", sqlFile)
+		}
+		if jsonLFileName, duplicated := keeperObjects[rbacObject{kind: kind, name: name}]; duplicated {
+			log.Warn().Msgf("RBAC object kind=%s, name=%s present in backup as %s and in keeper dump %s, will restore only keeper dump copy", kind, name, filepath.Base(sqlFile), jsonLFileName)
+			duplicatedSQLFiles = append(duplicatedSQLFiles, filepath.Base(sqlFile))
+		}
+	}
+	return duplicatedSQLFiles, nil
+}
+
 func isIgnoredRBACSQLFile(sqlFile string, ignoredSQLFiles []string) bool {
 	for _, ignored := range ignoredSQLFiles {
 		if filepath.Base(sqlFile) == ignored {
