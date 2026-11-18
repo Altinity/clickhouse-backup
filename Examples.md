@@ -1536,7 +1536,7 @@ CREATE GRANT backup_role TO backup_user;
 
 ## How to restore RBAC objects between different user_directories types
 
-RBAC objects live either in a `local_directory` user directory (`<access_control_path>/<uuid>.sql` files) or in a `replicated` one (znodes under `<zookeeper_path>`), see [ClickHouse user_directories](https://clickhouse.com/docs/operations/external-authenticators/#user_directories). `create --rbac` backs up both shapes, `*.sql` files and a `*.jsonl` Keeper dump per replicated user directory.
+RBAC objects live either in a `local_directory` user directory (`<access_control_path>/<uuid>.sql` files) or in a `replicated` one (znodes under `<zookeeper_path>`), see [ClickHouse user_directories](https://clickhouse.com/docs/operations/external-authenticators/#user_directories). `create --rbac` backs up both shapes, `*.sql` files when `system.user_directories` contains a `local_directory` and a `*.jsonl` Keeper dump per replicated user directory. `*.sql` files left in `<access_control_path>` after a switch from `local_directory` to `replicated` are not read by `clickhouse-server`, they are not backed up and a warning with the number of skipped files is logged.
 
 `restore --rbac` restores each shape into the matching user directory of the target server. When the target server has only one of the two, the backup content is converted automatically:
 
@@ -1544,5 +1544,7 @@ RBAC objects live either in a `local_directory` user directory (`<access_control
 - backup contains `*.sql` files but the target has no `local_directory` user directory, every RBAC object is written to Keeper, `ReplicatedAccessStorage` watches apply it without a restart.
 
 When the target server has neither a `local_directory` nor a `replicated` user directory (for example only `users_xml`), restoring a backup which contains RBAC objects fails instead of silently doing nothing.
+
+Backups created by clickhouse-backup before v2.8.4 on a server with such leftover `*.sql` files contain every RBAC object twice, the inactive `<uuid>.sql` and the live one in the Keeper dump. When the target server has only one of the two user directories, `restore --rbac` restores an object with the same kind and name only from the Keeper dump and logs a warning for every skipped `*.sql` file. When the target server has both user directories, the two copies are restored as is into different user directories and `clickhouse-server` uses the one from the user directory which is first in `system.user_directories`, so remove `access/*.sql` from the downloaded backup before `restore --rbac`, if they were inactive on the source server.
 
 Running `restore --rbac` on several replicas which share one `replicated` user directory at the same time is supported, every replica writes the same znodes and the result is the same on all of them; set `clickhouse: restart_command: "sql:SYSTEM RELOAD USERS"` for such clusters, so the concurrent restores don't restart every replica at once.
