@@ -697,14 +697,10 @@ func (s *S3) deleteKeys(ctx context.Context, keys []string) error {
 			g.Go(func() error {
 				identifiers, err := s.getObjectAllVersions(ctx, key)
 				if err != nil {
-					// If we can't list versions, try deleting without version ID
-					log.Warn().Msgf("S3 deleteKeys: can't get versions for %s: %v, will try without version", key, err)
-					mu.Lock()
-					objectsToDelete = append(objectsToDelete, s3types.ObjectIdentifier{
-						Key: aws.String(key),
-					})
-					mu.Unlock()
-					return nil
+					// A key-only delete would only hide the object, leaving its
+					// versions behind. Match deleteKey: report the error so the
+					// caller keeps the catalog needed to retry these objects.
+					return errors.Wrapf(err, "can't list versions for %s", key)
 				}
 				if len(identifiers) == 0 {
 					// Already absent (e.g. retry of an earlier successful delete).

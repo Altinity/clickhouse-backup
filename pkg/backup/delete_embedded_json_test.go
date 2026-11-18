@@ -74,6 +74,21 @@ func TestCleanEmbeddedIncludesNativeJSON(t *testing.T) {
 						return
 					}
 					_, _ = w.Write(body)
+				case r.Method == http.MethodPost && r.URL.Query().Has("delete"):
+					var request struct {
+						Objects []struct{ Key string } `xml:"Object"`
+					}
+					if err := xml.NewDecoder(r.Body).Decode(&request); err != nil {
+						t.Errorf("decode S3 delete: %v", err)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					mu.Lock()
+					for _, object := range request.Objects {
+						deleted = append(deleted, object.Key)
+					}
+					mu.Unlock()
+					_, _ = w.Write([]byte(`<DeleteResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>`))
 				case r.Method == http.MethodDelete:
 					mu.Lock()
 					deleted = append(deleted, strings.TrimPrefix(r.URL.Path, "/test-bucket/"))
@@ -138,7 +153,11 @@ func TestCleanEmbeddedIncludesNativeJSON(t *testing.T) {
 				files[name] = []byte(fmt.Sprintf("5\n1\t265\n265\t%s\n0\n0\n\n", objectKey))
 				expected = append(expected, objectKey)
 			}
-			b := &Backuper{cfg: &config.Config{ClickHouse: config.ClickHouseConfig{EmbeddedBackupDisk: diskName}}}
+			b := &Backuper{cfg: &config.Config{
+				ClickHouse: config.ClickHouseConfig{EmbeddedBackupDisk: diskName},
+				General:    config.GeneralConfig{DeleteBatchSize: 4},
+				S3:         config.S3Config{DeleteConcurrency: 3},
+			}}
 			backupMetadata := metadata.BackupMetadata{
 				BackupName: "test-backup", DataFormat: DirectoryFormat,
 				DiskTypes: map[string]string{diskName: "s3"},

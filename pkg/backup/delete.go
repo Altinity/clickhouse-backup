@@ -463,30 +463,34 @@ func (b *Backuper) cleanLocalEmbedded(ctx context.Context, backup LocalBackup, d
 				return errors.Wrap(err, "object_disk.InitCredentialsAndConnections")
 			}
 			backupPath := path.Join(disk.Path, backup.BackupName)
-			if err := filepath.Walk(backupPath, func(filePath string, info fs.FileInfo, err error) error {
-				if err != nil {
-					return err
-				}
-				relativePath, err := filepath.Rel(backupPath, filePath)
-				if err != nil {
-					return errors.Wrap(err, "filepath.Rel backupPath")
-				}
-				if !info.IsDir() && shouldCleanEmbeddedFile(relativePath) && !strings.HasPrefix(filePath, path.Join(backupPath, "access")) {
-					log.Debug().Msgf("object_disk.ReadMetadataFromFile(%s)", filePath)
-					meta, err := object_disk.ReadMetadataFromFile(filePath)
-					if err != nil {
-						return errors.Wrap(err, "object_disk.ReadMetadataFromFile")
-					}
-					for _, o := range meta.StorageObjects {
-						err = object_disk.DeleteFile(ctx, b.cfg.ClickHouse.EmbeddedBackupDisk, o.ObjectPath)
+			err := b.cleanEmbeddedFiles(ctx,
+				func(ctx context.Context, emit func(string) error) error {
+					return filepath.Walk(backupPath, func(filePath string, info fs.FileInfo, err error) error {
 						if err != nil {
-							return errors.Wrap(err, "object_disk.DeleteFile")
+							return err
 						}
+						if err = ctx.Err(); err != nil {
+							return err
+						}
+						relativePath, err := filepath.Rel(backupPath, filePath)
+						if err != nil {
+							return errors.Wrap(err, "filepath.Rel backupPath")
+						}
+						if !info.IsDir() && shouldCleanEmbeddedFile(relativePath) && !strings.HasPrefix(filePath, path.Join(backupPath, "access")) {
+							return emit(filePath)
+						}
+						return nil
+					})
+				},
+				func(ctx context.Context, name string, emit func(string) error) error {
+					reader, err := os.Open(name)
+					if err != nil {
+						return err
 					}
-				}
-				return nil
-			}); err != nil {
-				return errors.Wrap(err, "filepath.Walk backupPath")
+					return readEmbeddedObjectKeys(reader, name, emit)
+				})
+			if err != nil {
+				return errors.Wrap(err, "cleanLocalEmbedded")
 			}
 		}
 	}
@@ -701,39 +705,29 @@ func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backu
 	if err := object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, b.cfg.ClickHouse.EmbeddedBackupDisk); err != nil {
 		return errors.Wrap(err, "object_disk.InitCredentialsAndConnections")
 	}
-	return b.dst.Walk(ctx, backup.BackupName+"/", true, func(ctx context.Context, f storage.RemoteFile) error {
-		if !shouldCleanEmbeddedFile(f.Name()) {
-			return nil
-		}
-		remotePath := path.Join(backup.BackupName, f.Name())
-		if extension, compressed := config.ArchiveExtensions[backup.DataFormat]; compressed && strings.HasSuffix(f.Name(), "."+extension) {
-			return b.dst.WalkCompressedStream(ctx, remotePath, func(ctx context.Context, name string, content io.Reader) error {
-				// Every file inside a native data archive is an object-disk pointer,
-				// including serialization.json. WalkCompressedStream closes each entry.
-				return b.cleanEmbeddedObjectsFromReader(ctx, io.NopCloser(content), name)
+	return b.cleanEmbeddedFiles(ctx,
+		func(ctx context.Context, emit func(string) error) error {
+			return b.dst.Walk(ctx, backup.BackupName+"/", true, func(ctx context.Context, f storage.RemoteFile) error {
+				if !shouldCleanEmbeddedFile(f.Name()) {
+					return nil
+				}
+				return emit(path.Join(backup.BackupName, f.Name()))
 			})
-		}
-		r, err := b.dst.GetFileReader(ctx, remotePath)
-		if err != nil {
-			return errors.Wrap(err, "b.dst.GetFileReader")
-		}
-		return b.cleanEmbeddedObjectsFromReader(ctx, r, f.Name())
-	})
-}
-
-func (b *Backuper) cleanEmbeddedObjectsFromReader(ctx context.Context, reader io.ReadCloser, name string) error {
-	log.Debug().Msgf("object_disk.ReadMetadataFromReader(%s)", name)
-	// ReadMetadataFromReader closes the reader on both success and failure.
-	meta, err := object_disk.ReadMetadataFromReader(reader, name)
-	if err != nil {
-		return errors.Wrapf(err, "object_disk.ReadMetadataFromReader(%s)", name)
-	}
-	for _, object := range meta.StorageObjects {
-		if err = object_disk.DeleteFile(ctx, b.cfg.ClickHouse.EmbeddedBackupDisk, object.ObjectPath); err != nil {
-			return errors.Wrap(err, "object_disk.DeleteFile")
-		}
-	}
-	return nil
+		},
+		func(ctx context.Context, remotePath string, emit func(string) error) error {
+			if extension, compressed := config.ArchiveExtensions[backup.DataFormat]; compressed && strings.HasSuffix(remotePath, "."+extension) {
+				return b.dst.WalkCompressedStream(ctx, remotePath, func(ctx context.Context, name string, content io.Reader) error {
+					// Every file inside a native data archive is an object-disk pointer,
+					// including serialization.json. WalkCompressedStream closes each entry.
+					return readEmbeddedObjectKeys(io.NopCloser(content), name, emit)
+				})
+			}
+			reader, err := b.dst.GetFileReader(ctx, remotePath)
+			if err != nil {
+				return errors.Wrap(err, "b.dst.GetFileReader")
+			}
+			return readEmbeddedObjectKeys(reader, remotePath, emit)
+		})
 }
 
 // cleanBackupObjectDisks - recursive delete <object_disks_path>/<backupName>
