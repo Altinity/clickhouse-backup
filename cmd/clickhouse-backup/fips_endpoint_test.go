@@ -14,11 +14,11 @@ func TestSetDefaultFIPSEndpoint(t *testing.T) {
 		envValue *string
 		expected *string
 	}{
-		{name: "fips build, unset defaults to true", version: "2.8.3-fips", envValue: nil, expected: ptr("true")},
-		{name: "fips build, explicit false is kept", version: "2.8.3-fips", envValue: ptr("false"), expected: ptr("false")},
-		{name: "fips build, explicit true is kept", version: "2.8.3-fips", envValue: ptr("true"), expected: ptr("true")},
+		{name: "fips build, unset defaults to true", version: "2.8.3-fips", envValue: nil, expected: new("true")},
+		{name: "fips build, explicit false is kept", version: "2.8.3-fips", envValue: new("false"), expected: new("false")},
+		{name: "fips build, explicit true is kept", version: "2.8.3-fips", envValue: new("true"), expected: new("true")},
 		{name: "non-fips build, unset stays unset", version: "2.8.3", envValue: nil, expected: nil},
-		{name: "non-fips build, explicit value is kept", version: "2.8.3", envValue: ptr("true"), expected: ptr("true")},
+		{name: "non-fips build, explicit value is kept", version: "2.8.3", envValue: new("true"), expected: new("true")},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -39,7 +39,4 @@ func TestSetDefaultFIPSEndpoint(t *testing.T) {
 			r.Equal(*tc.expected, value)
 		})
 	}
-}
-func ptr(s string) *string {
-	return &s
 }

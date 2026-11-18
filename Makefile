@@ -17,7 +17,7 @@ GO_BUILD = go build -trimpath -buildvcs=false -tags netgo,osusergo -ldflags "-X 
 GO_BUILD_STATIC = go build -trimpath -buildvcs=false -tags netgo,osusergo -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -X 'main.buildArch=$(HOST_OS)/$(HOST_ARCH)' $(LDFLAGS)"
 PKG_FILES = build/$(NAME)_$(VERSION).amd64.deb build/$(NAME)_$(VERSION).arm64.deb build/$(NAME)-$(VERSION)-1.amd64.rpm build/$(NAME)-$(VERSION)-1.arm64.rpm
 
-.PHONY: clean all version test
+.PHONY: clean all version test fmt fmt-check
 
 all: build build-fips config packages
 
@@ -35,6 +35,17 @@ test:
 	rm -rf ./_coverage_
 	mkdir -v ./_coverage_
 	GOCOVERDIR=./_coverage_/ go test -coverprofile=./_coverage_/coverage.out -covermode=atomic -v ./...
+
+fmt:
+	gofmt -w cmd pkg test
+
+fmt-check:
+	@unformatted="$$(gofmt -l cmd pkg test)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "gofmt: unformatted files:"; \
+		echo "$$unformatted"; \
+		exit 1; \
+	fi
 
 build: build/linux/amd64/$(NAME) build/linux/arm64/$(NAME) build/darwin/amd64/$(NAME) build/darwin/arm64/$(NAME)
 
