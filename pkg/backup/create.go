@@ -1003,6 +1003,12 @@ func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disk
 			return rbacDataSize + replicatedRBACDataSize, errors.Wrap(err, "filepath.Glob accessPath")
 		}
 		if len(rbacSQLFiles) != 0 {
+			// if no `local_directory` in `system.user_directories` table -> skip backing it up,
+			// because it is probably a leftover/stale record
+			if hasLocalUserDirectory, _ := b.splitUserDirectories(ctx); !hasLocalUserDirectory {
+				log.Warn().Msgf("skip backup of %d RBAC *.sql files from %s, no `local_directory` in system.user_directories, clickhouse-server doesn't read them", len(rbacSQLFiles), accessPath)
+				return rbacDataSize + replicatedRBACDataSize, nil
+			}
 			if copySize, copyErr := b.backupSQLFiles(accessPath, rbacBackup); copyErr != nil {
 				return 0, errors.Wrap(copyErr, "backupSQLFiles rbac")
 			} else {
