@@ -169,6 +169,7 @@ func (m *APIMetrics) RegisterMetrics() {
 		m.LastBackupSizeLocal,
 		m.LastBackupSizeRemote,
 		m.NumberBackupsRemote,
+		m.NumberBackupsRemoteBroken,
 		m.NumberBackupsLocal,
 		m.NumberBackupsRemoteExpected,
 		m.NumberBackupsLocalExpected,
