@@ -91,6 +91,21 @@ jobs:
     outputs:
       GCS_TESTS: ${{ steps.secrets.outputs.GCS_TESTS }}
 
+  gofmt:
+    name: Gofmt
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v6
+
+      - name: Setup golang
+        uses: actions/setup-go@v6
+        with:
+          go-version: '^1.27'
+
+      - name: Check gofmt
+        run: make fmt-check
+
   testflows:
     needs: build
     name: Testflows
