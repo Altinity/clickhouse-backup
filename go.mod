@@ -33,8 +33,8 @@ require (
 	github.com/klauspost/pgzip v1.3.0
 	github.com/mattn/go-shellwords v1.0.17
 	github.com/mholt/archives v0.1.5
-	github.com/moby/moby/api v1.56.1
-	github.com/moby/moby/client v0.6.2
+	github.com/moby/moby/api v1.57.0
+	github.com/moby/moby/client v0.6.3
 	github.com/otiai10/copy v1.14.1
 	github.com/pkg/errors v0.9.1
 	github.com/pkg/sftp v1.13.12
