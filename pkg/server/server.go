@@ -421,7 +421,9 @@ func (api *APIServer) actionsDeleteHandler(row status.ActionRow, args []string, 
 		return actionsResults, ErrAPILocked
 	}
 	commandId, _ := status.Current.Start(row.Command)
-	err := api.newCliApp().Run(context.Background(), append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
+	err, _ := api.metrics.ExecuteWithMetrics("delete", 0, func() error {
+		return api.newCliApp().Run(context.Background(), append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
+	})
 	if err == nil {
 		// refresh metrics before marking the operation as completed so /metrics observers see consistent state
 		if metricsErr := api.UpdateBackupMetrics(context.Background(), args[1] == "local"); metricsErr != nil {

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -504,7 +505,10 @@ func testAPIBackupActions(r *require.Assertions, env *TestEnvironment) {
 		"clickhouse_backup_last_restore_status 1",
 	)
 
+	// delete must update the delete metrics the same way as POST /backup/delete/{where}/{name}
+	successfulDeletes := readAPIMetric(r, env, "clickhouse_backup_successful_deletes")
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{"delete local actions_backup1", "delete remote actions_backup1"}, false)
+	r.Equal(successfulDeletes+2, readAPIMetric(r, env, "clickhouse_backup_successful_deletes"), "each delete in system.backup_actions must increment clickhouse_backup_successful_deletes")
 
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{"create actions_backup2"}, true)
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{"upload actions_backup2"}, true)
@@ -1404,6 +1408,17 @@ func waitForAPIMetricsContains(r *require.Assertions, env *TestEnvironment, time
 	for _, item := range expected {
 		r.Contains(out, item)
 	}
+}
+
+// readAPIMetric scrapes /metrics and parses the value of a metric without labels
+func readAPIMetric(r *require.Assertions, env *TestEnvironment, metric string) float64 {
+	out, err := env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/metrics")
+	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
+	matches := regexp.MustCompile(`(?m)^` + metric + `\s+(\S+)$`).FindStringSubmatch(out)
+	r.Len(matches, 2, "%s not found in GET /metrics output:\n%s", metric, out)
+	value, err := strconv.ParseFloat(matches[1], 64)
+	r.NoError(err, "unexpected %s value %q", metric, matches[1])
+	return value
 }
 
 // waitForAPIActionStatus polls system.backup_actions (an ENGINE=URL table backed
