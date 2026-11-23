@@ -127,9 +127,10 @@ func (ch *ClickHouse) Connect() error {
 		},
 		MaxOpenConns:    ch.Config.MaxConnections,
 		ConnMaxLifetime: 0, // don't change it, it related to SYSTEM SHUTDOWN behavior for properly rebuild RBAC lists on 20.4-22.3
-		MaxIdleConns:    0,
-		DialTimeout:     timeout,
-		ReadTimeout:     timeout,
+		// keep all MaxOpenConns idle, clickhouse-go default 5 closes extra connections on release and re-opens them on next concurrent burst
+		MaxIdleConns: ch.Config.MaxConnections,
+		DialTimeout:  timeout,
+		ReadTimeout:  timeout,
 	}
 
 	if ch.Config.Debug {
