@@ -134,7 +134,7 @@ func (b *Backuper) createToRemoteStreaming(ctx context.Context, backupName, diff
 	if rbacConfigsNamedCollectionsErr != nil {
 		return errors.Wrap(rbacConfigsNamedCollectionsErr, "createConfigsNamedCollectionsAndRBACIfNecessary")
 	}
-	err = b.createAndUploadStreaming(ctx, backupName, diffFrom, diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, backupVersion, p, backupRBACSize, backupConfigSize, backupNamedCollectionsSize, startBackup, clickHouseVersion)
+	err = b.createAndUploadStreaming(ctx, backupName, diffFrom, diffFromRemote, tablePattern, partitions, skipProjections, backupVersion, p, backupRBACSize, backupConfigSize, backupNamedCollectionsSize, startBackup, clickHouseVersion)
 	// a failed step after the complete upload is not a partial backup, https://github.com/Altinity/clickhouse-backup/issues/1535
 	if !watchBackupUploaded(err) {
 		log.Error().Msgf("streaming backup failed error: %v", err)
@@ -162,7 +162,7 @@ func (b *Backuper) createToRemoteStreaming(ctx context.Context, backupName, diff
 // then runs createOneTable producers (limited by clickhouse.max_connections) feeding uploadOneTable consumers
 // (limited by general.upload_concurrency) through a channel, each uploaded table is removed locally right away,
 // finally rewrites metadata.json with real sizes and runs uploadEpilogue with deleteSource=true
-func (b *Backuper) createAndUploadStreaming(ctx context.Context, backupName, diffFrom, diffFromRemote, tablePattern string, partitions, skipProjections []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly bool, backupVersion string, p *createPrologueResult, backupRBACSize, backupConfigSize, backupNamedCollectionsSize uint64, startBackup time.Time, version int) error {
+func (b *Backuper) createAndUploadStreaming(ctx context.Context, backupName, diffFrom, diffFromRemote, tablePattern string, partitions, skipProjections []string, backupVersion string, p *createPrologueResult, backupRBACSize, backupConfigSize, backupNamedCollectionsSize uint64, startBackup time.Time, version int) error {
 	backupPath, err := b.createBackupDirs(backupName, p.disks)
 	if err != nil {
 		return err
@@ -175,7 +175,7 @@ func (b *Backuper) createAndUploadStreaming(ctx context.Context, backupName, dif
 		return errors.Wrap(err, "filesystemhelper.Mkdir metadataPath")
 	}
 	tableMetas := make([]metadata.TableTitle, 0, len(p.tables))
-	if schemaOnly || p.doBackupData {
+	if p.schemaOnly || p.doBackupData {
 		for _, table := range p.tables {
 			if !table.Skip {
 				tableMetas = append(tableMetas, metadata.TableTitle{Database: table.Database, Table: table.Name})
@@ -188,7 +188,7 @@ func (b *Backuper) createAndUploadStreaming(ctx context.Context, backupName, dif
 	}
 
 	// uploadPrologue connects b.dst, it is shared with object disk copy inside createOneTable
-	prologue, err := b.uploadPrologue(ctx, backupName, diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly)
+	prologue, err := b.uploadPrologue(ctx, backupName, diffFrom, diffFromRemote, tablePattern, partitions, p.schemaOnly, p.rbacOnly, p.configsOnly, p.namedCollectionsOnly)
 	if err != nil {
 		return err
 	}
@@ -199,7 +199,7 @@ func (b *Backuper) createAndUploadStreaming(ctx context.Context, backupName, dif
 	}()
 	// one `create_upload_streaming.state2` is shared by object disk copy (create) and data upload, their keys don't overlap:
 	// create records `<bucket>/<object key>`, upload records `<backupName>/<remote path>`
-	if err = b.uploadInitResumableAndManifest(backupName, "create_upload_streaming", diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly, prologue.backupExistsOnRemote); err != nil {
+	if err = b.uploadInitResumableAndManifest(backupName, "create_upload_streaming", diffFrom, diffFromRemote, tablePattern, partitions, p.schemaOnly, prologue.backupExistsOnRemote); err != nil {
 		return err
 	}
 	if b.resume {
@@ -214,35 +214,18 @@ func (b *Backuper) createAndUploadStreaming(ctx context.Context, backupName, dif
 	if diffFromRemote != "" {
 		tablesDiffFromRemote = prologue.tablesForUploadFromDiff
 	}
-	allInProgressMutations, err := b.checkPartsColumnsAndGetInProgressMutations(ctx, p.tables, p.doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly)
-	if err != nil {
-		return err
-	}
 	checkLocalPart := diffFrom != "" && diffFromRemote == ""
-	// https://github.com/Altinity/clickhouse-backup/issues/1120
-	kafkaKeeper, attachKafkaTables, err := b.backupKafkaKeeperOffsets(ctx, p.tables, p.doBackupData)
-	if err != nil {
-		return errors.Wrap(err, "b.backupKafkaKeeperOffsets")
-	}
-	defer func() {
-		// errors are already logged with the ATTACH statement for manual run
-		_ = attachKafkaTables()
-	}()
 
-	var backupDataSize, backupObjectDiskSize, backupMetadataSize uint64
-	var brokenParts, totalParts int64
 	var compressedDataSize, uploadedMetadataSize, uploadedTables int64
 	var tablesForUploadMutex sync.Mutex
 	tablesForUpload := ListOfTables{}
 	nonSkipTables := b.CalculateNonSkipTables(p.tables)
 
-	// upload error cancels uploadCtx and createCtx derived from it, create error cancels pipelineCtx explicitly below
+	// upload error cancels uploadCtx and the createTables context derived from it, create error cancels pipelineCtx explicitly below
 	pipelineCtx, pipelineCancel := context.WithCancel(ctx)
 	defer pipelineCancel()
 	uploadGroup, uploadCtx := errgroup.WithContext(pipelineCtx)
 	uploadGroup.SetLimit(max(int(b.cfg.General.UploadConcurrency), 1))
-	createGroup, createCtx := errgroup.WithContext(uploadCtx)
-	createGroup.SetLimit(max(b.cfg.ClickHouse.MaxConnections, 1))
 	tablesToUpload := make(chan *metadata.TableMetadata, max(int(b.cfg.General.UploadConcurrency), 1))
 
 	uploadDone := make(chan error, 1)
@@ -251,7 +234,7 @@ func (b *Backuper) createAndUploadStreaming(ctx context.Context, backupName, dif
 			table := table
 			uploadGroup.Go(func() error {
 				progress := fmt.Sprintf("%d/%d", atomic.AddInt64(&uploadedTables, 1), nonSkipTables)
-				uploadedBytes, tableMetadataSize, uploadTableErr := b.uploadOneTable(uploadCtx, backupName, false, table, skipProjections, prologue.disks, prologue.backupMetadata, prologue.tablesForUploadFromDiff, checkLocalPart, p.doBackupData, schemaOnly, backupVersion, progress)
+				uploadedBytes, tableMetadataSize, uploadTableErr := b.uploadOneTable(uploadCtx, backupName, false, table, skipProjections, prologue.disks, prologue.backupMetadata, prologue.tablesForUploadFromDiff, checkLocalPart, p.doBackupData, p.schemaOnly, backupVersion, progress)
 				if uploadTableErr != nil {
 					return uploadTableErr
 				}
@@ -271,38 +254,15 @@ func (b *Backuper) createAndUploadStreaming(ctx context.Context, backupName, dif
 		uploadDone <- uploadGroup.Wait()
 	}()
 
-	for tableIdx, tableItem := range p.tables {
-		//to avoid race condition
-		table := tableItem
-		if table.Skip {
-			continue
+	tp := &createTablesParams{createPrologueResult: p, backupName: backupName, backupPath: backupPath, tablesDiffFromRemote: tablesDiffFromRemote, skipProjections: skipProjections, version: version}
+	total, createErr, attachErr := b.createTables(uploadCtx, tp, func(createCtx context.Context, tableMeta *metadata.TableMetadata) error {
+		select {
+		case tablesToUpload <- tableMeta:
+			return nil
+		case <-createCtx.Done():
+			return createCtx.Err()
 		}
-		idx := tableIdx
-		createGroup.Go(func() error {
-			tableMeta, tableBackupSize, createOneTableErr := b.createOneTable(createCtx, backupName, backupPath, &table, tablesDiffFromRemote, p.partitionsIdMap, allInProgressMutations, kafkaKeeper, skipProjections, p.disks, p.doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, version)
-			if createOneTableErr != nil {
-				return createOneTableErr
-			}
-			atomic.AddInt64(&brokenParts, tableBackupSize.brokenParts)
-			atomic.AddInt64(&totalParts, tableBackupSize.totalParts)
-			atomic.AddUint64(&backupDataSize, tableBackupSize.dataSize)
-			atomic.AddUint64(&backupObjectDiskSize, tableBackupSize.objectDiskSize)
-			atomic.AddUint64(&backupMetadataSize, tableBackupSize.metadataSize)
-			log.Info().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Str("progress", fmt.Sprintf("%d/%d", idx+1, len(p.tables))).Msg("done")
-			if tableMeta == nil {
-				return nil
-			}
-			select {
-			case tablesToUpload <- tableMeta:
-				return nil
-			case <-createCtx.Done():
-				return createCtx.Err()
-			}
-		})
-	}
-	createErr := createGroup.Wait()
-	// all tables are frozen, Kafka tables can consume again
-	attachErr := attachKafkaTables()
+	})
 	if createErr != nil {
 		pipelineCancel()
 	}
@@ -310,20 +270,20 @@ func (b *Backuper) createAndUploadStreaming(ctx context.Context, backupName, dif
 	uploadErr := <-uploadDone
 	// the side which failed first cancels the other one, report the root cause instead of context.Canceled
 	if createErr != nil && !errors.Is(createErr, context.Canceled) {
-		return errors.Wrap(createErr, "one of createOneTable go-routine return error")
+		return createErr
 	}
 	if uploadErr != nil {
 		return errors.Wrap(uploadErr, "one of upload table go-routine return error")
 	}
 	if createErr != nil {
-		return errors.Wrap(createErr, "one of createOneTable go-routine return error")
+		return createErr
 	}
 	if attachErr != nil {
-		return errors.Wrapf(attachErr, "can't attach back Kafka tables with %s", kafkaKeeperPathSetting)
+		return attachErr
 	}
 
 	// tables already uploaded stay on remote storage when the ratio check fails, the returned error tells the user to delete the backup
-	if err = b.checkMaxBrokenPartRatio(atomic.LoadInt64(&brokenParts), atomic.LoadInt64(&totalParts)); err != nil {
+	if err = b.checkMaxBrokenPartRatio(total.brokenParts, total.totalParts); err != nil {
 		return err
 	}
 
@@ -332,15 +292,15 @@ func (b *Backuper) createAndUploadStreaming(ctx context.Context, backupName, dif
 	for i := range tablesForUpload {
 		tableMetas[i] = metadata.TableTitle{Database: tablesForUpload[i].Database, Table: tablesForUpload[i].Table}
 	}
-	if err = b.createBackupMetadata(ctx, backupMetaFile, backupName, diffFromRemote, backupVersion, "regular", p.diskMap, p.diskTypes, p.disks, backupDataSize, backupObjectDiskSize, backupMetadataSize, backupRBACSize, backupConfigSize, backupNamedCollectionsSize, tableMetas, p.allDatabases, p.allFunctions); err != nil {
+	if err = b.createBackupMetadata(ctx, backupMetaFile, backupName, diffFromRemote, backupVersion, "regular", p.diskMap, p.diskTypes, p.disks, total.dataSize, total.objectDiskSize, total.metadataSize, backupRBACSize, backupConfigSize, backupNamedCollectionsSize, tableMetas, p.allDatabases, p.allFunctions); err != nil {
 		return errors.Wrap(err, "createBackupMetadata return error")
 	}
 	// prologue.backupMetadata was read from the early metadata.json with zero sizes
-	prologue.backupMetadata.DataSize = backupDataSize
-	prologue.backupMetadata.ObjectDiskSize = backupObjectDiskSize
-	prologue.backupMetadata.MetadataSize = backupMetadataSize
+	prologue.backupMetadata.DataSize = total.dataSize
+	prologue.backupMetadata.ObjectDiskSize = total.objectDiskSize
+	prologue.backupMetadata.MetadataSize = total.metadataSize
 	log.Info().Str("version", backupVersion).Str("operation", "createBackupLocal").Str("duration", utils.HumanizeDuration(time.Since(startBackup))).Msg("done")
 
 	// deleteSource=true removes the local backup via RemoveBackupLocal, which skips object disk cleanup because the remote backup exists
-	return b.uploadEpilogue(ctx, backupName, true, tablesForUpload, prologue.backupMetadata, prologue.disks, compressedDataSize, uploadedMetadataSize, p.doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, backupVersion, startBackup)
+	return b.uploadEpilogue(ctx, backupName, true, tablesForUpload, prologue.backupMetadata, prologue.disks, compressedDataSize, uploadedMetadataSize, p.doBackupData, p.schemaOnly, p.rbacOnly, p.configsOnly, p.namedCollectionsOnly, backupVersion, startBackup)
 }
