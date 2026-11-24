@@ -64,10 +64,14 @@ func TestCustomSQLDisk(t *testing.T) {
 	// A cached custom disk is rejected unless the server config declares a base
 	// directory for it, see ClickHouse RegisterDiskCache.cpp - the fallback to
 	// <path>/caches applies to ATTACH only.
+	// Likewise an explicit metadata_path of a custom object storage disk must be inside
+	// custom_local_disks_base_directory since 26.10 (backported to 26.3.69, 26.8.44, 26.9.36),
+	// see ClickHouse MetadataStorageFactory.cpp, https://github.com/ClickHouse/ClickHouse/pull/110665
 	env.DockerExecNoError(r, "clickhouse", "bash", "-xc", `
 cat > /etc/clickhouse-server/config.d/custom_sql_disk_test.xml <<'XML'
 <clickhouse>
   <custom_cached_disks_base_directory>/var/lib/clickhouse/caches/</custom_cached_disks_base_directory>
+  <custom_local_disks_base_directory>/var/lib/clickhouse/disks/</custom_local_disks_base_directory>
 </clickhouse>
 XML
 `)
