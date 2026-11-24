@@ -9,7 +9,7 @@ func TestCustomRestic(t *testing.T) {
 	defer env.Cleanup(t, r)
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
 	env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
-	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL --retry 5 --retry-delay 5 --retry-connrefused \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", "yq --version || { curl -fsSL --retry 10 --retry-delay 5 --retry-connrefused \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq.tmp && chmod +x /usr/bin/yq.tmp && /usr/bin/yq.tmp --version && mv -f /usr/bin/yq.tmp /usr/bin/yq; }")
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "jq", "bzip2", "pgp", "git")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "command -v restic || RELEASE_TAG=$(curl -H 'Accept: application/json' -sL --retry 5 --retry-delay 5 --retry-connrefused https://github.com/restic/restic/releases/latest | jq -c -r -M '.tag_name'); RELEASE=$(echo ${RELEASE_TAG} | sed -e 's/v//'); curl -sfL --retry 5 --retry-delay 5 --retry-connrefused \"https://github.com/restic/restic/releases/download/${RELEASE_TAG}/restic_${RELEASE}_linux_amd64.bz2\" | bzip2 -d > /bin/restic; chmod +x /bin/restic")
 	env.runIntegrationCustom(t, r, "restic")

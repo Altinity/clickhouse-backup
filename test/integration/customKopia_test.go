@@ -18,7 +18,7 @@ func TestCustomKopia(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-f", "/tmp/kopia_diag.log")
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
 	env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
-	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL --retry 5 --retry-delay 5 --retry-connrefused \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", "yq --version || { curl -fsSL --retry 10 --retry-delay 5 --retry-connrefused \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq.tmp && chmod +x /usr/bin/yq.tmp && /usr/bin/yq.tmp --version && mv -f /usr/bin/yq.tmp /usr/bin/yq; }")
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "jq", "bzip2", "pgp", "git")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "curl -sfL --retry 5 --retry-delay 5 --retry-connrefused https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg")
