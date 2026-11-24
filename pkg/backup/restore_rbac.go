@@ -121,6 +121,112 @@ func (b *Backuper) convertLocalSQLToKeeper(backupAccessPath string, ignoredSQLFi
 	return converted, nil
 }
 
+// rbacObjectID - kind and full name of RBAC object, identifiers are stored without back quotes,
+// database and table are filled only for ROW POLICY and MASKING POLICY
+type rbacObjectID struct {
+	kind     string
+	name     string
+	database string
+	table    string
+}
+
+func (id rbacObjectID) fullName() string {
+	if id.table == "" {
+		return id.name
+	}
+	if id.database == "" {
+		return id.name + " ON " + id.table
+	}
+	return id.name + " ON " + id.database + "." + id.table
+}
+
+// cutRBACIdentifier - cut one identifier from the beginning of sql, returns it without back quotes and the rest of sql,
+// back quoted identifier can contain spaces and dots
+func cutRBACIdentifier(sql string) (string, string) {
+	if strings.HasPrefix(sql, "`") {
+		for i := 1; i < len(sql); i++ {
+			switch sql[i] {
+			case '\\':
+				// skip escaped character
+				i++
+			case '`':
+				return sql[1:i], sql[i+1:]
+			}
+		}
+		return sql[1:], ""
+	}
+	if end := strings.IndexAny(sql, " .;\n"); end >= 0 {
+		return sql[:end], sql[end:]
+	}
+	return sql, ""
+}
+
+// detectRBACObjectID - returns kind and full name of RBAC object from ATTACH query to compare RBAC objects,
+// detectRBACObject can't be used for it, it cuts the name on the first space,
+// so `john smith` and `john doe` are the same `john`, and keeps back quotes in policy names,
+// while clickhouse-server 22.3 writes `ATTACH SETTINGS PROFILE name` and 26.8 writes the same name back quoted
+func (b *Backuper) detectRBACObjectID(sql string) (rbacObjectID, error) {
+	kind, _, detectErr := b.detectRBACObject(sql)
+	if detectErr != nil {
+		return rbacObjectID{}, detectErr
+	}
+	id := rbacObjectID{kind: kind}
+	var rest string
+	id.name, rest = cutRBACIdentifier(strings.TrimLeft(strings.TrimPrefix(sql, "ATTACH "+kind), " "))
+	if (kind == "ROW POLICY" || kind == "MASKING POLICY") && strings.HasPrefix(rest, " ON ") {
+		id.table, rest = cutRBACIdentifier(strings.TrimPrefix(rest, " ON "))
+		if strings.HasPrefix(rest, ".") {
+			id.database = id.table
+			id.table, _ = cutRBACIdentifier(strings.TrimPrefix(rest, "."))
+		}
+	}
+	return id, nil
+}
+
+// findRBACSQLFilesDuplicatedInKeeperDump - returns base names of backup access `<uuid>.sql` files with RBAC objects,
+// which have the same kind and name as the objects in the `<user_directory>.jsonl` keeper dumps of the same backup,
+// `create --rbac` stored `*.sql` left in the access path after a switch from `local_directory`
+// to `replicated` user directory next to the keeper dump, which contains the live objects,
+// look https://github.com/Altinity/clickhouse-backup/issues/1666
+func (b *Backuper) findRBACSQLFilesDuplicatedInKeeperDump(sqlFiles, jsonLFiles []string) ([]string, error) {
+	duplicatedSQLFiles := make([]string, 0)
+	if len(sqlFiles) == 0 || len(jsonLFiles) == 0 {
+		return duplicatedSQLFiles, nil
+	}
+	keeperObjects := make(map[rbacObjectID]string)
+	for _, jsonLFile := range jsonLFiles {
+		walkErr := keeper.WalkDumpFile(jsonLFile, func(node keeper.DumpNode) error {
+			if !strings.HasPrefix(node.Path, "uuid/") || len(node.Value) == 0 {
+				return nil
+			}
+			id, detectErr := b.detectRBACObjectID(string(node.Value))
+			if detectErr != nil {
+				return errors.Wrapf(detectErr, "detectRBACObjectID %s", node.Path)
+			}
+			keeperObjects[id] = filepath.Base(jsonLFile)
+			return nil
+		})
+		if walkErr != nil {
+			return nil, errors.Wrapf(walkErr, "findRBACSQLFilesDuplicatedInKeeperDump(%s)", jsonLFile)
+		}
+	}
+	for _, sqlFile := range sqlFiles {
+		sql, readErr := os.ReadFile(sqlFile)
+		if readErr != nil {
+			return nil, errors.Wrapf(readErr, "can't read %s", sqlFile)
+		}
+		id, detectErr := b.detectRBACObjectID(string(sql))
+		if detectErr != nil {
+			return nil, errors.Wrapf(detectErr, "detectRBACObjectID %s", sqlFile)
+		}
+		if jsonLFileName, duplicated := keeperObjects[id]; duplicated {
+			log.Warn().Msgf("RBAC object kind=%s, name=%s present in backup as %s and in keeper dump %s, will restore only keeper dump copy", id.kind, id.fullName(), filepath.Base(sqlFile), jsonLFileName)
+			duplicatedSQLFiles = append(duplicatedSQLFiles, filepath.Base(sqlFile))
+		}
+	}
+	return duplicatedSQLFiles, nil
+}
+
 func isIgnoredRBACSQLFile(sqlFile string, ignoredSQLFiles []string) bool {
 	for _, ignored := range ignoredSQLFiles {
 		if filepath.Base(sqlFile) == ignored {
