@@ -579,6 +579,10 @@ func (s *S3) putFileMultipartCRC32(ctx context.Context, s3MultipartAPIClient s3M
 				Body:              bytes.NewReader(buf[:n]),
 				ChecksumAlgorithm: s3types.ChecksumAlgorithmCrc32,
 				ChecksumCRC32:     aws.String(base64.StdEncoding.EncodeToString(h.Sum(nil))),
+				// SSE-C: every UploadPart must repeat the customer key the upload was initiated with
+				SSECustomerAlgorithm: putParams.SSECustomerAlgorithm,
+				SSECustomerKey:       putParams.SSECustomerKey,
+				SSECustomerKeyMD5:    putParams.SSECustomerKeyMD5,
 			}
 			if s.Config.RequestPayer != "" {
 				uploadParams.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
@@ -604,6 +608,10 @@ func (s *S3) putFileMultipartCRC32(ctx context.Context, s3MultipartAPIClient s3M
 		Key:             putParams.Key,
 		UploadId:        uploadID,
 		MultipartUpload: &s3types.CompletedMultipartUpload{Parts: parts},
+		// required for SSE-C objects created with a checksum algorithm
+		SSECustomerAlgorithm: putParams.SSECustomerAlgorithm,
+		SSECustomerKey:       putParams.SSECustomerKey,
+		SSECustomerKeyMD5:    putParams.SSECustomerKeyMD5,
 	}); completeErr != nil {
 		return abort(errors.Wrap(completeErr, "S3 putFileMultipartCRC32 CompleteMultipartUpload"))
 	}
