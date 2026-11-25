@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
@@ -42,6 +43,9 @@ type ClickHouse struct {
 	// ShutdownCtx stops the infinite reconnect loop when the process is asked to terminate,
 	// otherwise a SIGTERM can't stop a command waiting for an unreachable ClickHouse
 	ShutdownCtx context.Context
+	// firstFreezeMu and firstFreezeDone serialize the first FREEZE query, see freezeQuery
+	firstFreezeMu   sync.Mutex
+	firstFreezeDone atomic.Bool
 }
 
 // zerologSlogHandler adapts slog.Handler interface to write through zerolog.
@@ -1006,7 +1010,7 @@ func (ch *ClickHouse) FreezeTableByParts(ctx context.Context, table *Table, name
 				withNameQuery,
 			)
 		}
-		if err := ch.QueryContext(ctx, query); err != nil {
+		if err := ch.freezeQuery(ctx, query); err != nil {
 			if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81")) && ch.Config.IgnoreNotExistsErrorDuringFreeze {
 				log.Warn().Msgf("can't freeze partition: %v", err)
 			} else {
@@ -1043,6 +1047,27 @@ func (ch *ClickHouse) SyncReplicatedTable(ctx context.Context, table *Table) {
 	}
 }
 
+// freezeQuery runs one ALTER TABLE ... FREEZE query, the first successful one runs alone. Every FREEZE increments the counter
+// in `<path>/shadow/increment.txt` (CounterInFile in ClickHouse), on a fresh clickhouse-server the file doesn't exist and
+// concurrent first FREEZE queries race on creating it: the loser reads the file created but not written yet and fails with
+// code 32 "File .../shadow/increment.txt is empty", https://github.com/Altinity/clickhouse-backup/issues/1651
+// A failed first FREEZE (e.g. a table dropped concurrently) lets the next one go first.
+func (ch *ClickHouse) freezeQuery(ctx context.Context, query string) error {
+	if !ch.firstFreezeDone.Load() {
+		ch.firstFreezeMu.Lock()
+		if !ch.firstFreezeDone.Load() {
+			defer ch.firstFreezeMu.Unlock()
+			err := ch.QueryContext(ctx, query)
+			if err == nil {
+				ch.firstFreezeDone.Store(true)
+			}
+			return err
+		}
+		ch.firstFreezeMu.Unlock()
+	}
+	return ch.QueryContext(ctx, query)
+}
+
 // FreezeTable - freeze all partitions for table
 // This way available for ClickHouse since v19.1
 func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string) error {
@@ -1059,7 +1084,7 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 		withNameQuery = fmt.Sprintf("WITH NAME '%s'", name)
 	}
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE %s;", table.Database, table.Name, withNameQuery)
-	if err := ch.QueryContext(ctx, query); err != nil {
+	if err := ch.freezeQuery(ctx, query); err != nil {
 		if ch.IsIgnorableNotExistsError(err) {
 			log.Warn().Msgf("can't freeze table: %v", err)
 			return nil
