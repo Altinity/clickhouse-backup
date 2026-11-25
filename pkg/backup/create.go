@@ -1792,8 +1792,9 @@ func (b *Backuper) getPlainPolicyParts(ctx context.Context, table *clickhouse.Ta
 // filterPlainPolicyParts keeps the parts of the requested partitions and checks that every one of them lives on a
 // disk which can be snapshotted without FREEZE: a plain disk, or a disk with complete local files. A part on any
 // other disk is rejected: an object disk with local metadata protects its blobs with the hardlink counter inside the
-// metadata files, which only FREEZE maintains. A cache disk over such a disk is reported by system.parts under its
-// own name while GetDisks lists it under the underlying disk name, so an unknown disk name is the same case
+// metadata files, which only FREEZE maintains. system.parts reports a part behind a cache disk under the name of the
+// cache disk (26.8) or of the disk it wraps (25.8) while GetDisks lists the pair once, under the wrapped disk name:
+// DiskName of the returned parts is rewritten to that name, the one the disk has in the backup
 func (b *Backuper) filterPlainPolicyParts(table *clickhouse.Table, parts []activePart, diskList []clickhouse.Disk, partitionsIdsMap common.EmptyMap) ([]activePart, error) {
 	filtered := make([]activePart, 0, len(parts))
 	for _, part := range parts {
@@ -1802,11 +1803,16 @@ func (b *Backuper) filterPlainPolicyParts(table *clickhouse.Table, parts []activ
 		}
 		disk := b.findDiskByName(diskList, part.DiskName)
 		if disk == nil {
-			return nil, errors.Errorf("`%s`.`%s` have parts on plain disks and on disk %s which is not a local disk of system.disks (a cache disk over object storage is listed under the underlying disk name), only local disks are supported next to plain disks in one storage policy", table.Database, table.Name, part.DiskName)
+			return nil, errors.Errorf("`%s`.`%s` have parts on plain disks and on disk %s which is absent in system.disks, only local disks are supported next to plain disks in one storage policy", table.Database, table.Name, part.DiskName)
 		}
 		if !b.isDiskPlain(*disk) && !b.isDiskLocal(*disk, diskList) {
-			return nil, errors.Errorf("`%s`.`%s` have parts on plain disks and on disk %s of type %s, only local disks are supported next to plain disks in one storage policy", table.Database, table.Name, disk.Name, disk.Type)
+			reportedAs := ""
+			if part.DiskName != disk.Name {
+				reportedAs = fmt.Sprintf(" (system.parts reports it as %s)", part.DiskName)
+			}
+			return nil, errors.Errorf("`%s`.`%s` have parts on plain disks and on disk %s%s of type %s, only local disks are supported next to plain disks in one storage policy", table.Database, table.Name, disk.Name, reportedAs, disk.Type)
 		}
+		part.DiskName = disk.Name
 		filtered = append(filtered, part)
 	}
 	return filtered, nil

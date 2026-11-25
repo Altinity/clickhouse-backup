@@ -3,12 +3,15 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/rs/zerolog/log"
 )
 
@@ -16,13 +19,16 @@ import (
 // ClickHouse cache disk wraps an S3 object disk. Both disks share the same
 // metadata path in system.disks, so GROUP BY d.path collapses them into one
 // row. Before the fix, any(d.name) could pick the cache wrapper name (e.g.
-// "s3_cache") instead of the underlying disk name ("s3_disk"). Since
-// system.parts always reports the underlying disk name, this mismatch caused
-// fetchHashOfAllFiles to fail with "part not found after FREEZE".
+// "s3_cache") instead of the underlying disk name ("s3_disk"). When
+// system.parts reports the underlying disk name (ClickHouse before 26.x), this
+// mismatch caused fetchHashOfAllFiles to fail with "part not found after
+// FREEZE".
 //
 // The fix uses argMin(d.name, d.cache_path != ”) to always prefer the
 // underlying disk (empty cache_path) over the cache wrapper (non-empty
-// cache_path).
+// cache_path). ClickHouse 26.8 reports the parts behind the cache under the
+// cache disk name, the backup keeps the underlying disk name there too, the
+// test checks it in the table metadata.
 //
 // See: https://github.com/Altinity/clickhouse-backup/issues/1396
 func TestCacheDiskBackup(t *testing.T) {
@@ -152,6 +158,18 @@ XML
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c",
 		"/etc/clickhouse-backup/config-s3.yml",
 		"create", "--tables="+dbName+".*", backupName)
+
+	// the backup lists the parts behind the cache under the underlying disk name on every ClickHouse version,
+	// system.parts reports them as s3_disk before 26.x and as s3_cache since then
+	metaOut, metaErr := env.DockerExecOut("clickhouse-backup", "cat",
+		fmt.Sprintf("/var/lib/clickhouse/backup/%s/metadata/%s/%s.json", backupName, common.TablePathEncode(dbName), tableName))
+	r.NoError(metaErr, "can't read table metadata json: %s", metaOut)
+	var tableMeta metadata.TableMetadata
+	r.NoError(json.Unmarshal([]byte(metaOut), &tableMeta), "can't parse table metadata json: %s", metaOut)
+	r.NotContains(tableMeta.Parts, "s3_cache", "the cache disk name must not be in the backup: %s", metaOut)
+	if s3Parts > 0 {
+		r.NotEmpty(tableMeta.Parts["s3_disk"], "the parts behind the cache disk must be in the backup: %s", metaOut)
+	}
 
 	// Step 4: Upload backup
 	log.Debug().Msg("Uploading backup")

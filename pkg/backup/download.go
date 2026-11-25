@@ -1653,9 +1653,13 @@ func (b *Backuper) findHardlinkablePartsByHash(ctx context.Context, tables ListO
 	if len(hashes) == 0 {
 		return result, nil
 	}
+	// system.parts reports the parts behind a cache disk under either name, see clickhouse.Disk.Aliases
 	knownDisks := make(common.EmptyMap, len(disks))
 	for _, d := range disks {
 		knownDisks[d.Name] = struct{}{}
+		for _, alias := range d.Aliases {
+			knownDisks[alias] = struct{}{}
+		}
 	}
 	const chunkSize = 1000
 	for chunkStart := 0; chunkStart < len(hashes); chunkStart += chunkSize {
@@ -1757,13 +1761,7 @@ func (b *Backuper) hardlinkFromLiveParts(rows []livePartRow, tolerateStale bool,
 		return candidates[i].Name < candidates[j].Name
 	})
 
-	var localDisk *clickhouse.Disk
-	for i := range disks {
-		if disks[i].Name == candidates[0].Disk {
-			localDisk = &disks[i]
-			break
-		}
-	}
+	localDisk := b.findDiskByName(disks, candidates[0].Disk)
 	if localDisk == nil {
 		return false, 0, errors.Errorf("disk %q from system.parts not found in disks=%v", candidates[0].Disk, disks)
 	}

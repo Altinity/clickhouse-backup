@@ -207,17 +207,17 @@ func (b *Backuper) shouldSkipByTableEngine(t metadata.TableMetadata) bool {
 }
 
 func (b *Backuper) shouldDiskNameSkipByNameOrType(diskName string, disks []clickhouse.Disk) bool {
-	for _, disk := range disks {
-		if disk.Name == diskName {
-			return b.shouldSkipByDiskNameOrType(disk)
-		}
+	if disk := b.findDiskByName(disks, diskName); disk != nil {
+		return b.shouldSkipByDiskNameOrType(*disk)
 	}
 	return false
 }
 
+// shouldSkipByDiskNameOrType - `clickhouse.skip_disks` matches a cache disk and the disk it wraps by either name,
+// they are one entry of GetDisks and the same data
 func (b *Backuper) shouldSkipByDiskNameOrType(disk clickhouse.Disk) bool {
 	for _, diskName := range b.cfg.ClickHouse.SkipDisks {
-		if diskName == disk.Name {
+		if disk.HasName(diskName) {
 			return true
 		}
 	}

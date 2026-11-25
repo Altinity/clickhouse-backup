@@ -302,7 +302,7 @@ func (b *Backuper) buildRebalanceDisksInfo(ctx context.Context, disks []clickhou
 
 // planTableRebalance - collect live parts, resolve the table storage policy and compute part moves for one table
 func (b *Backuper) planTableRebalance(ctx context.Context, tm *metadata.TableMetadata, localBackup *LocalBackup, disks []clickhouse.Disk, info *rebalanceDisksInfo, backupName string) ([]partMove, error) {
-	liveParts, err := b.getLiveParts(ctx, tm.Database, tm.Table)
+	liveParts, err := b.getLiveParts(ctx, tm.Database, tm.Table, disks)
 	if err != nil {
 		return nil, err
 	}
@@ -353,8 +353,10 @@ func (b *Backuper) planTableRebalance(ctx context.Context, tm *metadata.TableMet
 	return computeTableRebalancePlan(tm, localBackup.DiskTypes, localBackup.DiskEncrypted, liveParts, policyName, policyDisks, backupObjectDisks, info, resolvePartSize)
 }
 
-// getLiveParts - active parts of the table from system.parts keyed by part name
-func (b *Backuper) getLiveParts(ctx context.Context, database, table string) (map[string]livePart, error) {
+// getLiveParts - active parts of the table from system.parts keyed by part name, DiskName is the name the disk has
+// in GetDisks: system.parts reports a part behind a cache disk under the cache disk name or the wrapped disk name,
+// see clickhouse.Disk.Aliases
+func (b *Backuper) getLiveParts(ctx context.Context, database, table string, disks []clickhouse.Disk) (map[string]livePart, error) {
 	parts := make([]livePart, 0)
 	query := "SELECT name, disk_name, path FROM system.parts WHERE active AND database=? AND table=?"
 	if err := b.ch.SelectContext(ctx, &parts, query, database, table); err != nil {
@@ -362,6 +364,9 @@ func (b *Backuper) getLiveParts(ctx context.Context, database, table string) (ma
 	}
 	result := make(map[string]livePart, len(parts))
 	for _, p := range parts {
+		if disk := b.findDiskByName(disks, p.DiskName); disk != nil {
+			p.DiskName = disk.Name
+		}
 		result[p.Name] = p
 	}
 	return result, nil
