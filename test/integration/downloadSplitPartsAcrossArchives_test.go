@@ -3,7 +3,11 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -35,8 +39,6 @@ func TestDownloadSplitPartsAcrossArchives(t *testing.T) {
 	tableName := dbName + "." + tableShort
 	fullBackup := "split_parts_full_" + suffix
 	incrBackup := "split_parts_incr_" + suffix
-	// many small archives, each wide part spans several of them
-	const uploadEnv = "UPLOAD_BY_PART=false MAX_FILE_SIZE=16384 UPLOAD_CONCURRENCY=4"
 	backupCmd := func(envVars string, args ...string) string {
 		cmd := fmt.Sprintf("%s LOG_LEVEL=debug clickhouse-backup -c %s %s 2>&1", envVars, configFile, strings.Join(args, " "))
 		out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", cmd)
@@ -62,46 +64,105 @@ func TestDownloadSplitPartsAcrossArchives(t *testing.T) {
 	}()
 
 	wideSettings := ""
-	if compareVersion(chVersion, "20.3") >= 0 {
+	// before 20.3 every part is wide, in 20.3 min_bytes_for_wide_part defaults to 0
+	if compareVersion(chVersion, "20.3") > 0 {
 		wideSettings = " SETTINGS min_bytes_for_wide_part=0, min_rows_for_wide_part=0"
 	}
+	createTable := func(name string) {
+		env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE %s (id UInt64, s String, f Float64, d Date, a Array(UInt8), n Nullable(Int64)) ENGINE=MergeTree() ORDER BY id%s", name, wideSettings))
+	}
+	insert := func(name string, from, count uint64) {
+		env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO %s SELECT number, toString(cityHash64(number)), number / 7, toDate('2026-01-01') + number %% 300, range(number %% 10), if(number %% 3 = 0, NULL, toInt64(number)) FROM numbers(%d, %d)", name, from, count))
+	}
+	partsBytesQuery := "SELECT %s(bytes_on_disk) FROM system.parts WHERE active %s SETTINGS empty_result_for_aggregation_by_empty_set=0"
 	env.queryWithNoError(t, r, "CREATE DATABASE IF NOT EXISTS "+dbName)
-	env.queryWithNoError(t, r, fmt.Sprintf("CREATE TABLE %s (id UInt64, s String, f Float64, d Date, a Array(UInt32), n Nullable(Int64)) ENGINE=MergeTree() ORDER BY id%s", tableName, wideSettings))
+
+	// upload with upload_by_part=false raises max_file_size to 1.02*max(bytes_on_disk) of all active parts on the server
+	// (Backuper.CalculateMaxSize), so pick a limit above that and make every part ~70% of it: the first archive then
+	// holds part 1 and the head of part 2, the second one the tail of part 2 and the head of part 3, and so on
+	var serverMaxPart uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&serverMaxPart, fmt.Sprintf(partsBytesQuery, "max", "")))
+	maxFileSize := 2 * serverMaxPart
+	if maxFileSize < 1024*1024 {
+		maxFileSize = 1024 * 1024
+	}
+	calibrationTable := dbName + ".calibration"
+	createTable(calibrationTable)
+	const calibrationRows = 20000
+	insert(calibrationTable, 0, calibrationRows)
+	var calibrationBytes uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&calibrationBytes, fmt.Sprintf(partsBytesQuery, "sum", fmt.Sprintf("AND database='%s' AND table='calibration'", dbName))))
+	// no SYNC, old versions reject it
+	env.queryWithNoError(t, r, "DROP TABLE "+calibrationTable)
+	rowsPerPart := maxFileSize * 7 / 10 * calibrationRows / calibrationBytes
+	uploadEnv := fmt.Sprintf("UPLOAD_BY_PART=false MAX_FILE_SIZE=%d UPLOAD_CONCURRENCY=4", maxFileSize)
+
+	createTable(tableName)
 	// keep the parts of the full backup alive, so the incremental marks them as required
 	env.queryWithNoError(t, r, "SYSTEM STOP MERGES "+tableName)
-	insert := func(from, count int) {
-		env.queryWithNoError(t, r, fmt.Sprintf("INSERT INTO %s SELECT number, toString(cityHash64(number)), number / 7, toDate('2026-01-01') + number %% 300, range(number %% 10), if(number %% 3 = 0, NULL, toInt64(number)) FROM numbers(%d, %d)", tableName, from, count))
+	for i := uint64(0); i < 3; i++ {
+		insert(tableName, i*rowsPerPart, rowsPerPart)
 	}
-	for i := 0; i < 3; i++ {
-		insert(i*20000, 20000)
-	}
+	var fullParts, minPart, maxPart uint64
+	tableFilter := fmt.Sprintf("AND database='%s' AND table='%s'", dbName, tableShort)
+	r.NoError(env.ch.SelectSingleRowNoCtx(&fullParts, fmt.Sprintf(partsBytesQuery, "count", tableFilter)))
+	r.NoError(env.ch.SelectSingleRowNoCtx(&minPart, fmt.Sprintf(partsBytesQuery, "min", tableFilter)))
+	r.NoError(env.ch.SelectSingleRowNoCtx(&maxPart, fmt.Sprintf(partsBytesQuery, "max", tableFilter)))
+	r.Equal(uint64(3), fullParts)
+	r.Greater(minPart, maxFileSize/2, "part must be bigger than half of max_file_size=%d", maxFileSize)
+	r.Less(maxPart*102/100, maxFileSize, "part must fit into max_file_size=%d", maxFileSize)
 
 	backupCmd(uploadEnv, "create_remote", "--tables="+tableName, fullBackup)
-	var fullParts uint64
-	r.NoError(env.ch.SelectSingleRowNoCtx(&fullParts, fmt.Sprintf("SELECT count() FROM system.parts WHERE database='%s' AND table='%s' AND active SETTINGS empty_result_for_aggregation_by_empty_set=0", dbName, tableShort)))
-	r.Equal(uint64(3), fullParts)
 
-	// archives hold whole parts only if there are not more archives than parts
+	// read the archive listings back, at least one part directory must be spread over several archives
 	shadowDir := fmt.Sprintf("%s/%s/shadow/%s/%s/", root, fullBackup, dbName, tableShort)
 	lsOut, err := env.DockerExecOut("minio", "bash", "-c", fmt.Sprintf("%s && mc ls %s", mcAliasCmd, shadowDir))
 	r.NoError(err, "mc ls %s: %s", shadowDir, lsOut)
-	archives := 0
+	archivesByPart := make(map[string]map[string]bool)
 	for _, line := range strings.Split(strings.TrimSpace(lsOut), "\n") {
-		if fields := strings.Fields(line); len(fields) > 0 && strings.HasPrefix(fields[len(fields)-1], "default_") {
-			archives++
+		fields := strings.Fields(line)
+		if len(fields) == 0 || !strings.HasPrefix(fields[len(fields)-1], "default_") {
+			continue
+		}
+		archive := fields[len(fields)-1]
+		encoded, catErr := env.DockerExecOut("minio", "bash", "-c", fmt.Sprintf("%s && mc cat %s%s | base64 -w0", mcAliasCmd, shadowDir, archive))
+		r.NoError(catErr, "mc cat %s%s: %s", shadowDir, archive, encoded)
+		body, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
+		r.NoError(decodeErr, "decode %s", archive)
+		tr := tar.NewReader(bytes.NewReader(body))
+		for {
+			header, nextErr := tr.Next()
+			if nextErr == io.EOF {
+				break
+			}
+			r.NoError(nextErr, "read %s", archive)
+			partName := strings.SplitN(strings.TrimPrefix(header.Name, "/"), "/", 2)[0]
+			if archivesByPart[partName] == nil {
+				archivesByPart[partName] = make(map[string]bool)
+			}
+			archivesByPart[partName][archive] = true
 		}
 	}
-	r.Greater(archives, int(fullParts), "expected parts split across archives in %s, got: %s", shadowDir, lsOut)
-
-	for i := 3; i < 5; i++ {
-		insert(i*20000, 20000)
+	r.Len(archivesByPart, int(fullParts), "unexpected parts in archives: %v", archivesByPart)
+	splitParts := 0
+	for _, archives := range archivesByPart {
+		if len(archives) > 1 {
+			splitParts++
+		}
 	}
-	backupCmd(uploadEnv, "create_remote", "--tables="+tableName, "--diff-from-remote="+fullBackup, incrBackup)
+	r.Greater(splitParts, 0, "expected parts split across archives with max_file_size=%d, got: %v", maxFileSize, archivesByPart)
+
+	for i := uint64(3); i < 5; i++ {
+		insert(tableName, i*rowsPerPart, rowsPerPart)
+	}
+	// --diff-from-remote requires upload_by_part=true, the full backup stays size-bundled, so the diff flow can't find
+	// a per-part archive of a required part and downloads every archive of the full backup into one directory
+	backupCmd("UPLOAD_BY_PART=true", "create_remote", "--tables="+tableName, "--diff-from-remote="+fullBackup, incrBackup)
 
 	var expectedCount, expectedHash uint64
 	r.NoError(env.ch.SelectSingleRowNoCtx(&expectedCount, "SELECT count() FROM "+tableName))
-	r.NoError(env.ch.SelectSingleRowNoCtx(&expectedHash, "SELECT sum(cityHash64(*)) FROM "+tableName))
-	r.Equal(uint64(100000), expectedCount)
+	r.NoError(env.ch.SelectSingleRowNoCtx(&expectedHash, "SELECT sum(cityHash64(id, s, f, d, a, n)) FROM "+tableName))
+	r.Equal(5*rowsPerPart, expectedCount)
 
 	backupCmd("", "delete", "local", incrBackup)
 	backupCmd("", "delete", "local", fullBackup)
@@ -115,7 +176,7 @@ func TestDownloadSplitPartsAcrossArchives(t *testing.T) {
 	backupCmd("", "restore", "--rm", "--tables="+tableName, incrBackup)
 	var restoredCount, restoredHash uint64
 	r.NoError(env.ch.SelectSingleRowNoCtx(&restoredCount, "SELECT count() FROM "+tableName))
-	r.NoError(env.ch.SelectSingleRowNoCtx(&restoredHash, "SELECT sum(cityHash64(*)) FROM "+tableName))
+	r.NoError(env.ch.SelectSingleRowNoCtx(&restoredHash, "SELECT sum(cityHash64(id, s, f, d, a, n)) FROM "+tableName))
 	r.Equal(expectedCount, restoredCount)
 	r.Equal(expectedHash, restoredHash)
 }
