@@ -1685,7 +1685,7 @@ func (ch *ClickHouse) CalculateMaxFileSize(ctx context.Context, cfg *config.Conf
 		}
 	}
 	if !cfg.General.UploadByPart && isDiskNamePresent > 0 {
-		maxSizeQuery ="SELECT toInt64(max(data_by_disk) * 1.02) AS max_file_size FROM (SELECT disk_name, max(toInt64(bytes_on_disk)) data_by_disk FROM system.parts WHERE active GROUP BY disk_name)"
+		maxSizeQuery = "SELECT toInt64(max(data_by_disk) * 1.02) AS max_file_size FROM (SELECT disk_name, max(toInt64(bytes_on_disk)) data_by_disk FROM system.parts WHERE active GROUP BY disk_name)"
 	}
 	maxSizeQuery += " SETTINGS empty_result_for_aggregation_by_empty_set=0"
 	if err := ch.SelectSingleRow(ctx, &rows, maxSizeQuery); err != nil {
