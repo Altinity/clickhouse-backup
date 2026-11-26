@@ -186,6 +186,20 @@ func TestEnrichQueryWithOnCluster(t *testing.T) {
 		ExpectedQuery string
 	}{
 		{
+			Name:          "CREATE VIEW with UUID, DEFINER and SQL SECURITY",
+			Query:         "CREATE VIEW repro.v_repro UUID 'a6d0321e-e765-4b70-8c2e-570c157283d4' DEFINER = default SQL SECURITY DEFINER AS SELECT {a:UInt8} AS x",
+			OnCluster:     "my_cluster",
+			Version:       26008044,
+			ExpectedQuery: "CREATE VIEW repro.v_repro UUID 'a6d0321e-e765-4b70-8c2e-570c157283d4' ON CLUSTER 'my_cluster'  DEFINER = default SQL SECURITY DEFINER AS SELECT {a:UInt8} AS x",
+		},
+		{
+			Name:          "CREATE VIEW with quoted identifiers and SQL SECURITY INVOKER",
+			Query:         "CREATE VIEW `analytics db`.`orders view`\nSQL SECURITY INVOKER AS SELECT {id:UInt64} AS id",
+			OnCluster:     "my_cluster",
+			Version:       26008044,
+			ExpectedQuery: "CREATE VIEW `analytics db`.`orders view` ON CLUSTER 'my_cluster' \nSQL SECURITY INVOKER AS SELECT {id:UInt64} AS id",
+		},
+		{
 			Name:          "No OnCluster provided, version < 19000000",
 			Query:         "CREATE TABLE test (id UInt64) ENGINE = MergeTree ORDER BY id",
 			OnCluster:     "my_cluster",
