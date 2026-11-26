@@ -110,6 +110,17 @@ func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {
 
 // Classify need to log retries
 func (b *Backuper) Classify(err error) retrier.Action {
+	return b.classify(err, false)
+}
+
+// An object may take time to become visible after a successful write.
+type postUploadStatClassifier struct{ *Backuper }
+
+func (c postUploadStatClassifier) Classify(err error) retrier.Action {
+	return c.classify(err, true)
+}
+
+func (b *Backuper) classify(err error, retryNotFound bool) retrier.Action {
 	if err == nil {
 		return retrier.Succeed
 	}
@@ -119,7 +130,7 @@ func (b *Backuper) Classify(err error) retrier.Action {
 	}
 	// a missing remote object (404/NoSuchKey/BlobNotFound) will never heal, don't burn the retry budget on it,
 	// see https://github.com/Altinity/clickhouse-backup/issues/1456
-	if storage.IsNotFoundErr(err) {
+	if !retryNotFound && storage.IsNotFoundErr(err) {
 		return retrier.Fail
 	}
 	log.Warn().Err(err).Msgf("Will wait near %s and retry", common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter))
