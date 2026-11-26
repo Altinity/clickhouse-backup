@@ -21,9 +21,11 @@ import (
 )
 
 type fakeS3MultipartAPI struct {
-	uploaded  bytes.Buffer
-	completed bool
-	aborted   bool
+	uploaded   bytes.Buffer
+	completed  bool
+	aborted    bool
+	partSSEC   []string
+	completeSC string
 }
 
 func (f *fakeS3MultipartAPI) CreateMultipartUpload(_ context.Context, _ *s3.CreateMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
@@ -31,6 +33,7 @@ func (f *fakeS3MultipartAPI) CreateMultipartUpload(_ context.Context, _ *s3.Crea
 }
 
 func (f *fakeS3MultipartAPI) UploadPart(_ context.Context, params *s3.UploadPartInput, _ ...func(*s3.Options)) (*s3.UploadPartOutput, error) {
+	f.partSSEC = append(f.partSSEC, aws.ToString(params.SSECustomerAlgorithm)+"/"+aws.ToString(params.SSECustomerKey)+"/"+aws.ToString(params.SSECustomerKeyMD5))
 	if _, err := f.uploaded.ReadFrom(params.Body); err != nil {
 		return nil, err
 	}
@@ -40,8 +43,9 @@ func (f *fakeS3MultipartAPI) UploadPart(_ context.Context, params *s3.UploadPart
 	}, nil
 }
 
-func (f *fakeS3MultipartAPI) CompleteMultipartUpload(_ context.Context, _ *s3.CompleteMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error) {
+func (f *fakeS3MultipartAPI) CompleteMultipartUpload(_ context.Context, params *s3.CompleteMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error) {
 	f.completed = true
+	f.completeSC = aws.ToString(params.SSECustomerAlgorithm) + "/" + aws.ToString(params.SSECustomerKey) + "/" + aws.ToString(params.SSECustomerKeyMD5)
 	return &s3.CompleteMultipartUploadOutput{}, nil
 }
 
@@ -80,6 +84,29 @@ func TestPutFileMultipartCRC32ReadsUntilEOF(t *testing.T) {
 	if !bytes.Equal(fake.uploaded.Bytes(), data) {
 		t.Fatalf("uploaded %d bytes, want %d - the tail of the stream was truncated", fake.uploaded.Len(), trueSize)
 	}
+}
+
+// TestPutFileMultipartCRC32SSECustomerKey - with s3.check_sum_algorithm: CRC32 and SSE-C, the upload is initiated
+// with the customer key, so S3 rejects every UploadPart without it ("The multipart upload initiate requested
+// encryption. Subsequent part requests must include the appropriate encryption parameters.")
+func TestPutFileMultipartCRC32SSECustomerKey(t *testing.T) {
+	const partSize = 8 * 1024
+	data := make([]byte, 3*partSize+10)
+	fake := &fakeS3MultipartAPI{}
+	s := &S3{Config: &config.S3Config{Bucket: "bucket"}}
+	params := &s3.PutObjectInput{
+		Bucket:               aws.String("bucket"),
+		Key:                  aws.String("backup/shadow/db/table/default/all_1_1_0/data.bin"),
+		SSECustomerAlgorithm: aws.String("AES256"),
+		SSECustomerKey:       aws.String("key"),
+		SSECustomerKeyMD5:    aws.String("md5"),
+	}
+	require.NoError(t, s.putFileMultipartCRC32(context.Background(), fake, params, bytes.NewReader(data), int64(len(data)), partSize))
+	require.Len(t, fake.partSSEC, 4)
+	for i, got := range fake.partSSEC {
+		assert.Equal(t, "AES256/key/md5", got, "part %d", i+1)
+	}
+	assert.Equal(t, "AES256/key/md5", fake.completeSC)
 }
 
 // TestS3CopySource - `x-amz-copy-source` must be URL-encoded, keys with literal `%`/`#`/non-ASCII
