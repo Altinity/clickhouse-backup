@@ -1677,7 +1677,14 @@ func (ch *ClickHouse) CreateUserDefinedFunction(query string, cluster string) er
 func (ch *ClickHouse) CalculateMaxFileSize(ctx context.Context, cfg *config.Config) (int64, error) {
 	var rows int64
 	maxSizeQuery := "SELECT max(toInt64(bytes_on_disk * 1.02)) AS max_file_size FROM system.parts WHERE active"
+	var isDiskNamePresent uint64
 	if !cfg.General.UploadByPart {
+		// system.parts.disk_name appeared together with multiple disks in 19.15, older versions have one disk only
+		if err := ch.SelectSingleRow(ctx, &isDiskNamePresent, "SELECT count() FROM system.columns WHERE database='system' AND table='parts' AND name='disk_name' SETTINGS empty_result_for_aggregation_by_empty_set=0"); err != nil {
+			return 0, errors.Wrap(err, "can't check system.parts.disk_name")
+		}
+	}
+	if !cfg.General.UploadByPart && isDiskNamePresent > 0 {
 		maxSizeQuery = "SELECT toInt64(max(data_by_disk) * 1.02) AS max_file_size FROM (SELECT disk_name, max(toInt64(bytes_on_disk)) data_by_disk FROM system.parts WHERE active GROUP BY disk_name)"
 	}
 	maxSizeQuery += " SETTINGS empty_result_for_aggregation_by_empty_set=0"

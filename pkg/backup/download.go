@@ -56,6 +56,48 @@ func (b *Backuper) resumeExistingBackup(backupName, command string) error {
 	return nil
 }
 
+// removeExtractLeftovers removes the storage.ExtractTempDirPrefix directories which a killed download (SIGKILL, OOM)
+// left in the local backup, the deferred cleanup in DownloadCompressedStream can't run then. The directories are
+// created directly in the extraction target: shadow/<db>/<table>/<disk> per disk, access, configs, named_collections,
+// and <db>/<table> under the data dir of an embedded backup. Walking is depth limited to skip the part contents.
+func (b *Backuper) removeExtractLeftovers(backupName string) error {
+	roots := make(map[string]int)
+	for _, diskPath := range b.DiskToPathMap {
+		roots[path.Join(diskPath, "backup", backupName)] = 5
+		if b.isEmbedded {
+			roots[path.Join(diskPath, backupName, b.embeddedClusterPrefix, "data")] = 3
+		}
+	}
+	for root, maxDepth := range roots {
+		walkErr := filepath.WalkDir(root, func(filePath string, d os.DirEntry, err error) error {
+			if err != nil {
+				if os.IsNotExist(err) {
+					return nil
+				}
+				return err
+			}
+			if !d.IsDir() || filePath == root {
+				return nil
+			}
+			if strings.HasPrefix(d.Name(), storage.ExtractTempDirPrefix) {
+				log.Warn().Msgf("remove %s, left by an interrupted download", filePath)
+				if err = os.RemoveAll(filePath); err != nil {
+					return err
+				}
+				return filepath.SkipDir
+			}
+			if strings.Count(strings.TrimPrefix(filePath, root+string(filepath.Separator)), string(filepath.Separator))+1 >= maxDepth {
+				return filepath.SkipDir
+			}
+			return nil
+		})
+		if walkErr != nil {
+			return errors.Wrapf(walkErr, "can't remove %s* leftovers in %s", storage.ExtractTempDirPrefix, root)
+		}
+	}
+	return nil
+}
+
 func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume bool, hardlinkExistsFiles bool, backupVersion string, commandId int) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "download"); pidCheckErr != nil {
 		return errors.Wrap(pidCheckErr, "CheckAndCreatePidFile")
@@ -308,6 +350,10 @@ func (b *Backuper) downloadTablesMetadata(ctx context.Context, backupName, comma
 		// will ignore partitions cause can't manipulate .backup
 		partitions = make([]string, 0)
 		localBackupDir = path.Join(b.EmbeddedBackupDataPath, backupName)
+	}
+	// runs under the backup pid lock before any download goroutine starts, so no extraction is in flight
+	if err = b.removeExtractLeftovers(backupName); err != nil {
+		return nil, err
 	}
 	err = os.MkdirAll(localBackupDir, 0750)
 	if err != nil && !resume {
