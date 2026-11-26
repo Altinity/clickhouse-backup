@@ -162,17 +162,20 @@ func TestPlainRewritableAzure(t *testing.T) {
 	env.runPlainRewritableScenario(t, r, "config-azblob.yml", "test_plain_rewritable_azure", "azure_plain_rewritable_only")
 }
 
-// runPlainRewritableHybridScenario backs up a table of the s3_plain_rewritable_hybrid policy with partition 0 moved to
-// the plain_rewritable volume, checks that merges and moves of the table work again after create and that the
-// backup metadata lists the local parts and, unless skipPlainDisk put the plain disk into skip_disks, the plain
-// ones. With checkRestore the table is then dropped, restored and its row count verified, restore into
-// plain_rewritable needs ClickHouse 25.11+.
-func (env *TestEnvironment) runPlainRewritableHybridScenario(t *testing.T, r *require.Assertions, dbName string, skipPlainDisk, checkRestore bool) {
+// runPlainRewritableHybridScenario backs up a table of storagePolicy (a hot local volume and a cold volume on
+// disk_s3_plain_rewritable, directly or behind a cache disk) with partition 0 moved to the cold volume, checks that
+// merges and moves of the table work again after create and that the backup metadata lists the local parts and,
+// unless skipDiskName put the plain disk into skip_disks, the plain ones. The plain parts are always listed under
+// disk_s3_plain_rewritable, whichever name system.parts reports for the parts behind the cache disk. With
+// checkRestore the table is then dropped, restored and its row count verified, restore into plain_rewritable needs
+// ClickHouse 25.11+.
+func (env *TestEnvironment) runPlainRewritableHybridScenario(t *testing.T, r *require.Assertions, dbName, storagePolicy, skipDiskName string, checkRestore bool) {
 	backupName := fmt.Sprintf("%s_%d", dbName, rand.Int())
 	tableName := "data"
 	backupEnv := ""
+	skipPlainDisk := skipDiskName != ""
 	if skipPlainDisk {
-		backupEnv = "CLICKHOUSE_SKIP_DISKS=disk_s3_plain_rewritable "
+		backupEnv = "CLICKHOUSE_SKIP_DISKS=" + skipDiskName + " "
 	}
 
 	env.queryWithNoError(t, r, "DROP DATABASE IF EXISTS "+dbName+" SYNC")
@@ -185,16 +188,18 @@ func (env *TestEnvironment) runPlainRewritableHybridScenario(t *testing.T, r *re
 	}()
 	env.queryWithNoError(t, r, "CREATE DATABASE "+dbName)
 	env.queryWithNoError(t, r, fmt.Sprintf(
-		"CREATE TABLE %s.%s (id UInt64, payload String) ENGINE=MergeTree() PARTITION BY id %% 4 ORDER BY id SETTINGS storage_policy='s3_plain_rewritable_hybrid'",
-		dbName, tableName,
+		"CREATE TABLE %s.%s (id UInt64, payload String) ENGINE=MergeTree() PARTITION BY id %% 4 ORDER BY id SETTINGS storage_policy='%s'",
+		dbName, tableName, storagePolicy,
 	))
 	env.queryWithNoError(t, r, fmt.Sprintf(
 		"INSERT INTO %s.%s SELECT number, repeat('x', 128) FROM numbers(1000)",
 		dbName, tableName,
 	))
 	env.queryWithNoError(t, r, fmt.Sprintf("ALTER TABLE %s.%s MOVE PARTITION ID '0' TO VOLUME 'cold'", dbName, tableName))
+	// the parts behind a cache disk are reported under the wrapped disk name before ClickHouse 26.x and under the
+	// cache disk name since then
 	env.checkCount(r, 1, 1, fmt.Sprintf(
-		"SELECT count() FROM (SELECT DISTINCT disk_name FROM system.parts WHERE database='%s' AND table='%s' AND active AND disk_name='disk_s3_plain_rewritable')",
+		"SELECT count() FROM (SELECT DISTINCT disk_name FROM system.parts WHERE database='%s' AND table='%s' AND active AND disk_name IN ('disk_s3_plain_rewritable','disk_s3_plain_rewritable_cache'))",
 		dbName, tableName,
 	))
 
@@ -283,7 +288,28 @@ func TestPlainRewritableHybridS3(t *testing.T) {
 	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
-	env.runPlainRewritableHybridScenario(t, r, "test_plain_rewritable_hybrid", true, true)
-	env.runPlainRewritableHybridScenario(t, r, "test_plain_rewritable_hybrid", false, compareVersion(version, "25.11") >= 0)
+	env.runPlainRewritableHybridScenario(t, r, "test_plain_rewritable_hybrid", "s3_plain_rewritable_hybrid", "disk_s3_plain_rewritable", true)
+	env.runPlainRewritableHybridScenario(t, r, "test_plain_rewritable_hybrid", "s3_plain_rewritable_hybrid", "", compareVersion(version, "25.11") >= 0)
+	env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3_plain_rewritable")
+}
+
+// TestPlainRewritableCacheHybridS3 verifies the same table with the cold volume on a cache disk over the
+// plain_rewritable disk (s3_plain_rewritable_cache_hybrid in dynamic_settings.sh). The cache disk and the disk it
+// wraps are one row of GetDisks, listed under the wrapped disk name, while system.parts reports the parts behind the
+// cache under the wrapped disk name (ClickHouse 25.8) or under the cache disk name (26.8): create must resolve both,
+// skip_disks must work with either of the two names and the backup must keep the wrapped disk name.
+func TestPlainRewritableCacheHybridS3(t *testing.T) {
+	version := os.Getenv("CLICKHOUSE_VERSION")
+	if compareVersion(version, "25.4") < 0 {
+		t.Skipf("Test requires ClickHouse >= 25.4 (MOVE and ATTACH PART on a storage policy with plain_rewritable disks), current %s", version)
+	}
+
+	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+
+	env.runPlainRewritableHybridScenario(t, r, "test_plain_rewritable_cache_hybrid", "s3_plain_rewritable_cache_hybrid", "disk_s3_plain_rewritable_cache", true)
+	env.runPlainRewritableHybridScenario(t, r, "test_plain_rewritable_cache_hybrid", "s3_plain_rewritable_cache_hybrid", "disk_s3_plain_rewritable", true)
+	env.runPlainRewritableHybridScenario(t, r, "test_plain_rewritable_cache_hybrid", "s3_plain_rewritable_cache_hybrid", "", compareVersion(version, "25.11") >= 0)
 	env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3_plain_rewritable")
 }

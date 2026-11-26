@@ -82,6 +82,12 @@ func (b *Backuper) buildCreateDryRunReport(ctx context.Context, backupName strin
 	isObjectDisk := make(map[string]bool, len(disks))
 	for _, disk := range disks {
 		isObjectDisk[disk.Name] = b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, disks) || b.isDiskPlain(disk)
+		// system.parts reports the parts behind a cache disk under either name, see clickhouse.Disk.Aliases
+		for _, alias := range disk.Aliases {
+			if _, exists := isObjectDisk[alias]; !exists {
+				isObjectDisk[alias] = isObjectDisk[disk.Name]
+			}
+		}
 	}
 	for _, row := range rows {
 		title := metadata.TableTitle{Database: row.Database, Table: row.Table}

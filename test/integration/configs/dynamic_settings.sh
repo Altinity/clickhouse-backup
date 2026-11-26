@@ -524,6 +524,40 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3_plain_rewri
 </clickhouse>
 EOT
 
+# cache disk over the plain_rewritable disk, system.parts reports the parts behind it under the wrapped disk name
+# (25.8) or under the cache disk name (26.8), MOVE to a plain_rewritable volume requires 25.4+
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^25\.([4-9]|1[0-9]) || "${CLICKHOUSE_VERSION}" =~ ^2[6-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
+
+cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3_plain_rewritable_cache.xml
+<?xml version="1.0"?>
+<clickhouse>
+  <storage_configuration>
+    <disks>
+      <disk_s3_plain_rewritable_cache>
+        <type>cache</type>
+        <disk>disk_s3_plain_rewritable</disk>
+        <path>/var/lib/clickhouse/filesystem_caches/disk_s3_plain_rewritable_cache/</path>
+        <max_size>1Gi</max_size>
+      </disk_s3_plain_rewritable_cache>
+    </disks>
+    <policies>
+      <s3_plain_rewritable_cache_hybrid>
+        <volumes>
+          <hot>
+            <disk>default</disk>
+          </hot>
+          <cold>
+            <disk>disk_s3_plain_rewritable_cache</disk>
+          </cold>
+        </volumes>
+      </s3_plain_rewritable_cache_hybrid>
+    </policies>
+  </storage_configuration>
+</clickhouse>
+EOT
+
+fi
+
 # azure plain / plain_rewritable disks in SEPARATE azurite containers,
 # common_key_prefix for azure defaults to empty, so __meta lands in the container root
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_azblob_plain.xml

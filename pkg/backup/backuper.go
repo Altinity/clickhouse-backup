@@ -316,14 +316,10 @@ func (b *Backuper) isDiskTypeObject(diskType string) bool {
 	return diskType == "s3" || diskType == "azure_blob_storage" || diskType == "azure"
 }
 
-// findDiskByName returns the disk with the given name from live system.disks list, nil when absent
+// findDiskByName returns the disk clickhouse-server reports under the given name from live system.disks list, nil
+// when absent. A cache disk and the disk it wraps are one entry of the list, found by either name
 func (b *Backuper) findDiskByName(disks []clickhouse.Disk, diskName string) *clickhouse.Disk {
-	for i := range disks {
-		if disks[i].Name == diskName {
-			return &disks[i]
-		}
-	}
-	return nil
+	return clickhouse.FindDiskByName(disks, diskName)
 }
 
 // isDiskPlain returns true for object storage disks with metadata_type=plain or plain_rewritable:

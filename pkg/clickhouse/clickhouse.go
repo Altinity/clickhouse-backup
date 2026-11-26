@@ -441,6 +441,19 @@ func normalizeDiskMetadataType(metadataType, diskType string) string {
 	return metadataType
 }
 
+// diskAliases - the names of the `system.disks` rows collapsed into a disk without the name the disk is listed
+// under, sorted, nil for a disk which is a single row, see Disk.Aliases
+func diskAliases(diskName string, names []string) []string {
+	var aliases []string
+	for _, name := range names {
+		if name != diskName && name != "" {
+			aliases = append(aliases, name)
+		}
+	}
+	sort.Strings(aliases)
+	return aliases
+}
+
 func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, error) {
 	select {
 	case <-ctx.Done():
@@ -472,18 +485,22 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		// diskNameSQL: prefer the underlying (non-cache) disk name when cache
 		// disks are present. Cache disks share the same metadata_path as the
 		// disk they wrap, so GROUP BY d.path collapses them into one row.
-		// system.parts always reports the underlying disk name, not the cache
-		// wrapper, so picking the cache name here causes fetchHashOfAllFiles
-		// to fail with "part not found after FREEZE".
+		// The underlying name is the one stored in the backup metadata and in
+		// the remote paths, it must not depend on the server version.
+		// system.parts and system.storage_policies report the pair under the
+		// underlying name (25.8) or under the cache name (26.8), so the names
+		// of the cache wrappers are kept in Disk.Aliases, see diskAliasesSQL.
 		// We use the cache_path column (non-empty for cache disks) to detect
 		// cache wrappers, since both cache and underlying disks may report
 		// type='ObjectStorage' in modern ClickHouse versions.
 		diskNameSQL := "any(d.name)"
+		diskAliasesSQL := "groupUniqArray(d.name)"
 		if len(diskFields) > 0 && diskFields[0].DiskTypePresent > 0 {
 			diskTypeSQL = "any(d.type)"
 		}
 		if len(diskFields) > 0 && diskFields[0].CachePathPresent > 0 {
 			diskNameSQL = "argMin(d.name, d.cache_path != '')"
+			diskAliasesSQL = "groupUniqArrayIf(d.name, d.cache_path != '')"
 		}
 		if len(diskFields) > 0 && diskFields[0].ObjectStorageTypePresent > 0 {
 			diskTypeSQL = "any(lower(if(d.type='ObjectStorage',d.object_storage_type,d.type)))"
@@ -519,15 +536,16 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		}
 		var result []Disk
 		query := fmt.Sprintf(
-			"SELECT d.path AS path, %s AS name, %s AS type, %s AS metadata_type, %s AS free_space, %s AS total_space, %s AS storage_policies, %s AS is_encrypted "+
+			"SELECT d.path AS path, %s AS name, %s AS aliases, %s AS type, %s AS metadata_type, %s AS free_space, %s AS total_space, %s AS storage_policies, %s AS is_encrypted "+
 				"FROM system.disks AS d %s GROUP BY %s",
-			diskNameSQL, diskTypeSQL, diskMetadataTypeSQL, diskFreeSpaceSQL, diskTotalSpaceSQL, storagePoliciesSQL, diskIsEncryptedSQL, joinStoragePoliciesSQL, groupBySQL,
+			diskNameSQL, diskAliasesSQL, diskTypeSQL, diskMetadataTypeSQL, diskFreeSpaceSQL, diskTotalSpaceSQL, storagePoliciesSQL, diskIsEncryptedSQL, joinStoragePoliciesSQL, groupBySQL,
 		)
 		if err := ch.SelectContext(ctx, &result, query); err != nil {
 			return nil, errors.Wrap(err, "getDisksFromSystemDisks: select disks")
 		}
 		for i := range result {
 			result[i].MetadataType = normalizeDiskMetadataType(result[i].MetadataType, result[i].Type)
+			result[i].Aliases = diskAliases(result[i].Name, result[i].Aliases)
 		}
 		return result, nil
 	}

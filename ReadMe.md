@@ -277,6 +277,7 @@ clickhouse:
   skip_table_engines: []
   # CLICKHOUSE_SKIP_DISKS, list of disk names which are ignored during create, upload, download and restore command
   # The format for this env variable is "Disk1,disk2,disk3". For YAML please continue using array syntax
+  # a `cache` disk and the disk it wraps are one disk for clickhouse-backup, named as the wrapped disk in the backup, either of the two names skips both
   skip_disks: []
   # CLICKHOUSE_SKIP_DISK_TYPES, list of disk types which are ignored during create, upload, download and restore command
   # The format for this env variable is "Engine1,Engine2,engine3". For YAML please continue using array syntax

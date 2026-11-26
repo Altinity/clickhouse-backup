@@ -48,7 +48,13 @@ type Disk struct {
 	TotalSpace      uint64   `ch:"total_space"`
 	StoragePolicies []string `ch:"storage_policies"`
 	IsEncrypted     uint8    `ch:"is_encrypted"`
-	IsBackup        bool
+	// Aliases - the other `system.disks` names of the rows GetDisks collapses into this disk: a `cache` disk
+	// shares the path of the disk it wraps, the pair is listed once, under the name of the wrapped disk.
+	// clickhouse-server reports such a pair under either name depending on the version: for the same part
+	// `system.parts.disk_name` is the wrapped disk on 25.8 and the cache disk on 26.8, `system.storage_policies`
+	// changed the same way, so a disk name which comes from the server is matched with Disk.HasName
+	Aliases  []string `ch:"aliases"`
+	IsBackup bool
 	// RawPath - `system.disks.path` as reported by clickhouse-server, before GetDisks rewrites it: the
 	// bucket key prefix of plain/plain_rewritable disks becomes a pseudo local path, a relative local path
 	// (clickhouse-server started with a relative `<path>`) becomes absolute via disk_mapping. Empty for a
@@ -59,6 +65,37 @@ type Disk struct {
 // IsPlain returns true for disks without local VFS metadata files (metadata_type=plain or plain_rewritable)
 func (d Disk) IsPlain() bool {
 	return d.MetadataType == "plain" || d.MetadataType == "plain_rewritable"
+}
+
+// HasName tells whether clickhouse-server can report the disk under diskName: its own name or the name of a
+// `system.disks` row collapsed into it, see Disk.Aliases
+func (d Disk) HasName(diskName string) bool {
+	if d.Name == diskName {
+		return true
+	}
+	for _, alias := range d.Aliases {
+		if alias == diskName {
+			return true
+		}
+	}
+	return false
+}
+
+// FindDiskByName returns the disk clickhouse-server reports under diskName, nil when absent. The name of a disk
+// wins over an alias of another disk, the names of `system.disks` are unique, so only a disk added from
+// `clickhouse.disk_mapping` can collide with an alias
+func FindDiskByName(disks []Disk, diskName string) *Disk {
+	for i := range disks {
+		if disks[i].Name == diskName {
+			return &disks[i]
+		}
+	}
+	for i := range disks {
+		if disks[i].HasName(diskName) {
+			return &disks[i]
+		}
+	}
+	return nil
 }
 
 // IsCAS returns true for Antalya content-addressed disks (metadata_type=cas), parts live in the object storage pool
